@@ -289,7 +289,15 @@ pub struct ProtectionOutput { pub action: ProtectionAction, pub speed_limit: Opt
 
 - **ETCS** L1 Limited Supervision/L2 (balises are already provided for as a trackside kind; DMI display;
   scope v2 — the architecture just must not preclude it).
-- **ZBS** (Berlin S-Bahn), **GNT/tilting technology**, **door control TAV/TB0**: v2+, same trait API.
+- **ZBS** (Berlin S-Bahn), **GNT/tilting technology**: v2+, same trait API.
+
+### 9.5a Door control (implemented)
+
+`sim-core::doors` — TB0, TAV and UIC-WTB, chosen per train (`Train::doors`). Common to all
+three: no traction while a door is not closed and locked, and an unlocked door above
+5 km/h applies the emergency brake. TB0 needs the driver's close button, TAV closes by
+itself, UIC-WTB is TAV over the train bus (inauguration after a consist change, one bus
+cycle per vehicle). Vehicles take part when `VehicleSpec::passenger_doors` is set.
 
 ### 9.6 Train radio
 

@@ -118,6 +118,11 @@ pub fn player_input(
     // Starter button of the diesel engine.
     cab.engine_start = keys.pressed(KeyCode::Digit5);
 
+    // Doors: release left (J) / right (K), close (I).
+    cab.door_release_left = keys.pressed(KeyCode::KeyJ);
+    cab.door_release_right = keys.pressed(KeyCode::KeyK);
+    cab.door_close = keys.pressed(KeyCode::KeyI);
+
     // Sifa and train protection.
     cab.sifa = keys.pressed(KeyCode::Space);
     cab.pzb_acknowledge = keys.pressed(KeyCode::PageDown);

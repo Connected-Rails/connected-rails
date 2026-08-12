@@ -5,6 +5,7 @@
 
 pub mod brakes;
 pub mod cab;
+pub mod doors;
 pub mod drive;
 pub mod electric;
 pub mod interlock;
@@ -36,6 +37,9 @@ pub struct TrainRuntime {
     /// Last output of the train protection.
     #[serde(skip)]
     pub protection: ProtectionOutput,
+    /// Last output of the door control.
+    #[serde(skip)]
+    pub doors: doors::DoorOutput,
     /// Remaining distance without contact wire voltage (neutral section) [m].
     pub neutral_section_left: f64,
     /// Train is stopped because of a node that cannot be passed.
@@ -146,13 +150,18 @@ impl Sim {
         let cab = self.controls[index];
         let action = self.runtime[index].protection.action;
 
+        // 0. Doors — traction interlock and door loop act on this step already.
+        let doors = doors::step(&mut self.trains[index], &cab, dt);
+        self.runtime[index].doors = doors;
+
         // Forced braking overrides the driver's brake valve and the traction.
         let valve = match action {
+            _ if doors.emergency => DriverBrakeValve::Emergency,
             ProtectionAction::EmergencyBrake => DriverBrakeValve::Emergency,
             ProtectionAction::ForcedServiceBrake => DriverBrakeValve::Service(1.5),
             _ => cab.brake_valve,
         };
-        let traction_allowed = action == ProtectionAction::None;
+        let traction_allowed = action == ProtectionAction::None && !doors.traction_lock;
 
         // 1. Electrics and drive.
         {

@@ -20,6 +20,7 @@ use content::{musterbahn, re_4711, to_musterstadt};
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
+use sim_core::doors::{DoorControl, DoorSystem};
 use sim_core::safety::SafetySystems;
 use sim_core::safety::de::{DeSafety, Lzb80, PzbVariant, SifaKind, TrainType};
 use sim_core::train::{Train, VehicleSpec};
@@ -473,7 +474,13 @@ fn spawn_train(
     for _ in 0..coaches {
         vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
     }
-    let train = Train::assemble(vehicles, head, &sim.net);
+    let mut train = Train::assemble(vehicles, head, &sim.net);
+    train.doors = DoorControl::new(match arg("--doors").as_deref() {
+        Some("tb0") => DoorSystem::Tb0,
+        Some("tav") => DoorSystem::Tav,
+        Some("wtb") => DoorSystem::UicWtb,
+        _ => DoorSystem::None,
+    });
     let index = sim.add_train(train);
     // Vehicles start prepared — the "cold locomotive" is a scenario of its own (M6).
     for v in &mut sim.trains[index].vehicles {

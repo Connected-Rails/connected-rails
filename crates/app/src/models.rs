@@ -246,12 +246,14 @@ pub fn animate_parts(
 
 /// Value of a part function, 0 … 1 (or an angle fraction for gauges).
 ///
-/// ponytail: only the functions for which the simulation actually has state. Doors, lamps
-/// and destination displays need state that `sim-core` does not model yet — they stay at
+/// ponytail: only the functions for which the simulation actually has state. Lamps and
+/// destination displays need state that `sim-core` does not model yet — they stay at
 /// their rest position instead of being faked here.
 fn part_value(function: &str, vehicle: &Vehicle, cab: &CabInputs) -> Option<f32> {
     let value = match function {
         "pantograph" => vehicle.traction.pantograph,
+        "door_left" => vehicle.doors.left.travel,
+        "door_right" => vehicle.doors.right.travel,
         "gauge:speed" => {
             let v_max = if vehicle.spec.v_max > 0.0 {
                 vehicle.spec.v_max

@@ -54,6 +54,14 @@ pub struct CabInputs {
     /// Starter button of the diesel engine.
     #[serde(default)]
     pub engine_start: bool,
+    /// Door release, left and right in the direction of travel.
+    #[serde(default)]
+    pub door_release_left: bool,
+    #[serde(default)]
+    pub door_release_right: bool,
+    /// Door close button.
+    #[serde(default)]
+    pub door_close: bool,
     pub sanding: bool,
     /// Sifa pedal/button.
     pub sifa: bool,
@@ -82,6 +90,9 @@ impl Default for CabInputs {
             parking_brake: false,
             ep_brake: false,
             engine_start: false,
+            door_release_left: false,
+            door_release_right: false,
+            door_close: false,
             sanding: false,
             sifa: false,
             pzb_acknowledge: false,

@@ -207,10 +207,11 @@ glTF exporter writes them into `extras` if "Include → Custom Properties" is sw
 
 The simulator spawns the model in place of the placeholder body, shows the level of detail
 whose distance the vehicle is within, and moves the bound parts. Which functions have a
-value today: `pantograph`, `gauge:speed`, `gauge:brake_pipe`, `gauge:cylinder`,
-`gauge:main_reservoir`, `gauge:tractive_effort`, `switch:throttle`, `switch:reverser`,
-`switch:direct_brake`, `lamp:main_switch`, `lamp:sanding`. Everything else stays in its rest
-position until `sim-core` models the state (doors, destination displays, marker lights).
+value today: `pantograph`, `door_left`, `door_right`, `gauge:speed`, `gauge:brake_pipe`,
+`gauge:cylinder`, `gauge:main_reservoir`, `gauge:tractive_effort`, `switch:throttle`,
+`switch:reverser`, `switch:direct_brake`, `lamp:main_switch`, `lamp:sanding`. Everything
+else stays in its rest position until `sim-core` models the state (destination displays,
+marker lights).
 
 ```bash
 cargo run -p app -- --loco example:br101_afb --camera outside

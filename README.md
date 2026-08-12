@@ -9,7 +9,11 @@ Aktueller Stand und offene Punkte: [STATUS.md](STATUS.md).
 cargo test --workspace     # alle Abnahmetests (headless, ohne GPU)
 cargo run -p app           # Simulator starten
 cargo run -p app -- --frames 120   # Rendering-Smoke-Test (CI)
+cargo run -p app -- --screenshot screenshots/hud.png   # Bild aufnehmen und beenden
 ```
+
+`--screenshot` gibt es auch im Editor; `--frames N` legt fest, nach wie vielen Frames
+aufgenommen wird (60 Frames ≈ 1 s Simulationszeit).
 
 ## Strecke importieren
 

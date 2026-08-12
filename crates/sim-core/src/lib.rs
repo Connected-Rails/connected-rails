@@ -197,6 +197,7 @@ impl Sim {
             odometer: self.runtime[index].odometer,
             line_speed: self.trains[index].vehicles[0].pos.speed_limit(&self.net),
             braking: !self.trains[index].vehicles[0].brake.released(),
+            train_length: self.trains[index].length(),
         };
         let mut out = ProtectionOutput::default();
         let train = &mut self.trains[index];

@@ -16,7 +16,15 @@ cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and ex
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
+
+cargo run -p app -- --pzb i60 --sifa zeit-weg   # older train protection build
+cargo run -p app -- --pzb none                  # LZB-only vehicle, without PZB
 ```
+
+`--pzb` picks the Indusi/PZB build: `i54`, `i60`, `i60m`, `i60r`, `pzb60` (ÖBB),
+`pzb90-1.5`, `pzb90-2.0` (default) or `none`. `--sifa` picks the Sifa build: `zeit-zeit`
+(default), `zeit-weg` or `rzm`. Switching the battery off and on again (`1`) restarts the
+function test of every system on board.
 
 `--screenshot` is available in both editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).
@@ -183,7 +191,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `G` | Sanding |
 | `Space` | Sifa (driver's safety device) |
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
-| `N` / `M` | LZB takeover / end |
+| `N` / `M` / `B` | LZB takeover / end / function test |
 | `H` | Horn |
 | `1`–`4` | Battery / pantograph / main switch / air compressor |
 | `F1`–`F3` | Camera: cab / external / lineside |

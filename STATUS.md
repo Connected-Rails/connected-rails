@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-12 · `cargo test --workspace`: **162 tests green** · clippy and fmt clean.
+As of 2026-08-12 · `cargo test --workspace`: **189 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,9 +11,9 @@ As of 2026-08-12 · `cargo test --workspace`: **162 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done except audio** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; **sound (ch. 13) missing** |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa and PZB 90 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD and moving parts |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD and moving parts |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
-| **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures; BR 110 present; **AFB missing**, MFA only as HUD text |
+| **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — start-up chain simulated and operable via keyboard, weather changes through scenario actions, terrain from the DGM; no 3D cab, no audio, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
 | **M8** | Mod runtime: declarative content plus Lua behaviour | **usable** — loader with dependency order, vehicles/lines/scenarios/signal types as RON, signal state machine as data, two Lua hooks (vehicle, signal aspect) with a sandbox; reference mod under `mods/example` incl. a glTF model. **Missing:** mod manager UI, line/scenario hooks |
@@ -37,9 +37,26 @@ As of 2026-08-12 · `cargo test --workspace`: **162 tests green** · clippy and 
   braked weight percentage.
 - **Electrics (ch. 8):** start-up chain, pantograph travel time, main switch drop-out in
   neutral sections, three traction types (tap changer, converter, diesel).
-- **Train protection (ch. 9):** trait abstraction + country package DE with Sifa, complete
-  PZB 90 (O/M/U, 1000/500/2000 Hz, exemption, restrictive supervision, override 40) and
-  LZB 80 (takeover, v-target/v-goal/distance to target, end and failure procedures).
+- **Train protection (ch. 9):** trait abstraction + country package DE with all intermittent
+  builds, LZB and three Sifa builds:
+  - **Indusi/PZB** as one state machine plus a parameter set per build — **I 54**, **I 60**,
+    **I 60M**, **I 60R**, **ÖBB PZB 60**, **PZB 90 V1.5** and **V2.0**. The older builds
+    supervise the check speed only once the 1000 Hz time has run and hold the 500 Hz speed
+    constant; the distance supervision (1250 m), the restrictive mode and the supervised
+    override came with the I 60R and the PZB 90. V1.5 enters the restrictive mode only after
+    a stop and holds 45 km/h there, V2.0 also after 15 s below 10 km/h and falls to 25 km/h.
+    Train categories O/M/U with all check speeds, acknowledgement, exemption from 700 m,
+    override 40 and the forced braking logic apply throughout.
+  - **LZB 80/I 80** with and without PZB, full and partial block mode (in partial block mode
+    the signals stay binding, so their magnets remain the fallback level), **CIR-ELKE**
+    (steeper braking curve, 5 km/h speed steps, speed rises effective at the head of the
+    train instead of at its rear), takeover, v-target/v-goal/distance to target, end and
+    failure procedures.
+  - **Function test** (Funktionsprüfung) of the PZB and the LZB: lamp test → internal test →
+    acknowledgement, at a standstill only; the PZB holds the forced braking until it passes.
+    Switching the battery on starts it.
+  - **Sifa** in three builds: time-time, time-distance (30 s **or** 1250 m) and RZM
+    (time-distance plus a minimum interval between operations).
 - **Interlocking (ch. 10):** signal aspects, distant signalling, automatic block, routes,
   signal-dependent magnet activation.
 - **AI (ch. 11):** look-ahead across the track graph, braking curve with reaction and
@@ -102,7 +119,18 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **Brake pipe model** is a node/diffusion model, not a pressure wave.
 - **Slip per vehicle**, not per wheelset.
 - **Flank protection** is only switch locking.
-- **LZB braking curve** with a fixed deceleration instead of train-specific brake assessment.
+- **LZB braking curve** with a fixed deceleration instead of train-specific brake assessment
+  (0.6 m/s², 0.85 m/s² under CIR-ELKE).
+- **LZB block modes** are reduced to "signals binding yes/no". The block division of the
+  movement authority itself follows once the LZB centre in the interlocking generates block
+  markers of its own.
+- **Sifa RZM** is modelled as time-distance plus a minimum interval between operations, so
+  beating the pedal continuously does not satisfy the device. Where the build differs in the
+  detail, `SifaParams` is the place to correct it.
+- **The parameter sets of the older Indusi builds** (I 54 … ÖBB PZB 60) carry the check
+  speeds of the train categories over from the PZB 90 rulebook, which is where they came
+  from historically; what differs per build is *which* supervision an influence starts, and
+  that is modelled in full. The tables sit in `PzbVariant::spec` as `const` values.
 - **Geoid undulation** as a constant offset per line.
 - **Device payload** as RON *text* instead of `ron::Value` (Value loses unit enum variants).
 - **No CRS framework:** UTM 32/33 directly as a Snyder series in `world-coords::geo` instead of

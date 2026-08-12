@@ -273,6 +273,19 @@ example.
 
 Start it with `cargo run -p app -- --line example:beispielstrecke`.
 
+A `LineConductor` device carries the LZB telegram as its payload:
+
+```ron
+(kind: LineConductor, edge: 2, s: 0.0, payload: "(permitted_speed:160.0,target_speed:0.0,\
+target_distance:3000.0,length:3000.0,block_mode:Full,cir_elke:false)"),
+```
+
+`block_mode` is `Full` (LZB block markers instead of signals) or `Partial` (the LZB is laid
+over the signal block division, the signals stay binding and their PZB magnets keep working).
+`cir_elke: true` marks a CIR-ELKE section: steeper braking curve, 5 km/h speed steps, and
+speed rises that take effect at the head of the train instead of at its rear. Both fields
+may be left out — the defaults are `Full` and `false`.
+
 `scenarios/*.ron` is a `Scenario` — triggers and actions, see the README section on scenarios.
 Line and scenario hooks (`on_load`, `on_frame`) do not exist yet.
 

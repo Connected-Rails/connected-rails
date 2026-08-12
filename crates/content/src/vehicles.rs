@@ -3,7 +3,7 @@
 use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec};
 use sim_core::electric::TractionSpec;
 use sim_core::safety::SafetySystems;
-use sim_core::safety::de::{DeSafety, TrainType};
+use sim_core::safety::de::{DeSafety, PzbVariant, TrainType};
 use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, Vehicle, VehicleSpec};
 use track_model::TrackPosition;
 
@@ -207,14 +207,24 @@ pub fn vehicle(spec: VehicleSpec, pos: TrackPosition, safety: SafetySystems) -> 
     v
 }
 
-/// Equipment: Sifa + PZB.
+/// Equipment: Sifa + PZB 90 V2.0.
 pub fn de_pzb(train_type: TrainType) -> SafetySystems {
     SafetySystems::De(DeSafety::pzb(train_type))
+}
+
+/// Equipment: Sifa + a specific Indusi/PZB build.
+pub fn de_indusi(variant: PzbVariant, train_type: TrainType) -> SafetySystems {
+    SafetySystems::De(DeSafety::indusi(variant, train_type))
 }
 
 /// Equipment: Sifa + PZB + LZB.
 pub fn de_pzb_lzb(train_type: TrainType) -> SafetySystems {
     SafetySystems::De(DeSafety::pzb_lzb(train_type))
+}
+
+/// Equipment: Sifa + LZB, without PZB.
+pub fn de_lzb_only() -> SafetySystems {
+    SafetySystems::De(DeSafety::lzb_only())
 }
 
 #[cfg(test)]

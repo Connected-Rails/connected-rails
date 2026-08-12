@@ -104,11 +104,13 @@ impl AiDriver {
         cab.reverser = 1;
         Self::apply_speed_control(cab, v_kmh, target);
 
-        // Operate the Sifa every 20 s (short pedal press).
+        // Operate the Sifa every 20 s (short pedal press) — but at least every 800 m, so a
+        // time-distance or RZM Sifa is served in time at speed as well.
+        let interval = 20.0_f64.min(800.0 / (v_kmh.abs() / 3.6).max(1.0));
         self.sifa_timer += dt;
-        if self.sifa_timer > 20.0 {
+        if self.sifa_timer > interval {
             self.sifa_pressed = true;
-            if self.sifa_timer > 20.5 {
+            if self.sifa_timer > interval + 0.5 {
                 self.sifa_pressed = false;
                 self.sifa_timer = 0.0;
             }

@@ -413,4 +413,6 @@ cargo test --workspace
 - Pick up open points from [STATUS.md](STATUS.md); larger topics are outlined in [PLAN.md](PLAN.md).
   For anything sizeable, open an issue first so the direction is agreed before the work.
 
-Licensed under MIT — contributions are accepted under the same licence.
+Licensed under the EUPL v. 1.2 — contributions are accepted under the same licence. Mods are
+exempt: RON data, assets and Lua scripts are not derivative works and may be sold under any
+licence, see the mod exception in [LICENSE](LICENSE).

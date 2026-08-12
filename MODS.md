@@ -405,3 +405,12 @@ Loading warnings and script errors go to the log with a `mod:` prefix.
 
 Planned: `.trainsim` = a zip of the mod directory, unpacked to `<game>/mods/` by a mod manager.
 For now, copy the directory into `mods/` by hand.
+
+## Licensing your mod
+
+Your mod is yours. RON data, assets and Lua scripts that use the documented interfaces are not
+derivative works of the game — see the mod exception at the top of [LICENSE](LICENSE). Ship them
+closed-source, sell them, pick any licence you like; no obligation to publish sources.
+
+The EUPL only applies once you distribute the game itself, a modified copy of it, or native code
+linked against its crates.

@@ -2,6 +2,40 @@ Copyright (c) 2026 vanlueckn
 
 Licensed under the EUPL
 
+
+ADDITIONAL PERMISSION FOR MODS AND CONTENT PACKS
+
+As the copyright holder of the Original Work, the Licensor declares that the
+following are not Derivative Works within the meaning of Article 1 of the
+EUPL, and may therefore be distributed, sold and licensed under any terms,
+including proprietary and commercial ones:
+
+  a) data files in the documented mod formats — `mod.ron` manifests,
+     VehicleSpec, LineSource, Scenario and SignalType files, and any other
+     declarative mod data read by the Work;
+  b) assets shipped with a mod — 3D models, textures, sounds and comparable
+     media;
+  c) Lua scripts executed by the Work's mod runtime that interact with it
+     solely through its documented scripting interface.
+
+Distributing a mod under this permission does not require its source code to
+be made available.
+
+This permission covers mods distributed separately from the Work. It does not
+extend to:
+
+  - modified copies of the Work or of any of its crates;
+  - code compiled or linked together with the Work, including native plugins
+    linking against `sim-core` or any other crate of the Work;
+  - distributions that bundle the Work itself, which remain subject to the
+    EUPL in full.
+
+This permission is irrevocable for mods published while it is in effect. The
+Licensor may withdraw or amend it for future versions of the Work.
+
+The Work itself is licensed under the EUPL v. 1.2, reproduced below.
+
+
                       EUROPEAN UNION PUBLIC LICENCE v. 1.2
                       EUPL © the European Union 2007, 2016
 

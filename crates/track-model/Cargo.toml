@@ -1,0 +1,11 @@
+[package]
+name = "track-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+world-coords = { workspace = true }
+glam = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }

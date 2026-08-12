@@ -1,0 +1,18 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "train-sim"
+path = "src/main.rs"
+
+[dependencies]
+sim-core = { workspace = true }
+track-model = { workspace = true }
+world-coords = { workspace = true }
+content = { workspace = true }
+ai-driver = { workspace = true }
+glam = { workspace = true }
+bevy = "0.19"

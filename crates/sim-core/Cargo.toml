@@ -1,0 +1,12 @@
+[package]
+name = "sim-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+track-model = { workspace = true }
+world-coords = { workspace = true }
+glam = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }

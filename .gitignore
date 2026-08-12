@@ -1,0 +1,12 @@
+# Rust
+/target/
+
+# Kachel-Cache des Luftbild-Overlays
+/cache/
+
+# Konfiguration, die beim ersten Start entsteht (enthält ggf. eigene Zugangsschlüssel)
+/imagery.ron
+
+# Betriebssystem
+Thumbs.db
+.DS_Store

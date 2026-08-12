@@ -1,0 +1,9 @@
+[package]
+name = "world-coords"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }

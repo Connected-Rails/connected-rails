@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/world-coords",
+    "crates/track-model",
+    "crates/sim-core",
+    "crates/content",
+    "crates/ai-driver",
+    "crates/app",
+    "crates/imagery",
+    "crates/editor",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+glam = { version = "0.32", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+ron = "0.10"
+
+world-coords = { path = "crates/world-coords" }
+track-model = { path = "crates/track-model" }
+sim-core = { path = "crates/sim-core" }
+content = { path = "crates/content" }
+ai-driver = { path = "crates/ai-driver" }
+imagery = { path = "crates/imagery" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

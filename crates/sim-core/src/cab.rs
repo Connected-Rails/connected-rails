@@ -48,6 +48,8 @@ pub struct CabInputs {
     pub pzb_override: bool,
     pub lzb_takeover: bool,
     pub lzb_end: bool,
+    /// LZB function test button (acknowledges the test result).
+    pub lzb_test: bool,
     pub horn: bool,
     /// AFB switched on.
     pub afb: bool,
@@ -69,6 +71,7 @@ impl Default for CabInputs {
             pzb_override: false,
             lzb_takeover: false,
             lzb_end: false,
+            lzb_test: false,
             horn: false,
             afb: false,
             afb_target: 0.0,

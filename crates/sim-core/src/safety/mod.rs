@@ -145,11 +145,116 @@ pub struct SafetyTrainState {
     pub line_speed: f64,
     /// Braking active (for the release logic).
     pub braking: bool,
+    /// Train length [m] — the LZB needs it: outside CIR-ELKE a speed rise only takes
+    /// effect once the rear of the train has passed the point of change.
+    pub train_length: f64,
 }
 
 impl SafetyTrainState {
     pub fn standstill(&self) -> bool {
         self.v_kmh < 0.5
+    }
+}
+
+/// Phase of the function test (Funktionsprüfung) that every modern train protection
+/// system runs when it is switched on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SelfTestPhase {
+    /// Lamp test — every indicator is lit.
+    Lamps,
+    /// The device tests itself, all indicators are dark.
+    Running,
+    /// Result present, waiting for the driver's acknowledgement.
+    AwaitAck,
+    /// Test passed, the system is operational.
+    #[default]
+    Passed,
+}
+
+/// Function test of a train protection system (plan 9.3/9.4).
+///
+/// It only runs at a standstill: rolling away during the test freezes it, and the
+/// forced braking therefore stays applied.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SelfTest {
+    phase: SelfTestPhase,
+    timer: f64,
+    /// Duration of the lamp test [s].
+    pub t_lamps: f64,
+    /// Duration of the internal test [s].
+    pub t_running: f64,
+}
+
+impl Default for SelfTest {
+    fn default() -> Self {
+        Self::passed()
+    }
+}
+
+impl SelfTest {
+    /// A device that has already been tested (vehicle set up before the scenario starts).
+    pub fn passed() -> Self {
+        Self {
+            phase: SelfTestPhase::Passed,
+            timer: 0.0,
+            t_lamps: 2.0,
+            t_running: 3.0,
+        }
+    }
+
+    /// Starts the test — the system switches on.
+    pub fn start() -> Self {
+        Self {
+            phase: SelfTestPhase::Lamps,
+            ..Self::passed()
+        }
+    }
+
+    pub fn restart(&mut self) {
+        self.phase = SelfTestPhase::Lamps;
+        self.timer = 0.0;
+    }
+
+    pub fn phase(&self) -> SelfTestPhase {
+        self.phase
+    }
+
+    pub fn is_passed(&self) -> bool {
+        self.phase == SelfTestPhase::Passed
+    }
+
+    /// During the lamp test every indicator of the system is lit.
+    pub fn lamp_test(&self) -> bool {
+        self.phase == SelfTestPhase::Lamps
+    }
+
+    /// Advances the test. `ack` is the acknowledgement button of the system
+    /// (PZB: Wachsam, LZB: test button). Returns `true` once the test is passed.
+    pub fn step(&mut self, dt: f64, train: &SafetyTrainState, ack: bool) -> bool {
+        if self.phase == SelfTestPhase::Passed {
+            return true;
+        }
+        // The test requires a standstill; if the train moves it does not progress.
+        if !train.standstill() {
+            return false;
+        }
+        self.timer += dt;
+        match self.phase {
+            SelfTestPhase::Lamps if self.timer >= self.t_lamps => {
+                self.phase = SelfTestPhase::Running;
+                self.timer = 0.0;
+            }
+            SelfTestPhase::Running if self.timer >= self.t_running => {
+                self.phase = SelfTestPhase::AwaitAck;
+                self.timer = 0.0;
+            }
+            SelfTestPhase::AwaitAck if ack => {
+                self.phase = SelfTestPhase::Passed;
+                self.timer = 0.0;
+            }
+            _ => {}
+        }
+        self.phase == SelfTestPhase::Passed
     }
 }
 
@@ -181,11 +286,15 @@ pub trait TrainProtectionSystem {
 /// `Vec<Box<dyn …>>` — that way cloning and serialising (save/load, replays) stay possible
 /// without extra code.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+// ponytail: the German package is a few hundred bytes larger than the empty variant, so
+// every coach carries them unused. Boxing would cost an allocation per vehicle and the
+// `Copy` of the inner types — not worth it below thousands of vehicles per train.
+#[allow(clippy::large_enum_variant)]
 pub enum SafetySystems {
     /// Vehicle without train protection (coach).
     #[default]
     None,
-    /// German package: Sifa, PZB 90, LZB 80.
+    /// German package: Sifa, Indusi/PZB (I 54 … PZB 90 V2.0, ÖBB PZB 60), LZB 80.
     De(de::DeSafety),
 }
 
@@ -207,6 +316,14 @@ impl SafetySystems {
         match self {
             SafetySystems::None => Vec::new(),
             SafetySystems::De(de) => de.indicators(),
+        }
+    }
+
+    /// Switching on (setting the vehicle up) starts the function tests.
+    pub fn power_on(&mut self) {
+        match self {
+            SafetySystems::None => {}
+            SafetySystems::De(de) => de.power_on(),
         }
     }
 }

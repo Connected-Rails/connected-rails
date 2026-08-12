@@ -1,16 +1,39 @@
-//! LZB 80/CE — continuous train protection, on-board side (plan 9.4).
+//! LZB 80/I 80 — continuous train protection, on-board side (plan 9.4).
 //!
 //! The trackside (LZB centre in the interlocking) supplies movement authorities as
 //! [`LzbTelegram`] over the loop cable sections. From these the vehicle derives v-Soll,
 //! v-Ziel and the distance to target and supervises the braking curve.
+//!
+//! Two block modes are transmitted per telegram (plan 9.4):
+//!
+//! * [`LzbBlockMode::Full`] — full block mode: the LZB divides the line into blocks of its
+//!   own, the lineside signals are replaced by LZB block markers. The PZB magnets are
+//!   suppressed under guidance.
+//! * [`LzbBlockMode::Partial`] — partial block mode: the LZB is laid over the existing
+//!   signal block division, every movement authority ends at a main signal and the signals
+//!   stay binding.
+//!
+//! [`LzbTelegram::cir_elke`] switches the CIR-ELKE build on: shorter blocks with a higher
+//! supervised deceleration, finer speed steps, and speed rises that take effect at the head
+//! of the train instead of at its rear.
 
 use crate::cab::{CabInputs, Edge};
 use crate::safety::{
-    Indicator, LampState, ProtectionAction, ProtectionOutput, SafetyTrainState, TracksideEvent,
-    TrainProtectionSystem,
+    Indicator, LampState, ProtectionAction, ProtectionOutput, SafetyTrainState, SelfTest,
+    TracksideEvent, TrainProtectionSystem,
 };
 use serde::{Deserialize, Serialize};
 use track_model::DeviceKind;
+
+/// Block division the LZB works with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LzbBlockMode {
+    /// LZB block markers instead of signals — the LZB alone gives the movement authority.
+    #[default]
+    Full,
+    /// The LZB is laid over the signal block division; the signals stay binding.
+    Partial,
+}
 
 /// Telegram of the LZB centre (payload of a loop cable section).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -29,6 +52,12 @@ pub struct LzbTelegram {
     /// as long as the train is inside the section.
     #[serde(default = "default_conductor_length")]
     pub length: f64,
+    /// Block division of this section.
+    #[serde(default)]
+    pub block_mode: LzbBlockMode,
+    /// CIR-ELKE section.
+    #[serde(default)]
+    pub cir_elke: bool,
 }
 
 fn default_conductor_length() -> f64 {
@@ -41,6 +70,13 @@ fn default_conductor_length() -> f64 {
 /// for LZB guidance and the end procedure; replace it once the braked weight percentage
 /// per train is reported to the centre.
 pub const LZB_DECELERATION: f64 = 0.6;
+/// Deceleration of the CIR-ELKE braking curve [m/s²] — the tighter block division only
+/// works because the curve is allowed to be steeper.
+pub const LZB_DECELERATION_CIRELKE: f64 = 0.85;
+/// Speed step of the LZB displays [km/h].
+pub const V_STEP: f64 = 10.0;
+/// Speed step under CIR-ELKE [km/h].
+pub const V_STEP_CIRELKE: f64 = 5.0;
 /// Without a telegram over this distance the LZB counts as failed [m].
 pub const D_LOSS: f64 = 300.0;
 /// Supervision speed in the failure/end procedure ("V40") [km/h].
@@ -66,6 +102,8 @@ pub enum LzbMode {
 pub struct Lzb80 {
     pub mode: LzbMode,
     isolated: bool,
+    /// Function test after switching on.
+    test: SelfTest,
     /// Last received telegram.
     telegram: Option<LzbTelegram>,
     /// Odometer reading the telegram's distance to target refers to [m].
@@ -74,19 +112,81 @@ pub struct Lzb80 {
     last_contact_odo: f64,
     /// Distance to target, current [m].
     target_distance: f64,
+    /// Permitted speed currently in force [km/h]. Outside CIR-ELKE a rise only applies
+    /// once the rear of the train has passed the point of change.
+    permitted: f64,
+    /// Pending speed rise: (speed [km/h], odometer from which it applies [m]).
+    pending_rise: Option<(f64, f64)>,
     /// Forced braking active.
     tripped: bool,
     takeover: Edge,
     end: Edge,
+    lzb_test: Edge,
 }
 
 impl Lzb80 {
+    /// An LZB that has already been function-tested.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Switches the device on: the function test starts (plan 9.4).
+    pub fn power_on(&mut self) {
+        self.test.restart();
+    }
+
+    /// State of the function test.
+    pub fn self_test(&self) -> SelfTest {
+        self.test
+    }
+
     pub fn is_guiding(&self) -> bool {
         matches!(self.mode, LzbMode::Guiding | LzbMode::Ending)
+    }
+
+    /// Block mode of the section currently being run through.
+    pub fn block_mode(&self) -> LzbBlockMode {
+        self.telegram.map(|t| t.block_mode).unwrap_or_default()
+    }
+
+    /// Are the lineside signals binding? In partial block mode they are, so their PZB
+    /// magnets stay effective as the fallback level.
+    ///
+    /// ponytail: the model reduces the difference between the block modes to "signals
+    /// binding yes/no". The full picture also covers the block division of the movement
+    /// authority itself — that follows once the LZB centre in the interlocking generates
+    /// its own block markers.
+    pub fn signals_binding(&self) -> bool {
+        self.is_guiding() && self.block_mode() == LzbBlockMode::Partial
+    }
+
+    /// CIR-ELKE section?
+    pub fn is_cir_elke(&self) -> bool {
+        self.telegram.is_some_and(|t| t.cir_elke)
+    }
+
+    /// Supervised deceleration [m/s²].
+    pub fn deceleration(&self) -> f64 {
+        if self.is_cir_elke() {
+            LZB_DECELERATION_CIRELKE
+        } else {
+            LZB_DECELERATION
+        }
+    }
+
+    /// Speed step of the displays [km/h].
+    pub fn speed_step(&self) -> f64 {
+        if self.is_cir_elke() {
+            V_STEP_CIRELKE
+        } else {
+            V_STEP
+        }
+    }
+
+    /// The LZB transmits speeds in steps; rounding down keeps it on the safe side.
+    fn quantise(&self, v: f64) -> f64 {
+        let step = self.speed_step();
+        (v / step).floor() * step
     }
 
     /// v-Soll [km/h] — the guidance's target speed (also the AFB input).
@@ -97,16 +197,17 @@ impl Lzb80 {
         let t = self.telegram?;
         // Braking curve to the target: v² = v_target² + 2·a·s
         let v_target = t.target_speed / 3.6;
-        let curve = (v_target * v_target + 2.0 * LZB_DECELERATION * self.target_distance.max(0.0))
-            .sqrt()
+        let curve = (v_target * v_target
+            + 2.0 * self.deceleration() * self.target_distance.max(0.0))
+        .sqrt()
             * 3.6;
-        Some(t.permitted_speed.min(curve))
+        Some(self.quantise(self.permitted.min(curve)))
     }
 
     /// v-Ziel [km/h].
     pub fn target_speed(&self) -> Option<f64> {
         self.telegram
-            .map(|t| t.target_speed)
+            .map(|t| self.quantise(t.target_speed))
             .filter(|_| self.is_guiding())
     }
 
@@ -118,12 +219,26 @@ impl Lzb80 {
     pub fn tripped(&self) -> bool {
         self.tripped
     }
+
+    /// Takes a new telegram over. A speed rise only applies once the whole train has
+    /// passed the point of change — under CIR-ELKE already at its head.
+    fn accept(&mut self, t: LzbTelegram, train: &SafetyTrainState, s_offset: f64) {
+        let at = train.odometer - s_offset;
+        if t.permitted_speed > self.permitted && self.is_guiding() && !t.cir_elke {
+            self.pending_rise = Some((t.permitted_speed, at + train.train_length));
+        } else {
+            self.permitted = t.permitted_speed;
+            self.pending_rise = None;
+        }
+        self.telegram = Some(t);
+        self.telegram_odo = at;
+    }
 }
 
 impl TrainProtectionSystem for Lzb80 {
     fn update(
         &mut self,
-        _dt: f64,
+        dt: f64,
         train: &SafetyTrainState,
         cab: &CabInputs,
         events: &[TracksideEvent],
@@ -135,6 +250,16 @@ impl TrainProtectionSystem for Lzb80 {
 
         let takeover = self.takeover.rising(cab.lzb_takeover);
         let end = self.end.rising(cab.lzb_end);
+        let test_ack = self.lzb_test.rising(cab.lzb_test);
+
+        // Function test — until it has passed the LZB is not available; the PZB remains
+        // in charge, so unlike the PZB test this one does not hold the brake.
+        if !self.test.is_passed() {
+            self.test.step(dt, train, test_ack);
+            self.mode = LzbMode::Off;
+            self.telegram = None;
+            return ProtectionOutput::default();
+        }
 
         // Pick up telegrams from the loop cable.
         for e in events {
@@ -150,8 +275,7 @@ impl TrainProtectionSystem for Lzb80 {
             if self.telegram == Some(t) {
                 continue;
             }
-            self.telegram = Some(t);
-            self.telegram_odo = train.odometer - e.s_offset;
+            self.accept(t, train, e.s_offset);
             self.mode = match self.mode {
                 LzbMode::Off | LzbMode::Failure => LzbMode::Acceptance,
                 LzbMode::Ending if !t.end_of_authority => LzbMode::Guiding,
@@ -160,6 +284,14 @@ impl TrainProtectionSystem for Lzb80 {
             if t.end_of_authority && self.is_guiding() {
                 self.mode = LzbMode::Ending;
             }
+        }
+
+        // A pending speed rise takes effect once the rear of the train has passed.
+        if let Some((v, at)) = self.pending_rise
+            && train.odometer >= at
+        {
+            self.permitted = v;
+            self.pending_rise = None;
         }
 
         // Reduce the distance to target with the distance travelled.
@@ -220,6 +352,20 @@ impl TrainProtectionSystem for Lzb80 {
     }
 
     fn indicators(&self) -> Vec<Indicator> {
+        // Lamp test of the function test: everything lit.
+        if self.test.lamp_test() {
+            return [
+                "lzb_ue",
+                "lzb_g",
+                "lzb_ende",
+                "lzb_stoerung",
+                "lzb_b",
+                "lzb_v40",
+            ]
+            .into_iter()
+            .map(|n| Indicator::lamp(n, true))
+            .collect();
+        }
         let mut v = vec![
             Indicator::state(
                 "lzb_ue",
@@ -229,6 +375,8 @@ impl TrainProtectionSystem for Lzb80 {
                     _ => LampState::Off,
                 },
             ),
+            // "G" — the LZB is guiding the train.
+            Indicator::lamp("lzb_g", self.is_guiding()),
             Indicator::state(
                 "lzb_ende",
                 match self.mode {
@@ -268,6 +416,7 @@ impl TrainProtectionSystem for Lzb80 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::safety::SelfTestPhase;
 
     fn telegram_event(t: LzbTelegram, s_offset: f64) -> TracksideEvent {
         TracksideEvent {
@@ -275,6 +424,19 @@ mod tests {
             payload: ron::to_string(&t).unwrap(),
             s_offset,
             active: true,
+        }
+    }
+
+    /// A telegram with the usual defaults; the tests override what they care about.
+    fn telegram(permitted_speed: f64, target_speed: f64, target_distance: f64) -> LzbTelegram {
+        LzbTelegram {
+            permitted_speed,
+            target_speed,
+            target_distance,
+            end_of_authority: false,
+            length: 1000.0,
+            block_mode: LzbBlockMode::Full,
+            cir_elke: false,
         }
     }
 
@@ -293,6 +455,7 @@ mod tests {
                 lzb: Lzb80::new(),
                 state: SafetyTrainState {
                     v_kmh,
+                    train_length: 200.0,
                     ..Default::default()
                 },
                 cab: CabInputs::default(),
@@ -323,6 +486,14 @@ mod tests {
                 self.out = self.lzb.update(dt, &self.state, &self.cab, &ev);
             }
         }
+        /// Lets `seconds` pass on the spot (for the function test).
+        fn run(&mut self, seconds: f64) {
+            let dt = 0.1;
+            for _ in 0..(seconds / dt).round() as u32 {
+                let ev = self.events();
+                self.out = self.lzb.update(dt, &self.state, &self.cab, &ev);
+            }
+        }
         fn press(&mut self, set: impl Fn(&mut CabInputs)) {
             set(&mut self.cab);
             let ev = self.events();
@@ -331,21 +502,18 @@ mod tests {
             let ev = self.events();
             self.out = self.lzb.update(0.05, &self.state, &self.cab, &ev);
         }
+        fn takeover(&mut self) {
+            self.press(|c| c.lzb_takeover = true);
+        }
     }
 
     #[test]
     fn acceptance_only_after_takeover() {
         let mut r = Rig::new(120.0);
-        r.send(LzbTelegram {
-            permitted_speed: 160.0,
-            target_speed: 0.0,
-            target_distance: 5000.0,
-            end_of_authority: false,
-            length: 1000.0,
-        });
+        r.send(telegram(160.0, 0.0, 5000.0));
         assert_eq!(r.lzb.mode, LzbMode::Acceptance);
         assert!(!r.lzb.is_guiding());
-        r.press(|c| c.lzb_takeover = true);
+        r.takeover();
         assert_eq!(r.lzb.mode, LzbMode::Guiding);
         assert!(r.lzb.permitted_speed().is_some());
     }
@@ -353,14 +521,8 @@ mod tests {
     #[test]
     fn braking_curve_to_stop_lowers_permitted_speed() {
         let mut r = Rig::new(160.0);
-        r.send(LzbTelegram {
-            permitted_speed: 160.0,
-            target_speed: 0.0,
-            target_distance: 6000.0,
-            end_of_authority: false,
-            length: 1000.0,
-        });
-        r.press(|c| c.lzb_takeover = true);
+        r.send(telegram(160.0, 0.0, 6000.0));
+        r.takeover();
         assert!(
             r.lzb.permitted_speed().unwrap() >= 160.0,
             "far away: full permitted speed"
@@ -382,20 +544,11 @@ mod tests {
     #[test]
     fn end_procedure_hands_over_to_pzb() {
         let mut r = Rig::new(100.0);
+        r.send(telegram(160.0, 100.0, 2000.0));
+        r.takeover();
         r.send(LzbTelegram {
-            permitted_speed: 160.0,
-            target_speed: 100.0,
-            target_distance: 2000.0,
-            end_of_authority: false,
-            length: 1000.0,
-        });
-        r.press(|c| c.lzb_takeover = true);
-        r.send(LzbTelegram {
-            permitted_speed: 100.0,
-            target_speed: 100.0,
-            target_distance: 1000.0,
             end_of_authority: true,
-            length: 1000.0,
+            ..telegram(100.0, 100.0, 1000.0)
         });
         assert_eq!(r.lzb.mode, LzbMode::Ending);
         r.telegram = None; // loop cable ends
@@ -407,17 +560,138 @@ mod tests {
     #[test]
     fn telegram_loss_leads_to_failure_procedure() {
         let mut r = Rig::new(100.0);
-        r.send(LzbTelegram {
-            permitted_speed: 160.0,
-            target_speed: 160.0,
-            target_distance: 9000.0,
-            end_of_authority: false,
-            length: 1000.0,
-        });
-        r.press(|c| c.lzb_takeover = true);
+        r.send(telegram(160.0, 160.0, 9000.0));
+        r.takeover();
         r.telegram = None; // loop cable ends without warning
         r.drive(400.0);
         assert_eq!(r.lzb.mode, LzbMode::Failure);
         assert_eq!(r.out.speed_limit, Some(V_END));
+    }
+
+    // --- Block modes ------------------------------------------------------------------
+
+    #[test]
+    fn full_block_mode_replaces_the_signals() {
+        let mut r = Rig::new(100.0);
+        r.send(telegram(160.0, 160.0, 9000.0));
+        r.takeover();
+        assert_eq!(r.lzb.block_mode(), LzbBlockMode::Full);
+        assert!(
+            !r.lzb.signals_binding(),
+            "full block mode: LZB block markers instead of signals"
+        );
+    }
+
+    #[test]
+    fn partial_block_mode_keeps_the_signals_binding() {
+        let mut r = Rig::new(100.0);
+        r.send(LzbTelegram {
+            block_mode: LzbBlockMode::Partial,
+            ..telegram(160.0, 0.0, 3000.0)
+        });
+        r.takeover();
+        assert_eq!(r.lzb.block_mode(), LzbBlockMode::Partial);
+        assert!(r.lzb.signals_binding());
+        assert!(r.lzb.is_guiding(), "guidance runs all the same");
+    }
+
+    // --- CIR-ELKE ---------------------------------------------------------------------
+
+    #[test]
+    fn cir_elke_supervises_a_steeper_braking_curve() {
+        let mut plain = Rig::new(160.0);
+        plain.send(telegram(300.0, 0.0, 3000.0));
+        plain.takeover();
+
+        let mut cir = Rig::new(160.0);
+        cir.send(LzbTelegram {
+            cir_elke: true,
+            ..telegram(300.0, 0.0, 3000.0)
+        });
+        cir.takeover();
+
+        assert_eq!(cir.lzb.deceleration(), LZB_DECELERATION_CIRELKE);
+        assert!(
+            cir.lzb.permitted_speed().unwrap() > plain.lzb.permitted_speed().unwrap(),
+            "the steeper curve permits more speed at the same distance"
+        );
+    }
+
+    #[test]
+    fn cir_elke_displays_five_kmh_steps() {
+        let mut r = Rig::new(100.0);
+        r.send(telegram(160.0, 85.0, 9000.0));
+        r.takeover();
+        assert_eq!(r.lzb.target_speed(), Some(80.0), "10 km/h steps");
+
+        let mut r = Rig::new(100.0);
+        r.send(LzbTelegram {
+            cir_elke: true,
+            ..telegram(160.0, 85.0, 9000.0)
+        });
+        r.takeover();
+        assert_eq!(r.lzb.target_speed(), Some(85.0), "5 km/h steps");
+    }
+
+    #[test]
+    fn speed_rise_waits_for_the_rear_of_the_train() {
+        let mut r = Rig::new(80.0);
+        r.state.train_length = 400.0;
+        r.send(telegram(100.0, 100.0, 9000.0));
+        r.takeover();
+        r.send(telegram(160.0, 160.0, 8000.0));
+        assert_eq!(
+            r.lzb.permitted_speed(),
+            Some(100.0),
+            "the rise only applies once the train has passed"
+        );
+        r.drive(200.0);
+        assert_eq!(r.lzb.permitted_speed(), Some(100.0));
+        r.drive(250.0);
+        assert_eq!(r.lzb.permitted_speed(), Some(160.0));
+    }
+
+    #[test]
+    fn cir_elke_raises_the_speed_at_the_head_of_the_train() {
+        let mut r = Rig::new(80.0);
+        r.state.train_length = 400.0;
+        r.send(LzbTelegram {
+            cir_elke: true,
+            ..telegram(100.0, 100.0, 9000.0)
+        });
+        r.takeover();
+        r.send(LzbTelegram {
+            cir_elke: true,
+            ..telegram(160.0, 160.0, 8000.0)
+        });
+        assert_eq!(r.lzb.permitted_speed(), Some(160.0), "effective at once");
+    }
+
+    #[test]
+    fn a_speed_reduction_always_applies_at_once() {
+        let mut r = Rig::new(120.0);
+        r.state.train_length = 400.0;
+        r.send(telegram(160.0, 160.0, 9000.0));
+        r.takeover();
+        r.send(telegram(100.0, 100.0, 8000.0));
+        assert_eq!(r.lzb.permitted_speed(), Some(100.0));
+    }
+
+    // --- Function test ----------------------------------------------------------------
+
+    #[test]
+    fn function_test_blocks_the_guidance_until_it_is_acknowledged() {
+        let mut r = Rig::new(0.0);
+        r.lzb.power_on();
+        assert_eq!(r.lzb.self_test().phase(), SelfTestPhase::Lamps);
+        assert!(r.lzb.indicators().iter().all(|i| i.lamp == LampState::On));
+        r.send(telegram(160.0, 160.0, 9000.0));
+        r.run(6.0);
+        assert_eq!(r.lzb.self_test().phase(), SelfTestPhase::AwaitAck);
+        assert_eq!(r.lzb.mode, LzbMode::Off, "no pick-up during the test");
+        r.press(|c| c.lzb_test = true);
+        assert!(r.lzb.self_test().is_passed());
+        r.run(0.2);
+        assert_eq!(r.lzb.mode, LzbMode::Acceptance, "picks up after the test");
     }
 }

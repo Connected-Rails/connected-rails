@@ -1,13 +1,13 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-12 · `cargo test --workspace`: **141 tests green** · clippy and fmt clean.
+As of 2026-08-12 · `cargo test --workspace`: **143 tests green** · clippy and fmt clean.
 
 ## Milestones
 
 | M | Contents | Status |
 |---|---|---|
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
-| **M1** | `track-model`, procedural track rendering, streaming | **partial** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes done; **tile streaming (plan 4.3) missing** |
+| **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done except audio** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; **sound (ch. 13) missing** |
 | **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa and PZB 90 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **editor** exists as a top-down view with aerial imagery overlay, but cannot edit anything yet |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
@@ -19,6 +19,12 @@ As of 2026-08-12 · `cargo test --workspace`: **141 tests green** · clippy and 
 
 - **Coordinates (ch. 4):** ECEF f64, ENU frames, floating origin with rebase every 4 km incl.
   new ENU rotation, earth curvature correction of the tangent plane, UTM↔geodetic for the import.
+- **Streaming (ch. 4.3):** the world is tiled in the UTM grid of the elevation data.
+  `TerrainBuilder` keeps line and DGM resident and hands out single tiles by key; the app
+  builds everything within 4 km of the camera **and of every train** on the
+  `AsyncComputeTaskPool` and discards it again at 5 km (the gap is the hysteresis).
+  The simulation is untouched by it — track graph and timetable stay resident, AI trains
+  keep running in areas that carry no graphics.
 - **Track model (ch. 5):** one segment type (`k0`, `dk`) for straight, curve and clothoid;
   switches with throw time, locking and trailing-move detection; trackside devices with RON payload.
 - **Driving dynamics (ch. 6):** Davis, curve and gradient resistance, couplers with slack and
@@ -55,7 +61,8 @@ As of 2026-08-12 · `cargo test --workspace`: **141 tests green** · clippy and 
   CLI: `import-line`.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
-  at the track, view distance limit per LOD level in the app.
+  at the track, view distance limit per LOD level in the app, built while driving (see
+  streaming above).
 - **Aerial imagery overlay (ch. 15):** dedicated `imagery` crate with Web Mercator tile maths,
   provider configuration (tile template or WMS, placeholders, keys, zoom limits,
   attribution) and a two-level cache (memory + disk, budget with eviction of the oldest
@@ -83,8 +90,14 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **DGM sheet boundaries from the file name** (state convention: `…_389_5711_…`); if the name
   does not match, the tile is read once to determine its extent.
   Packed deliveries (`.gz`, `.zip`) must be unpacked beforehand.
-- **Terrain tiles are built at startup**, not at runtime — for 100 km lines, asynchronous
-  loading needs to be retrofitted.
+- **One terrain builder behind a mutex:** the DGM cache inside it is shared state, so tile
+  builds run one after another even though they sit on the task pool. One source per
+  worker if a single tile at a time turns out to be too slow.
+- **The track ribbon is not streamed** — one mesh per edge at startup. A whole 100 km line
+  costs a few hundred thousand vertices there; only when the ballast bed gets sleepers and
+  a texture does the same tile logic have to be applied to it.
+- **No Bevy `AssetLoader` for tiles** (plan 4.3 suggests one): terrain is computed, not
+  loaded, and the task pool does that without a detour through an asset path.
 - **Transition curve length and cant come from the rulebook**, not from the data: neither can be
   recovered from a noisy point sequence (the section boundary is uncertain by more than a
   hundred metres). Where the source deviates from this, the reconstruction deviates by a few
@@ -105,9 +118,6 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
    then the import directly yields an equipped line instead of a bare strand.
 5. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
    (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
-6. **Terrain streaming (ch. 4.3)** — tiles are currently built at startup; at 100 km they
-   must be loaded and discarded at runtime. The tile structure already supports this,
-   only the asynchronous generation is missing.
-7. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
-8. **Audio (ch. 13)** — `sim-core` already emits the events.
-9. **3D cab (M6)** — the biggest chunk.
+6. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
+7. **Audio (ch. 13)** — `sim-core` already emits the events.
+8. **3D cab (M6)** — the biggest chunk.

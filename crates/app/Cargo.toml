@@ -17,3 +17,8 @@ mod-runtime = { workspace = true }
 ai-driver = { workspace = true }
 glam = { workspace = true }
 bevy = { workspace = true }
+
+[features]
+# Links Bevy as a shared library instead of statically: much faster relinks.
+# Local development only, the resulting binary needs the Bevy DLL next to it.
+dev = ["bevy/dynamic_linking"]

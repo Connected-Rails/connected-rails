@@ -20,6 +20,12 @@ cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # 
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
+For a faster edit-compile-run loop, add `--features dev` to any of the three binaries
+(`app`, `route-editor`, `vehicle-editor`). It links Bevy as a shared library, which cuts the
+relink after a code change. The first build with the flag recompiles Bevy, and the resulting
+binary needs the Bevy DLL next to it — so use it for development only, never for a release.
+Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`).
+
 Train protection and door control are **vehicle equipment**, not command line options: the
 `safety` and `doors` fields of a `VehicleSpec` state which Indusi/PZB build, which Sifa and
 which door control a vehicle carries (see [Mods](#vehicles)). Whether the equipment can do

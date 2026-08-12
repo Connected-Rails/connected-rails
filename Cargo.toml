@@ -40,6 +40,11 @@ imagery = { path = "crates/imagery" }
 
 [profile.dev]
 opt-level = 1
+# Full debuginfo is the single largest input to the linker; line tables keep
+# backtraces with file/line but cut link time and target/ size roughly in half.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
+# Dependencies are rebuilt rarely and never stepped through in a debugger.
+debug = false

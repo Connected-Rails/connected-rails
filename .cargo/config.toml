@@ -1,0 +1,7 @@
+# Link time dominates incremental builds of a Bevy project. `rust-lld` ships with
+# the toolchain and is several times faster than the platform default linker.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+[target.aarch64-pc-windows-msvc]
+linker = "rust-lld.exe"

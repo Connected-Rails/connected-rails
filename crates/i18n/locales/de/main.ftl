@@ -54,6 +54,7 @@ status-new-file = (neu)
 
 heading-vehicle = Fahrzeug
 field-name = Name
+group-base-data = Grunddaten
 
 veh-length = Länge über Puffer
 veh-length-hint = m — amtliche LÜP; Puffer 1–2 cm eingedrückt zeichnen

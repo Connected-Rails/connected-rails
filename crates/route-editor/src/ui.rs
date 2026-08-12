@@ -17,8 +17,16 @@ pub fn draw(
     overlay: Res<Overlay>,
     focus: Res<Focus>,
     line: Res<Line>,
+    mut themed: Local<bool>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
+    if !*themed {
+        // Fonts installed by `apply` become active with the next pass — skip
+        // one frame so nothing draws with a font family that is not there yet.
+        editor_ui::apply(&ctx);
+        *themed = true;
+        return Ok(());
+    }
     let mut root = egui::Ui::new(
         ctx.clone(),
         "viewport".into(),
@@ -27,83 +35,88 @@ pub fn draw(
             .max_rect(ctx.viewport_rect()),
     );
 
-    egui::Panel::top("menu").show(&mut root, |ui| {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(t!("menu-file"), |ui| {
-                if ui.button(t!("action-open-line")).clicked() {
-                    request.open_line = rfd::FileDialog::new()
-                        .add_filter(t!("filter-line-ron"), &["ron"])
-                        .pick_file();
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(t!("action-load-imagery")).clicked() {
-                    request.load_config = true;
-                    ui.close();
-                }
-                if ui.button(t!("action-save-imagery")).clicked() {
-                    request.save_config = true;
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(t!("action-quit")).clicked() {
-                    std::process::exit(0);
-                }
-            });
-            ui.menu_button(t!("menu-overlay"), |ui| {
-                if ui.button(t!("overlay-toggle")).clicked() {
-                    request.toggle_overlay = true;
-                    ui.close();
-                }
-                if ui.button(t!("overlay-next-provider")).clicked() {
-                    request.cycle_provider = true;
-                    ui.close();
-                }
-                if ui.button(t!("overlay-offline")).clicked() {
-                    request.toggle_offline = true;
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(t!("overlay-clear-cache")).clicked() {
-                    request.clear_cache = true;
-                    ui.close();
-                }
-                if ui.button(t!("overlay-retry")).clicked() {
-                    request.retry_failed = true;
-                    ui.close();
-                }
-            });
-            ui.menu_button(t!("menu-view"), language_menu);
-            ui.menu_button(t!("menu-help"), |ui| {
-                ui.label(t!("help-pan"));
-                ui.label(t!("help-opacity"));
-                ui.label(t!("help-offset"));
+    egui::Panel::top("menu")
+        .frame(editor_ui::bar_frame())
+        .show(&mut root, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(t!("menu-file"), |ui| {
+                    if ui.button(t!("action-open-line")).clicked() {
+                        request.open_line = rfd::FileDialog::new()
+                            .add_filter(t!("filter-line-ron"), &["ron"])
+                            .pick_file();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(t!("action-load-imagery")).clicked() {
+                        request.load_config = true;
+                        ui.close();
+                    }
+                    if ui.button(t!("action-save-imagery")).clicked() {
+                        request.save_config = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(t!("action-quit")).clicked() {
+                        std::process::exit(0);
+                    }
+                });
+                ui.menu_button(t!("menu-overlay"), |ui| {
+                    if ui.button(t!("overlay-toggle")).clicked() {
+                        request.toggle_overlay = true;
+                        ui.close();
+                    }
+                    if ui.button(t!("overlay-next-provider")).clicked() {
+                        request.cycle_provider = true;
+                        ui.close();
+                    }
+                    if ui.button(t!("overlay-offline")).clicked() {
+                        request.toggle_offline = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(t!("overlay-clear-cache")).clicked() {
+                        request.clear_cache = true;
+                        ui.close();
+                    }
+                    if ui.button(t!("overlay-retry")).clicked() {
+                        request.retry_failed = true;
+                        ui.close();
+                    }
+                });
+                ui.menu_button(t!("menu-view"), language_menu);
+                ui.menu_button(t!("menu-help"), |ui| {
+                    ui.label(t!("help-pan"));
+                    ui.label(t!("help-opacity"));
+                    ui.label(t!("help-offset"));
+                });
             });
         });
-    });
 
-    egui::Panel::bottom("status").show(&mut root, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(if overlay.status.is_empty() {
-                t!("status-ready")
-            } else {
-                overlay.status.clone()
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (lat, lon) = focus_degrees(focus.position);
-                ui.label(t!(
-                    "status-position",
-                    lat = format!("{lat:.5}"),
-                    lon = format!("{lon:.5}"),
-                    height = format!("{:.0}", focus.height),
-                ));
+    egui::Panel::bottom("status")
+        .frame(editor_ui::bar_frame())
+        .show(&mut root, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(if overlay.status.is_empty() {
+                    t!("status-ready")
+                } else {
+                    overlay.status.clone()
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (lat, lon) = focus_degrees(focus.position);
+                    ui.label(t!(
+                        "status-position",
+                        lat = format!("{lat:.5}"),
+                        lon = format!("{lon:.5}"),
+                        height = format!("{:.0}", focus.height),
+                    ));
+                });
             });
         });
-    });
 
     egui::Panel::left("info")
         .default_size(360.0)
         .resizable(true)
+        .frame(editor_ui::panel_frame())
         .show(&mut root, |ui| {
             let config = overlay.config();
             let provider = config.provider();

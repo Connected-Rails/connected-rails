@@ -54,6 +54,7 @@ status-new-file = (new)
 
 heading-vehicle = Vehicle
 field-name = Name
+group-base-data = Base data
 
 veh-length = Length over buffers
 veh-length-hint = m — official LÜP; draw the buffers 1–2 cm compressed

@@ -12,6 +12,7 @@ members = [
     "crates/imagery",
     "crates/route-editor",
     "crates/vehicle-editor",
+    "crates/editor-ui",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ content = { path = "crates/content" }
 mod-runtime = { path = "crates/mod-runtime" }
 ai-driver = { path = "crates/ai-driver" }
 imagery = { path = "crates/imagery" }
+editor-ui = { path = "crates/editor-ui" }
 
 [profile.dev]
 opt-level = 1

@@ -168,6 +168,11 @@ fn main() {
             .cloned()
     };
     let shot = flag("--screenshot");
+    // `--window 1280x2000` — fixed size for reproducible CI screenshots.
+    let window_size = flag("--window").and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    });
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -184,11 +189,15 @@ fn main() {
     // Models come out of the mods, exactly as the simulator reads them later:
     // `mods://<mod>/assets/<file>.gltf`. Has to be registered before the asset plugin.
     app.register_asset_source(MOD_SOURCE, mod_asset_source());
+    let mut window = Window {
+        title: t!("window-vehicle-editor"),
+        ..default()
+    };
+    if let Some((w, h)) = window_size {
+        window.resolution = bevy::window::WindowResolution::new(w as u32, h as u32);
+    }
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: t!("window-vehicle-editor"),
-            ..default()
-        }),
+        primary_window: Some(window),
         ..default()
     }))
     .add_plugins(EguiPlugin::default())

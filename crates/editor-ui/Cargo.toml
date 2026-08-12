@@ -1,0 +1,8 @@
+[package]
+name = "editor-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy_egui = { workspace = true }

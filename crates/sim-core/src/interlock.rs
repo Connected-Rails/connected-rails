@@ -92,9 +92,12 @@ impl DistantAspect {
 /// Complete signal aspect.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Aspect {
+    #[serde(default)]
     pub main: Option<MainAspect>,
+    #[serde(default)]
     pub distant: Option<DistantAspect>,
     /// Zs3/Zs3v speed indicator [km/h].
+    #[serde(default)]
     pub speed: Option<f64>,
 }
 
@@ -115,6 +118,82 @@ impl Aspect {
     pub fn announces_restriction(&self) -> bool {
         self.distant.is_some_and(DistantAspect::is_restrictive)
     }
+}
+
+/// What the interlocking knows about a signal in this step.
+///
+/// Input of the declarative signal type and of the optional script hook — the signal system
+/// stays data, the interlocking only supplies the situation (plan ch. 19).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Situation {
+    /// All guarded sections are clear.
+    pub clear: bool,
+    /// A route is locked at this signal.
+    pub route: bool,
+    /// The locked route leads over a diverging path.
+    pub diverging: bool,
+    /// The following main signal shows stop.
+    pub next_stop: bool,
+    /// The following main signal shows slow speed.
+    pub next_slow: bool,
+}
+
+/// Condition of an aspect rule — only the fields that are set have to match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Condition {
+    #[serde(default)]
+    pub clear: Option<bool>,
+    #[serde(default)]
+    pub route: Option<bool>,
+    #[serde(default)]
+    pub diverging: Option<bool>,
+    #[serde(default)]
+    pub next_stop: Option<bool>,
+    #[serde(default)]
+    pub next_slow: Option<bool>,
+}
+
+impl Condition {
+    pub fn matches(&self, s: &Situation) -> bool {
+        let ok = |c: Option<bool>, v: bool| c.is_none_or(|c| c == v);
+        ok(self.clear, s.clear)
+            && ok(self.route, s.route)
+            && ok(self.diverging, s.diverging)
+            && ok(self.next_stop, s.next_stop)
+            && ok(self.next_slow, s.next_slow)
+    }
+}
+
+/// One row of the signal state machine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AspectRule {
+    #[serde(default)]
+    pub when: Condition,
+    pub show: Aspect,
+    /// Lamp image for the presentation, e.g. `["red"]` or `["green", "yellow"]`.
+    #[serde(default)]
+    pub lamps: Vec<String>,
+}
+
+/// A signal type as data: which aspect belongs to which situation.
+///
+/// Comes from a mod (`signals/*.ron`) and replaces the built-in aspect logic for the
+/// signals that reference it. Behaviour that a table cannot express — substitute signal,
+/// counting down a timer, hand-operated signals — goes into the optional `script`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignalType {
+    #[serde(default = "default_system")]
+    pub system: SignalSystem,
+    /// The first matching rule wins; without a match the signal shows stop.
+    pub rules: Vec<AspectRule>,
+    /// Optional Lua hook `"<mod>:<script>"` — runs after the rules and may override
+    /// the aspect. Evaluated by the mod runtime, not by `sim-core`.
+    #[serde(default)]
+    pub script: Option<String>,
+}
+
+fn default_system() -> SignalSystem {
+    SignalSystem::Ks
 }
 
 /// Track clear detection section (axle counter section).
@@ -148,6 +227,16 @@ pub struct Signal {
     pub aspect: Aspect,
     /// Cleared route.
     pub route: Option<RouteId>,
+    /// Signal type from a mod (index into `Interlock::types`). With it the aspect comes
+    /// from the rule table instead of the built-in logic.
+    #[serde(default)]
+    pub type_index: Option<u32>,
+    /// Situation of the last update — input of rule table and script hook.
+    #[serde(default)]
+    pub situation: Situation,
+    /// Lamp image of the current aspect (only with a signal type).
+    #[serde(default)]
+    pub lamps: Vec<String>,
 }
 
 impl Signal {
@@ -171,6 +260,9 @@ impl Signal {
                 _ => Aspect::stop(),
             },
             route: None,
+            type_index: None,
+            situation: Situation::default(),
+            lamps: Vec::new(),
         }
     }
 }
@@ -250,6 +342,9 @@ pub struct Interlock {
     pub signals: Vec<Signal>,
     pub sections: Vec<TrackSection>,
     pub routes: Vec<Route>,
+    /// Signal types supplied by mods; `Signal::type_index` points into this.
+    #[serde(default)]
+    pub types: Vec<SignalType>,
 }
 
 impl Interlock {
@@ -456,6 +551,9 @@ impl Interlock {
             let sig = &mut self.signals[i];
             sig.aspect.main = Some(main);
             sig.aspect.speed = speed;
+            sig.situation.clear = free;
+            sig.situation.route = sig.route.is_some();
+            sig.situation.diverging = diverging;
         }
 
         // 2. Distant signalling derived from the following main signal.
@@ -476,7 +574,41 @@ impl Interlock {
                 _ => DistantAspect::ExpectStop,
             };
             self.signals[i].aspect.distant = Some(distant);
+            self.signals[i].situation.next_stop = next_main.is_stop();
+            self.signals[i].situation.next_slow = next_main == MainAspect::ProceedSlow;
         }
+
+        // 3. Signal types from mods: the rule table replaces the built-in aspect.
+        //
+        // ponytail: `situation.next_*` comes from pass 2, i.e. from the built-in aspect of
+        // the following signal. Two typed signals in a row therefore announce each other one
+        // step late (5 ms at 200 Hz). Evaluate the rules in signalling order if that ever
+        // becomes visible.
+        for i in 0..self.signals.len() {
+            let Some(ty) = self.signals[i]
+                .type_index
+                .and_then(|t| self.types.get(t as usize))
+            else {
+                continue;
+            };
+            // Fallback per plan 19.3: a type without a matching rule shows stop.
+            let (aspect, lamps) = match ty
+                .rules
+                .iter()
+                .find(|r| r.when.matches(&self.signals[i].situation))
+            {
+                Some(rule) => (rule.show, rule.lamps.clone()),
+                None => (Aspect::stop(), Vec::new()),
+            };
+            self.signals[i].aspect = aspect;
+            self.signals[i].lamps = lamps;
+        }
+    }
+
+    /// Registers a signal type and returns its index (for the mod runtime).
+    pub fn add_type(&mut self, ty: SignalType) -> u32 {
+        self.types.push(ty);
+        self.types.len() as u32 - 1
     }
 
     /// Signal belonging to a trackside device (if it is one).
@@ -602,6 +734,58 @@ mod tests {
         il.update_occupancy(&[e]);
         il.update(&mut net);
         assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::Stop));
+    }
+
+    /// A signal type from a mod decides the aspect instead of the built-in logic.
+    #[test]
+    fn signal_type_rules_replace_the_builtin_aspect() {
+        let mut net = TrackNetwork::new();
+        let a = net.add_node(NodeKind::Buffer);
+        let b = net.add_node(NodeKind::Buffer);
+        let e = net.add_edge(TrackEdge::new(
+            EdgeId(0),
+            a,
+            b,
+            to_ecef_deg(52.0, 10.0, 100.0),
+            0.0,
+            vec![Segment::straight(1000.0)],
+        ));
+        let mut il = Interlock::new();
+        let sec = il.add_section(vec![e]);
+        let ty = il.add_type(SignalType {
+            system: SignalSystem::Ks,
+            rules: vec![
+                AspectRule {
+                    when: Condition {
+                        clear: Some(true),
+                        ..Condition::default()
+                    },
+                    show: Aspect {
+                        main: Some(MainAspect::ProceedSlow),
+                        distant: None,
+                        speed: Some(60.0),
+                    },
+                    lamps: vec!["yellow".into(), "zs3_6".into()],
+                },
+                // No rule for an occupied section — the fallback is stop.
+            ],
+            script: None,
+        });
+        let mut sig = Signal::new(SignalId(0), SignalKind::Main, DeviceId(0));
+        sig.guarded = vec![sec];
+        sig.type_index = Some(ty);
+        let sid = il.add_signal(sig);
+
+        il.update_occupancy(&[]);
+        il.update(&mut net);
+        assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::ProceedSlow));
+        assert_eq!(il.signal(sid).aspect.speed, Some(60.0));
+        assert_eq!(il.signal(sid).lamps, ["yellow", "zs3_6"]);
+
+        il.update_occupancy(&[e]);
+        il.update(&mut net);
+        assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::Stop));
+        assert!(il.signal(sid).lamps.is_empty());
     }
 
     #[test]

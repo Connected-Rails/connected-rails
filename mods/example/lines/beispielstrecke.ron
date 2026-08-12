@@ -1,0 +1,40 @@
+// A line is declaration too: nodes, edges with geometry, gradient, cant, speed, plus
+// trackside equipment. `signal_type` points at a signal type of a mod — with it the aspect
+// comes from that state machine instead of the built-in logic.
+//
+// 4 km straight, one Ks main signal at km 2.0 with a 1000 Hz magnet 1000 m ahead of it.
+(
+    name: "Beispielstrecke",
+    geoid_offset: 46.0,
+    nodes: [Buffer, Buffer],
+    edges: [
+        (
+            from: 0,
+            to: 1,
+            start: Geo(point: (lat: 52.0, lon: 10.0, height: 100.0), heading_deg: 90.0),
+            segments: [(len: 4000.0, k0: 0.0, dk: 0.0)],
+            grade: [(0.0, 0.0)],
+            speed: [(0.0, 120.0)],
+        ),
+    ],
+    devices: [
+        // 1000 Hz magnet at the distant signal position, active only when the main signal
+        // announces a restriction.
+        (kind: Magnet, edge: 0, s: 1000.0, payload: "(frequency:Hz1000,signal:Some(0),activation:WhenRestrictive)"),
+        (kind: Signal, edge: 0, s: 2000.0, lateral_offset: 3.0, payload: "(signal:Some(0))"),
+        // 500 Hz magnet 250 m ahead of the signal, and 2000 Hz at the signal itself.
+        (kind: Magnet, edge: 0, s: 1750.0, payload: "(frequency:Hz500,signal:Some(0),activation:WhenStop)"),
+        (kind: Magnet, edge: 0, s: 2000.0, payload: "(frequency:Hz2000,signal:Some(0),activation:WhenStop)"),
+    ],
+    sections: [(edges: [0])],
+    signals: [
+        (
+            kind: Main,
+            system: Ks,
+            device: 1,
+            guarded: [0],
+            signal_type: Some("example:ks_main"),
+        ),
+    ],
+    routes: [],
+)

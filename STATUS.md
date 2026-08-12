@@ -1,6 +1,8 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-12 · `cargo test --workspace`: **143 tests green** · clippy and fmt clean.
+As of 2026-08-12 · `cargo test --workspace`: **162 tests green** · clippy and fmt clean.
+
+**This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
 ## Milestones
 
@@ -9,11 +11,12 @@ As of 2026-08-12 · `cargo test --workspace`: **143 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done except audio** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; **sound (ch. 13) missing** |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa and PZB 90 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **editor** exists as a top-down view with aerial imagery overlay, but cannot edit anything yet |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa and PZB 90 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD and moving parts |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures; BR 110 present; **AFB missing**, MFA only as HUD text |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — start-up chain simulated and operable via keyboard, weather changes through scenario actions, terrain from the DGM; no 3D cab, no audio, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
+| **M8** | Mod runtime: declarative content plus Lua behaviour | **usable** — loader with dependency order, vehicles/lines/scenarios/signal types as RON, signal state machine as data, two Lua hooks (vehicle, signal aspect) with a sandbox; reference mod under `mods/example` incl. a glTF model. **Missing:** mod manager UI, line/scenario hooks |
 
 ## What is in place
 
@@ -69,6 +72,26 @@ As of 2026-08-12 · `cargo test --workspace`: **143 tests green** · clippy and 
   tiles, maximum age, offline mode). Fetching and decoding run on worker threads, the editor
   places the tiles georeferenced beneath the track ribbon.
   All of it controllable through a RON file, reloadable at runtime.
+- **Editors (ch. 15):** two separate programs with a desktop UI (menu bar, docked panels,
+  native file dialogs): `route-editor` shows a line with an aerial imagery overlay and can
+  load another one at runtime; `vehicle-editor` edits the vehicle base data (LÜP, gauge,
+  v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
+  hunting, payload), imports glTF models, reads their levels of detail from the node names
+  and binds moving parts — either through name prefixes, through the Blender custom
+  property `ts_function`, or by hand from the node list. The viewport shows one level at a
+  time against a reference body of the length over buffers.
+- **Vehicle models in the app (ch. 15.3):** a vehicle with a model gets its glTF instead of
+  the placeholder body; the level of detail follows the camera distance, and the bound parts
+  follow the simulation (pantograph, gauges, switches, lamps). `--camera outside` starts on
+  the external camera.
+- **Mod runtime (ch. 19):** `mods/<id>/` with manifest, vehicles, lines, scenarios, signal types
+  and scripts; everything addressed as `"<mod>:<file>"`, loaded in dependency order, broken files
+  are warnings instead of crashes. **Data and behaviour are separate:** the vehicle description
+  stays RON, only behaviour is Lua. Signals are a declarative state machine (situation → aspect +
+  lamp image) with an optional script hook for what a table cannot express. Lua runs sandboxed
+  (`table`/`string`/`math` only) via `mlua`; a failing script is switched off, not fatal.
+  `mods/` is an asset source, so models, textures and sounds of a mod are addressed as
+  `mods://<mod>/assets/…`. The app takes `--line <mod>:<name>` and `--loco <mod>:<name>`.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
 
@@ -104,20 +127,29 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   metres — the same order of magnitude as the positional accuracy of OSM itself.
 - **No routing across switches** when chaining, and station areas with multiple tracks are not
   separated.
+- **Mod hooks run once per frame**, not once per simulation step — a Lua call every 5 ms per
+  train for behaviour that reacts in tenths of a second would be pure overhead. A hook that
+  genuinely has to see every step moves into `Sim::step`.
+- **A modded signal announces one step late** if the signal ahead of it is modded as well: the
+  rule table sees the following signal's built-in aspect from the same update. At 200 Hz the
+  difference is 5 ms; evaluating the rules in signalling order would remove it.
 
 ## Sensible next steps
 
-1. **Editor with tools**: so far it only displays. Next up: drawing alignments, placing
-   switches and signals, positioning platforms — the aerial image behind it is the
+1. **Route editor with tools**: so far it only displays. Next up: drawing alignments,
+   placing switches and signals, positioning platforms — the aerial image behind it is the
    template for that.
-2. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
-3. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
+2. **Signal models**: the lamp images of a modded signal are strings without geometry —
+   signals are still drawn as plain devices. The same path as for vehicles (glTF plus a
+   binding table) is missing.
+3. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
+4. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node
    without any geometry.
-4. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
+5. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
    then the import directly yields an equipped line instead of a bare strand.
-5. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
+6. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
    (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
-6. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
-7. **Audio (ch. 13)** — `sim-core` already emits the events.
-8. **3D cab (M6)** — the biggest chunk.
+7. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
+8. **Audio (ch. 13)** — `sim-core` already emits the events.
+9. **3D cab (M6)** — the biggest chunk.

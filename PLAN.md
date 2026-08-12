@@ -6,6 +6,11 @@ with German train protection systems (PZB, LZB, Sifa, …) and a country abstrac
 
 ---
 
+**IMPORTANT: This project is mod-first. Trains, signals, and lines are meant to be extended, not
+hard-coded.** See **chapter 19: Mod runtime** below.
+
+---
+
 ## 0. Vision
 
 A simulator with the simulation depth of MaSzyna (not an arcade game):
@@ -82,7 +87,8 @@ train-sim/
 │  ├─ content/           # asset formats, importer (incl. geo reprojection), vehicle definitions
 │  ├─ ai-driver/         # AI train driver, timetable
 │  ├─ app/               # Bevy app: rendering, camera, input, audio, UI; binds sim-core to ECS
-│  └─ editor/            # line editor (own Bevy app, uses app crates)
+│  ├─ route-editor/      # route editor (own Bevy app, desktop UI)
+│  └─ vehicle-editor/    # vehicle editor (own Bevy app, glTF import)
 └─ assets/
 ```
 
@@ -373,9 +379,51 @@ pub struct ProtectionOutput { pub action: ProtectionAction, pub speed_limit: Opt
   scenery placements) → the compiler builds binary tiles (ch. 4.3).
 - **Importer:** OSM track data (rough alignment) + DGM (terrain height) as the starting point of a line;
   CRS reprojection happens here (ch. 4.2). No MaSzyna .scn importer (effort > benefit, different country).
-- **Editor** (`editor` crate, its own Bevy app): track laying (clothoid tool), placing trackside devices
-  (with rule checking: "1000 Hz magnet missing at the distant signal"), route definition, scenery,
-  timetable editor. The editor comes early (M3), otherwise there is no content.
+### 15.1 Two editors, not one
+
+Building a line and building a vehicle share nothing: one is geodata, the other a model
+with a data sheet. So there are **two programs**, each its own Bevy app:
+
+- **`route-editor`:** track laying (clothoid tool), placing trackside devices (with rule
+  checking: "1000 Hz magnet missing at the distant signal"), route definition, scenery,
+  timetable editor, aerial imagery overlay as the template. Comes early (M3), otherwise
+  there is no content.
+- **`vehicle-editor`:** base data, glTF import, levels of detail, moving parts, brake and
+  traction characteristics, later cab layout and sounds.
+
+Both are **desktop applications, not game screens**: menu bar, docked panels, the operating
+system's own file dialogs (`rfd`), status bar. UI with `bevy_egui` — a real native toolkit
+(WinUI/GTK/Qt) would buy platform-native widgets at the price of losing the 3D viewport in
+the same window, which is exactly what both editors are about.
+
+### 15.2 Vehicle base data
+
+Everything the running gear and the driving dynamics need is declaration, and each field is
+one the modder can find in a data sheet: length over buffers (LÜP), gauge, v max, mass,
+rotating mass allowance, number of axles, **axle base sum** (the sum over all bogies — this
+is what forces the axles in a curve, not the vehicle length), rolling resistance, air
+resistance cw·A, tilt angle, hunting factor, maximum payload.
+
+### 15.3 Models: glTF and its own features
+
+Models are glTF/GLB. Levels of detail and moving parts are found in the file; **the binding
+is stored in the vehicle RON**, so a model needs no preparation in Blender — but a prepared
+file needs no clicking either:
+
+- **Levels of detail:** node names ending in `_LOD0`, `_LOD1`, … (in Blender that is just
+  the object name — no add-on, unlike the `MSFT_lod` extension, which neither Blender nor
+  Bevy supports out of the box). The distances are data, not model.
+- **Moving parts:** name prefixes (`door_`, `pant_`, `sw_`, `gauge_`, `lamp_`, `wheel_`) as
+  the zero-configuration fallback, and Blender custom properties (`ts_function`,
+  `ts_motion`, `ts_axis`, `ts_amount`) — the exporter writes them into glTF `extras`, and
+  they beat the name.
+- **Motion** is `Visibility`, `Rotate` or `Translate` with an axis and an amount; `function`
+  is a free-form string, exactly like the lamp images of a signal.
+
+`mods/` is registered as a Bevy asset source, so a model is addressed as
+`mods://<mod>/assets/<file>` — the same string in the editor and in the simulator. The app
+spawns the scene in place of the placeholder body, shows the level of detail matching the
+camera distance and drives the bound parts from the simulation state.
 
 ## 16. Cross-cutting concerns
 
@@ -413,12 +461,163 @@ Rationale for the order: coordinates first (foundation, cannot be retrofitted), 
 - Scenario regression tests: recorded input replays, target end state.
 - CI: `cargo test` + clippy + fmt; rendering only as a smoke test (app starts, 100 frames).
 
-## 19. Risks
+## 19. Mod runtime (extensibility)
+
+**Core principle:** trains, signals and lines are meant to be extended by players, not hard-coded
+in the engine. Everything the simulator shows should be replaceable from a mod.
+
+### 19.1 Data and behaviour are separate
+
+The bulk of a locomotive is *declaration*, not script: model paths, wheel arrangement, masses,
+tractive effort curve, brake valve parameters, sounds, cab layout. All of that is RON, validated
+while loading and editable without programming.
+
+Scripts only cover *real behaviour* — things a table cannot express:
+
+| Declarative (RON) | Script (Lua) |
+|---|---|
+| masses, lengths, Davis coefficients | tap changer logic, AFB |
+| brake equipment, braked weight, brake position | start-up procedure, fault behaviour |
+| tractive effort/power/v_max per traction type | choice of a signal aspect beyond the table |
+| track geometry, gradient, cant, speed | line events depending on state |
+| signal aspect table (situation → aspect + lamps) | substitute signal, timers, dispatcher decisions |
+
+That keeps roughly 80 % of every mod declarative: validatable, diffable, safe, and free of a
+Lua interpreter in the hot path.
+
+### 19.2 Lua as the scripting language
+
+- **Why Lua:** light-weight, easy to sandbox, well-worn path (Roblox, Garry's Mod,
+  Cities: Skylines, FS/MSFS).
+- **Implementation:** `mlua` (Lua 5.4, statically linked, no external Lua binary).
+- **Sandbox:** `table`, `string`, `math` — no `io`, no `os`, no `require`, no filesystem.
+  A script sees a context table of numbers and booleans and answers with a table of overrides;
+  it never holds a handle on the simulation. The trust boundary is a single place: the value
+  check when the answer is applied (finite, clamped to the valid range).
+
+### 19.3 Mod structure
+
+```
+mods/
+└─ <id>/
+   ├─ mod.ron          # id, name, version, author, description, depends, enabled
+   ├─ vehicles/*.ron   # VehicleSpec — declaration, optionally naming a script
+   ├─ lines/*.ron      # LineSource — track, equipment, signals
+   ├─ scenarios/*.ron  # Scenario — triggers and actions
+   ├─ signals/*.ron    # SignalType — aspect table, optional script hook
+   ├─ scripts/*.lua    # behaviour
+   └─ assets/…         # models, textures, sounds
+```
+
+Everything is addressed as `"<mod>:<file stem>"`, e.g. `example:br101_afb`, so two mods may
+use the same file names.
+
+### 19.4 Loading and fallback
+
+1. **Discovery:** `mods/` is scanned at startup, `mod.ron` read (`enabled: false` skips a mod).
+2. **Load order:** dependencies first (`depends`), alphabetical within that. A missing or
+   circular dependency is a warning, the mod is loaded last anyway.
+3. **Never crash:** a broken file is a warning, everything else still loads. A script that
+   raises an error is disabled after the first error — the run continues. A signal type
+   without a matching rule shows stop.
+
+### 19.5 Signals: declarative state machine plus optional hook
+
+The interlocking stays country-neutral. It computes only the *situation* of a signal — guarded
+sections clear, route locked, diverging route, aspect of the following signal — and the signal
+type maps that to an aspect. The first matching rule wins:
+
+```ron
+(
+    system: Ks,
+    rules: [
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: ["red"]),
+        (when: (diverging: Some(true)),
+         show: (main: Some(ProceedSlow), distant: Some(ExpectStop), speed: Some(40.0)),
+         lamps: ["yellow", "zs3_4"]),
+        (when: (next_stop: Some(true)),
+         show: (main: Some(Proceed), distant: Some(ExpectStop)), lamps: ["yellow"]),
+        (when: (), show: (main: Some(Proceed), distant: Some(ExpectProceed)), lamps: ["green"]),
+    ],
+    script: None,
+)
+```
+
+`lamps` are free-form strings — the presentation of the mod decides what they look like.
+Anything the table cannot express gets `script: Some("<mod>:<name>")`; the hook runs after the
+table, sees its result, and may override it:
+
+```lua
+-- Zs1 (substitute signal) after three minutes at stop — needs memory, so it cannot be a rule.
+local M = {}
+local DELAY, at_stop_since = 180.0, {}
+
+function M.aspect(ctx)   -- ctx: signal, time, clear, route, diverging, next_stop, next_slow,
+  if ctx.main ~= "stop" then      --      main, distant, speed (the table's result)
+    at_stop_since[ctx.signal] = nil
+    return nil                    -- nil = keep what the table decided
+  end
+  local since = at_stop_since[ctx.signal]
+  if since == nil then at_stop_since[ctx.signal] = ctx.time return nil end
+  if ctx.time - since >= DELAY then
+    return { main = "substitute", speed = 40.0, lamps = { "red", "zs1" } }
+  end
+end
+
+return M
+```
+
+A line points at a signal type by name; the mod runtime resolves it:
+
+```ron
+signals: [(kind: Main, system: Ks, device: 1, guarded: [0], signal_type: Some("example:ks_main"))],
+```
+
+### 19.6 Vehicles: declaration plus behaviour hook
+
+`VehicleSpec` is unchanged data — the only addition is `script`. The hook is called once per
+frame for the train whose leading vehicle names it and writes cab controls:
+
+```lua
+-- AFB: holds the speed set in the cab; the line speed always wins.
+local M = {}
+
+function M.update(ctx)   -- ctx: dt, time, v_kmh, speed_limit_kmh, mass_t, throttle, reverser,
+  if not ctx.afb or ctx.reverser == 0 then   --   direct_brake, sanding, afb, afb_target,
+    return nil                               --   brake_pipe, notch, line_voltage,
+  end                                        --   tractive_effort
+  local target = math.min(ctx.afb_target, ctx.speed_limit_kmh)
+  local notch = (target - ctx.v_kmh) / 10.0
+  return { throttle = math.max(-1.0, math.min(1.0, notch)) }   -- also: direct_brake, sanding
+end
+
+return M
+```
+
+### 19.7 Integration points
+
+- **`mod-runtime` crate:** discovery, manifests, registry, Lua state, both hooks.
+- **`sim-core`:** knows the signal type as *data* (`interlock::SignalType`, `Situation`) and the
+  script name on `VehicleSpec` — but no Lua. That keeps the core deterministic and serialisable.
+- **`app`:** loads `mods/` at startup, `--line <mod>:<name>` and `--loco <mod>:<name>` select
+  content from a mod, and one system per frame runs the hooks after `Sim::advance`.
+- Still open: mod manager UI (enable/disable, dependency check), assets from mod directories
+  through a Bevy `AssetSource`, scenario and line hooks (`on_load`, `on_frame`),
+  `.trainsim` = zip with an installer.
+
+### 19.8 Distribution
+
+A `.trainsim` is a zip of the mod directory; the mod manager unpacks it to `<game>/mods/`.
+---
+
+## 20. Risks
 
 | Risk | Countermeasure |
 |---|---|
 | The pneumatics model becomes numerically unstable | Substepping, implicit node solution, reference tests early |
 | Bevy breaking changes | sim-core Bevy-free; keep the app layer thin; pin the Bevy version per milestone |
-| Content bottleneck (building lines is expensive) | Editor early (M3), OSM/DGM import, procedural overhead line/scenery |
+| Content bottleneck (building lines is expensive) | Editor early (M3), OSM/DGM import, **mods allow community lines** |
 | Train protection rulebook implemented incorrectly | Derive test cases from Richtlinie 483 (PZB/LZB operating rules), table-driven |
 | f64 ECEF errors creep into f32 paths | `EcefPos` as a newtype, clippy lint/review: no `as f32` outside the origin sync |
+| Lua mods become the bottleneck | Pre-compile to bytecode, limit per-frame callback frequency, profile hotspots |
+| Mods can't access sim state → not interesting | Lua API must support creative use cases; start with 3 concrete examples |

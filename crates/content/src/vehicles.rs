@@ -4,7 +4,7 @@ use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec};
 use sim_core::electric::TractionSpec;
 use sim_core::safety::SafetySystems;
 use sim_core::safety::de::{DeSafety, TrainType};
-use sim_core::train::{CouplerSpec, Davis, Vehicle, VehicleSpec};
+use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, Vehicle, VehicleSpec};
 use track_model::TrackPosition;
 
 /// Loads a vehicle definition from RON.
@@ -44,6 +44,18 @@ pub fn br101() -> VehicleSpec {
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
         slip_control: true,
+        gauge: STANDARD_GAUGE,
+        v_max: 220.0,
+        axles: 4,
+        // Bo'Bo', 2.65 m axle base per bogie.
+        axle_base_sum: 5.3,
+        // The Davis parameters are calibrated as a whole; cw·A stays open for mods.
+        cw_a: None,
+        max_payload: 0.0,
+        tilt_angle_deg: 0.0,
+        hunting: 0.0,
+        script: None,
+        model: None,
     }
 }
 
@@ -72,6 +84,17 @@ pub fn br110() -> VehicleSpec {
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
         slip_control: false,
+        gauge: STANDARD_GAUGE,
+        v_max: 150.0,
+        axles: 4,
+        // Bo'Bo', 3.4 m axle base per bogie.
+        axle_base_sum: 6.8,
+        cw_a: None,
+        max_payload: 0.0,
+        tilt_angle_deg: 0.0,
+        hunting: 0.0,
+        script: None,
+        model: None,
     }
 }
 
@@ -100,6 +123,17 @@ pub fn br218() -> VehicleSpec {
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
         slip_control: false,
+        gauge: STANDARD_GAUGE,
+        v_max: 140.0,
+        axles: 4,
+        // B'B', 2.8 m axle base per bogie.
+        axle_base_sum: 5.6,
+        cw_a: None,
+        max_payload: 0.0,
+        tilt_angle_deg: 0.0,
+        hunting: 0.0,
+        script: None,
+        model: None,
     }
 }
 
@@ -120,6 +154,18 @@ pub fn passenger_coach() -> VehicleSpec {
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 0.0,
         slip_control: true,
+        gauge: STANDARD_GAUGE,
+        v_max: 160.0,
+        axles: 4,
+        // Two Minden-Deutz bogies, 2.5 m axle base each.
+        axle_base_sum: 5.0,
+        cw_a: None,
+        // Passengers and luggage — the usual assumption is 5 t per coach.
+        max_payload: 5_000.0,
+        tilt_angle_deg: 0.0,
+        hunting: 0.0,
+        script: None,
+        model: None,
     }
 }
 
@@ -140,6 +186,17 @@ pub fn freight_wagon() -> VehicleSpec {
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 0.0,
         slip_control: false,
+        gauge: STANDARD_GAUGE,
+        v_max: 100.0,
+        axles: 4,
+        // Y25 bogies, 1.8 m axle base each.
+        axle_base_sum: 3.6,
+        cw_a: None,
+        max_payload: 57_000.0,
+        tilt_angle_deg: 0.0,
+        hunting: 0.0,
+        script: None,
+        model: None,
     }
 }
 

@@ -1,0 +1,140 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "TrainSim-DE example mod"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "br101",
+      "nodes": [
+        0,
+        1,
+        2
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "body_LOD0",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        1.9,
+        0.0
+      ],
+      "scale": [
+        1.5,
+        1.9,
+        9.55
+      ]
+    },
+    {
+      "name": "body_LOD1",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        1.9,
+        0.0
+      ],
+      "scale": [
+        1.5,
+        1.9,
+        9.55
+      ]
+    },
+    {
+      "name": "pant_front",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        3.9,
+        -5.0
+      ],
+      "scale": [
+        0.6,
+        0.12,
+        0.6
+      ],
+      "extras": {
+        "ts_function": "pantograph",
+        "ts_motion": "rotate",
+        "ts_axis": "1 0 0",
+        "ts_amount": 45
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "box",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "body",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.7,
+          0.12,
+          0.14,
+          1.0
+        ],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.6
+      }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 72,
+      "target": 34963
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 168,
+      "uri": "data:application/octet-stream;base64,AACAvwAAgL8AAIC/AACAPwAAgL8AAIC/AACAPwAAgD8AAIC/AACAvwAAgD8AAIC/AACAvwAAgL8AAIA/AACAPwAAgL8AAIA/AACAPwAAgD8AAIA/AACAvwAAgD8AAIA/AAACAAEAAAADAAIABAAFAAYABAAGAAcAAAABAAUAAAAFAAQAAQACAAYAAQAGAAUAAgADAAcAAgAHAAYAAwAAAAQAAwAEAAcA"
+    }
+  ]
+}

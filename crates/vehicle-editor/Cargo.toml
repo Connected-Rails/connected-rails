@@ -1,19 +1,19 @@
 [package]
-name = "app"
+name = "vehicle-editor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "train-sim"
+name = "trainsim-vehicle-editor"
 path = "src/main.rs"
 
 [dependencies]
 sim-core = { workspace = true }
-track-model = { workspace = true }
-world-coords = { workspace = true }
 content = { workspace = true }
-mod-runtime = { workspace = true }
-ai-driver = { workspace = true }
-glam = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+serde_json = "1"
 bevy = { workspace = true }
+bevy_egui = { workspace = true }
+rfd = { workspace = true }

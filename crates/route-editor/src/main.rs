@@ -8,11 +8,13 @@
 //! on first start and can be reloaded at runtime (F5).
 
 mod overlay;
+mod ui;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use content::LineSource;
 use glam::DVec3;
 use imagery::{ImageryConfig, ZoomMode};
@@ -64,8 +66,19 @@ struct FrameLimit(u32);
 #[derive(Resource)]
 struct ShotPath(String);
 
-#[derive(Component)]
-struct HudText;
+/// What the menu has asked for — applied by `overlay_control` through the same code paths
+/// as the keyboard shortcuts.
+#[derive(Resource, Default)]
+pub struct Request {
+    pub open_line: Option<std::path::PathBuf>,
+    pub toggle_overlay: bool,
+    pub cycle_provider: bool,
+    pub toggle_offline: bool,
+    pub clear_cache: bool,
+    pub retry_failed: bool,
+    pub load_config: bool,
+    pub save_config: bool,
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -89,23 +102,33 @@ fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
-            title: "TrainSim-DE Editor".into(),
+            title: "TrainSim-DE — Route editor".into(),
             ..default()
         }),
         ..default()
     }))
+    .add_plugins(EguiPlugin::default())
+    // The UI belongs on our own camera. Left to itself, `bevy_egui` creates a context on a
+    // camera without a render graph — depending on which startup system runs first, and the
+    // panels then stay invisible.
+    .insert_resource(bevy_egui::EguiGlobalSettings {
+        auto_create_primary_context: false,
+        ..default()
+    })
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.11)))
     .insert_resource(ConfigPath(config_path))
     .insert_resource(LinePath(line_path))
+    .init_resource::<Request>()
     .add_systems(Startup, setup)
+    .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
         Update,
         (
             camera_control,
             overlay_control,
+            open_line,
             overlay::update,
             rebase_origin,
-            update_hud,
         )
             .chain(),
     );
@@ -182,6 +205,7 @@ fn setup(
             brightness: 800.0,
             ..default()
         },
+        PrimaryEguiContext,
     ));
     commands.spawn((
         DirectionalLight {
@@ -190,22 +214,6 @@ fn setup(
             ..default()
         },
         Transform::from_xyz(100.0, 400.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-
-    commands.spawn((
-        Text::new(""),
-        TextFont {
-            font_size: bevy::text::FontSize::Px(15.0),
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            ..default()
-        },
-        HudText,
     ));
 
     commands.insert_resource(Overlay::new(
@@ -219,6 +227,53 @@ fn setup(
     });
     commands.insert_resource(Origin(origin));
     commands.insert_resource(Line { net, name, path });
+}
+
+/// Loads a different line at runtime (menu → File → Open line…).
+// Rebuilding the line touches the whole world state; a system with that many parameters is
+// normal in Bevy.
+#[allow(clippy::too_many_arguments)]
+fn open_line(
+    mut request: ResMut<Request>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut line: ResMut<Line>,
+    mut origin: ResMut<Origin>,
+    mut focus: ResMut<Focus>,
+    mut overlay: ResMut<Overlay>,
+    track: Query<Entity, (With<WorldAnchored>, Without<OverlayTile>)>,
+) {
+    let Some(path) = request.open_line.take() else {
+        return;
+    };
+    let source = match std::fs::read_to_string(&path).map(|t| LineSource::from_ron(&t)) {
+        Ok(Ok(source)) => source,
+        _ => {
+            overlay.status = format!("{} not readable", path.display());
+            return;
+        }
+    };
+    let Ok(compiled) = source.compile() else {
+        overlay.status = format!("{} does not compile", path.display());
+        return;
+    };
+
+    for entity in track.iter() {
+        commands.entity(entity).despawn();
+    }
+    overlay.clear(&mut commands);
+
+    let net = compiled.net;
+    let middle = &net.edges()[net.edges().len() / 2];
+    focus.position = middle.eval(middle.length() / 2.0).pos;
+    origin.0 = RenderOrigin::new(focus.position);
+    spawn_track(&mut commands, &mut meshes, &mut materials, &net, &origin.0);
+
+    overlay.status = format!("{} loaded", path.display());
+    line.name = source.name.clone();
+    line.path = Some(path.display().to_string());
+    line.net = net;
 }
 
 /// Track ribbon as a dark quad — reference for the position in the aerial imagery.
@@ -330,12 +385,51 @@ fn overlay_control(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut overlay: ResMut<Overlay>,
+    mut request: ResMut<Request>,
     config_path: Res<ConfigPath>,
     focus: Res<Focus>,
 ) {
     let mut config = overlay.config().clone();
     let mut changed = false;
     let mut rebuild = false;
+
+    // Menu entries take the same paths as the keys.
+    let menu = std::mem::take(&mut *request);
+    request.open_line = menu.open_line;
+    if menu.toggle_overlay {
+        config.enabled = !config.enabled;
+        changed = true;
+    }
+    if menu.cycle_provider {
+        config.cycle_provider();
+        changed = true;
+        rebuild = true;
+    }
+    if menu.toggle_offline {
+        config.cache.offline = !config.cache.offline;
+        changed = true;
+    }
+    if menu.clear_cache {
+        overlay.source.clear_cache();
+        overlay.clear(&mut commands);
+        overlay.status = "Cache cleared".into();
+    }
+    if menu.retry_failed {
+        overlay.source.retry_failed();
+        overlay.status = "Failed attempts reset".into();
+    }
+    if menu.save_config {
+        overlay.status = match config.save(&config_path.0) {
+            Ok(()) => format!("{} saved", config_path.0),
+            Err(e) => format!("Saving failed: {e}"),
+        };
+    }
+    if menu.load_config {
+        let (loaded, message) = ImageryConfig::load_or_create(&config_path.0);
+        overlay.status = message.unwrap_or_else(|| format!("{} loaded", config_path.0));
+        overlay.apply(&mut commands, loaded);
+        return;
+    }
 
     if keys.just_pressed(KeyCode::KeyO) {
         config.enabled = !config.enabled;
@@ -447,86 +541,6 @@ fn rebase_origin(
         transform.rotation = rotation;
     }
     overlay::resync(&origin.0, &mut tiles);
-}
-
-fn update_hud(
-    overlay: Res<Overlay>,
-    focus: Res<Focus>,
-    line: Res<Line>,
-    mut query: Query<&mut Text, With<HudText>>,
-) {
-    let Ok(mut text) = query.single_mut() else {
-        return;
-    };
-    let config = overlay.config();
-    let provider = config.provider();
-    let (lat, lon) = focus_degrees(focus.position);
-    let stats = overlay.source.cache_stats();
-
-    let mut lines = vec![
-        format!(
-            "Line: {} ({} edges{})",
-            line.name,
-            line.net.edges().len(),
-            line.path
-                .as_ref()
-                .map(|p| format!(", {p}"))
-                .unwrap_or_default()
-        ),
-        format!(
-            "View point {lat:.5}°, {lon:.5}°   Height {:.0} m",
-            focus.height
-        ),
-        format!(
-            "Aerial imagery: {}   {}   Opacity {:.0} %   Zoom {} ({})",
-            provider.map(|p| p.name.as_str()).unwrap_or("—"),
-            if config.enabled { "on" } else { "off" },
-            config.opacity * 100.0,
-            overlay.zoom,
-            match config.zoom {
-                ZoomMode::Fixed(_) => "fixed".to_string(),
-                ZoomMode::Resolution(m) => format!("{m:.2} m/px"),
-            }
-        ),
-        format!(
-            "Tiles: {} shown, {} in flight   Offset {:+.1}/{:+.1} m{}",
-            overlay.tiles_shown(),
-            overlay.source.pending(),
-            config.offset.0,
-            config.offset.1,
-            if config.cache.offline {
-                "   OFFLINE"
-            } else {
-                ""
-            }
-        ),
-        format!(
-            "Cache: {} hits ({} disk), {} stored, {} evicted, {:.1} MB in {}",
-            stats.hits_memory + stats.hits_disk,
-            stats.hits_disk,
-            stats.stored,
-            stats.evicted,
-            overlay.source.disk_usage() as f64 / 1e6,
-            config.cache.directory.display()
-        ),
-    ];
-    if let Some(provider) = provider
-        && !provider.attribution.is_empty()
-    {
-        lines.push(format!("© {}", provider.attribution));
-    }
-    if !overlay.status.is_empty() {
-        lines.push(overlay.status.clone());
-    }
-    for error in overlay.source.errors.iter().rev().take(2) {
-        lines.push(format!("Error: {error}"));
-    }
-    lines.push(String::new());
-    lines.push("WASD/arrows pan   PgUp/PgDn height   O overlay   P provider   [ ] opacity".into());
-    lines.push(", . zoom level   Z automatic   Numpad 4/6/8/2 offset, 5 reset".into());
-    lines.push("L offline mode   C clear cache   R reset errors   F5 load   F2 save".into());
-
-    **text = lines.join("\n");
 }
 
 /// Exits the editor after the given number of frames — with `--screenshot` the window is

@@ -129,6 +129,12 @@ As of 2026-08-12 · `cargo test --workspace`: **223 tests green** · clippy and 
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
   time against a reference body of the length over buffers.
+- **Localisation:** every string the user reads goes through the `i18n` crate
+  (Fluent `.ftl`, English source plus German), including the simulator HUD, both editors
+  and the scoring report. Language from `TRAINSIM_LANG` or the operating system,
+  switchable at runtime under View → Language; a test fails on a key that only one
+  language has. Crowdin config in `crowdin.yml`. Text out of the mods (scenario
+  messages, station names) is content, not code, and is not translated.
 - **Vehicle models in the app (ch. 15.3):** a vehicle with a model gets its glTF instead of
   the placeholder body; the level of detail follows the camera distance, and the bound parts
   follow the simulation (pantograph, gauges, switches, lamps). `--camera outside` starts on

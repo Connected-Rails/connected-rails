@@ -83,7 +83,7 @@ fn main() {
     app.register_asset_source(models::SOURCE, mod_asset_source());
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
-            title: "TrainSim-DE".into(),
+            title: i18n::t!("window-simulator"),
             ..default()
         }),
         ..default()

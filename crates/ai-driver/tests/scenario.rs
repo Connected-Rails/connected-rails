@@ -70,6 +70,8 @@ fn events_fire_one_after_another() {
 
 #[test]
 fn scenario_finishes_successfully_and_is_scored() {
+    // The report reads back in the display language.
+    i18n::set_language("en");
     // Start shortly before the destination so the test runs in seconds.
     let (mut sim, t) = scenario_sim(TrackPosition::new(EdgeId(2), 1000.0, 1));
     let mut ai = AiDriver::new(re_4711());
@@ -109,6 +111,8 @@ fn scenario_finishes_successfully_and_is_scored() {
 
 #[test]
 fn forced_braking_costs_points() {
+    // The report reads back in the display language.
+    i18n::set_language("en");
     let (mut sim, t) = scenario_sim(TrackPosition::new(EdgeId(0), 100.0, 1));
     // Never operate the Sifa → forced braking after 35 s.
     sim.controls[t].reverser = 1;
@@ -135,6 +139,8 @@ fn forced_braking_costs_points() {
 
 #[test]
 fn exceeding_the_maximum_speed_is_counted() {
+    // The report reads back in the display language.
+    i18n::set_language("en");
     let (mut sim, _t) = scenario_sim(TrackPosition::new(EdgeId(1), 100.0, 1));
     // Section 1 permits 130 km/h — we set 170 km/h.
     for v in &mut sim.trains[0].vehicles {

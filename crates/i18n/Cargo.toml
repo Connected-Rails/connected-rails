@@ -1,0 +1,10 @@
+[package]
+name = "i18n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fluent-templates = "0.15"
+unic-langid = "0.9"
+sys-locale = "0.3"

@@ -7,6 +7,7 @@ use crate::overlay::Overlay;
 use crate::{Focus, Line, Request, focus_degrees};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
+use i18n::t;
 use imagery::ZoomMode;
 
 /// One frame of UI. Panels live inside a background `Ui` (egui 0.35).
@@ -28,54 +29,55 @@ pub fn draw(
 
     egui::Panel::top("menu").show(&mut root, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Open line…").clicked() {
+            ui.menu_button(t!("menu-file"), |ui| {
+                if ui.button(t!("action-open-line")).clicked() {
                     request.open_line = rfd::FileDialog::new()
-                        .add_filter("Line (RON)", &["ron"])
+                        .add_filter(t!("filter-line-ron"), &["ron"])
                         .pick_file();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Load imagery configuration (F5)").clicked() {
+                if ui.button(t!("action-load-imagery")).clicked() {
                     request.load_config = true;
                     ui.close();
                 }
-                if ui.button("Save imagery configuration (F2)").clicked() {
+                if ui.button(t!("action-save-imagery")).clicked() {
                     request.save_config = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Quit").clicked() {
+                if ui.button(t!("action-quit")).clicked() {
                     std::process::exit(0);
                 }
             });
-            ui.menu_button("Overlay", |ui| {
-                if ui.button("On/off (O)").clicked() {
+            ui.menu_button(t!("menu-overlay"), |ui| {
+                if ui.button(t!("overlay-toggle")).clicked() {
                     request.toggle_overlay = true;
                     ui.close();
                 }
-                if ui.button("Next provider (P)").clicked() {
+                if ui.button(t!("overlay-next-provider")).clicked() {
                     request.cycle_provider = true;
                     ui.close();
                 }
-                if ui.button("Offline mode (L)").clicked() {
+                if ui.button(t!("overlay-offline")).clicked() {
                     request.toggle_offline = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Clear cache (C)").clicked() {
+                if ui.button(t!("overlay-clear-cache")).clicked() {
                     request.clear_cache = true;
                     ui.close();
                 }
-                if ui.button("Reset failed attempts (R)").clicked() {
+                if ui.button(t!("overlay-retry")).clicked() {
                     request.retry_failed = true;
                     ui.close();
                 }
             });
-            ui.menu_button("Help", |ui| {
-                ui.label("WASD/arrows pan · PgUp/PgDn height");
-                ui.label("[ ] opacity · , . zoom level · Z automatic");
-                ui.label("Numpad 4/6/8/2 image offset, 5 reset");
+            ui.menu_button(t!("menu-view"), language_menu);
+            ui.menu_button(t!("menu-help"), |ui| {
+                ui.label(t!("help-pan"));
+                ui.label(t!("help-opacity"));
+                ui.label(t!("help-offset"));
             });
         });
     });
@@ -83,15 +85,17 @@ pub fn draw(
     egui::Panel::bottom("status").show(&mut root, |ui| {
         ui.horizontal(|ui| {
             ui.label(if overlay.status.is_empty() {
-                "Ready"
+                t!("status-ready")
             } else {
-                overlay.status.as_str()
+                overlay.status.clone()
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (lat, lon) = focus_degrees(focus.position);
-                ui.label(format!(
-                    "{lat:.5}°, {lon:.5}°   height {:.0} m",
-                    focus.height
+                ui.label(t!(
+                    "status-position",
+                    lat = format!("{lat:.5}"),
+                    lon = format!("{lon:.5}"),
+                    height = format!("{:.0}", focus.height),
                 ));
             });
         });
@@ -105,69 +109,82 @@ pub fn draw(
             let provider = config.provider();
             let stats = overlay.source.cache_stats();
 
-            ui.heading("Line");
-            ui.label(format!("{} · {} edges", line.name, line.net.edges().len()));
+            ui.heading(t!("heading-line"));
+            ui.label(t!(
+                "line-summary",
+                name = line.name,
+                edges = line.net.edges().len()
+            ));
             if let Some(path) = &line.path {
                 ui.small(path);
             }
 
             ui.separator();
-            ui.heading("Aerial imagery");
+            ui.heading(t!("heading-imagery"));
             egui::Grid::new("imagery").num_columns(2).show(ui, |ui| {
-                ui.label("Provider");
-                ui.label(provider.map(|p| p.name.as_str()).unwrap_or("—"));
+                ui.label(t!("img-provider"));
+                ui.label(
+                    provider
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| t!("common-none")),
+                );
                 ui.end_row();
-                ui.label("Status");
-                ui.label(if config.enabled { "on" } else { "off" });
+                ui.label(t!("img-status"));
+                ui.label(if config.enabled {
+                    t!("common-on")
+                } else {
+                    t!("common-off")
+                });
                 ui.end_row();
-                ui.label("Opacity");
+                ui.label(t!("img-opacity"));
                 ui.label(format!("{:.0} %", config.opacity * 100.0));
                 ui.end_row();
-                ui.label("Zoom");
+                ui.label(t!("img-zoom"));
                 ui.label(format!(
                     "{} ({})",
                     overlay.zoom,
                     match config.zoom {
-                        ZoomMode::Fixed(_) => "fixed".to_string(),
-                        ZoomMode::Resolution(m) => format!("{m:.2} m/px"),
+                        ZoomMode::Fixed(_) => t!("zoom-fixed"),
+                        ZoomMode::Resolution(m) =>
+                            t!("zoom-resolution", metres = format!("{m:.2}")),
                     }
                 ));
                 ui.end_row();
-                ui.label("Tiles");
-                ui.label(format!(
-                    "{} shown, {} in flight",
-                    overlay.tiles_shown(),
-                    overlay.source.pending()
+                ui.label(t!("img-tiles"));
+                ui.label(t!(
+                    "tiles-summary",
+                    shown = overlay.tiles_shown(),
+                    pending = overlay.source.pending()
                 ));
                 ui.end_row();
-                ui.label("Offset");
+                ui.label(t!("img-offset"));
                 ui.label(format!(
                     "{:+.1} / {:+.1} m",
                     config.offset.0, config.offset.1
                 ));
                 ui.end_row();
-                ui.label("Mode");
+                ui.label(t!("img-mode"));
                 ui.label(if config.cache.offline {
-                    "offline"
+                    t!("mode-offline")
                 } else {
-                    "online"
+                    t!("mode-online")
                 });
                 ui.end_row();
             });
 
             ui.separator();
-            ui.heading("Cache");
-            ui.label(format!(
-                "{} hits ({} from disk), {} stored, {} evicted",
-                stats.hits_memory + stats.hits_disk,
-                stats.hits_disk,
-                stats.stored,
-                stats.evicted
+            ui.heading(t!("heading-cache"));
+            ui.label(t!(
+                "cache-summary",
+                hits = stats.hits_memory + stats.hits_disk,
+                disk = stats.hits_disk,
+                stored = stats.stored,
+                evicted = stats.evicted
             ));
-            ui.label(format!(
-                "{:.1} MB in {}",
-                overlay.source.disk_usage() as f64 / 1e6,
-                config.cache.directory.display()
+            ui.label(t!(
+                "cache-size",
+                megabytes = format!("{:.1}", overlay.source.disk_usage() as f64 / 1e6),
+                directory = config.cache.directory.display()
             ));
 
             if let Some(provider) = provider
@@ -179,11 +196,24 @@ pub fn draw(
             let errors: Vec<&String> = overlay.source.errors.iter().rev().take(3).collect();
             if !errors.is_empty() {
                 ui.separator();
-                ui.label(egui::RichText::new("Errors").strong());
+                ui.label(egui::RichText::new(t!("group-errors")).strong());
                 for error in errors {
                     ui.small(error);
                 }
             }
         });
     Ok(())
+}
+
+/// Language picker.
+fn language_menu(ui: &mut egui::Ui) {
+    ui.menu_button(t!("menu-language"), |ui| {
+        let current = i18n::language();
+        for (code, name) in i18n::LANGUAGES {
+            if ui.selectable_label(current == *code, *name).clicked() {
+                i18n::set_language(code);
+                ui.close();
+            }
+        }
+    });
 }

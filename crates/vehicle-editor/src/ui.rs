@@ -3,6 +3,7 @@
 use crate::{Editor, PointerOverUi, model, powertrain};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
+use i18n::t;
 use sim_core::doors::DoorSystem;
 use sim_core::safety::SafetyEquipment;
 use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
@@ -32,7 +33,7 @@ pub fn draw(
         editor.loaded_file = file.clone();
         editor.nodes.clear();
         editor.gltf = Some(assets.load(format!("{}://{file}", crate::MOD_SOURCE)));
-        editor.status = format!("{file} loading…");
+        editor.status = t!("status-loading", file = file);
     }
     let mut root = egui::Ui::new(
         ctx.clone(),
@@ -51,14 +52,14 @@ pub fn draw(
 fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) {
     egui::Panel::top("menu").show(root, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("New").clicked() {
+            ui.menu_button(t!("menu-file"), |ui| {
+                if ui.button(t!("action-new")).clicked() {
                     *editor = Editor::default();
                     ui.close();
                 }
-                if ui.button("Open…").clicked() {
+                if ui.button(t!("action-open")).clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Vehicle (RON)", &["ron"])
+                        .add_filter(t!("filter-vehicle-ron"), &["ron"])
                         .pick_file()
                     {
                         editor.open(path);
@@ -67,7 +68,7 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
                 }
                 let has_path = editor.path.is_some();
                 if ui
-                    .add_enabled(has_path, egui::Button::new("Save"))
+                    .add_enabled(has_path, egui::Button::new(t!("action-save")))
                     .clicked()
                 {
                     if let Some(path) = editor.path.clone() {
@@ -75,9 +76,9 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
                     }
                     ui.close();
                 }
-                if ui.button("Save as…").clicked() {
+                if ui.button(t!("action-save-as")).clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Vehicle (RON)", &["ron"])
+                        .add_filter(t!("filter-vehicle-ron"), &["ron"])
                         .set_file_name("vehicle.ron")
                         .save_file()
                     {
@@ -86,23 +87,38 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Import model…").clicked() {
+                if ui.button(t!("action-import-model")).clicked() {
                     import_model(editor, assets);
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Quit").clicked() {
+                if ui.button(t!("action-quit")).clicked() {
                     std::process::exit(0);
                 }
             });
-            ui.menu_button("View", |ui| {
-                ui.checkbox(&mut editor.show_reference, "Reference body (LÜP)");
+            ui.menu_button(t!("menu-view"), |ui| {
+                ui.checkbox(&mut editor.show_reference, t!("view-reference-body"));
+                ui.separator();
+                language_menu(ui);
             });
-            ui.menu_button("Help", |ui| {
-                ui.label("Right mouse button: rotate · Wheel: zoom");
-                ui.label("Model conventions: see MODS.md");
+            ui.menu_button(t!("menu-help"), |ui| {
+                ui.label(t!("help-mouse"));
+                ui.label(t!("help-model-conventions"));
             });
         });
+    });
+}
+
+/// Language picker — the same submenu in both editors.
+pub fn language_menu(ui: &mut egui::Ui) {
+    ui.menu_button(t!("menu-language"), |ui| {
+        let current = i18n::language();
+        for (code, name) in i18n::LANGUAGES {
+            if ui.selectable_label(current == *code, *name).clicked() {
+                i18n::set_language(code);
+                ui.close();
+            }
+        }
     });
 }
 
@@ -110,17 +126,14 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
 /// how the simulator finds it later (`mods://<mod>/assets/…`).
 fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
     let Some(path) = rfd::FileDialog::new()
-        .add_filter("Model (glTF)", &["gltf", "glb"])
+        .add_filter(t!("filter-model-gltf"), &["gltf", "glb"])
         .set_directory(crate::mods_dir())
         .pick_file()
     else {
         return;
     };
     let Ok(relative) = path.strip_prefix(crate::mods_dir()) else {
-        editor.status = format!(
-            "{} lies outside mods/ — copy the model into your mod first",
-            path.display()
-        );
+        editor.status = t!("status-outside-mods", path = path.display());
         return;
     };
     let file = relative.to_string_lossy().replace('\\', "/");
@@ -129,7 +142,7 @@ fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
     editor.nodes.clear();
     editor.gltf = Some(assets.load(format!("{}://{file}", crate::MOD_SOURCE)));
     editor.dirty = true;
-    editor.status = format!("{file} loading…");
+    editor.status = t!("status-loading", file = file);
 }
 
 /// Left panel: the vehicle's base data (plan 15.2).
@@ -140,51 +153,43 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
         .show(root, |ui| {
             let before = editor.spec.clone();
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Vehicle");
-                ui.add(egui::TextEdit::singleline(&mut editor.spec.name).hint_text("Name"));
+                ui.heading(t!("heading-vehicle"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut editor.spec.name).hint_text(t!("field-name")),
+                );
                 ui.separator();
 
                 let spec = &mut editor.spec;
                 egui::Grid::new("base").num_columns(2).show(ui, |ui| {
-                    row(
-                        ui,
-                        "Length over buffers",
-                        "m — official LÜP; draw the buffers 1–2 cm compressed",
-                        |ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut spec.length)
-                                    .speed(0.1)
-                                    .range(1.0..=100.0),
-                            );
-                        },
-                    );
-                    row(
-                        ui,
-                        "Gauge",
-                        "m — checked against the infrastructure",
-                        |ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut spec.gauge)
-                                    .speed(0.001)
-                                    .range(0.6..=2.0),
-                            );
-                        },
-                    );
-                    row(ui, "v max", "km/h — running gear limit", |ui| {
+                    row(ui, "veh-length", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut spec.length)
+                                .speed(0.1)
+                                .range(1.0..=100.0),
+                        );
+                    });
+                    row(ui, "veh-gauge", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut spec.gauge)
+                                .speed(0.001)
+                                .range(0.6..=2.0),
+                        );
+                    });
+                    row(ui, "veh-vmax", |ui| {
                         ui.add(
                             egui::DragValue::new(&mut spec.v_max)
                                 .speed(1.0)
                                 .range(0.0..=400.0),
                         );
                     });
-                    row(ui, "Mass", "kg — tare mass", |ui| {
+                    row(ui, "veh-mass", |ui| {
                         ui.add(
                             egui::DragValue::new(&mut spec.mass_empty)
                                 .speed(100.0)
                                 .range(1_000.0..=200_000.0),
                         );
                     });
-                    row(ui, "Max payload", "kg — passenger coach about 5 t", |ui| {
+                    row(ui, "veh-payload", |ui| {
                         ui.add(
                             egui::DragValue::new(&mut spec.max_payload)
                                 .speed(100.0)
@@ -195,57 +200,42 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                 });
 
                 ui.separator();
-                ui.label(egui::RichText::new("Running gear").strong());
+                ui.label(egui::RichText::new(t!("group-running-gear")).strong());
                 egui::Grid::new("gear").num_columns(2).show(ui, |ui| {
-                    row(
-                        ui,
-                        "Rotating mass",
-                        "share of the mass — E loco 0.15–0.25, coach 0.06–0.09",
-                        |ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut spec.rotating_mass_factor)
-                                    .speed(0.005)
-                                    .range(0.0..=0.5),
-                            );
-                        },
-                    );
-                    row(ui, "Axles", "information for consist lists", |ui| {
+                    row(ui, "veh-rotating-mass", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut spec.rotating_mass_factor)
+                                .speed(0.005)
+                                .range(0.0..=0.5),
+                        );
+                    });
+                    row(ui, "veh-axles", |ui| {
                         ui.add(egui::DragValue::new(&mut spec.axles).range(0..=32));
                     });
-                    row(
-                        ui,
-                        "Axle base sum",
-                        "m — sum over all bogies, basis of the curve resistance",
-                        |ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut spec.axle_base_sum)
-                                    .speed(0.1)
-                                    .range(0.0..=40.0),
-                            );
-                        },
-                    );
-                    row(ui, "Tilt angle", "° — 0 conventional, ~8 tilting", |ui| {
+                    row(ui, "veh-axle-base", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut spec.axle_base_sum)
+                                .speed(0.1)
+                                .range(0.0..=40.0),
+                        );
+                    });
+                    row(ui, "veh-tilt", |ui| {
                         ui.add(
                             egui::DragValue::new(&mut spec.tilt_angle_deg)
                                 .speed(0.5)
                                 .range(0.0..=12.0),
                         );
                     });
-                    row(
-                        ui,
-                        "Hunting",
-                        "−1 none … 0 standard … 1 strong",
-                        |ui| {
-                            ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
-                        },
-                    );
+                    row(ui, "veh-hunting", |ui| {
+                        ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
+                    });
                     ui.end_row();
                 });
 
                 ui.separator();
-                ui.label(egui::RichText::new("Running resistance").strong());
+                ui.label(egui::RichText::new(t!("group-resistance")).strong());
                 egui::Grid::new("resistance").num_columns(2).show(ui, |ui| {
-                    ui.label("Rolling resistance a");
+                    ui.label(t!("res-rolling"));
                     ui.horizontal(|ui| {
                         ui.add(
                             egui::DragValue::new(&mut spec.davis.a)
@@ -253,8 +243,8 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                                 .range(0.0..=20_000.0),
                         );
                         if ui
-                            .button("Suggest")
-                            .on_hover_text("about 2 ‰ of the weight")
+                            .button(t!("action-suggest"))
+                            .on_hover_text(t!("res-rolling-suggest-hint"))
                             .clicked()
                         {
                             spec.davis.a =
@@ -262,7 +252,7 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                         }
                     });
                     ui.end_row();
-                    row(ui, "Speed term b", "N/(m/s)", |ui| {
+                    row(ui, "res-speed-term", |ui| {
                         ui.add(
                             egui::DragValue::new(&mut spec.davis.b)
                                 .speed(1.0)
@@ -271,9 +261,9 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                     });
 
                     let mut use_cw_a = spec.cw_a.is_some();
-                    ui.label("Air resistance");
+                    ui.label(t!("res-air"));
                     ui.horizontal(|ui| {
-                        if ui.checkbox(&mut use_cw_a, "cw·A").changed() {
+                        if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
                             spec.cw_a = use_cw_a.then_some(6.0);
                         }
                         match &mut spec.cw_a {
@@ -291,24 +281,24 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                                         .speed(0.1)
                                         .range(0.0..=100.0),
                                 )
-                                .on_hover_text("quadratic Davis term c");
+                                .on_hover_text(t!("res-davis-c-hint"));
                             }
                         }
                     });
                     ui.end_row();
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Curve resistance")
-                        .on_hover_text("factor on Röckl — 1 = as the axle base sum gives it");
+                    ui.label(t!("res-curve"))
+                        .on_hover_text(t!("res-curve-hint"));
                     ui.add(
                         egui::DragValue::new(&mut spec.curve_resistance_factor)
                             .speed(0.05)
                             .range(0.0..=3.0),
                     );
                 });
-                ui.small(format!(
-                    "Resistance at 100 km/h: {:.0} N",
-                    spec.resistance(100.0 / 3.6)
+                ui.small(t!(
+                    "res-at-100",
+                    newtons = format!("{:.0}", spec.resistance(100.0 / 3.6))
                 ));
 
                 ui.separator();
@@ -320,13 +310,10 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                 equipment_panel(ui, spec);
 
                 ui.separator();
-                ui.label(egui::RichText::new("Behaviour").strong());
+                ui.label(egui::RichText::new(t!("group-behaviour")).strong());
                 let mut script = spec.script.clone().unwrap_or_default();
                 if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut script)
-                            .hint_text("Lua script <mod>:<name>"),
-                    )
+                    .add(egui::TextEdit::singleline(&mut script).hint_text(t!("field-script-hint")))
                     .changed()
                 {
                     spec.script = (!script.is_empty()).then_some(script);
@@ -343,12 +330,12 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
 /// What the equipment achieves also depends on the line — the LZB needs a conductor cable,
 /// the PZB needs track magnets.
 fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
-    ui.label(egui::RichText::new("Equipment").strong());
+    ui.label(egui::RichText::new(t!("group-equipment")).strong());
 
     let mut fitted = matches!(spec.safety, SafetyEquipment::De { .. });
     if ui
-        .checkbox(&mut fitted, "German train protection")
-        .on_hover_text("Sifa, Indusi/PZB and LZB as fitted to the vehicle")
+        .checkbox(&mut fitted, t!("eq-german-protection"))
+        .on_hover_text(t!("eq-german-protection-hint"))
         .changed()
     {
         spec.safety = if fitted {
@@ -370,91 +357,90 @@ fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
     } = &mut spec.safety
     {
         egui::Grid::new("safety").num_columns(2).show(ui, |ui| {
-            ui.label("Indusi/PZB")
-                .on_hover_text("build on board — without it the vehicle runs on the LZB alone");
+            ui.label(t!("eq-pzb")).on_hover_text(t!("eq-pzb-hint"));
+            // Type designations of the equipment are names, not prose — they stay as they are.
             combo(
                 ui,
                 "pzb",
                 pzb,
                 &[
-                    (None, "not fitted"),
-                    (Some(PzbVariant::I54), "Indusi I 54"),
-                    (Some(PzbVariant::I60), "Indusi I 60"),
-                    (Some(PzbVariant::I60M), "Indusi I 60M"),
-                    (Some(PzbVariant::I60R), "Indusi I 60R"),
-                    (Some(PzbVariant::Pzb60), "ÖBB PZB 60"),
-                    (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5"),
-                    (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0"),
+                    (None, t!("opt-not-fitted")),
+                    (Some(PzbVariant::I54), "Indusi I 54".into()),
+                    (Some(PzbVariant::I60), "Indusi I 60".into()),
+                    (Some(PzbVariant::I60M), "Indusi I 60M".into()),
+                    (Some(PzbVariant::I60R), "Indusi I 60R".into()),
+                    (Some(PzbVariant::Pzb60), "ÖBB PZB 60".into()),
+                    (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5".into()),
+                    (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0".into()),
                 ],
             );
             ui.end_row();
 
-            ui.label("Train category")
-                .on_hover_text("Zugart from the brake sheet the vehicle starts in");
+            ui.label(t!("eq-train-type"))
+                .on_hover_text(t!("eq-train-type-hint"));
             combo(
                 ui,
                 "train_type",
                 train_type,
                 &[
-                    (TrainType::O, "O — upper"),
-                    (TrainType::M, "M — middle"),
-                    (TrainType::U, "U — lower"),
+                    (TrainType::O, t!("train-type-o")),
+                    (TrainType::M, t!("train-type-m")),
+                    (TrainType::U, t!("train-type-u")),
                 ],
             );
             ui.end_row();
 
-            ui.label("Sifa").on_hover_text("driver's safety device");
+            ui.label(t!("eq-sifa")).on_hover_text(t!("eq-sifa-hint"));
             combo(
                 ui,
                 "sifa",
                 sifa,
                 &[
-                    (None, "not fitted"),
-                    (Some(SifaKind::TimeTime), "time-time"),
-                    (Some(SifaKind::TimeDistance), "time-distance"),
-                    (Some(SifaKind::Rzm), "RZM"),
+                    (None, t!("opt-not-fitted")),
+                    (Some(SifaKind::TimeTime), t!("sifa-time-time")),
+                    (Some(SifaKind::TimeDistance), t!("sifa-time-distance")),
+                    (Some(SifaKind::Rzm), "RZM".into()),
                 ],
             );
             ui.end_row();
 
-            ui.label("LZB 80/I 80");
-            ui.checkbox(lzb, "on board")
-                .on_hover_text("guides only on lines with a conductor cable");
+            ui.label(t!("eq-lzb"));
+            ui.checkbox(lzb, t!("eq-lzb-on-board"))
+                .on_hover_text(t!("eq-lzb-hint"));
             ui.end_row();
         });
     }
 
-    ui.checkbox(&mut spec.passenger_doors, "Passenger doors")
-        .on_hover_text("these doors follow the door control of the train");
+    ui.checkbox(&mut spec.passenger_doors, t!("eq-passenger-doors"))
+        .on_hover_text(t!("eq-passenger-doors-hint"));
     ui.horizontal(|ui| {
-        ui.label("Door control")
-            .on_hover_text("what this cab commands — the leading vehicle decides for the train");
+        ui.label(t!("eq-doors")).on_hover_text(t!("eq-doors-hint"));
         combo(
             ui,
             "doors",
             &mut spec.doors,
             &[
-                (DoorSystem::None, "not fitted"),
-                (DoorSystem::Tb0, "TB0"),
-                (DoorSystem::Tav, "TAV"),
-                (DoorSystem::UicWtb, "UIC-WTB"),
+                (DoorSystem::None, t!("opt-not-fitted")),
+                (DoorSystem::Tb0, "TB0".into()),
+                (DoorSystem::Tav, "TAV".into()),
+                (DoorSystem::UicWtb, "UIC-WTB".into()),
             ],
         );
     });
 }
 
 /// Combo box over a fixed set of values.
-fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) {
+fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, String)]) {
     let selected = options
         .iter()
         .find(|(v, _)| v == value)
-        .map(|(_, label)| *label)
+        .map(|(_, label)| label.as_str())
         .unwrap_or("—");
     egui::ComboBox::from_id_salt(id)
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for (v, label) in options {
-                if ui.selectable_label(value == v, *label).clicked() {
+                if ui.selectable_label(value == v, label).clicked() {
                     *value = *v;
                 }
             }
@@ -491,7 +477,7 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
         .default_size(380.0)
         .resizable(true)
         .show(root, |ui| {
-            ui.heading("Model");
+            ui.heading(t!("heading-model"));
             let file = editor
                 .spec
                 .model
@@ -499,11 +485,11 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
                 .map(|m| m.file.clone())
                 .unwrap_or_default();
             ui.horizontal(|ui| {
-                if ui.button("Import glTF…").clicked() {
+                if ui.button(t!("action-import-gltf")).clicked() {
                     import_model(editor, assets);
                 }
                 ui.label(if file.is_empty() {
-                    "—".to_string()
+                    t!("common-none")
                 } else {
                     file
                 });
@@ -511,17 +497,13 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
             ui.separator();
 
             if editor.nodes.is_empty() {
-                ui.label("No model loaded.");
-                ui.small(
-                    "Levels of detail: node names ending in _LOD0, _LOD1, …\n\
-                     Moving parts: prefixes door_, pant_, sw_, gauge_, lamp_, wheel_,\n\
-                     or the Blender custom property ts_function.",
-                );
+                ui.label(t!("model-none-loaded"));
+                ui.small(t!("model-conventions"));
                 return;
             }
 
-            ui.label(egui::RichText::new("Levels of detail").strong());
-            if ui.button("Read from node names").clicked() {
+            ui.label(egui::RichText::new(t!("group-lods")).strong());
+            if ui.button(t!("action-read-node-names")).clicked() {
                 let lods = model::detect_lods(&editor.nodes);
                 editor.model_mut().lods = lods;
                 editor.dirty = true;
@@ -535,7 +517,7 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
                         // Radio button: which level the viewport shows.
                         if ui
                             .selectable_label(preview == lod.level, format!("LOD{}", lod.level))
-                            .on_hover_text("show in the viewport")
+                            .on_hover_text(t!("lod-show-hint"))
                             .clicked()
                         {
                             preview = lod.level;
@@ -559,8 +541,8 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
             }
 
             ui.separator();
-            ui.label(egui::RichText::new("Moving parts").strong());
-            if ui.button("Take over all suggestions").clicked() {
+            ui.label(egui::RichText::new(t!("group-parts")).strong());
+            if ui.button(t!("action-take-suggestions")).clicked() {
                 let parts: Vec<Part> = editor
                     .nodes
                     .iter()
@@ -590,7 +572,7 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
                             .add(
                                 egui::TextEdit::singleline(&mut part.function)
                                     .desired_width(140.0)
-                                    .hint_text("function"),
+                                    .hint_text(t!("part-function-hint")),
                             )
                             .changed();
                         changed |= motion_editor(ui, i, &mut part.motion);
@@ -604,7 +586,7 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
             }
             editor.dirty |= changed;
 
-            ui.label(egui::RichText::new("Nodes in the file").strong());
+            ui.label(egui::RichText::new(t!("group-nodes")).strong());
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let nodes = editor.nodes.clone();
                 for node in nodes {
@@ -616,7 +598,7 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
                             .is_some_and(|m| m.parts.iter().any(|p| p.node == node.name));
                         if ui
                             .add_enabled(!bound, egui::Button::new("+").small())
-                            .on_hover_text("bind as a moving part")
+                            .on_hover_text(t!("node-bind-hint"))
                             .clicked()
                         {
                             let part = node.suggestion.clone().unwrap_or(Part {
@@ -644,27 +626,36 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
 /// Motion of a part: kind plus axis and amount.
 fn motion_editor(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
     let mut changed = false;
-    let label = match motion {
-        Motion::Visibility => "visible",
-        Motion::Rotate { .. } => "rotate",
-        Motion::Translate { .. } => "move",
+    let key = match motion {
+        Motion::Visibility => "motion-visible",
+        Motion::Rotate { .. } => "motion-rotate",
+        Motion::Translate { .. } => "motion-move",
     };
     egui::ComboBox::from_id_salt(("motion", id))
-        .selected_text(label)
+        .selected_text(t!(key))
         .width(90.0)
         .show_ui(ui, |ui| {
-            if ui.selectable_label(label == "visible", "visible").clicked() {
+            if ui
+                .selectable_label(key == "motion-visible", t!("motion-visible"))
+                .clicked()
+            {
                 *motion = Motion::Visibility;
                 changed = true;
             }
-            if ui.selectable_label(label == "rotate", "rotate").clicked() {
+            if ui
+                .selectable_label(key == "motion-rotate", t!("motion-rotate"))
+                .clicked()
+            {
                 *motion = Motion::Rotate {
                     axis: [1.0, 0.0, 0.0],
                     degrees: 90.0,
                 };
                 changed = true;
             }
-            if ui.selectable_label(label == "move", "move").clicked() {
+            if ui
+                .selectable_label(key == "motion-move", t!("motion-move"))
+                .clicked()
+            {
                 *motion = Motion::Translate {
                     axis: [0.0, 0.0, 1.0],
                     metres: 1.0,
@@ -706,23 +697,23 @@ fn status_bar(root: &mut egui::Ui, editor: &Editor) {
             ui.label(&editor.status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if editor.dirty {
-                    ui.label("• unsaved");
+                    ui.label(t!("status-unsaved"));
                 }
                 ui.label(
                     editor
                         .path
                         .as_ref()
                         .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "(new)".into()),
+                        .unwrap_or_else(|| t!("status-new-file")),
                 );
             });
         });
     });
 }
 
-/// A labelled row with a tooltip.
-fn row(ui: &mut egui::Ui, label: &str, hint: &str, widget: impl FnOnce(&mut egui::Ui)) {
-    ui.label(label).on_hover_text(hint);
+/// A labelled row: `key` names the label, `key`-hint the tooltip.
+pub fn row(ui: &mut egui::Ui, key: &str, widget: impl FnOnce(&mut egui::Ui)) {
+    ui.label(t!(key)).on_hover_text(t!(&format!("{key}-hint")));
     widget(ui);
     ui.end_row();
 }

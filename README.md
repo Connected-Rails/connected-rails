@@ -19,12 +19,14 @@ cargo run -p app -- --loco example:br101_afb --camera outside   # look at the ve
 
 cargo run -p app -- --pzb i60 --sifa zeit-weg   # older train protection build
 cargo run -p app -- --pzb none                  # LZB-only vehicle, without PZB
+cargo run -p app -- --doors tav                 # train with a door control
 ```
 
 `--pzb` picks the Indusi/PZB build: `i54`, `i60`, `i60m`, `i60r`, `pzb60` (ÖBB),
 `pzb90-1.5`, `pzb90-2.0` (default) or `none`. `--sifa` picks the Sifa build: `zeit-zeit`
-(default), `zeit-weg` or `rzm`. Switching the battery off and on again (`1`) restarts the
-function test of every system on board.
+(default), `zeit-weg` or `rzm`. `--doors` picks the door control: `tb0`, `tav`, `wtb`
+(UIC 556 train bus) or nothing at all. Switching the battery off and on again (`1`)
+restarts the function test of every system on board.
 
 `--screenshot` is available in both editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).
@@ -191,6 +193,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `L` | Release button of the loco brake |
 | `P` / `O` | Parking brake / pre-controlled (ep) brake on-off |
 | `G` | Sanding |
+| `J` / `K` / `I` | Door release left / right, close the doors |
 | `Space` | Sifa (driver's safety device) |
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
 | `N` / `M` / `B` | LZB takeover / end / function test |

@@ -1,6 +1,7 @@
 //! Vehicle and train consist model.
 
 use crate::brakes::{BrakeKind, BrakeSpec, BrakeState, SlipProtection};
+use crate::doors::{DoorControl, VehicleDoors};
 use crate::drive::TractionSpec;
 use crate::electric::TractionState;
 use crate::safety::SafetySystems;
@@ -203,6 +204,10 @@ pub struct VehicleSpec {
     /// Maximum tilt angle [°]: 0 for conventional vehicles, ~8 for German tilting units.
     #[serde(default)]
     pub tilt_angle_deg: f64,
+    /// The vehicle has passenger doors on both sides — only those follow the door control
+    /// of the train (plan ch. 9, [`crate::doors`]).
+    #[serde(default)]
+    pub passenger_doors: bool,
     /// Hunting factor −1 … 1: −1 = no hunting, 0 = standard (tuned for bogie vehicles),
     /// above 0 = more than standard (sensible for single-axle running gear).
     #[serde(default)]
@@ -243,6 +248,7 @@ impl Default for VehicleSpec {
             curve_resistance_factor: 1.0,
             max_payload: 0.0,
             tilt_angle_deg: 0.0,
+            passenger_doors: false,
             hunting: 0.0,
             script: None,
             model: None,
@@ -302,6 +308,9 @@ pub struct Vehicle {
     /// Train protection equipment of this vehicle.
     #[serde(default)]
     pub safety: SafetySystems,
+    /// Position of the passenger doors (only used with `spec.passenger_doors`).
+    #[serde(default)]
+    pub doors: VehicleDoors,
 }
 
 impl Vehicle {
@@ -319,6 +328,7 @@ impl Vehicle {
             tractive_effort: 0.0,
             brake_effort: 0.0,
             safety: SafetySystems::default(),
+            doors: VehicleDoors::default(),
         }
     }
 
@@ -365,6 +375,9 @@ pub struct Train {
     /// Train number for timetable/train radio.
     #[serde(default)]
     pub number: String,
+    /// Door control of the train (TB0/TAV/UIC-WTB).
+    #[serde(default)]
+    pub doors: DoorControl,
 }
 
 impl Train {
@@ -393,6 +406,7 @@ impl Train {
             cab: 0,
             rail: RailCondition::Dry,
             number: String::new(),
+            doors: DoorControl::default(),
         }
     }
 

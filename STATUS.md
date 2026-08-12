@@ -77,6 +77,12 @@ As of 2026-08-12 · `cargo test --workspace`: **223 tests green** · clippy and 
     Switching the battery on starts it.
   - **Sifa** in three builds: time-time, time-distance (30 s **or** 1250 m) and RZM
     (time-distance plus a minimum interval between operations).
+- **Door control (ch. 9.5a):** **TB0**, **TAV** and **UIC-WTB** per train. Release only at a
+  standstill and per side, traction interlock until every door is closed and locked, and an
+  unlocked door above 5 km/h applies the emergency brake. TB0 needs the driver's close
+  button, TAV closes by itself after the boarding time, UIC-WTB is TAV over the train bus:
+  after a consist change the bus is inaugurated first, and a command needs one bus cycle per
+  vehicle to reach the rear.
 - **Interlocking (ch. 10):** signal aspects, distant signalling, automatic block, routes,
   signal-dependent magnet activation.
 - **AI (ch. 11):** look-ahead across the track graph, braking curve with reaction and

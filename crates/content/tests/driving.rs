@@ -190,10 +190,12 @@ fn starting_on_the_gradient_and_adhesion_limit() {
         sim.trains[t].speed_kmh()
     );
 
-    // Adhesion: the loco never transmits more than µ·m·g.
+    // Adhesion: the loco never transmits more than µ·m·g — plus whatever its wheel slip
+    // protection is worth (creep control lives in the slip and gets more out of the rail).
     let loco = &sim.trains[t].vehicles[0];
     let mu = sim_core::physics::adhesion_coefficient(loco.v * 3.6, sim.trains[t].rail, false);
-    let limit = mu * loco.adhesive_mass() * sim_core::G;
+    let limit =
+        mu * loco.adhesive_mass() * sim_core::G * loco.spec.slip_protection.adhesion_bonus();
     assert!(
         loco.tractive_effort <= limit * 1.05,
         "transmitted tractive effort {} N above the adhesion limit {} N",

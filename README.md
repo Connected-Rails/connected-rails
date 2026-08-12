@@ -187,13 +187,16 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `R` / `F` / `T` | Reverser forward / reverse / neutral |
 | `A` / `D` | Driver's brake valve release / brake |
 | `Q` / `E` / `Z` | Lap / emergency brake / fill |
-| `C` / `V` | Direct brake apply / release |
+| `C` / `V` | Direct (additional) brake apply / release |
+| `L` | Release button of the loco brake |
+| `P` / `O` | Parking brake / pre-controlled (ep) brake on-off |
 | `G` | Sanding |
 | `Space` | Sifa (driver's safety device) |
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
 | `N` / `M` / `B` | LZB takeover / end / function test |
 | `H` | Horn |
 | `1`–`4` | Battery / pantograph / main switch / air compressor |
+| `5` | Start the diesel engine |
 | `F1`–`F3` | Camera: cab / external / lineside |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 
@@ -264,9 +267,33 @@ wheel zooms.
 | Axle base sum | sum over all bogies (two bogies of 2.5 m → 5.0 m), **not** the vehicle length — the larger the value, the higher the curve resistance |
 | Rolling resistance | bearing friction and rolling of the wheel; "Suggest" derives a standard value from the mass |
 | Air resistance | cw·A [m²]; `F = ½·ρ·cw·A·v²`. Without it the quadratic Davis term applies |
+| Curve resistance | factor on Röckl — 1 = as the axle base sum gives it; lower it for radial steering bogies |
 | Tilt angle | 0 for conventional vehicles, ~8° for German tilting units |
 | Hunting | −1 no hunting, 0 standard (tuned for bogie vehicles), up to 1 more — raise it slightly for single-axle running gear |
 | Max payload | e.g. about 5 t for a passenger coach, per the anscriptions for freight |
+
+**Brake** — the panel below the base data. Control valve (`K-GP`, `KE-GP`, `KE-GPR`, `KE-Tm`,
+`KE-L2a`, `KE-L2d`), brake position (G/P/R/R+Mg), friction pairing (cast iron block, disc,
+K block, LL block, magnetic rail, or an own characteristic as a table), braked weight and
+the force that follows from it, cylinder pressure and the cylinder/reservoir volume ratio.
+Below that the additional brakes — magnetic track brake, direct brake, parking brake with or
+without a spring accumulator, pre-controlled cylinder, air supplement brake, equalising
+device — and the air data: auxiliary reservoir, brake pipe, main reservoir, compressor
+delivery and leakage, plus the wheel slip protection (none, wheel slip brake, traction
+cutback, creep control).
+
+**Drive** — pick the model, then fill in the data sheet:
+
+| Model | What is asked for |
+|---|---|
+| Tractive effort curve | the simplified model: a table km/h → N, optionally a second one for the dynamic brake |
+| Tap changer (series-wound) | notches, time per notch, starting effort, power — and optionally the motor data (resistance, machine constant, saturation and maximum current, voltage, field weakening stages, gear ratio, wheel diameter), plus a rheostatic brake |
+| Converter (three-phase) | starting effort, power, pull-out speed (above it the effort falls with 1/v²), brake force and power, fade-out speed, regenerative yes/no |
+| Diesel | engine map (idle/rated/overspeed, full load torque over engine speed, speed- or fill-governed, inertia, rack travel time), hydraulic transmission (circuits as converter or coupling with ratio, stall torque ratio, coupling point, absorption and change-up point; filling steps, filling time, change hysteresis, final drive, number of transmissions), hydrodynamic brake |
+
+The detailed data is optional throughout: a `Diesel` without an engine map runs on the plain
+tractive effort hyperbola, and the motor or gearbox can be added later without changing the
+vehicle's type.
 
 **Models are glTF**, and the glTF's own features are used. Levels of detail and moving parts
 are found in the file; the binding is stored in the vehicle RON, so **nothing has to be

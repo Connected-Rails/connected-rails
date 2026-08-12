@@ -107,6 +107,16 @@ pub fn player_input(
         cab.direct_brake = (cab.direct_brake - dt).max(0.0);
     }
     cab.sanding = keys.pressed(KeyCode::KeyG);
+    // Release button of the loco brake (L), parking brake (P), pre-controlled brake (O).
+    cab.brake_release = keys.pressed(KeyCode::KeyL);
+    if keys.just_pressed(KeyCode::KeyP) {
+        cab.parking_brake = !cab.parking_brake;
+    }
+    if keys.just_pressed(KeyCode::KeyO) {
+        cab.ep_brake = !cab.ep_brake;
+    }
+    // Starter button of the diesel engine.
+    cab.engine_start = keys.pressed(KeyCode::Digit5);
 
     // Sifa and train protection.
     cab.sifa = keys.pressed(KeyCode::Space);
@@ -267,8 +277,13 @@ pub fn update_hud(
         sim.time
     ));
     lines.push(format!(
-        "HL {:4.2} bar   C {:4.2} bar   R {:4.2} bar   Zusatz {:4.2} bar",
-        loco.brake.pipe, loco.brake.cylinder, loco.brake.aux_reservoir, loco.brake.direct_cylinder
+        "HL {:4.2} bar   C {:4.2} bar   R {:4.2} bar   HB {:5.2} bar   Zusatz {:4.2} bar   Luft {:6.0} Nl",
+        loco.brake.pipe,
+        loco.brake.cylinder,
+        loco.brake.aux_reservoir,
+        loco.brake.main_reservoir,
+        loco.brake.direct_cylinder,
+        loco.brake.air_consumed
     ));
     lines.push(format!(
         "Fahrschalter {:+.2}   Zugkraft {:6.0} kN   Bremskraft {:6.0} kN   Bremse {:?}",
@@ -278,12 +293,36 @@ pub fn update_hud(
         cab.brake_valve
     ));
     lines.push(format!(
-        "Batterie {}   Bügel {:.0}%   Hauptschalter {}   Fahrdraht {:5.0} V",
+        "Batterie {}   Bügel {:.0}%   Hauptschalter {}   Fahrdraht {:5.0} V   Federspeicher {}",
         onoff(loco.traction.battery),
         loco.traction.pantograph * 100.0,
         onoff(loco.traction.main_switch),
-        loco.traction.line_voltage
+        loco.traction.line_voltage,
+        onoff(loco.brake.parking_applied)
     ));
+    // Whatever the drive of this vehicle has to say about itself.
+    match &loco.spec.traction {
+        Some(sim_core::drive::TractionSpec::TapChanger { steps, .. }) => lines.push(format!(
+            "Fahrstufe {:4.1}/{steps}   Motorstrom {:5.0} A   Feld {:3.0} %   E-Bremse {:5.0} kN",
+            loco.traction.step,
+            loco.traction.motor_current,
+            loco.traction.field * 100.0,
+            loco.traction.dynamic_force / 1000.0
+        )),
+        Some(sim_core::drive::TractionSpec::Diesel { .. }) => lines.push(format!(
+            "Motor {:5.0} 1/min   Füllung {:3.0} %   Wandler {}   ν {:4.2}   Retarder {:3.0} %",
+            loco.traction.engine_rpm,
+            loco.traction.engine_fill * 100.0,
+            loco.traction.circuit + 1,
+            loco.traction.circuit_nu,
+            loco.traction.retarder_fill * 100.0
+        )),
+        Some(_) => lines.push(format!(
+            "E-Bremse {:5.0} kN",
+            loco.traction.dynamic_force / 1000.0
+        )),
+        None => {}
+    }
 
     // Train protection.
     let lamps: Vec<String> = loco

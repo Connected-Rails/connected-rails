@@ -60,16 +60,17 @@ without a matching rule shows stop.
 | `mass_empty` | tare mass [kg] |
 | `rotating_mass_factor` | allowance for rotating masses (0.05 coach … 0.25 powered vehicle) |
 | `davis` | running resistance `R = a + b·v + c·v²` [N], `v` in m/s |
-| `brake` | brake type, brake position, braked weight [t], forces, pressures |
-| `traction` | `TapChanger` / `Converter` / `Diesel` with force, power, v_max — or `None` |
+| `brake` | control valve, friction pairing, brake position, braked weight [t], forces, pressures, reservoir volumes, additional brakes |
+| `traction` | `Curve` / `TapChanger` / `Converter` / `Diesel` — or `None`; see below |
 | `coupler` | slack, stiffnesses, damping, breaking force |
 | `adhesive_mass_fraction` | share of the mass on driven axles (loco 1.0, coach 0.0) |
-| `slip_control` | wheel slip / wheel slide protection fitted |
+| `slip_protection` | `None` / `SlipBrake` / `TractionCutback` / `CreepControl` |
 | `gauge` | track gauge [m], standard gauge 1.435 |
 | `v_max` | highest permitted running speed [km/h] — the running gear limit |
 | `axles` | number of axles; information only |
 | `axle_base_sum` | total axle base [m], sum over all bogies — basis of the curve resistance |
 | `cw_a` | air resistance cw·A [m²]; replaces the quadratic Davis term |
+| `curve_resistance_factor` | factor on the Röckl curve resistance, 1 = standard |
 | `max_payload` | maximum payload [kg] |
 | `tilt_angle_deg` | maximum tilt angle [°], 0 without tilting technology |
 | `hunting` | hunting −1 … 1, 0 = standard |
@@ -78,6 +79,91 @@ without a matching rule shows stop.
 
 Start it with `cargo run -p app -- --loco example:br101_afb`, edit it with
 `cargo run -p vehicle-editor -- mods/example/vehicles/br101_afb.ron`.
+
+### Brake
+
+Every vehicle brakes for itself — the brake pipe runs as a chain of nodes along the train, so
+the rear of a long freight train applies seconds after the front.
+
+| Field | Meaning |
+|---|---|
+| `valve` | control valve: `KGp` (single-release), `KeGp`, `KeGpr` (with R position), `KeTm`, `KeL2a` (second cylinder pressure stage by speed), `KeL2d` (by a full application) |
+| `valve_params` | overrides the type's preset field by field: `graduated_release`, `rapid_position`, `high_stage`, `high_stage_trigger`, `loco`, `response_drop`, `full_service_drop` |
+| `kind` | friction pairing: `Block` (cast iron), `Disc`, `CompositeK`, `CompositeLl`, `Magnetic`, or `Custom([(km/h, µ), …])` for your own measurements |
+| `position` | `G` / `P` / `R` / `RMg`; an `R` on a valve without an R position falls back to `P` |
+| `brake_weight`, `max_force`, `max_cylinder`, `cylinder_to_reservoir` | braked weight [t], force at full pressure and standstill [N], cylinder pressure [bar], volume ratio (exhaustibility) |
+| `has_mg`, `mg_force` | magnetic track brake and its force [N] |
+| `has_direct`, `direct_max_cylinder` | direct (additional) brake of a traction unit |
+| `parking_force`, `spring_parking` | parking brake [N]; with `spring_parking` it is held off by air and applies by itself when the main reservoir runs empty |
+| `pilot_controlled` | pre-controlled cylinder: fed from the main reservoir through a relay valve, fills faster, cannot exhaust — and it is what the electrically transmitted (ep) brake acts on |
+| `supplement_brake` | air supplement brake: fills up whatever the dynamic brake falls short of |
+| `angleicher` | equalising device: makes up brake pipe leakage in lap position. Deliberately **without a memory** — leaving the lap position throws the set point away |
+| `aux_volume`, `pipe_volume`, `main_volume` | reservoir volumes [l]; `main_volume` 0 = no main reservoir |
+| `compressor_delivery`, `leakage` | compressor delivery and leakage [l/min of free air] |
+
+### Traction
+
+The detailed data is optional everywhere: without it the variant runs on the tractive effort
+hyperbola from `max_force`/`max_power`.
+
+```ron
+// The simplified model: tractive effort straight off the diagram.
+traction: Some(Curve(
+    force: [(0.0, 200000.0), (50.0, 120000.0), (150.0, 40000.0)],
+    v_max: 160.0,
+    brake: [],           // dynamic brake over speed, empty = none
+    ramp_time: 2.0,
+)),
+
+// Series-wound drive behind a tap changer: the characteristic follows from the
+// machine equations, not from a table.
+traction: Some(TapChanger(
+    steps: 28, max_force: 275000.0, max_power: 3620000.0, v_max: 150.0, step_time: 0.8,
+    motor: Some((
+        count: 4, resistance: 0.05, flux_constant: 0.0289,
+        saturation_current: 600.0, max_current: 1600.0, max_voltage: 1000.0,
+        field_steps: [1.0, 0.85, 0.7],
+        gear_ratio: 2.17, wheel_diameter: 1.25, efficiency: 0.95,
+    )),
+    dynamic_brake: None,          // rheostatic brake, if the loco has one
+)),
+
+// Three-phase drive. Above `v_pullout` the effort falls with 1/v² instead of 1/v.
+traction: Some(Converter(
+    max_force: 300000.0, max_power: 6400000.0, v_max: 220.0,
+    brake_force: 150000.0, brake_power: 2600000.0, ramp_time: 2.5,
+    v_pullout: 150.0, regenerative: true, brake_fade_kmh: 10.0,
+)),
+
+// Diesel-hydraulic: engine map plus converters that are engaged by filling them.
+traction: Some(Diesel(
+    max_force: 235000.0, max_power: 1840000.0, v_max: 140.0,
+    ramp_time: 4.0, start_time: 8.0,
+    engine: Some((
+        idle_rpm: 600.0, rated_rpm: 1500.0, max_rpm: 1650.0,
+        torque_curve: [(600.0, 9000.0), (1000.0, 13500.0), (1500.0, 13115.0)],
+        governor: Speed(steps: 0),   // or Fill — rack instead of engine speed
+        inertia: 60.0, response_time: 1.0,
+    )),
+    transmission: Some((
+        circuits: [
+            (kind: Converter, ratio: 3.93, stall_ratio: 2.4, coupling_nu: 0.85,
+             absorption: 0.53, shift_up_kmh: 72.0),
+            (kind: Converter, ratio: 1.50, stall_ratio: 1.9, coupling_nu: 0.85,
+             absorption: 0.53, shift_up_kmh: 0.0),
+        ],
+        fill_steps: 0,        // 0 continuous, 1 fill/empty only, n partial filling stages
+        fill_time: 1.2, hysteresis_kmh: 10.0,
+        final_ratio: 1.0, wheel_diameter: 1.0, count: 1, efficiency: 0.95,
+    )),
+    hydrodynamic_brake: None,
+)),
+```
+
+`absorption` λ is the pump wheel's torque coefficient: `M_pump = λ·ω²·fill`. Set it so the
+circuit absorbs the engine's rated torque at rated speed — `λ = M_rated / ω_rated²`.
+`shift_up_kmh` and `hysteresis_kmh` are the change points of the original; the last circuit
+ignores its change-up point.
 
 ### Model (glTF)
 

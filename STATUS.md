@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-12 · `cargo test --workspace`: **189 tests green** · clippy and fmt clean.
+As of 2026-08-12 · `cargo test --workspace`: **223 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -10,7 +10,7 @@ As of 2026-08-12 · `cargo test --workspace`: **189 tests green** · clippy and 
 |---|---|---|
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
-| **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done except audio** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; **sound (ch. 13) missing** |
+| **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done except audio** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; **sound (ch. 13) missing** |
 | **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD and moving parts |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
@@ -30,13 +30,33 @@ As of 2026-08-12 · `cargo test --workspace`: **189 tests green** · clippy and 
   keep running in areas that carry no graphics.
 - **Track model (ch. 5):** one segment type (`k0`, `dk`) for straight, curve and clothoid;
   switches with throw time, locking and trailing-move detection; trackside devices with RON payload.
-- **Driving dynamics (ch. 6):** Davis, curve and gradient resistance, couplers with slack and
-  breaking force, Curtius/Kniffler adhesion with wheel slip/slide, sanding, wheel slide protection.
-- **Brake (ch. 7):** brake pipe as a node chain, KE control valve (three-pressure system,
-  exhaustibility), brake positions G/P/R(+Mg), direct brake, blending with the electric brake,
-  braked weight percentage.
-- **Electrics (ch. 8):** start-up chain, pantograph travel time, main switch drop-out in
-  neutral sections, three traction types (tap changer, converter, diesel).
+- **Driving dynamics (ch. 6):** Davis, air resistance from cw·A, curve resistance after Röckl
+  with its own factor, gradient resistance, couplers with slack and breaking force,
+  Curtius/Kniffler adhesion with wheel slip/slide, sanding. Wheel slip protection in three
+  kinds: wheel slip brake, traction cutback and electronic creep control — the last one holds
+  the creep at the maximum of the adhesion curve and therefore gets more out of the rail than
+  the other two.
+- **Brake (ch. 7):** brake pipe as a node chain, one control valve **per vehicle** — the whole
+  train is simulated wagon by wagon, not as one braking force. Control valve types K-GP, KE-GP,
+  KE-GPR, KE-Tm, KE-L2a and KE-L2d as presets over their observable behaviour: graduated or
+  single release, R position, second cylinder pressure stage by speed or by a full application,
+  release button of a loco valve. Friction pairings for cast iron, disc, K and LL blocks and
+  the magnetic track brake, plus an own characteristic as a table. Equalising device
+  (deliberately without a memory), pre-controlled cylinder through a relay valve, electrically
+  transmitted (ep) brake, air supplement brake behind the dynamic brake, direct brake on every
+  powered vehicle, spring-applied parking brake, magnetic track brake. Air is accounted for:
+  reservoir volumes, main reservoir with a pressure-switched compressor, leakage and a running
+  consumption figure in normal litres.
+- **Electrics and drive (ch. 8):** start-up chain, pantograph travel time, main switch drop-out
+  in neutral sections, diesel engine cranking. Four drive models, each optionally with the
+  detailed data of the data sheet: the simplified tractive effort curve; series-wound motors
+  behind a tap changer, computed from the machine equations with saturation, current limit and
+  field weakening; three-phase drive with a pull-out range and a regenerative brake that dies
+  in a neutral section; diesel-hydraulic with an engine map, a speed or fill governor and a
+  transmission of torque converters and fluid couplings that are engaged by filling them —
+  change points and hysteresis to the original, filling from on/off through partial stages to
+  quasi-continuous. Dynamic brakes come from the drive model: rheostatic, regenerative or
+  hydrodynamic (retarder).
 - **Train protection (ch. 9):** trait abstraction + country package DE with all intermittent
   builds, LZB and three Sifa builds:
   - **Indusi/PZB** as one state machine plus a parameter set per build — **I 54**, **I 60**,
@@ -93,7 +113,11 @@ As of 2026-08-12 · `cargo test --workspace`: **189 tests green** · clippy and 
   native file dialogs): `route-editor` shows a line with an aerial imagery overlay and can
   load another one at runtime; `vehicle-editor` edits the vehicle base data (LÜP, gauge,
   v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
-  hunting, payload), imports glTF models, reads their levels of detail from the node names
+  hunting, payload, curve resistance factor), the complete brake equipment (control valve,
+  friction pairing, brake position, forces and pressures, additional brakes, reservoir volumes,
+  compressor, leakage, wheel slip protection) and the drive with all its detailed data (motor,
+  engine map, converter circuits with change points and hysteresis, retarder), imports glTF
+  models, reads their levels of detail from the node names
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
   time against a reference body of the length over buffers.
@@ -118,6 +142,15 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 
 - **Brake pipe model** is a node/diffusion model, not a pressure wave.
 - **Slip per vehicle**, not per wheelset.
+- **Friction coefficients as closed curves** instead of Karwatzki's full pressure-dependent
+  formula — the block force per block is in no vehicle data sheet either. Where measurements
+  exist, `BrakeKind::Custom` takes them as a table.
+- **Control valve types are presets** over the observable behaviour, not a rebuild of the
+  valve's internal chambers; every one of the parameters can be overridden per vehicle.
+- **Load braking** (automatic load-proportional cylinder pressure) is not modelled.
+- **Torque converters** with a linear µ(ν) up to the coupling point and a constant absorption
+  coefficient, not a measured λ/µ characteristic field — two numbers per circuit instead of two
+  curves, and the data sheets state the two numbers.
 - **Flank protection** is only switch locking.
 - **LZB braking curve** with a fixed deceleration instead of train-specific brake assessment
   (0.6 m/s², 0.85 m/s² under CIR-ELKE).

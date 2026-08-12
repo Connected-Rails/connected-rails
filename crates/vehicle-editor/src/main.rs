@@ -12,6 +12,7 @@
 //! (`<mod>/assets/<file>.gltf`) — exactly as the simulator loads them later.
 
 mod model;
+mod powertrain;
 mod ui;
 
 use bevy::asset::io::AssetSourceBuilder;

@@ -5,6 +5,7 @@
 
 pub mod brakes;
 pub mod cab;
+pub mod drive;
 pub mod electric;
 pub mod interlock;
 pub mod physics;
@@ -173,12 +174,15 @@ impl Sim {
                     cab.throttle.min(0.0)
                 };
                 veh.sanding = cab.sanding;
+                if cab.engine_start {
+                    electric::start_engine(&mut veh.traction, &spec);
+                }
                 electric::step(&mut veh.traction, &spec, veh.v, dt);
             }
         }
 
-        // 2. Brake.
-        brakes::step(&mut self.trains[index], valve, cab.direct_brake, dt);
+        // 2. Brake — one control valve per vehicle, plus main reservoir and compressor.
+        brakes::step(&mut self.trains[index], &cab, valve, dt);
 
         // 3./4. Longitudinal dynamics and position on the track graph.
         let report = physics::step(&mut self.trains[index], &self.net, dt);

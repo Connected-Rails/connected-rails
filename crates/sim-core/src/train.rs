@@ -1,10 +1,10 @@
 //! Vehicle and train consist model.
 
 use crate::brakes::{BrakeKind, BrakeSpec, BrakeState, SlipProtection};
-use crate::doors::{DoorControl, VehicleDoors};
+use crate::doors::{DoorControl, DoorSystem, VehicleDoors};
 use crate::drive::TractionSpec;
 use crate::electric::TractionState;
-use crate::safety::SafetySystems;
+use crate::safety::{SafetyEquipment, SafetySystems};
 use serde::{Deserialize, Serialize};
 use track_model::TrackPosition;
 
@@ -208,6 +208,14 @@ pub struct VehicleSpec {
     /// of the train (plan ch. 9, [`crate::doors`]).
     #[serde(default)]
     pub passenger_doors: bool,
+    /// Train protection fitted to the vehicle (plan 9.1) — vehicle equipment, not a
+    /// run-time option.
+    #[serde(default)]
+    pub safety: SafetyEquipment,
+    /// Door control the vehicle brings along; the leading vehicle determines the one the
+    /// train runs with ([`crate::doors`]).
+    #[serde(default)]
+    pub doors: DoorSystem,
     /// Hunting factor −1 … 1: −1 = no hunting, 0 = standard (tuned for bogie vehicles),
     /// above 0 = more than standard (sensible for single-axle running gear).
     #[serde(default)]
@@ -249,6 +257,8 @@ impl Default for VehicleSpec {
             max_payload: 0.0,
             tilt_angle_deg: 0.0,
             passenger_doors: false,
+            safety: SafetyEquipment::None,
+            doors: DoorSystem::None,
             hunting: 0.0,
             script: None,
             model: None,
@@ -317,6 +327,7 @@ impl Vehicle {
     pub fn new(spec: VehicleSpec, pos: TrackPosition) -> Self {
         Self {
             brake: BrakeState::new(&spec.brake),
+            safety: spec.safety.build(),
             traction: TractionState::default(),
             spec,
             load: 0.0,
@@ -327,7 +338,6 @@ impl Vehicle {
             sanding: false,
             tractive_effort: 0.0,
             brake_effort: 0.0,
-            safety: SafetySystems::default(),
             doors: VehicleDoors::default(),
         }
     }
@@ -400,13 +410,15 @@ impl Train {
             x -= half;
         }
         let couplers = vec![CouplerState::default(); vehicles.len().saturating_sub(1)];
+        // The driver's desk of the leading vehicle carries the door control.
+        let doors = DoorControl::new(vehicles.first().map(|v| v.spec.doors).unwrap_or_default());
         Self {
             vehicles,
             couplers,
             cab: 0,
             rail: RailCondition::Dry,
             number: String::new(),
-            doors: DoorControl::default(),
+            doors,
         }
     }
 

@@ -73,9 +73,18 @@ without a matching rule shows stop.
 | `curve_resistance_factor` | factor on the Röckl curve resistance, 1 = standard |
 | `max_payload` | maximum payload [kg] |
 | `tilt_angle_deg` | maximum tilt angle [°], 0 without tilting technology |
+| `passenger_doors` | vehicle has passenger doors that follow the door control |
+| `safety` | train protection fitted: `None` or `De(pzb: Some(Pzb90V20), lzb: true, sifa: Some(TimeTime), train_type: O)` |
+| `doors` | door control the vehicle brings: `None` / `Tb0` / `Tav` / `UicWtb` |
 | `hunting` | hunting −1 … 1, 0 = standard |
 | `script` | optional behaviour hook `"<mod>:<name>"` |
 | `model` | glTF file, levels of detail, moving parts — see below |
+
+`safety` and `doors` are the **equipment** of the vehicle, so a train carries what its
+vehicles carry — the leading vehicle determines the door control. Anything left out means
+"not fitted": a coach without `safety` has no train protection, a loco without `doors` gives
+the driver no door control. What the equipment achieves also depends on the line: the LZB
+needs a conductor cable, the PZB needs track magnets.
 
 Start it with `cargo run -p app -- --loco example:br101_afb`, edit it with
 `cargo run -p vehicle-editor -- mods/example/vehicles/br101_afb.ron`.

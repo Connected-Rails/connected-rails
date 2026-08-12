@@ -1,21 +1,19 @@
 //! Acceptance: playable scenario with scoring (plan ch. 11.4, M7 criterion).
 
 use ai_driver::AiDriver;
-use content::vehicles::{br101, de_pzb_lzb, passenger_coach, vehicle};
+use content::vehicles::{br101, passenger_coach};
 use content::{musterbahn, re_4711, to_musterstadt};
 use sim_core::Sim;
-use sim_core::safety::SafetySystems;
-use sim_core::safety::de::TrainType;
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
-use sim_core::train::{RailCondition, Train};
+use sim_core::train::{RailCondition, Train, Vehicle};
 use track_model::{EdgeId, TrackPosition};
 
 fn scenario_sim(start: TrackPosition) -> (Sim, usize) {
     let line = musterbahn().compile().unwrap();
     let mut sim = Sim::new(line.net, line.interlock, 99);
-    let mut vehicles = vec![vehicle(br101(), start, de_pzb_lzb(TrainType::O))];
+    let mut vehicles = vec![Vehicle::new(br101(), start)];
     for _ in 0..4 {
-        vehicles.push(vehicle(passenger_coach(), start, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), start));
     }
     let train = Train::assemble(vehicles, start, &sim.net);
     let t = sim.add_train(train);

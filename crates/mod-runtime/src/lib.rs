@@ -249,6 +249,22 @@ mod tests {
         // The physical data stay declarative — no script involved.
         assert!(loco.mass_empty > 80_000.0);
         assert!(loco.traction.is_some());
+        // Train protection and door control are equipment of the vehicle, from the RON.
+        assert!(
+            matches!(
+                loco.safety,
+                sim_core::safety::SafetyEquipment::De {
+                    pzb: Some(_),
+                    lzb: true,
+                    sifa: Some(_),
+                    ..
+                }
+            ),
+            "{:?}",
+            loco.safety
+        );
+        assert_eq!(loco.doors, sim_core::doors::DoorSystem::Tb0);
+        assert!(!loco.safety.build().indicators().is_empty());
     }
 
     /// The whole chain: line from a mod → compile → signal type → aspect from the table.

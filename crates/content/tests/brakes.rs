@@ -5,13 +5,13 @@
 
 use content::musterbahn;
 use content::vehicles::{
-    br101, br110, br218, freight_wagon, freight_wagon_k_valve, passenger_coach, railcar, vehicle,
+    br101, br110, br218, freight_wagon, freight_wagon_k_valve, passenger_coach, railcar,
 };
 use sim_core::Sim;
 use sim_core::brakes::{
     COMPRESSOR_CUT_IN, ControlValve, DriverBrakeValve, SPRING_RELEASE_PRESSURE,
 };
-use sim_core::safety::SafetySystems;
+use sim_core::safety::SafetyEquipment;
 use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
 
@@ -23,9 +23,18 @@ fn new_sim() -> Sim {
 /// Assembles a train from the given specs at the start of the line and powers it up.
 fn train(sim: &mut Sim, specs: Vec<VehicleSpec>) -> usize {
     let head = TrackPosition::new(EdgeId(0), 100.0, 1);
+    // Without train protection — these tests are about the brake, not about the PZB.
     let vehicles: Vec<Vehicle> = specs
         .into_iter()
-        .map(|spec| vehicle(spec, head, SafetySystems::None))
+        .map(|spec| {
+            Vehicle::new(
+                VehicleSpec {
+                    safety: SafetyEquipment::None,
+                    ..spec
+                },
+                head,
+            )
+        })
         .collect();
     let train = Train::assemble(vehicles, head, &sim.net);
     let index = sim.add_train(train);

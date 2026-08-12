@@ -12,6 +12,10 @@
 //! * **skirts** at the tile borders → no cracks between different levels,
 //! * **cutting/embankment**: close to the track the terrain is pulled up to the rail
 //!   height, otherwise the alignment would sit inside the hill.
+//!
+//! [`build`] creates the whole corridor at once (tests, tools). For a line of any real
+//! length the app uses [`TerrainBuilder`] instead and builds single tiles by key while
+//! driving (plan 4.3).
 
 use crate::import::dgm::TerrainSource;
 use glam::DVec2;
@@ -195,6 +199,140 @@ fn key(p: DVec2, cell: f64) -> (i64, i64) {
     ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64)
 }
 
+/// Position of a terrain tile in the UTM tile grid.
+pub type TileKey = (i64, i64);
+
+/// South-west corner of a tile [m UTM].
+fn tile_min(k: TileKey, tile_size: f64) -> DVec2 {
+    DVec2::new(k.0 as f64 * tile_size, k.1 as f64 * tile_size)
+}
+
+/// Distance from a point to the area of a tile (0 inside).
+fn distance_to_rect(p: DVec2, min: DVec2, size: f64) -> f64 {
+    let max = min + DVec2::splat(size);
+    let clamped = DVec2::new(p.x.clamp(min.x, max.x), p.y.clamp(min.y, max.y));
+    (p - clamped).length()
+}
+
+/// UTM position of a world point in the zone of the elevation data.
+pub fn to_utm(pos: EcefPos, options: &TerrainOptions) -> DVec2 {
+    let (lat, lon, _) = geo::from_ecef(pos);
+    let (e, n) = geo::to_utm(lat, lon, options.zone);
+    DVec2::new(e, n)
+}
+
+/// Tile containing the UTM point `p`.
+pub fn tile_at(p: DVec2, options: &TerrainOptions) -> TileKey {
+    key(p, options.tile_size)
+}
+
+/// All tile keys whose area lies within `radius` of the UTM point `p`.
+///
+/// Purely geometric — whether a tile carries terrain at all is only decided by
+/// [`TerrainBuilder::build_key`], which needs the centreline for that.
+pub fn keys_near(p: DVec2, radius: f64, options: &TerrainOptions) -> Vec<TileKey> {
+    let size = options.tile_size;
+    let (kx, ky) = key(p, size);
+    let reach = (radius / size).ceil() as i64;
+    let mut keys = Vec::new();
+    for dy in -reach..=reach {
+        for dx in -reach..=reach {
+            let k = (kx + dx, ky + dy);
+            if distance_to_rect(p, tile_min(k, size), size) <= radius {
+                keys.push(k);
+            }
+        }
+    }
+    keys
+}
+
+/// Distance from a tile to a UTM point [m] — for the unload check.
+pub fn tile_distance(k: TileKey, p: DVec2, options: &TerrainOptions) -> f64 {
+    distance_to_rect(p, tile_min(k, options.tile_size), options.tile_size)
+}
+
+/// Terrain generator that keeps line and elevation data resident and hands out single
+/// tiles (plan 4.3: load radius around camera and trains, everything else discarded).
+pub struct TerrainBuilder {
+    centerline: Centerline,
+    source: Option<TerrainSource>,
+    options: TerrainOptions,
+}
+
+impl TerrainBuilder {
+    pub fn new(net: &TrackNetwork, source: Option<TerrainSource>, options: TerrainOptions) -> Self {
+        Self {
+            centerline: Centerline::build(net, &options),
+            source,
+            options,
+        }
+    }
+
+    pub fn options(&self) -> &TerrainOptions {
+        &self.options
+    }
+
+    /// Builds a single tile; `None` if it lies outside the line corridor.
+    pub fn build_key(&mut self, k: TileKey, stats: &mut TerrainStats) -> Option<TerrainTile> {
+        build_key(
+            k,
+            &self.centerline,
+            self.source.as_mut(),
+            &self.options,
+            stats,
+        )
+    }
+
+    /// Every tile of the corridor, in a stable order.
+    pub fn corridor_keys(&self) -> Vec<TileKey> {
+        corridor_keys(&self.centerline, &self.options)
+    }
+
+    /// How often a DGM tile was read from disk.
+    pub fn load_count(&self) -> usize {
+        self.source.as_ref().map_or(0, |s| s.load_count())
+    }
+}
+
+/// Every tile key of the corridor, sorted — the same line state always yields the same
+/// tiles in the same sequence.
+fn corridor_keys(centerline: &Centerline, options: &TerrainOptions) -> Vec<TileKey> {
+    let mut set: std::collections::HashSet<TileKey> = std::collections::HashSet::new();
+    let reach = (options.radius / options.tile_size).ceil() as i64;
+    for p in &centerline.points {
+        let (kx, ky) = key(*p, options.tile_size);
+        for dx in -reach..=reach {
+            for dy in -reach..=reach {
+                set.insert((kx + dx, ky + dy));
+            }
+        }
+    }
+    let mut keys: Vec<TileKey> = set.into_iter().collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// Builds the tile `k`; `None` if it does not touch the corridor.
+fn build_key(
+    k: TileKey,
+    centerline: &Centerline,
+    source: Option<&mut TerrainSource>,
+    options: &TerrainOptions,
+    stats: &mut TerrainStats,
+) -> Option<TerrainTile> {
+    let min = tile_min(k, options.tile_size);
+    let distance = centerline.distance_to_rect(min, options.tile_size);
+    if distance > options.radius {
+        return None;
+    }
+    let (step, lod) = level_of_detail(distance, options);
+    let tile = build_tile(min, step, lod, centerline, source, options, stats);
+    stats.tiles += 1;
+    stats.vertices += tile.positions.len();
+    stats.triangles += tile.triangles();
+    Some(tile)
+}
+
 /// Builds the terrain around all tracks of the network.
 ///
 /// `source` may be `None` — then flat terrain at `fallback_height` is created, which
@@ -209,49 +347,15 @@ pub fn build(
         return (Vec::new(), TerrainStats::default());
     }
 
-    // Lay a tile grid over the corridor. Sorted order, so that the same line state
-    // always yields the same tiles in the same sequence.
-    let mut key_set: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
-    let reach = (options.radius / options.tile_size).ceil() as i64;
-    for p in &centerline.points {
-        let (kx, ky) = key(*p, options.tile_size);
-        for dx in -reach..=reach {
-            for dy in -reach..=reach {
-                key_set.insert((kx + dx, ky + dy));
-            }
-        }
-    }
-    let mut keys: Vec<(i64, i64)> = key_set.into_iter().collect();
-    keys.sort_unstable();
-
     let mut source = source;
     let mut tiles = Vec::new();
     let mut stats = TerrainStats::default();
 
-    for k in keys {
-        let min = DVec2::new(
-            k.0 as f64 * options.tile_size,
-            k.1 as f64 * options.tile_size,
-        );
-        let distance = centerline.distance_to_rect(min, options.tile_size);
+    for k in corridor_keys(&centerline, options) {
         // Tiles that do not touch the corridor are dropped entirely.
-        if distance > options.radius {
-            continue;
+        if let Some(tile) = build_key(k, &centerline, source.as_deref_mut(), options, &mut stats) {
+            tiles.push(tile);
         }
-        let (step, lod) = level_of_detail(distance, options);
-        let tile = build_tile(
-            min,
-            step,
-            lod,
-            &centerline,
-            source.as_deref_mut(),
-            options,
-            &mut stats,
-        );
-        stats.tiles += 1;
-        stats.vertices += tile.positions.len();
-        stats.triangles += tile.triangles();
-        tiles.push(tile);
     }
 
     if let Some(s) = source {
@@ -573,6 +677,55 @@ mod tests {
         }
         assert!(checked_rail > 10, "too few points checked at the track");
         assert!(checked_far > 10, "too few points checked off the track");
+    }
+
+    #[test]
+    fn streamed_tiles_match_the_batch_build() {
+        let net = test_net();
+        let options = options();
+        let (batch, batch_stats) = build(&net, Some(&mut test_source()), &options);
+
+        let mut builder = TerrainBuilder::new(&net, Some(test_source()), options);
+        let mut stats = TerrainStats::default();
+        let keys = builder.corridor_keys();
+        let streamed: Vec<TerrainTile> = keys
+            .into_iter()
+            .filter_map(|k| builder.build_key(k, &mut stats))
+            .collect();
+
+        assert_eq!(streamed.len(), batch.len());
+        assert_eq!(stats.triangles, batch_stats.triangles);
+        for (a, b) in streamed.iter().zip(&batch) {
+            assert_eq!(a.lod, b.lod);
+            assert_eq!(a.positions, b.positions);
+        }
+    }
+
+    #[test]
+    fn the_load_radius_only_covers_nearby_tiles() {
+        let net = test_net();
+        let options = options();
+        let mut builder = TerrainBuilder::new(&net, Some(test_source()), options);
+        let edge = &net.edges()[0];
+        let start = to_utm(edge.eval(0.0).pos, &options);
+        let end = to_utm(edge.eval(edge.length()).pos, &options);
+
+        let radius = 300.0;
+        let near = keys_near(start, radius, &options);
+        for k in &near {
+            assert!(tile_distance(*k, start, &options) <= radius);
+        }
+        // The tile the train stands on is loaded, the far end of the 1 km line is not.
+        assert!(near.contains(&tile_at(start, &options)));
+        assert!(!near.contains(&tile_at(end, &options)));
+
+        let mut stats = TerrainStats::default();
+        let built = near
+            .iter()
+            .filter_map(|k| builder.build_key(*k, &mut stats))
+            .count();
+        assert!(built > 0 && built <= near.len());
+        assert!(built < builder.corridor_keys().len(), "{built} tiles");
     }
 
     #[test]

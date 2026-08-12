@@ -180,51 +180,54 @@ fn to_render(p: DVec3) -> [f32; 3] {
     [p.x as f32, p.z as f32, -p.y as f32]
 }
 
-/// Spawns the terrain tiles from [`content::terrain`].
-pub fn spawn_terrain(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
+/// One material per LOD level — that way it is visible in debug where the resolution
+/// changes, and the levels can be coloured separately.
+pub fn terrain_materials(
     materials: &mut Assets<StandardMaterial>,
-    tiles: &[content::TerrainTile],
-    origin: &RenderOrigin,
-) {
-    // One material per LOD level — that way it is visible in debug where the resolution
-    // changes, and the levels can be coloured separately.
-    let colors = [
+) -> Vec<Handle<StandardMaterial>> {
+    [
         Color::srgb(0.36, 0.45, 0.26),
         Color::srgb(0.37, 0.46, 0.27),
         Color::srgb(0.38, 0.47, 0.28),
         Color::srgb(0.39, 0.48, 0.29),
-    ];
-    let materials: Vec<Handle<StandardMaterial>> = colors
-        .iter()
-        .map(|c| {
-            materials.add(StandardMaterial {
-                base_color: *c,
-                perceptual_roughness: 0.95,
-                ..default()
-            })
+    ]
+    .into_iter()
+    .map(|base_color| {
+        materials.add(StandardMaterial {
+            base_color,
+            perceptual_roughness: 0.95,
+            ..default()
         })
+    })
+    .collect()
+}
+
+/// Spawns a single terrain tile from [`content::terrain`] (streaming, plan 4.3).
+pub fn spawn_terrain_tile(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &[Handle<StandardMaterial>],
+    tile: &content::TerrainTile,
+    origin: &RenderOrigin,
+) -> Entity {
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    let uvs: Vec<[f32; 2]> = tile
+        .positions
+        .iter()
+        .map(|p| [p[0] / 32.0, p[2] / 32.0])
         .collect();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, tile.positions.clone());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(tile.indices.clone()));
+    mesh.compute_normals();
 
-    for tile in tiles {
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        );
-        let uvs: Vec<[f32; 2]> = tile
-            .positions
-            .iter()
-            .map(|p| [p[0] / 32.0, p[2] / 32.0])
-            .collect();
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, tile.positions.clone());
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_indices(Indices::U32(tile.indices.clone()));
-        mesh.compute_normals();
-
-        let frame = EnuFrame::at(tile.anchor);
-        let (translation, rotation) = origin.frame_transform(&frame);
-        commands.spawn((
+    let frame = EnuFrame::at(tile.anchor);
+    let (translation, rotation) = origin.frame_transform(&frame);
+    commands
+        .spawn((
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(materials[(tile.lod as usize).min(materials.len() - 1)].clone()),
             Transform::from_translation(translation).with_rotation(rotation),
@@ -235,8 +238,8 @@ pub fn spawn_terrain(
                 radius: tile.radius,
                 lod: tile.lod,
             },
-        ));
-    }
+        ))
+        .id()
 }
 
 /// Sets the transforms of all world-anchored objects anew — after an origin rebase.

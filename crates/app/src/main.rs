@@ -3,21 +3,25 @@
 //! The app ticks `sim-core` with a fixed time step and mirrors the state into ECS components.
 //! Simulation logic does **not** belong here.
 
+mod models;
 mod render;
 mod ui;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable};
+use bevy::asset::io::AssetSourceBuilder;
+use bevy::asset::io::file::FileAssetReader;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
 use content::terrain::{TerrainOptions, TerrainStats};
 use content::vehicles::{br101, de_pzb, de_pzb_lzb, passenger_coach, vehicle};
 use content::{musterbahn, re_4711, to_musterstadt};
+use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
 use sim_core::safety::SafetySystems;
 use sim_core::safety::de::TrainType;
-use sim_core::train::Train;
+use sim_core::train::{Train, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
 use world_coords::RenderOrigin;
 
@@ -32,6 +36,10 @@ pub struct PlayerTrain(pub usize);
 /// AI drivers of the remaining trains.
 #[derive(Resource)]
 pub struct AiDrivers(pub Vec<(usize, AiDriver)>);
+
+/// Loaded mods with their Lua state (plan ch. 19).
+#[derive(Resource)]
+pub struct Mods(pub ModRuntime);
 
 /// Terrain view distance [m] — tiles beyond it are hidden.
 #[derive(Resource)]
@@ -67,6 +75,9 @@ fn main() {
         .or_else(|| shot.as_ref().map(|_| 60));
 
     let mut app = App::new();
+    // Models, textures and sounds of a mod come from its own directory: `mods://<mod>/…`.
+    // Has to be registered before the asset plugin.
+    app.register_asset_source(models::SOURCE, mod_asset_source());
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "TrainSim-DE".into(),
@@ -75,6 +86,7 @@ fn main() {
         ..default()
     }))
     .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
+    .init_resource::<ui::CameraState>()
     .add_systems(Startup, setup)
     .add_systems(
         Update,
@@ -82,6 +94,7 @@ fn main() {
             ui::player_input,
             drive_ai,
             step_simulation,
+            run_mod_scripts,
             rebase_origin,
             sync_vehicles,
             ui::camera_control,
@@ -89,6 +102,16 @@ fn main() {
             ui::update_hud,
         )
             .chain(),
+    )
+    // Vehicle models from mods: bind glTF nodes, switch LODs, move parts (plan ch. 15.3).
+    .add_systems(
+        Update,
+        (
+            models::bind_nodes,
+            models::update_lod,
+            models::animate_parts,
+        )
+            .after(sync_vehicles),
     );
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
@@ -131,31 +154,91 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
 ) {
-    // Build line and simulation.
-    let line = musterbahn().compile().expect("example line compiles");
+    // Mods first — line, vehicles and signal types may come from them (plan ch. 19).
+    let mods = ModRuntime::load("mods");
+    for warning in mods.log() {
+        warn!("mod: {warning}");
+    }
+    info!(
+        "Mods: {} loaded ({} vehicles, {} lines, {} signal types, {} scripts)",
+        mods.mods.manifests.len(),
+        mods.mods.vehicles.len(),
+        mods.mods.lines.len(),
+        mods.mods.signal_types.len(),
+        mods.mods.scripts.len()
+    );
+
+    // Build line and simulation. `--line <mod>:<name>` takes a line from a mod.
+    let modded = arg("--line").and_then(|id| match mods.mods.lines.get(&id) {
+        Some(line) => Some(line.clone()),
+        None => {
+            warn!("line {id} not found — using the example line");
+            None
+        }
+    });
+    let line_source = modded.clone().unwrap_or_else(musterbahn);
+    let mut line = line_source.compile().expect("line compiles");
+    for warning in mods
+        .mods
+        .apply_signal_types(&line_source, &mut line.interlock)
+    {
+        warn!("{}: {warning}", line_source.name);
+    }
     let mut sim = Sim::new(line.net, line.interlock, 2024);
 
-    let player = spawn_train(&mut sim, TrackPosition::new(EdgeId(0), 200.0, 1), 5, true);
-    let ai_train = spawn_train(&mut sim, TrackPosition::new(EdgeId(1), 400.0, 1), 3, false);
+    // `--loco <mod>:<name>` puts a vehicle from a mod at the head of the train.
+    let loco = arg("--loco")
+        .and_then(|id| match mods.mods.vehicles.get(&id) {
+            Some(spec) => Some(spec.clone()),
+            None => {
+                warn!("vehicle {id} not found — using the BR 101");
+                None
+            }
+        })
+        .unwrap_or_else(br101);
 
-    let ai = AiDriver::new(Timetable {
-        number: "RB 20".into(),
-        category: "RB".into(),
-        stops: vec![ScheduledStop {
-            name: "Musterstadt".into(),
-            edge: EdgeId(2),
-            s: 2600.0,
-            arrival: 300.0,
-            departure: 360.0,
-            platform: "1".into(),
-        }],
-    });
+    let player = spawn_train(
+        &mut sim,
+        TrackPosition::new(EdgeId(0), 200.0, 1),
+        5,
+        true,
+        loco,
+    );
 
-    // Load the scenario with timetable and scoring (plan 11.4).
-    let mut scenario = to_musterstadt();
-    scenario.player_train = player;
-    sim.set_scenario(scenario, re_4711());
+    // Second train, timetable and scenario belong to the example line — a modded line
+    // brings its own scenario or none at all.
+    let mut drivers = Vec::new();
+    if modded.is_none() {
+        let ai_train = spawn_train(
+            &mut sim,
+            TrackPosition::new(EdgeId(1), 400.0, 1),
+            3,
+            false,
+            br101(),
+        );
+        drivers.push((
+            ai_train,
+            AiDriver::new(Timetable {
+                number: "RB 20".into(),
+                category: "RB".into(),
+                stops: vec![ScheduledStop {
+                    name: "Musterstadt".into(),
+                    edge: EdgeId(2),
+                    s: 2600.0,
+                    arrival: 300.0,
+                    departure: 360.0,
+                    platform: "1".into(),
+                }],
+            }),
+        ));
+
+        // Load the scenario with timetable and scoring (plan 11.4).
+        let mut scenario = to_musterstadt();
+        scenario.player_train = player;
+        sim.set_scenario(scenario, re_4711());
+    }
 
     // Render origin at the head of the train.
     let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
@@ -208,8 +291,18 @@ fn setup(
         perceptual_roughness: 0.6,
         ..default()
     });
-    for train in [player, ai_train] {
+    for train in std::iter::once(player).chain(drivers.iter().map(|(t, _)| *t)) {
         for (i, v) in sim.trains[train].vehicles.iter().enumerate() {
+            let view = VehicleView { train, vehicle: i };
+            // A vehicle with a model gets its glTF; everything else stays a body
+            // (plan ch. 15.3).
+            if let Some(model) = v.spec.model.as_ref().filter(|m| !m.file.is_empty()) {
+                let entity = commands
+                    .spawn((Transform::default(), Visibility::default(), view))
+                    .id();
+                models::spawn(&mut commands, &assets, entity, &view, &model.file);
+                continue;
+            }
             let mesh = meshes.add(Cuboid::new(3.0, 3.8, v.spec.length as f32));
             commands.spawn((
                 Mesh3d(mesh),
@@ -219,7 +312,7 @@ fn setup(
                     coach.clone()
                 }),
                 Transform::default(),
-                VehicleView { train, vehicle: i },
+                view,
             ));
         }
     }
@@ -250,11 +343,23 @@ fn setup(
 
     ui::spawn_hud(&mut commands);
 
+    // `--camera outside` starts on the external camera — handy for screenshots of a
+    // vehicle model.
+    if arg("--camera").as_deref() == Some("outside") {
+        commands.insert_resource(ui::CameraState {
+            mode: ui::CameraMode::Outside,
+            distance: 40.0,
+            pitch: -0.15,
+            ..default()
+        });
+    }
+
     commands.insert_resource(TerrainInfo(stats));
     commands.insert_resource(ViewDistance(6_000.0));
     commands.insert_resource(Origin(origin));
     commands.insert_resource(PlayerTrain(player));
-    commands.insert_resource(AiDrivers(vec![(ai_train, ai)]));
+    commands.insert_resource(AiDrivers(drivers));
+    commands.insert_resource(Mods(mods));
     commands.insert_resource(SimResource(sim));
 }
 
@@ -302,14 +407,32 @@ fn lod_range(lod: u8) -> f32 {
     }
 }
 
-/// Places a train of BR 101 + coaches at the given position.
-fn spawn_train(sim: &mut Sim, head: TrackPosition, coaches: usize, with_lzb: bool) -> usize {
+/// Value of a command line option (`--name <value>`).
+fn arg(name: &str) -> Option<String> {
+    std::env::args().skip_while(|a| a != name).nth(1)
+}
+
+/// Asset source for `mods://` — the `mods/` directory next to the game, the same one the
+/// mod runtime reads.
+fn mod_asset_source() -> AssetSourceBuilder {
+    let root = std::env::current_dir().unwrap_or_default().join("mods");
+    AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone())))
+}
+
+/// Places a train of one loco + coaches at the given position.
+fn spawn_train(
+    sim: &mut Sim,
+    head: TrackPosition,
+    coaches: usize,
+    with_lzb: bool,
+    loco: VehicleSpec,
+) -> usize {
     let safety = if with_lzb {
         de_pzb_lzb(TrainType::O)
     } else {
         de_pzb(TrainType::O)
     };
-    let mut vehicles = vec![vehicle(br101(), head, safety)];
+    let mut vehicles = vec![vehicle(loco, head, safety)];
     for _ in 0..coaches {
         vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
     }
@@ -337,6 +460,12 @@ fn drive_ai(mut sim: ResMut<SimResource>, mut drivers: ResMut<AiDrivers>, time: 
 
 fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
     sim.0.advance(time.delta_secs_f64());
+}
+
+/// Behaviour scripts of the mods — signal aspects and cab automation (plan ch. 19).
+fn run_mod_scripts(mut sim: ResMut<SimResource>, mut mods: ResMut<Mods>, time: Res<Time>) {
+    let dt = time.delta_secs_f64().min(0.25);
+    mods.0.post_step(&mut sim.0, dt);
 }
 
 /// Follow up the origin and re-place all world-anchored objects.

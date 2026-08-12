@@ -99,6 +99,10 @@ pub struct SignalSource {
     pub requires_route: bool,
     #[serde(default)]
     pub diverging_speed: Option<f64>,
+    /// Signal type from a mod (`"<mod>:<name>"`) — the aspect then comes from that rule
+    /// table instead of the built-in logic. Resolved by the mod runtime (plan ch. 19).
+    #[serde(default)]
+    pub signal_type: Option<String>,
 }
 
 fn default_system() -> SignalSystem {

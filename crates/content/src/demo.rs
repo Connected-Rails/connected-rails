@@ -154,6 +154,7 @@ pub fn musterbahn() -> LineSource {
                 guarded: vec![],
                 requires_route: false,
                 diverging_speed: None,
+                signal_type: None,
             },
             SignalSource {
                 kind: SignalKind::Main,
@@ -163,6 +164,7 @@ pub fn musterbahn() -> LineSource {
                 guarded: vec![1],
                 requires_route: false,
                 diverging_speed: None,
+                signal_type: None,
             },
         ],
         routes: vec![],

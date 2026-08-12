@@ -144,7 +144,7 @@ pub fn camera_control(
     sim: Res<SimResource>,
     origin: Res<Origin>,
     player: Res<PlayerTrain>,
-    mut state: Local<CameraState>,
+    mut state: ResMut<CameraState>,
     mut camera: Query<&mut Transform, With<CabCamera>>,
 ) {
     let dt = time.delta_secs();

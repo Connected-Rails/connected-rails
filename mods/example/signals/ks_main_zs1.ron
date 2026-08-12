@@ -1,0 +1,24 @@
+// The same Ks signal, but with a script hook: what a rule table cannot express — anything
+// with memory or a timer — goes into Lua. Here: the substitute signal Zs1.
+(
+    system: Ks,
+    rules: [
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: ["red"]),
+        (
+            when: (diverging: Some(true)),
+            show: (main: Some(ProceedSlow), distant: Some(ExpectStop), speed: Some(40.0)),
+            lamps: ["yellow", "zs3_4"],
+        ),
+        (
+            when: (next_stop: Some(true)),
+            show: (main: Some(Proceed), distant: Some(ExpectStop)),
+            lamps: ["yellow"],
+        ),
+        (
+            when: (),
+            show: (main: Some(Proceed), distant: Some(ExpectProceed)),
+            lamps: ["green"],
+        ),
+    ],
+    script: Some("example:zs1"),
+)

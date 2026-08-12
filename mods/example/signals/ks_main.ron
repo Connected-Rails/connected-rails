@@ -1,0 +1,35 @@
+// Ks combination signal as a declarative state machine.
+//
+// The interlocking supplies the situation (sections clear, route locked, diverging route,
+// aspect of the following signal); the first matching rule wins. `lamps` is what the
+// renderer shows — free-form strings, the mod's own assets decide what they look like.
+(
+    system: Ks,
+    rules: [
+        // Hp0 — the block ahead is occupied or the route is not locked.
+        (
+            when: (clear: Some(false)),
+            show: (main: Some(Stop)),
+            lamps: ["red"],
+        ),
+        // Ks2 with Zs3 — diverging route, 40 km/h.
+        (
+            when: (diverging: Some(true)),
+            show: (main: Some(ProceedSlow), distant: Some(ExpectStop), speed: Some(40.0)),
+            lamps: ["yellow", "zs3_4"],
+        ),
+        // Ks2 — proceed, expect stop at the next signal.
+        (
+            when: (next_stop: Some(true)),
+            show: (main: Some(Proceed), distant: Some(ExpectStop)),
+            lamps: ["yellow"],
+        ),
+        // Ks1 — proceed, the next signal shows proceed as well.
+        (
+            when: (),
+            show: (main: Some(Proceed), distant: Some(ExpectProceed)),
+            lamps: ["green"],
+        ),
+    ],
+    script: None,
+)

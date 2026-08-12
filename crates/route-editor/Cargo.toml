@@ -1,11 +1,11 @@
 [package]
-name = "editor"
+name = "route-editor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "train-sim-editor"
+name = "trainsim-route-editor"
 path = "src/main.rs"
 
 [dependencies]
@@ -15,4 +15,6 @@ world-coords = { workspace = true }
 content = { workspace = true }
 imagery = { workspace = true }
 glam = { workspace = true }
-bevy = "0.19"
+bevy = { workspace = true }
+bevy_egui = { workspace = true }
+rfd = { workspace = true }

@@ -1,7 +1,10 @@
 # TrainSim-DE
 
-German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
+A **mod-first** German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
 Current state and open points: [STATUS.md](STATUS.md).
+
+This project is designed from the ground up for modding — your own locomotives, your own
+signals, your own lines. See [Mods](#mods) for the guide.
 
 ## Build and run
 
@@ -10,10 +13,103 @@ cargo test --workspace     # all acceptance tests (headless, no GPU)
 cargo run -p app           # start the simulator
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
+
+cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
+cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
-`--screenshot` is available in the editor as well; `--frames N` sets after how many frames
+`--screenshot` is available in both editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).
+
+## Mods
+
+Everything is meant to be moddable: your own locomotives, your own signals, your own lines.
+A mod is a directory below `mods/`; `mods/example/` is the reference to copy from.
+
+```
+mods/<id>/mod.ron          id, name, version, author, depends, enabled
+         /vehicles/*.ron   locomotives and coaches
+         /lines/*.ron      track, equipment, signals
+         /scenarios/*.ron  triggers and actions
+         /signals/*.ron    signal types (aspect table + optional script)
+         /scripts/*.lua    behaviour
+         /assets/…         models, textures, sounds — as `mods://<id>/assets/…`
+```
+
+Everything is addressed as `"<mod>:<file stem>"`, e.g. `example:br101_afb`, so two mods may use
+the same file names. Nothing is fatal: a broken file is a warning, everything else still loads.
+Mods are loaded in dependency order (`depends`), alphabetically within that.
+
+### Data and behaviour are separate
+
+The bulk of a locomotive is **declaration**, not script — masses, running resistance, brake
+equipment, tractive effort curve. That is RON, validated on load and editable without
+programming. **Lua only covers real behaviour:** tap changer logic, AFB, the choice of a signal
+aspect. That keeps roughly 80 % of every mod declarative, checkable and safe.
+
+The Lua sandbox has `table`, `string` and `math` — no `io`, no `os`, no `require`, no
+filesystem. A script sees a context table of numbers and booleans and answers with a table of
+overrides; it never gets a handle on the simulation. A script that raises an error is switched
+off, and the run continues.
+
+### Signals: state machine as data, script only where needed
+
+The interlocking supplies the *situation* of a signal — guarded sections clear, route locked,
+diverging route, aspect of the following signal. The signal type maps that to an aspect; the
+first matching rule wins (`mods/example/signals/ks_main.ron`):
+
+```ron
+(
+    system: Ks,
+    rules: [
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: ["red"]),
+        (when: (diverging: Some(true)),
+         show: (main: Some(ProceedSlow), distant: Some(ExpectStop), speed: Some(40.0)),
+         lamps: ["yellow", "zs3_4"]),
+        (when: (next_stop: Some(true)),
+         show: (main: Some(Proceed), distant: Some(ExpectStop)), lamps: ["yellow"]),
+        (when: (), show: (main: Some(Proceed), distant: Some(ExpectProceed)), lamps: ["green"]),
+    ],
+    script: None,
+)
+```
+
+`lamps` are free-form strings — your own presentation decides what they look like. A line points
+at the type by name: `signal_type: Some("example:ks_main")`.
+
+What a table cannot express — anything with memory or a timer — goes into `script`. The hook
+runs after the table, sees its result in `ctx.main` and returns `nil` to keep it
+(`mods/example/scripts/zs1.lua` gives Zs1 after three minutes at stop):
+
+```lua
+-- ctx: signal, time, clear, route, diverging, next_stop, next_slow, main, distant, speed
+function M.aspect(ctx)
+  if ctx.time - since >= 180.0 then
+    return { main = "substitute", speed = 40.0, lamps = { "red", "zs1" } }
+  end
+end
+```
+
+### Vehicles: declaration plus behaviour hook
+
+A `vehicles/*.ron` is the plain vehicle description; `script` is the only addition. The hook is
+called once per frame for the train whose leading vehicle names it and writes cab controls —
+here the AFB that is otherwise still missing (`mods/example/scripts/afb.lua`):
+
+```lua
+-- ctx: dt, time, v_kmh, speed_limit_kmh, mass_t, throttle, reverser, afb, afb_target, …
+function M.update(ctx)
+  if not ctx.afb or ctx.reverser == 0 then
+    return nil
+  end
+  local target = math.min(ctx.afb_target, ctx.speed_limit_kmh)
+  local notch = (target - ctx.v_kmh) / 10.0
+  return { throttle = math.max(-1.0, math.min(1.0, notch)) }   -- also: direct_brake, sanding
+end
+```
+
+Full field reference, sandbox rules and packaging: [MODS.md](MODS.md); background and state:
+[PLAN.md ch. 19](PLAN.md), [STATUS.md](STATUS.md).
 
 ## Importing a line
 
@@ -65,10 +161,12 @@ alignment from the OSM points.
 | `track-model` | Track geometry (straight/curve/clothoid), topology, switches, lineside equipment (ch. 5) |
 | `sim-core` | Driving dynamics, air brake, electrics, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |
 | `content` | Vehicle database, line source format (RON) + compiler, scenarios, OSM/DGM importer (ch. 15) |
+| `mod-runtime` | Mod discovery, declarative content, Lua behaviour hooks (ch. 19) |
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12) |
-| `editor` | Line editor: top-down view with aerial imagery overlay (ch. 15) |
+| `route-editor` | Route editor: top-down view with aerial imagery overlay (ch. 15) |
+| `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
 
 `sim-core` is a pure Rust library with a fixed time step (200 Hz). The Bevy app ticks it and
 mirrors the state into ECS components — simulation logic does not belong there.
@@ -120,11 +218,70 @@ The app shows the terrain automatically (flat without DGM):
 cargo run -p app -- --dgm ./dgm1_niedersachsen --epsg 25832
 ```
 
-## Editor with aerial imagery overlay
+## Editors
+
+There are **two separate programs**, because the two jobs have nothing to do with each
+other: a route is geodata, a vehicle is a model with a data sheet.
+
+| Program | Purpose |
+|---|---|
+| `cargo run -p route-editor` | line: track, equipment, aerial imagery overlay |
+| `cargo run -p vehicle-editor` | vehicle: base data, glTF model, LOD, moving parts |
+
+Both are desktop applications, not game screens: menu bar, docked panels, the operating
+system's own file dialogs. `--frames N` and `--screenshot file.png` work in both.
+
+### Vehicle editor
 
 ```bash
-cargo run -p editor                              # example line
-cargo run -p editor -- line.ron --imagery my_imagery.ron
+cargo run -p vehicle-editor                                   # new vehicle
+cargo run -p vehicle-editor -- mods/example/vehicles/br101_afb.ron
+```
+
+The left panel holds the vehicle's base data, the right one the model, the middle shows the
+3D viewport with the track and a reference body of the length over buffers — so it is
+immediately visible whether the model matches the LÜP. Right mouse button rotates, the
+wheel zooms.
+
+**Base data** (everything that is declaration, not script):
+
+| Field | Meaning |
+|---|---|
+| Length over buffers | the official LÜP — spacing of the following vehicle. Draw the buffers 1–2 cm compressed in the model so they do not intersect in curves |
+| Gauge | checked against the infrastructure, and used for the curve resistance |
+| v max | highest permitted *running* speed, independent of the traction characteristic |
+| Mass | tare mass; payload separately |
+| Rotating mass | allowance for rotating parts of running gear and drive — acts on the inertia, not on the weight. Diesel-hydraulic 10–15 %, diesel-electric and electric loco 15–25 %, freight wagon 8–10 %, coach 6–9 % |
+| Axles | information for consist lists and brake sheets |
+| Axle base sum | sum over all bogies (two bogies of 2.5 m → 5.0 m), **not** the vehicle length — the larger the value, the higher the curve resistance |
+| Rolling resistance | bearing friction and rolling of the wheel; "Suggest" derives a standard value from the mass |
+| Air resistance | cw·A [m²]; `F = ½·ρ·cw·A·v²`. Without it the quadratic Davis term applies |
+| Tilt angle | 0 for conventional vehicles, ~8° for German tilting units |
+| Hunting | −1 no hunting, 0 standard (tuned for bogie vehicles), up to 1 more — raise it slightly for single-axle running gear |
+| Max payload | e.g. about 5 t for a passenger coach, per the anscriptions for freight |
+
+**Models are glTF**, and the glTF's own features are used. Levels of detail and moving parts
+are found in the file; the binding is stored in the vehicle RON, so **nothing has to be
+prepared in Blender** — but a prepared file needs no clicking:
+
+| In Blender | Result |
+|---|---|
+| Object name `body_LOD0`, `body_LOD1`, … | "Read from node names" fills the LOD table; the distances stay editable |
+| Object name `door_left`, `pant_front`, `sw_throttle`, `gauge_speed`, `lamp_left`, `wheel_1` | suggested function plus a sensible motion |
+| Custom property `ts_function` (plus `ts_motion` = `rotate`/`translate`/`visibility`, `ts_axis` = `"0 0 1"`, `ts_amount`) | exported into glTF `extras` and beats the name |
+
+The simulator uses the same data: a vehicle with a model gets its glTF instead of the
+placeholder body, the level of detail follows the camera distance, and the bound parts follow
+the simulation state (pantograph, gauges, switches, lamps). Models live in the mod and are
+addressed as `mods://<mod>/assets/<file>` — the same string in the editor and in the game.
+
+Details: [MODS.md](MODS.md).
+
+### Route editor with aerial imagery overlay
+
+```bash
+cargo run -p route-editor                              # example line
+cargo run -p route-editor -- line.ron --imagery my_imagery.ron
 ```
 
 The overlay configuration (`imagery.ron`) is created on first start and is fully editable:

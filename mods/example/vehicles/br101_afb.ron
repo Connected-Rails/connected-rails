@@ -1,0 +1,61 @@
+// A vehicle is declaration: masses, running resistance, brake, traction characteristic.
+// Only the behaviour — here the AFB — is a script.
+(
+    name: "BR 101 (AFB)",
+    length: 19.1,
+    // Tare mass [kg] and allowance for rotating masses.
+    mass_empty: 84000.0,
+    rotating_mass_factor: 0.20,
+    // Running resistance R = a + b*v + c*v^2 [N], v in m/s.
+    davis: (a: 2200.0, b: 60.0, c: 6.5),
+    brake: (
+        kind: Disc,
+        position: R,
+        // Braked weight [t] and the force that follows from it [N].
+        brake_weight: 90.0,
+        max_force: 127976.8,
+        max_cylinder: 3.8,
+        cylinder_to_reservoir: 0.35,
+        has_direct: true,
+    ),
+    traction: Some(Converter(
+        max_force: 300000.0,
+        max_power: 6400000.0,
+        v_max: 220.0,
+        brake_force: 150000.0,
+        brake_power: 2600000.0,
+        ramp_time: 2.5,
+    )),
+    coupler: (
+        slack: 0.08,
+        draw_stiffness: 3000000.0,
+        buffer_stiffness: 8000000.0,
+        damping: 120000.0,
+        breaking_force: 1000000.0,
+    ),
+    adhesive_mass_fraction: 1.0,
+    slip_control: true,
+    gauge: 1.435,
+    v_max: 220.0,
+    axles: 4,
+    // Bo'Bo', 2.65 m axle base per bogie.
+    axle_base_sum: 5.3,
+    max_payload: 0.0,
+    tilt_angle_deg: 0.0,
+    hunting: 0.0,
+    // Behaviour script: <mod>:<file stem> below scripts/.
+    script: Some("example:afb"),
+    // Model, relative to the mods directory. `_LOD0`/`_LOD1` come from the node names,
+    // the pantograph from the Blender custom property `ts_function` in the glTF `extras`.
+    model: Some((
+        file: "example/assets/br101.gltf",
+        lods: [
+            (level: 0, distance: 150.0),
+            (level: 1, distance: 2000.0),
+        ],
+        parts: [
+            (node: "pant_front", function: "pantograph",
+             motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 45.0)),
+        ],
+    )),
+)

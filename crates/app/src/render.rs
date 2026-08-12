@@ -27,7 +27,7 @@ pub struct TerrainChunk {
 }
 
 /// A vehicle in train `train`, vehicle index `vehicle`.
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub struct VehicleView {
     pub train: usize,
     pub vehicle: usize,

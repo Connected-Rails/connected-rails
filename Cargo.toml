@@ -5,10 +5,12 @@ members = [
     "crates/track-model",
     "crates/sim-core",
     "crates/content",
+    "crates/mod-runtime",
     "crates/ai-driver",
     "crates/app",
     "crates/imagery",
-    "crates/editor",
+    "crates/route-editor",
+    "crates/vehicle-editor",
 ]
 
 [workspace.package]
@@ -20,11 +22,19 @@ license = "MIT"
 glam = { version = "0.32", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 ron = "0.10"
+# Lua 5.4, statically linked; `send` so the runtime can live in a Bevy resource.
+mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }
+bevy = "0.19"
+# Desktop UI of the editors: menu bar, docked panels (bevy_egui) and the operating
+# system's own file dialogs (rfd).
+bevy_egui = "0.41"
+rfd = "0.17"
 
 world-coords = { path = "crates/world-coords" }
 track-model = { path = "crates/track-model" }
 sim-core = { path = "crates/sim-core" }
 content = { path = "crates/content" }
+mod-runtime = { path = "crates/mod-runtime" }
 ai-driver = { path = "crates/ai-driver" }
 imagery = { path = "crates/imagery" }
 

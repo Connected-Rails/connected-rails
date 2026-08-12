@@ -26,7 +26,16 @@ pub fn adhesion_coefficient(v_kmh: f64, rail: RailCondition, sanding: bool) -> f
 }
 
 /// Curve resistance after Röckl [N] for mass `m` [kg] and curvature `k` [1/m].
-pub fn curve_resistance(m: f64, k: f64) -> f64 {
+///
+/// `axle_base_sum` [m] is the total axle base of the vehicle; it is what forces the axles
+/// in a curve. Röckl's constants are calibrated for a bogie vehicle with about 5 m
+/// ([`REFERENCE_AXLE_BASE`](crate::train::REFERENCE_AXLE_BASE)), so the value is scaled
+/// against that reference; 0 means "not stated" and leaves Röckl untouched.
+///
+/// ponytail: linear scaling instead of a flange friction model — the empirical
+/// wheel/rail part of Röckl dominates anyway. A real model needs the bogie geometry
+/// (axle base per bogie, pivot spacing), which no data sheet states either.
+pub fn curve_resistance(m: f64, k: f64, axle_base_sum: f64) -> f64 {
     let radius = if k.abs() < 1e-9 {
         return 0.0;
     } else {
@@ -37,7 +46,12 @@ pub fn curve_resistance(m: f64, k: f64) -> f64 {
     } else {
         500.0 / (radius - 30.0).max(1.0)
     };
-    m * G / 1000.0 * specific
+    let scale = if axle_base_sum > 0.0 {
+        (axle_base_sum / crate::train::REFERENCE_AXLE_BASE).clamp(0.5, 2.0)
+    } else {
+        1.0
+    };
+    m * G / 1000.0 * specific * scale
 }
 
 /// One step of the longitudinal dynamics.
@@ -101,9 +115,9 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         let braking = brake_force(veh, rail, dt);
         veh.tractive_effort = traction;
         veh.brake_effort = braking;
-        let resistance = veh.spec.davis.resistance(veh.v);
+        let resistance = veh.spec.resistance(veh.v);
         let grade = veh.mass() * G * pose.grade / 1000.0;
-        let curve = curve_resistance(veh.mass(), pose.curvature);
+        let curve = curve_resistance(veh.mass(), pose.curvature, veh.spec.axle_base_sum);
 
         // Resistances always act against the motion, and so does the brake.
         let dir = if veh.v.abs() < 1e-4 {
@@ -209,4 +223,42 @@ fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
 
 fn limit(veh: &Vehicle, rail: RailCondition) -> f64 {
     adhesion_coefficient(veh.v * 3.6, rail, veh.sanding) * veh.adhesive_mass() * G
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::train::{AIR_DENSITY, REFERENCE_AXLE_BASE};
+
+    #[test]
+    fn curve_resistance_grows_with_the_axle_base() {
+        let k = 1.0 / 500.0;
+        let reference = curve_resistance(40_000.0, k, REFERENCE_AXLE_BASE);
+        // Not stated == reference vehicle.
+        assert!((curve_resistance(40_000.0, k, 0.0) - reference).abs() < 1e-9);
+        // A two-axle wagon with a short axle base forces less, a long one more.
+        assert!(curve_resistance(40_000.0, k, 3.0) < reference);
+        assert!(curve_resistance(40_000.0, k, 8.0) > reference);
+        // Straight track has no curve resistance.
+        assert_eq!(curve_resistance(40_000.0, 0.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn cw_a_replaces_the_quadratic_davis_term() {
+        let mut spec = crate::train::VehicleSpec {
+            cw_a: None,
+            ..crate::train::VehicleSpec::default()
+        };
+        spec.davis = crate::train::Davis {
+            a: 1_000.0,
+            b: 10.0,
+            c: 5.0,
+        };
+        let v = 40.0;
+        assert_eq!(spec.resistance(v), 1_000.0 + 10.0 * v + 5.0 * v * v);
+
+        spec.cw_a = Some(10.0);
+        let expected = 1_000.0 + 10.0 * v + 0.5 * AIR_DENSITY * 10.0 * v * v;
+        assert!((spec.resistance(v) - expected).abs() < 1e-9);
+    }
 }

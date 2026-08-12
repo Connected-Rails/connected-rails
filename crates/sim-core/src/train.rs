@@ -1,6 +1,6 @@
 //! Vehicle and train consist model.
 
-use crate::brakes::{BrakeSpec, BrakeState};
+use crate::brakes::{BrakeKind, BrakeSpec, BrakeState};
 use crate::electric::{TractionSpec, TractionState};
 use crate::safety::SafetySystems;
 use serde::{Deserialize, Serialize};
@@ -81,11 +81,77 @@ impl RailCondition {
     }
 }
 
+/// Density of air [kg/m³] at 15 °C and 1013 hPa — for the cw·A air resistance.
+pub const AIR_DENSITY: f64 = 1.225;
+
+/// Standard gauge [m].
+pub const STANDARD_GAUGE: f64 = 1.435;
+
+/// Axle base sum the Röckl curve resistance is calibrated for [m] — a bogie vehicle with
+/// 2.5 m per bogie.
+pub const REFERENCE_AXLE_BASE: f64 = 5.0;
+
+fn standard_gauge() -> f64 {
+    STANDARD_GAUGE
+}
+
+/// Motion of a model node between function value 0 and 1.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum Motion {
+    /// The node is only shown or hidden.
+    #[default]
+    Visibility,
+    /// Rotation about a local axis [°] — doors, pantographs, instrument needles.
+    Rotate { axis: [f32; 3], degrees: f32 },
+    /// Translation along a local axis [m] — sliding doors, switches, levers.
+    Translate { axis: [f32; 3], metres: f32 },
+}
+
+/// A moving part of the model, bound to a glTF node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Part {
+    /// Name of the glTF node.
+    pub node: String,
+    /// What the node represents — free-form, like the lamp images of a signal:
+    /// `"door_left"`, `"pantograph"`, `"switch:throttle"`, `"gauge:speed"`.
+    /// The app maps the names it knows; mods may invent their own.
+    pub function: String,
+    #[serde(default)]
+    pub motion: Motion,
+}
+
+/// One level of detail. The convention is glTF nodes named `<name>_LOD<level>`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Lod {
+    pub level: u8,
+    /// Visible up to this distance [m].
+    pub distance: f64,
+}
+
+/// Visual description of a vehicle: glTF file, levels of detail, moving parts.
+///
+/// Pure data — `sim-core` never renders. It sits next to the physical data so that a
+/// vehicle stays a single file (plan ch. 15).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct VehicleModel {
+    /// glTF/GLB file, relative to the `mods/` directory — e.g.
+    /// `example/assets/br101.gltf`, loaded as `mods://example/assets/br101.gltf`.
+    pub file: String,
+    /// Levels of detail, coarsest last. Empty = the whole scene at every distance.
+    #[serde(default)]
+    pub lods: Vec<Lod>,
+    /// Moving parts.
+    #[serde(default)]
+    pub parts: Vec<Part>,
+}
+
 /// Static vehicle description (from the vehicle database, RON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VehicleSpec {
     pub name: String,
-    /// Length over buffers [m].
+    /// Length over buffers (LÜP) [m] — determines the spacing of the following vehicle.
+    /// The buffers of the model should be drawn 1–2 cm compressed so that vehicles do not
+    /// intersect in curves.
     pub length: f64,
     /// Tare mass [kg].
     pub mass_empty: f64,
@@ -102,6 +168,98 @@ pub struct VehicleSpec {
     /// Vehicle has wheel slip / wheel slide protection.
     #[serde(default)]
     pub slip_control: bool,
+    /// Track gauge [m] — checked against the infrastructure and used for the curve
+    /// resistance.
+    #[serde(default = "standard_gauge")]
+    pub gauge: f64,
+    /// Highest permitted running speed [km/h] — the running gear limit, independent of the
+    /// traction characteristic. 0 = not stated.
+    #[serde(default)]
+    pub v_max: f64,
+    /// Number of axles — information for consist lists and brake sheets, no influence on
+    /// the simulation.
+    #[serde(default)]
+    pub axles: u8,
+    /// Total axle base [m]: the sum over all bogies (two bogies of 2.5 m → 5.0), not the
+    /// vehicle length. The larger the value, the more the axles are forced in a curve.
+    #[serde(default)]
+    pub axle_base_sum: f64,
+    /// Air resistance cw·A [m²]. When set it replaces the quadratic Davis term with
+    /// `½·ρ·cw·A·v²`.
+    #[serde(default)]
+    pub cw_a: Option<f64>,
+    /// Maximum payload [kg] — passenger coaches roughly 5 t, freight per the anscriptions.
+    #[serde(default)]
+    pub max_payload: f64,
+    /// Maximum tilt angle [°]: 0 for conventional vehicles, ~8 for German tilting units.
+    #[serde(default)]
+    pub tilt_angle_deg: f64,
+    /// Hunting factor −1 … 1: −1 = no hunting, 0 = standard (tuned for bogie vehicles),
+    /// above 0 = more than standard (sensible for single-axle running gear).
+    #[serde(default)]
+    pub hunting: f64,
+    /// Optional Lua behaviour script `"<mod>:<script>"` — tap changer logic, AFB, start-up
+    /// procedure. Everything physical stays declarative; the script only decides
+    /// *behaviour* (plan ch. 19).
+    #[serde(default)]
+    pub script: Option<String>,
+    /// Visual model. The simulation ignores it; app and editor read it (plan ch. 15).
+    #[serde(default)]
+    pub model: Option<VehicleModel>,
+}
+
+impl Default for VehicleSpec {
+    /// A blank vehicle — starting point for "New" in the vehicle editor.
+    fn default() -> Self {
+        Self {
+            name: "New vehicle".into(),
+            length: 20.0,
+            mass_empty: 40_000.0,
+            rotating_mass_factor: 0.08,
+            davis: Davis {
+                a: 800.0,
+                b: 20.0,
+                c: 5.0,
+            },
+            brake: BrakeSpec::from_brake_weight(40.0, BrakeKind::Disc),
+            traction: None,
+            coupler: CouplerSpec::screw(),
+            adhesive_mass_fraction: 0.0,
+            slip_control: false,
+            gauge: STANDARD_GAUGE,
+            v_max: 160.0,
+            axles: 4,
+            axle_base_sum: REFERENCE_AXLE_BASE,
+            cw_a: None,
+            max_payload: 0.0,
+            tilt_angle_deg: 0.0,
+            hunting: 0.0,
+            script: None,
+            model: None,
+        }
+    }
+}
+
+impl VehicleSpec {
+    /// Running resistance [N] at speed `v` [m/s].
+    ///
+    /// `davis` is the basis; where `cw_a` is stated, the quadratic term comes from the
+    /// air resistance instead — that is the value found in data sheets.
+    pub fn resistance(&self, v: f64) -> f64 {
+        match self.cw_a {
+            Some(cw_a) => {
+                let av = v.abs();
+                self.davis.a + self.davis.b * av + 0.5 * AIR_DENSITY * cw_a * av * av
+            }
+            None => self.davis.resistance(v),
+        }
+    }
+
+    /// Suggested rolling resistance `a` [N] from the mass — about 2 ‰ of the weight,
+    /// the usual starting value for the "suggest" button in the editor.
+    pub fn suggested_rolling_resistance(mass_kg: f64) -> f64 {
+        mass_kg * crate::G * 0.002
+    }
 }
 
 /// Runtime state of a vehicle.

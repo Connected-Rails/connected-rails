@@ -13,4 +13,6 @@ This applies consistently across the entire codebase, including but not limited 
 - Documentation files
 - Commit messages
 
+After code changes check if you need to update existing md files.
+
 **Rationale:** Ensures consistency, improves maintainability, and aligns with standard software development practices.

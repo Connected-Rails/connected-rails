@@ -7,7 +7,7 @@ use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::prelude::*;
 use sim_core::brakes::DriverBrakeValve;
-use sim_core::safety::{LampState, SafetySystems};
+use sim_core::safety::{LampState, SafetySystems, SelfTestPhase};
 
 /// Camera of the player.
 #[derive(Component)]
@@ -125,6 +125,7 @@ pub fn player_input(
     cab.pzb_override = keys.pressed(KeyCode::Delete);
     cab.lzb_takeover = keys.pressed(KeyCode::KeyN);
     cab.lzb_end = keys.pressed(KeyCode::KeyM);
+    cab.lzb_test = keys.pressed(KeyCode::KeyB);
     cab.horn = keys.pressed(KeyCode::KeyH);
 
     // Preparation: battery, pantograph, main switch, compressor.
@@ -135,6 +136,11 @@ pub fn player_input(
         }
         if keys.just_pressed(KeyCode::Digit1) {
             v.traction.battery = !v.traction.battery;
+            // Switching the battery on sets the train protection up: it runs its function
+            // test and holds the brake until the driver acknowledges it (plan 9.3/9.4).
+            if v.traction.battery {
+                v.safety.power_on();
+            }
         }
         if keys.just_pressed(KeyCode::Digit2) {
             v.traction.pantograph_command = !v.traction.pantograph_command;
@@ -343,17 +349,37 @@ pub fn update_hud(
             lamps.join(" ")
         }
     ));
-    if let SafetySystems::De(de) = &loco.safety
-        && let Some(lzb) = de.lzb
-        && lzb.is_guiding()
-    {
-        lines.push(format!(
-            "LZB {:?}: v-Soll {:5.0}   v-Ziel {:5.0}   Zielentfernung {:6.0} m",
-            lzb.mode,
-            lzb.permitted_speed().unwrap_or(0.0),
-            lzb.target_speed().unwrap_or(0.0),
-            lzb.target_distance().unwrap_or(0.0)
-        ));
+    if let SafetySystems::De(de) = &loco.safety {
+        if let Some(pzb) = de.pzb {
+            lines.push(format!(
+                "{}   Zugart {:?}{}",
+                pzb.variant.name(),
+                pzb.train_type,
+                match pzb.self_test().phase() {
+                    SelfTestPhase::Passed if pzb.is_restrictive() => "   restriktiv".into(),
+                    SelfTestPhase::Passed => String::new(),
+                    p => format!("   Funktionsprüfung: {p:?}"),
+                }
+            ));
+        }
+        if let Some(lzb) = de.lzb {
+            if !lzb.self_test().is_passed() {
+                lines.push(format!(
+                    "LZB Funktionsprüfung: {:?} (B = quittieren)",
+                    lzb.self_test().phase()
+                ));
+            } else if lzb.is_guiding() {
+                lines.push(format!(
+                    "LZB {:?} {:?}{}: v-Soll {:5.0}   v-Ziel {:5.0}   Zielentfernung {:6.0} m",
+                    lzb.mode,
+                    lzb.block_mode(),
+                    if lzb.is_cir_elke() { " CIR-ELKE" } else { "" },
+                    lzb.permitted_speed().unwrap_or(0.0),
+                    lzb.target_speed().unwrap_or(0.0),
+                    lzb.target_distance().unwrap_or(0.0)
+                ));
+            }
+        }
     }
 
     // Signals ahead.
@@ -419,7 +445,7 @@ pub fn update_hud(
             .into(),
     );
     lines.push(
-        "Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M LZB  1–4 Aufrüsten  F1–F3 Kamera"
+        "Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  1–4 Aufrüsten  F1–F3 Kamera"
             .into(),
     );
 

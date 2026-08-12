@@ -7,7 +7,7 @@ use crate::route::{
     SignalSource,
 };
 use sim_core::interlock::{SignalKind, SignalSystem};
-use sim_core::safety::de::{LzbTelegram, MagnetPayload};
+use sim_core::safety::de::{LzbBlockMode, LzbTelegram, MagnetPayload};
 use track_model::{DeviceKind, Facing, Segment};
 
 /// Start point of the Musterbahn (Lower Saxony, UTM zone 32).
@@ -128,6 +128,9 @@ pub fn musterbahn() -> LineSource {
                     target_distance: 3000.0,
                     end_of_authority: false,
                     length: 3000.0,
+                    // The example line runs the LZB in full block mode without CIR-ELKE.
+                    block_mode: LzbBlockMode::Full,
+                    cir_elke: false,
                 })
                 .unwrap(),
             },

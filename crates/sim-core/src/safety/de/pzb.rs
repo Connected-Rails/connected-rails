@@ -1,15 +1,33 @@
-//! PZB 90 (intermittent train protection), complete on-board logic (plan 9.3).
+//! Indusi / PZB — intermittent train protection, complete on-board logic (plan 9.3).
+//!
+//! All German and Austrian intermittent systems descend from the same Indusi principle
+//! (1000/500/2000 Hz track magnets, three train categories, acknowledgement within 4 s).
+//! They differ only in *which* supervisions are derived from an influence. Therefore one
+//! state machine [`Pzb`] plus a per-variant parameter set [`PzbSpec`] covers all of them:
+//!
+//! | Variant | 1000 Hz | 500 Hz | Distance sup. | Restrictive | Function test |
+//! |---|---|---|---|---|---|
+//! | [`PzbVariant::I54`]     | time step | fixed | — | — | — |
+//! | [`PzbVariant::I60`]     | time step | fixed | — | — | — |
+//! | [`PzbVariant::I60M`]    | time step | fixed | — | — | yes |
+//! | [`PzbVariant::I60R`]    | time step | fixed | 1250 m | yes | yes |
+//! | [`PzbVariant::Pzb60`]   | time step | fixed | — | — | — |
+//! | [`PzbVariant::Pzb90V15`]| ramp | ramp 153 m | 1250 m | after a stop | yes |
+//! | [`PzbVariant::Pzb90V20`]| ramp | ramp 153 m | 1250 m | + 15 s < 10 km/h | yes |
 //!
 //! On the trackside, 500 Hz, 1000 Hz and 2000 Hz track magnets are effective; their
 //! activation depends on the signal aspect and is decided by the interlocking
 //! (`TracksideEvent::active`).
 //!
-//! Numeric values according to Ril 483.0111 (PZB 90, train categories O/M/U).
+//! Numeric values according to Ril 483.0111 (PZB 90, train categories O/M/U); the values of
+//! the older variants are those of the Indusi rulebooks they were built to, the Austrian
+//! ones those of the ÖBB PZB 60. Country packages are compile-time Rust (plan 9.1), so the
+//! parameter sets are `const` tables rather than data files.
 
 use crate::cab::{CabInputs, Edge};
 use crate::safety::{
-    Indicator, LampState, ProtectionAction, ProtectionOutput, SafetyTrainState, TracksideEvent,
-    TrainProtectionSystem,
+    Indicator, LampState, ProtectionAction, ProtectionOutput, SafetyTrainState, SelfTest,
+    TracksideEvent, TrainProtectionSystem,
 };
 use serde::{Deserialize, Serialize};
 use track_model::DeviceKind;
@@ -78,56 +96,103 @@ pub enum TrainType {
     U,
 }
 
+/// Build state of the on-board equipment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PzbVariant {
+    /// Indusi I 54 — relay technology, pure time supervision, no restrictive mode.
+    I54,
+    /// Indusi I 60 — the electronic successor, same supervision logic as the I 54.
+    I60,
+    /// Indusi I 60 Mikrorechner — I 60 logic on a microprocessor, hence with a function test.
+    I60M,
+    /// Indusi I 60R — I 60 retrofitted with the restrictive programme (interim build
+    /// towards the PZB 90): distance supervision and restrictive mode, but the I 60
+    /// time supervision of the 1000 Hz influence.
+    I60R,
+    /// ÖBB PZB 60 — the Austrian Indusi build.
+    Pzb60,
+    /// PZB 90 version 1.5 — restrictive mode only after a stop.
+    Pzb90V15,
+    /// PZB 90 version 2.0 — today's standard.
+    #[default]
+    Pzb90V20,
+}
+
 /// Supervision parameters of a train category.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PzbParams {
+    /// Start of the 1000 Hz braking curve [km/h] (ramp variants only).
     pub v1000_start: f64,
+    /// Check speed of the 1000 Hz influence [km/h].
     pub v1000_end: f64,
-    /// Duration of the 1000 Hz braking curve [s].
+    /// Duration of the 1000 Hz supervision [s].
     pub t1000: f64,
+    /// 500 Hz check speed at the magnet [km/h].
     pub v500_start: f64,
+    /// 500 Hz check speed at the end of the curve [km/h] (ramp variants only).
     pub v500_end: f64,
     /// Indicator lamp label of the train category.
     pub lamp: &'static str,
 }
 
-impl TrainType {
-    pub fn params(self) -> PzbParams {
-        match self {
-            TrainType::O => PzbParams {
-                v1000_start: 165.0,
-                v1000_end: 85.0,
-                t1000: 23.0,
-                v500_start: 65.0,
-                v500_end: 45.0,
-                lamp: "85",
-            },
-            TrainType::M => PzbParams {
-                v1000_start: 125.0,
-                v1000_end: 70.0,
-                t1000: 29.0,
-                v500_start: 50.0,
-                v500_end: 35.0,
-                lamp: "70",
-            },
-            TrainType::U => PzbParams {
-                v1000_start: 105.0,
-                v1000_end: 55.0,
-                t1000: 38.0,
-                v500_start: 40.0,
-                v500_end: 25.0,
-                lamp: "55",
-            },
-        }
-    }
+/// How the 1000 Hz influence supervises the speed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Curve1000 {
+    /// PZB 90: braking curve falling continuously from `v1000_start` to `v1000_end`.
+    Ramp,
+    /// Indusi I 54/I 60: no supervision while the time runs, the check speed applies from
+    /// the moment it has elapsed.
+    Step,
 }
 
-/// Supervision speed of the restrictive supervision [km/h].
-pub const V_RESTRICTIVE: f64 = 45.0;
-/// Restrictive 500 Hz curve: from 45 down to 25 km/h.
-pub const V_RESTRICTIVE_500_END: f64 = 25.0;
-/// Supervised speed with the override (Befehl 40) [km/h].
-pub const V_OVERRIDE: f64 = 40.0;
+/// How the 500 Hz influence supervises the speed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Curve500 {
+    /// PZB 90: braking curve from `v500_start` to `v500_end` over this distance [m].
+    Ramp(f64),
+    /// Indusi I 54/I 60: `v500_start` applies immediately and stays.
+    Step,
+}
+
+/// Parameters of the restrictive supervision.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Restrictive {
+    /// Supervision speed of the restrictive mode [km/h].
+    pub v: f64,
+    /// End of the restrictive 500 Hz curve [km/h].
+    pub v_500_end: f64,
+    /// The restrictive mode also takes effect after running this long below `v_slow` [s];
+    /// `None` = only after a stop (PZB 90 V1.5 and older).
+    pub t_slow: Option<f64>,
+    /// Speed threshold for `t_slow` [km/h].
+    pub v_slow: f64,
+}
+
+/// The complete parameter set of one build state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PzbSpec {
+    pub o: PzbParams,
+    pub m: PzbParams,
+    pub u: PzbParams,
+    pub curve_1000: Curve1000,
+    pub curve_500: Curve500,
+    /// The 1000 Hz supervision ends after this distance [m]; `None` = only the release
+    /// button ends it (Indusi I 54/I 60).
+    pub d_1000: Option<f64>,
+    /// Length of the 500 Hz supervision [m].
+    pub d_500: f64,
+    /// The release button is permitted from this distance after the 1000 Hz magnet [m].
+    pub d_exempt: Option<f64>,
+    /// Time allowed for the acknowledgement after a 1000 Hz influence [s].
+    pub t_acknowledge: f64,
+    pub restrictive: Option<Restrictive>,
+    /// Speed supervised while the override button is pressed [km/h]; `None` = the older
+    /// override button merely suppresses the 2000 Hz influence.
+    pub v_override: Option<f64>,
+    /// The device runs a function test when it is switched on.
+    pub self_test: bool,
+}
+
 /// Length of the 1000 Hz supervision [m].
 pub const D_1000: f64 = 1250.0;
 /// Length of the 500 Hz supervision [m].
@@ -138,10 +203,181 @@ pub const D_500_CURVE: f64 = 153.0;
 pub const D_EXEMPT: f64 = 700.0;
 /// Time allowed for the acknowledgement after a 1000 Hz influence [s].
 pub const T_ACKNOWLEDGE: f64 = 4.0;
+/// Supervision speed of the restrictive supervision [km/h].
+pub const V_RESTRICTIVE: f64 = 45.0;
+/// Restrictive 500 Hz curve: from 45 down to 25 km/h.
+pub const V_RESTRICTIVE_500_END: f64 = 25.0;
+/// Supervised speed with the override (Befehl 40) [km/h].
+pub const V_OVERRIDE: f64 = 40.0;
 /// From this time running below 10 km/h the restrictive supervision takes effect [s].
 pub const T_SLOW: f64 = 15.0;
 /// Speed threshold for the restrictive supervision [km/h].
 pub const V_SLOW: f64 = 10.0;
+
+/// Train categories of the German Indusi builds I 54 … I 60R.
+const INDUSI_DE: (PzbParams, PzbParams, PzbParams) = (
+    PzbParams {
+        v1000_start: 165.0,
+        v1000_end: 85.0,
+        t1000: 23.0,
+        v500_start: 65.0,
+        v500_end: 65.0,
+        lamp: "85",
+    },
+    PzbParams {
+        v1000_start: 125.0,
+        v1000_end: 70.0,
+        t1000: 29.0,
+        v500_start: 50.0,
+        v500_end: 50.0,
+        lamp: "70",
+    },
+    PzbParams {
+        v1000_start: 105.0,
+        v1000_end: 55.0,
+        t1000: 38.0,
+        v500_start: 40.0,
+        v500_end: 40.0,
+        lamp: "55",
+    },
+);
+
+/// Train categories of the PZB 90 — same check speeds, but as braking curves.
+const PZB90_DE: (PzbParams, PzbParams, PzbParams) = (
+    PzbParams {
+        v500_end: 45.0,
+        ..INDUSI_DE.0
+    },
+    PzbParams {
+        v500_end: 35.0,
+        ..INDUSI_DE.1
+    },
+    PzbParams {
+        v500_end: 25.0,
+        ..INDUSI_DE.2
+    },
+);
+
+/// Train categories of the ÖBB PZB 60 — same check speeds, shorter supervision time.
+const PZB60_AT: (PzbParams, PzbParams, PzbParams) = (
+    PzbParams {
+        t1000: 20.0,
+        ..INDUSI_DE.0
+    },
+    PzbParams {
+        t1000: 26.0,
+        ..INDUSI_DE.1
+    },
+    PzbParams {
+        t1000: 34.0,
+        ..INDUSI_DE.2
+    },
+);
+
+/// Base of every Indusi build: 1000/500/2000 Hz, acknowledgement within 4 s, release button.
+const INDUSI_BASE: PzbSpec = PzbSpec {
+    o: INDUSI_DE.0,
+    m: INDUSI_DE.1,
+    u: INDUSI_DE.2,
+    curve_1000: Curve1000::Step,
+    curve_500: Curve500::Step,
+    d_1000: None,
+    d_500: D_500,
+    d_exempt: Some(D_EXEMPT),
+    t_acknowledge: T_ACKNOWLEDGE,
+    restrictive: None,
+    v_override: None,
+    self_test: false,
+};
+
+/// The restrictive supervision as the PZB 90 V2.0 defines it.
+const RESTRICTIVE_V20: Restrictive = Restrictive {
+    v: V_RESTRICTIVE,
+    v_500_end: V_RESTRICTIVE_500_END,
+    t_slow: Some(T_SLOW),
+    v_slow: V_SLOW,
+};
+
+impl PzbVariant {
+    pub fn spec(self) -> PzbSpec {
+        match self {
+            PzbVariant::I54 | PzbVariant::I60 => INDUSI_BASE,
+            PzbVariant::I60M => PzbSpec {
+                self_test: true,
+                ..INDUSI_BASE
+            },
+            // The restrictive programme brought the distance supervision and the
+            // supervised override with it; the 1000 Hz supervision stayed the I 60 one.
+            PzbVariant::I60R => PzbSpec {
+                d_1000: Some(D_1000),
+                restrictive: Some(Restrictive {
+                    t_slow: None,
+                    ..RESTRICTIVE_V20
+                }),
+                v_override: Some(V_OVERRIDE),
+                self_test: true,
+                ..INDUSI_BASE
+            },
+            PzbVariant::Pzb60 => PzbSpec {
+                o: PZB60_AT.0,
+                m: PZB60_AT.1,
+                u: PZB60_AT.2,
+                ..INDUSI_BASE
+            },
+            // V1.5: the restrictive mode is only entered after a stop and supervises a
+            // constant 45 km/h, the 500 Hz curve included.
+            PzbVariant::Pzb90V15 => PzbSpec {
+                restrictive: Some(Restrictive {
+                    t_slow: None,
+                    v_500_end: V_RESTRICTIVE,
+                    ..RESTRICTIVE_V20
+                }),
+                ..PzbVariant::Pzb90V20.spec()
+            },
+            PzbVariant::Pzb90V20 => PzbSpec {
+                o: PZB90_DE.0,
+                m: PZB90_DE.1,
+                u: PZB90_DE.2,
+                curve_1000: Curve1000::Ramp,
+                curve_500: Curve500::Ramp(D_500_CURVE),
+                d_1000: Some(D_1000),
+                restrictive: Some(RESTRICTIVE_V20),
+                v_override: Some(V_OVERRIDE),
+                self_test: true,
+                ..INDUSI_BASE
+            },
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PzbVariant::I54 => "Indusi I 54",
+            PzbVariant::I60 => "Indusi I 60",
+            PzbVariant::I60M => "Indusi I 60M",
+            PzbVariant::I60R => "Indusi I 60R",
+            PzbVariant::Pzb60 => "PZB 60 (ÖBB)",
+            PzbVariant::Pzb90V15 => "PZB 90 V1.5",
+            PzbVariant::Pzb90V20 => "PZB 90 V2.0",
+        }
+    }
+}
+
+impl PzbSpec {
+    pub fn params(&self, train_type: TrainType) -> PzbParams {
+        match train_type {
+            TrainType::O => self.o,
+            TrainType::M => self.m,
+            TrainType::U => self.u,
+        }
+    }
+}
+
+impl TrainType {
+    /// Parameters of the current standard build (PZB 90 V2.0).
+    pub fn params(self) -> PzbParams {
+        PzbVariant::Pzb90V20.spec().params(self)
+    }
+}
 
 /// Trigger of a forced braking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,11 +403,14 @@ struct Monitor500 {
     start_odo: f64,
 }
 
-/// The PZB 90 on-board equipment.
+/// The Indusi/PZB on-board equipment.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct Pzb90 {
+pub struct Pzb {
+    pub variant: PzbVariant,
     pub train_type: TrainType,
     isolated: bool,
+    /// Function test after switching on.
+    test: SelfTest,
     m1000: Option<Monitor1000>,
     m500: Option<Monitor500>,
     /// Restrictive supervision active.
@@ -179,7 +418,7 @@ pub struct Pzb90 {
     /// Override (Befehl 40) button pressed.
     override_40: bool,
     trip: Option<PzbTrip>,
-    /// Time below 10 km/h within a supervision [s].
+    /// Time below the restrictive threshold within a supervision [s].
     slow_timer: f64,
     acknowledge: Edge,
     exempt: Edge,
@@ -187,12 +426,33 @@ pub struct Pzb90 {
     limit: Option<f64>,
 }
 
-impl Pzb90 {
+/// The PZB 90 — kept as a name of its own because most vehicles carry exactly this build.
+pub type Pzb90 = Pzb;
+
+impl Pzb {
+    /// Standard build (PZB 90 V2.0), already function-tested.
     pub fn new(train_type: TrainType) -> Self {
+        Self::with_variant(PzbVariant::Pzb90V20, train_type)
+    }
+
+    /// A specific build, already function-tested (vehicle set up before the scenario).
+    pub fn with_variant(variant: PzbVariant, train_type: TrainType) -> Self {
         Self {
+            variant,
             train_type,
             ..Default::default()
         }
+    }
+
+    /// Switches the device on: the function test starts (plan 9.3).
+    pub fn power_on(&mut self) {
+        if self.spec().self_test {
+            self.test.restart();
+        }
+    }
+
+    pub fn spec(&self) -> PzbSpec {
+        self.variant.spec()
     }
 
     pub fn trip(&self) -> Option<PzbTrip> {
@@ -201,6 +461,11 @@ impl Pzb90 {
 
     pub fn is_restrictive(&self) -> bool {
         self.restrictive
+    }
+
+    /// State of the function test.
+    pub fn self_test(&self) -> SelfTest {
+        self.test
     }
 
     /// Current supervision speed [km/h], if a supervision is running.
@@ -218,17 +483,19 @@ impl Pzb90 {
 
     /// Is the exemption currently permitted?
     pub fn release_allowed(&self, odometer: f64) -> bool {
-        self.m1000
-            .is_some_and(|m| odometer - m.start_odo >= D_EXEMPT)
-            && !self.restrictive
+        let Some(d) = self.spec().d_exempt else {
+            return false;
+        };
+        self.m1000.is_some_and(|m| odometer - m.start_odo >= d) && !self.restrictive
     }
 
     fn params(&self) -> PzbParams {
-        self.train_type.params()
+        self.spec().params(self.train_type)
     }
 
     /// Supervision speed derived from all active influences.
     fn compute_limit(&self, odometer: f64) -> Option<f64> {
+        let spec = self.spec();
         let p = self.params();
         let mut limit: Option<f64> = None;
         let mut take = |v: f64| {
@@ -236,24 +503,36 @@ impl Pzb90 {
         };
 
         if let Some(m) = self.m1000 {
-            if self.restrictive {
-                take(V_RESTRICTIVE);
-            } else {
-                let t = (m.elapsed / p.t1000).clamp(0.0, 1.0);
-                take(p.v1000_start + (p.v1000_end - p.v1000_start) * t);
+            match (self.restrictive, spec.restrictive) {
+                (true, Some(r)) => take(r.v),
+                _ => match spec.curve_1000 {
+                    Curve1000::Ramp => {
+                        let t = (m.elapsed / p.t1000).clamp(0.0, 1.0);
+                        take(p.v1000_start + (p.v1000_end - p.v1000_start) * t);
+                    }
+                    // Older Indusi: the check speed only has to be met once the time has run.
+                    Curve1000::Step if m.elapsed >= p.t1000 => take(p.v1000_end),
+                    Curve1000::Step => {}
+                },
             }
         }
         if let Some(m) = self.m500 {
-            let d = ((odometer - m.start_odo) / D_500_CURVE).clamp(0.0, 1.0);
-            let (start, end) = if self.restrictive {
-                (V_RESTRICTIVE, V_RESTRICTIVE_500_END)
-            } else {
-                (p.v500_start, p.v500_end)
+            let (start, end) = match (self.restrictive, spec.restrictive) {
+                (true, Some(r)) => (r.v, r.v_500_end),
+                _ => (p.v500_start, p.v500_end),
             };
-            take(start + (end - start) * d);
+            match spec.curve_500 {
+                Curve500::Ramp(distance) => {
+                    let d = ((odometer - m.start_odo) / distance).clamp(0.0, 1.0);
+                    take(start + (end - start) * d);
+                }
+                Curve500::Step => take(start),
+            }
         }
-        if self.override_40 {
-            take(V_OVERRIDE);
+        if self.override_40
+            && let Some(v) = spec.v_override
+        {
+            take(v);
         }
         limit
     }
@@ -281,7 +560,8 @@ impl Pzb90 {
                 self.m500 = Some(Monitor500 { start_odo });
             }
             MagnetFrequency::Hz2000 => {
-                // The override (Befehl 40) suppresses the 2000 Hz influence.
+                // The override (Befehl 40) suppresses the 2000 Hz influence — that is what
+                // the button does in every build, supervised speed or not.
                 if !self.override_40 {
                     self.trip = Some(PzbTrip::Magnet2000);
                 }
@@ -294,7 +574,7 @@ fn ron_payload(event: &TracksideEvent) -> Option<MagnetPayload> {
     ron::from_str::<MagnetPayload>(&event.payload).ok()
 }
 
-impl TrainProtectionSystem for Pzb90 {
+impl TrainProtectionSystem for Pzb {
     fn update(
         &mut self,
         dt: f64,
@@ -304,6 +584,7 @@ impl TrainProtectionSystem for Pzb90 {
     ) -> ProtectionOutput {
         if self.isolated {
             *self = Self {
+                variant: self.variant,
                 train_type: self.train_type,
                 isolated: true,
                 ..Default::default()
@@ -315,6 +596,18 @@ impl TrainProtectionSystem for Pzb90 {
         let acknowledge = self.acknowledge.rising(cab.pzb_acknowledge);
         let exempt = self.exempt.rising(cab.pzb_exempt);
 
+        // Function test — until it has passed the device holds the forced braking.
+        if !self.test.is_passed() {
+            self.test.step(dt, train, acknowledge);
+            return ProtectionOutput {
+                action: ProtectionAction::EmergencyBrake,
+                alert: true,
+                ..Default::default()
+            };
+        }
+
+        let spec = self.spec();
+
         for e in events {
             self.handle_event(e, train.odometer);
         }
@@ -325,21 +618,24 @@ impl TrainProtectionSystem for Pzb90 {
                 m.acknowledged = true;
             }
             if self.trip.is_some() && train.standstill() {
-                // Release the forced braking — afterwards the restrictive supervision applies.
+                // Release the forced braking. Builds with a restrictive programme continue
+                // under it, older ones simply carry on with the running supervision.
                 self.trip = None;
-                self.restrictive = true;
-                if self.m1000.is_none() {
-                    self.m1000 = Some(Monitor1000 {
-                        start_odo: train.odometer,
-                        elapsed: 0.0,
-                        acknowledged: true,
-                        ack_timer: 0.0,
-                    });
+                if spec.restrictive.is_some() {
+                    self.restrictive = true;
+                    if self.m1000.is_none() {
+                        self.m1000 = Some(Monitor1000 {
+                            start_odo: train.odometer,
+                            elapsed: 0.0,
+                            acknowledged: true,
+                            ack_timer: 0.0,
+                        });
+                    }
                 }
             }
         }
 
-        // Exemption (Frei button) from 700 m onwards, not in restrictive supervision.
+        // Exemption (Frei button).
         if exempt && self.release_allowed(train.odometer) {
             self.m1000 = None;
             self.slow_timer = 0.0;
@@ -350,36 +646,41 @@ impl TrainProtectionSystem for Pzb90 {
             m.elapsed += dt;
             if !m.acknowledged {
                 m.ack_timer += dt;
-                if m.ack_timer > T_ACKNOWLEDGE {
+                if m.ack_timer > spec.t_acknowledge {
                     self.trip = Some(PzbTrip::MissingAcknowledge);
                 }
             }
-            if train.odometer - m.start_odo > D_1000 {
+            if spec
+                .d_1000
+                .is_some_and(|d| train.odometer - m.start_odo > d)
+            {
                 self.m1000 = None;
                 self.restrictive = false;
                 self.slow_timer = 0.0;
             }
         }
         if let Some(m) = self.m500
-            && train.odometer - m.start_odo > D_500
+            && train.odometer - m.start_odo > spec.d_500
         {
             self.m500 = None;
         }
 
-        // Restrictive supervision: stop, or running longer than 15 s below 10 km/h
-        // within a supervision.
-        if self.m1000.is_some() || self.m500.is_some() {
-            if train.v_kmh < V_SLOW {
-                self.slow_timer += dt;
-                if train.standstill() || self.slow_timer > T_SLOW {
-                    self.restrictive = true;
+        // Restrictive supervision: after a stop, and from V2.0 also after running longer
+        // than 15 s below 10 km/h within a supervision.
+        if let Some(r) = spec.restrictive {
+            if self.m1000.is_some() || self.m500.is_some() {
+                if train.v_kmh < r.v_slow {
+                    self.slow_timer += dt;
+                    if train.standstill() || r.t_slow.is_some_and(|t| self.slow_timer > t) {
+                        self.restrictive = true;
+                    }
+                } else {
+                    self.slow_timer = 0.0;
                 }
             } else {
+                self.restrictive = false;
                 self.slow_timer = 0.0;
             }
-        } else {
-            self.restrictive = false;
-            self.slow_timer = 0.0;
         }
 
         // Speed supervision.
@@ -406,6 +707,15 @@ impl TrainProtectionSystem for Pzb90 {
 
     fn indicators(&self) -> Vec<Indicator> {
         let p = self.params();
+        // During the lamp test of the function test every indicator is lit.
+        if self.test.lamp_test() {
+            return vec![
+                Indicator::lamp("pzb_1000hz", true),
+                Indicator::lamp("pzb_500hz", true),
+                Indicator::lamp("pzb_befehl", true),
+                Indicator::lamp(p.lamp, true),
+            ];
+        }
         vec![
             Indicator::lamp("pzb_1000hz", self.m1000.is_some()),
             Indicator::lamp("pzb_500hz", self.m500.is_some()),
@@ -432,17 +742,18 @@ impl TrainProtectionSystem for Pzb90 {
     }
 
     fn name(&self) -> &'static str {
-        "PZB 90"
+        self.variant.name()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::safety::SelfTestPhase;
 
     /// Small test rig: runs the train at constant speed with button presses.
     struct Rig {
-        pzb: Pzb90,
+        pzb: Pzb,
         state: SafetyTrainState,
         cab: CabInputs,
         out: ProtectionOutput,
@@ -450,13 +761,16 @@ mod tests {
 
     impl Rig {
         fn new(train_type: TrainType, v_kmh: f64) -> Self {
+            Self::variant(PzbVariant::Pzb90V20, train_type, v_kmh)
+        }
+
+        fn variant(variant: PzbVariant, train_type: TrainType, v_kmh: f64) -> Self {
             Self {
-                pzb: Pzb90::new(train_type),
+                pzb: Pzb::with_variant(variant, train_type),
                 state: SafetyTrainState {
                     v_kmh,
-                    odometer: 0.0,
                     line_speed: 160.0,
-                    braking: false,
+                    ..Default::default()
                 },
                 cab: CabInputs::default(),
                 out: ProtectionOutput::default(),
@@ -670,5 +984,209 @@ mod tests {
         };
         let out = r.pzb.update(0.1, &r.state, &r.cab, &[event]);
         assert_eq!(out.action, ProtectionAction::None);
+    }
+
+    // --- Build states -----------------------------------------------------------------
+
+    #[test]
+    fn indusi_i54_supervises_the_check_speed_only_after_the_time() {
+        // I 54, category O: 23 s of grace, then 85 km/h.
+        let mut r = Rig::variant(PzbVariant::I54, TrainType::O, 120.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.run(20.0);
+        assert!(
+            r.pzb.supervised_speed().is_none(),
+            "no braking curve while the time runs"
+        );
+        assert!(!r.braking());
+        r.run(4.0);
+        assert_eq!(r.pzb.supervised_speed(), Some(85.0));
+        assert!(r.braking(), "120 km/h after the time has run");
+    }
+
+    #[test]
+    fn indusi_i54_five_hundred_hertz_is_a_fixed_check_speed() {
+        let mut r = Rig::variant(PzbVariant::I54, TrainType::O, 60.0);
+        r.magnet(MagnetFrequency::Hz500);
+        assert_eq!(r.pzb.supervised_speed(), Some(65.0));
+        r.drive(200.0);
+        assert_eq!(
+            r.pzb.supervised_speed(),
+            Some(65.0),
+            "no falling curve, the I 54 holds the check speed"
+        );
+        assert!(!r.braking());
+    }
+
+    #[test]
+    fn indusi_i60_has_no_restrictive_mode() {
+        let mut r = Rig::variant(PzbVariant::I60, TrainType::O, 80.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.drive(200.0);
+        r.state.v_kmh = 0.0;
+        r.run(2.0);
+        assert!(
+            !r.pzb.is_restrictive(),
+            "the I 60 knows no restrictive mode"
+        );
+        // Pulling away again at 60 km/h stays permitted before the time has run.
+        r.state.v_kmh = 60.0;
+        r.run(1.0);
+        assert!(!r.braking());
+    }
+
+    #[test]
+    fn indusi_i60_supervision_only_ends_with_the_release_button() {
+        let mut r = Rig::variant(PzbVariant::I60, TrainType::O, 80.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.drive(1400.0);
+        assert!(
+            r.pzb.monitoring_1000(),
+            "no 1250 m distance supervision before the I 60R"
+        );
+        r.exempt();
+        assert!(!r.pzb.monitoring_1000());
+    }
+
+    #[test]
+    fn indusi_i60r_adds_distance_supervision_and_restrictive_mode() {
+        let mut r = Rig::variant(PzbVariant::I60R, TrainType::O, 80.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.drive(200.0);
+        r.state.v_kmh = 0.0;
+        r.run(1.0);
+        assert!(r.pzb.is_restrictive(), "restrictive programme present");
+        assert_eq!(r.pzb.supervised_speed(), Some(V_RESTRICTIVE));
+
+        // …but the 15 s rule below 10 km/h is a PZB 90 V2.0 addition.
+        let mut r = Rig::variant(PzbVariant::I60R, TrainType::O, 8.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.run(20.0);
+        assert!(!r.pzb.is_restrictive());
+
+        // The distance supervision ends after 1250 m.
+        let mut r = Rig::variant(PzbVariant::I60R, TrainType::O, 80.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.drive(1300.0);
+        assert!(!r.pzb.monitoring_1000());
+    }
+
+    #[test]
+    fn oebb_pzb60_uses_the_shorter_supervision_time() {
+        let mut r = Rig::variant(PzbVariant::Pzb60, TrainType::O, 120.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.run(19.0);
+        assert!(!r.braking(), "20 s of grace");
+        r.run(2.0);
+        assert_eq!(r.pzb.supervised_speed(), Some(85.0));
+        assert!(r.braking());
+    }
+
+    #[test]
+    fn pzb90_v15_enters_the_restrictive_mode_only_after_a_stop() {
+        // Running below 10 km/h does not trigger it …
+        let mut r = Rig::variant(PzbVariant::Pzb90V15, TrainType::O, 8.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.run(20.0);
+        assert!(!r.pzb.is_restrictive(), "the 15 s rule came with V2.0");
+        // … a stop does.
+        r.state.v_kmh = 0.0;
+        r.run(1.0);
+        assert!(r.pzb.is_restrictive());
+    }
+
+    #[test]
+    fn pzb90_v15_restrictive_500_hz_stays_at_45() {
+        let mut r = Rig::variant(PzbVariant::Pzb90V15, TrainType::O, 40.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.state.v_kmh = 0.0;
+        r.run(1.0);
+        assert!(r.pzb.is_restrictive());
+        r.state.v_kmh = 40.0;
+        r.magnet(MagnetFrequency::Hz500);
+        r.drive(200.0);
+        assert_eq!(
+            r.pzb.supervised_speed(),
+            Some(V_RESTRICTIVE),
+            "V1.5 holds 45 km/h, V2.0 falls to 25"
+        );
+        assert!(!r.braking());
+    }
+
+    #[test]
+    fn pzb90_v20_restrictive_500_hz_falls_to_25() {
+        let mut r = Rig::new(TrainType::O, 40.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.state.v_kmh = 0.0;
+        r.run(1.0);
+        r.state.v_kmh = 40.0;
+        r.magnet(MagnetFrequency::Hz500);
+        r.drive(200.0);
+        assert!(r.braking(), "the restrictive 500 Hz curve ends at 25 km/h");
+    }
+
+    // --- Function test ----------------------------------------------------------------
+
+    #[test]
+    fn function_test_holds_the_brake_until_it_is_acknowledged() {
+        let mut r = Rig::new(TrainType::O, 0.0);
+        r.pzb.power_on();
+        assert_eq!(r.pzb.self_test().phase(), SelfTestPhase::Lamps);
+        assert!(
+            r.pzb.indicators().iter().all(|i| i.lamp == LampState::On),
+            "lamp test: every indicator lit"
+        );
+        r.run(1.0);
+        assert!(r.braking(), "the brake stays applied during the test");
+        r.run(5.0);
+        assert_eq!(r.pzb.self_test().phase(), SelfTestPhase::AwaitAck);
+        assert!(r.braking(), "waiting for the acknowledgement");
+        r.acknowledge();
+        assert!(r.pzb.self_test().is_passed());
+        assert!(!r.braking());
+    }
+
+    #[test]
+    fn function_test_does_not_run_while_the_train_moves() {
+        let mut r = Rig::new(TrainType::O, 30.0);
+        r.pzb.power_on();
+        r.run(20.0);
+        assert_eq!(
+            r.pzb.self_test().phase(),
+            SelfTestPhase::Lamps,
+            "the test needs a standstill"
+        );
+        assert!(r.braking());
+    }
+
+    #[test]
+    fn older_builds_have_no_function_test() {
+        for variant in [PzbVariant::I54, PzbVariant::I60, PzbVariant::Pzb60] {
+            let mut r = Rig::variant(variant, TrainType::O, 0.0);
+            r.pzb.power_on();
+            r.run(0.5);
+            assert!(
+                !r.braking(),
+                "{} switches on without a function test",
+                variant.name()
+            );
+        }
+        // The microprocessor builds do run one.
+        for variant in [PzbVariant::I60M, PzbVariant::I60R, PzbVariant::Pzb90V20] {
+            let mut r = Rig::variant(variant, TrainType::O, 0.0);
+            r.pzb.power_on();
+            r.run(0.5);
+            assert!(r.braking(), "{} runs a function test", variant.name());
+        }
     }
 }

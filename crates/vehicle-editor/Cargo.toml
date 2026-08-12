@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 i18n = { workspace = true }
+editor-ui = { workspace = true }
 sim-core = { workspace = true }
 content = { workspace = true }
 serde = { workspace = true }

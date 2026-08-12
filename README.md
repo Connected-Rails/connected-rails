@@ -181,6 +181,7 @@ alignment from the OSM points.
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12) |
+| `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down view with aerial imagery overlay (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
 

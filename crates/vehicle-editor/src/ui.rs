@@ -1,13 +1,25 @@
 //! Desktop UI of the vehicle editor: menu bar, data panel, model panel, status bar.
+//!
+//! Look and feel come from the `editor-ui` crate; this file only lays out the
+//! forms. Every labelled field goes through [`row`], every section through
+//! `editor_ui::section`, so labels and fields line up across the whole panel.
 
 use crate::{Editor, PointerOverUi, model, powertrain};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
+use editor_ui::{colors, drag, space};
 use i18n::t;
 use sim_core::doors::DoorSystem;
 use sim_core::safety::SafetyEquipment;
 use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
 use sim_core::train::{Motion, Part, VehicleSpec};
+
+const SHORTCUT_NEW: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N);
+const SHORTCUT_OPEN: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O);
+const SHORTCUT_SAVE: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
 
 /// One frame of UI.
 ///
@@ -18,9 +30,18 @@ pub fn draw(
     mut editor: ResMut<Editor>,
     mut assets: ResMut<AssetServer>,
     mut over_ui: ResMut<PointerOverUi>,
+    mut themed: Local<bool>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
+    if !*themed {
+        // Fonts installed by `apply` become active with the next pass — skip
+        // one frame so nothing draws with a font family that is not there yet.
+        editor_ui::apply(&ctx);
+        *themed = true;
+        return Ok(());
+    }
     over_ui.0 = ctx.egui_wants_pointer_input();
+    handle_shortcuts(&ctx, &mut editor);
 
     // A vehicle that was just opened brings its model along.
     let file = editor
@@ -49,64 +70,107 @@ pub fn draw(
     Ok(())
 }
 
+fn handle_shortcuts(ctx: &egui::Context, editor: &mut Editor) {
+    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_SAVE)) {
+        save(editor);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_OPEN)) {
+        open(editor);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_NEW)) {
+        *editor = Editor::default();
+    }
+}
+
+/// Save to the known path, or fall back to the save dialog.
+fn save(editor: &mut Editor) {
+    match editor.path.clone() {
+        Some(path) => editor.save(path),
+        None => save_as(editor),
+    }
+}
+
+fn save_as(editor: &mut Editor) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter(t!("filter-vehicle-ron"), &["ron"])
+        .set_file_name("vehicle.ron")
+        .save_file()
+    {
+        editor.save(path);
+    }
+}
+
+fn open(editor: &mut Editor) {
+    if let Some(path) = rfd::FileDialog::new()
+        .add_filter(t!("filter-vehicle-ron"), &["ron"])
+        .pick_file()
+    {
+        editor.open(path);
+    }
+}
+
 fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) {
-    egui::Panel::top("menu").show(root, |ui| {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(t!("menu-file"), |ui| {
-                if ui.button(t!("action-new")).clicked() {
-                    *editor = Editor::default();
-                    ui.close();
-                }
-                if ui.button(t!("action-open")).clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter(t!("filter-vehicle-ron"), &["ron"])
-                        .pick_file()
+    egui::Panel::top("menu")
+        .frame(editor_ui::bar_frame())
+        .show(root, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                let ctx = ui.ctx().clone();
+                ui.menu_button(t!("menu-file"), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(t!("action-new"))
+                                .shortcut_text(ctx.format_shortcut(&SHORTCUT_NEW)),
+                        )
+                        .clicked()
                     {
-                        editor.open(path);
+                        *editor = Editor::default();
+                        ui.close();
                     }
-                    ui.close();
-                }
-                let has_path = editor.path.is_some();
-                if ui
-                    .add_enabled(has_path, egui::Button::new(t!("action-save")))
-                    .clicked()
-                {
-                    if let Some(path) = editor.path.clone() {
-                        editor.save(path);
-                    }
-                    ui.close();
-                }
-                if ui.button(t!("action-save-as")).clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter(t!("filter-vehicle-ron"), &["ron"])
-                        .set_file_name("vehicle.ron")
-                        .save_file()
+                    if ui
+                        .add(
+                            egui::Button::new(t!("action-open"))
+                                .shortcut_text(ctx.format_shortcut(&SHORTCUT_OPEN)),
+                        )
+                        .clicked()
                     {
-                        editor.save(path);
+                        open(editor);
+                        ui.close();
                     }
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(t!("action-import-model")).clicked() {
-                    import_model(editor, assets);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(t!("action-quit")).clicked() {
-                    std::process::exit(0);
-                }
-            });
-            ui.menu_button(t!("menu-view"), |ui| {
-                ui.checkbox(&mut editor.show_reference, t!("view-reference-body"));
-                ui.separator();
-                language_menu(ui);
-            });
-            ui.menu_button(t!("menu-help"), |ui| {
-                ui.label(t!("help-mouse"));
-                ui.label(t!("help-model-conventions"));
+                    if ui
+                        .add(
+                            egui::Button::new(t!("action-save"))
+                                .shortcut_text(ctx.format_shortcut(&SHORTCUT_SAVE)),
+                        )
+                        .clicked()
+                    {
+                        save(editor);
+                        ui.close();
+                    }
+                    if ui.button(t!("action-save-as")).clicked() {
+                        save_as(editor);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(t!("action-import-model")).clicked() {
+                        import_model(editor, assets);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(t!("action-quit")).clicked() {
+                        std::process::exit(0);
+                    }
+                });
+                ui.menu_button(t!("menu-view"), |ui| {
+                    ui.checkbox(&mut editor.show_reference, t!("view-reference-body"));
+                    ui.separator();
+                    language_menu(ui);
+                });
+                ui.menu_button(t!("menu-help"), |ui| {
+                    ui.label(t!("help-mouse"));
+                    ui.label(t!("help-model-conventions"));
+                });
             });
         });
-    });
 }
 
 /// Language picker — the same submenu in both editors.
@@ -148,177 +212,150 @@ fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
 /// Left panel: the vehicle's base data (plan 15.2).
 fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
     egui::Panel::left("data")
-        .default_size(340.0)
+        .default_size(400.0)
         .resizable(true)
+        .frame(editor_ui::panel_frame())
         .show(root, |ui| {
             let before = editor.spec.clone();
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading(t!("heading-vehicle"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut editor.spec.name).hint_text(t!("field-name")),
-                );
-                ui.separator();
-
-                let spec = &mut editor.spec;
-                egui::Grid::new("base").num_columns(2).show(ui, |ui| {
-                    row(ui, "veh-length", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.length)
-                                .speed(0.1)
-                                .range(1.0..=100.0),
-                        );
-                    });
-                    row(ui, "veh-gauge", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.gauge)
-                                .speed(0.001)
-                                .range(0.6..=2.0),
-                        );
-                    });
-                    row(ui, "veh-vmax", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.v_max)
-                                .speed(1.0)
-                                .range(0.0..=400.0),
-                        );
-                    });
-                    row(ui, "veh-mass", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.mass_empty)
-                                .speed(100.0)
-                                .range(1_000.0..=200_000.0),
-                        );
-                    });
-                    row(ui, "veh-payload", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.max_payload)
-                                .speed(100.0)
-                                .range(0.0..=120_000.0),
-                        );
-                    });
-                    ui.end_row();
-                });
-
-                ui.separator();
-                ui.label(egui::RichText::new(t!("group-running-gear")).strong());
-                egui::Grid::new("gear").num_columns(2).show(ui, |ui| {
-                    row(ui, "veh-rotating-mass", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.rotating_mass_factor)
-                                .speed(0.005)
-                                .range(0.0..=0.5),
-                        );
-                    });
-                    row(ui, "veh-axles", |ui| {
-                        ui.add(egui::DragValue::new(&mut spec.axles).range(0..=32));
-                    });
-                    row(ui, "veh-axle-base", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.axle_base_sum)
-                                .speed(0.1)
-                                .range(0.0..=40.0),
-                        );
-                    });
-                    row(ui, "veh-tilt", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.tilt_angle_deg)
-                                .speed(0.5)
-                                .range(0.0..=12.0),
-                        );
-                    });
-                    row(ui, "veh-hunting", |ui| {
-                        ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
-                    });
-                    ui.end_row();
-                });
-
-                ui.separator();
-                ui.label(egui::RichText::new(t!("group-resistance")).strong());
-                egui::Grid::new("resistance").num_columns(2).show(ui, |ui| {
-                    ui.label(t!("res-rolling"));
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.davis.a)
-                                .speed(10.0)
-                                .range(0.0..=20_000.0),
-                        );
-                        if ui
-                            .button(t!("action-suggest"))
-                            .on_hover_text(t!("res-rolling-suggest-hint"))
-                            .clicked()
-                        {
-                            spec.davis.a =
-                                VehicleSpec::suggested_rolling_resistance(spec.mass_empty);
-                        }
-                    });
-                    ui.end_row();
-                    row(ui, "res-speed-term", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut spec.davis.b)
-                                .speed(1.0)
-                                .range(0.0..=500.0),
-                        );
-                    });
-
-                    let mut use_cw_a = spec.cw_a.is_some();
-                    ui.label(t!("res-air"));
-                    ui.horizontal(|ui| {
-                        if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
-                            spec.cw_a = use_cw_a.then_some(6.0);
-                        }
-                        match &mut spec.cw_a {
-                            Some(cw_a) => {
-                                ui.add(
-                                    egui::DragValue::new(cw_a)
-                                        .speed(0.1)
-                                        .range(0.1..=40.0)
-                                        .suffix(" m²"),
-                                );
-                            }
-                            None => {
-                                ui.add(
-                                    egui::DragValue::new(&mut spec.davis.c)
-                                        .speed(0.1)
-                                        .range(0.0..=100.0),
-                                )
-                                .on_hover_text(t!("res-davis-c-hint"));
-                            }
-                        }
-                    });
-                    ui.end_row();
-                });
-                ui.horizontal(|ui| {
-                    ui.label(t!("res-curve"))
-                        .on_hover_text(t!("res-curve-hint"));
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    ui.label(editor_ui::heading(t!("heading-vehicle")));
+                    ui.add_space(space::XS);
                     ui.add(
-                        egui::DragValue::new(&mut spec.curve_resistance_factor)
-                            .speed(0.05)
-                            .range(0.0..=3.0),
+                        egui::TextEdit::singleline(&mut editor.spec.name)
+                            .hint_text(t!("field-name"))
+                            .desired_width(f32::INFINITY),
                     );
+                    ui.add_space(space::S);
+
+                    let spec = &mut editor.spec;
+                    editor_ui::section(ui, "base", t!("group-base-data"), |ui| {
+                        editor_ui::form_grid("base").show(ui, |ui| {
+                            row(ui, "veh-length", |ui| {
+                                ui.add(drag(&mut spec.length, 0.1, 1.0..=100.0, "m"));
+                            });
+                            row(ui, "veh-gauge", |ui| {
+                                ui.add(drag(&mut spec.gauge, 0.001, 0.6..=2.0, "m"));
+                            });
+                            row(ui, "veh-vmax", |ui| {
+                                ui.add(drag(&mut spec.v_max, 1.0, 0.0..=400.0, "km/h"));
+                            });
+                            row(ui, "veh-mass", |ui| {
+                                ui.add(drag(
+                                    &mut spec.mass_empty,
+                                    100.0,
+                                    1_000.0..=200_000.0,
+                                    "kg",
+                                ));
+                            });
+                            row(ui, "veh-payload", |ui| {
+                                ui.add(drag(&mut spec.max_payload, 100.0, 0.0..=120_000.0, "kg"));
+                            });
+                        });
+                    });
+
+                    editor_ui::section(ui, "gear", t!("group-running-gear"), |ui| {
+                        editor_ui::form_grid("gear").show(ui, |ui| {
+                            row(ui, "veh-rotating-mass", |ui| {
+                                ui.add(drag(&mut spec.rotating_mass_factor, 0.005, 0.0..=0.5, ""));
+                            });
+                            row(ui, "veh-axles", |ui| {
+                                ui.add(drag(&mut spec.axles, 1.0, 0.0..=32.0, ""));
+                            });
+                            row(ui, "veh-axle-base", |ui| {
+                                ui.add(drag(&mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m"));
+                            });
+                            row(ui, "veh-tilt", |ui| {
+                                ui.add(drag(&mut spec.tilt_angle_deg, 0.5, 0.0..=12.0, "°"));
+                            });
+                            row(ui, "veh-hunting", |ui| {
+                                ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
+                            });
+                        });
+                    });
+
+                    editor_ui::section(ui, "resistance", t!("group-resistance"), |ui| {
+                        editor_ui::form_grid("resistance").show(ui, |ui| {
+                            row(ui, "res-rolling", |ui| {
+                                ui.add(drag(&mut spec.davis.a, 10.0, 0.0..=20_000.0, "N"));
+                                if ui
+                                    .button(t!("action-suggest"))
+                                    .on_hover_text(t!("res-rolling-suggest-hint"))
+                                    .clicked()
+                                {
+                                    spec.davis.a =
+                                        VehicleSpec::suggested_rolling_resistance(spec.mass_empty);
+                                }
+                            });
+                            row(ui, "res-speed-term", |ui| {
+                                ui.add(drag(&mut spec.davis.b, 1.0, 0.0..=500.0, "N·s/m"));
+                            });
+
+                            let mut use_cw_a = spec.cw_a.is_some();
+                            editor_ui::form_label(ui, t!("res-air"));
+                            ui.horizontal(|ui| {
+                                if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
+                                    spec.cw_a = use_cw_a.then_some(6.0);
+                                }
+                                match &mut spec.cw_a {
+                                    Some(cw_a) => {
+                                        ui.add(drag(cw_a, 0.1, 0.1..=40.0, "m²"));
+                                    }
+                                    None => {
+                                        ui.add(drag(&mut spec.davis.c, 0.1, 0.0..=100.0, ""))
+                                            .on_hover_text(t!("res-davis-c-hint"));
+                                    }
+                                }
+                            });
+                            ui.end_row();
+
+                            row(ui, "res-curve", |ui| {
+                                ui.add(drag(
+                                    &mut spec.curve_resistance_factor,
+                                    0.05,
+                                    0.0..=3.0,
+                                    "",
+                                ));
+                            });
+                        });
+                        ui.add_space(space::XS);
+                        ui.label(
+                            egui::RichText::new(t!(
+                                "res-at-100",
+                                newtons = format!("{:.0}", spec.resistance(100.0 / 3.6))
+                            ))
+                            .small()
+                            .color(colors::TEXT_SECONDARY),
+                        );
+                    });
+
+                    editor_ui::section(ui, "brake", t!("group-brake"), |ui| {
+                        powertrain::brake_panel(ui, &mut spec.brake, &mut spec.slip_protection);
+                    });
+
+                    editor_ui::section(ui, "drive", t!("group-drive"), |ui| {
+                        powertrain::drive_panel(ui, &mut spec.traction);
+                    });
+
+                    editor_ui::section(ui, "equipment", t!("group-equipment"), |ui| {
+                        equipment_panel(ui, spec);
+                    });
+
+                    editor_ui::section(ui, "behaviour", t!("group-behaviour"), |ui| {
+                        let mut script = spec.script.clone().unwrap_or_default();
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut script)
+                                    .hint_text(t!("field-script-hint"))
+                                    .desired_width(f32::INFINITY),
+                            )
+                            .changed()
+                        {
+                            spec.script = (!script.is_empty()).then_some(script);
+                        }
+                    });
                 });
-                ui.small(t!(
-                    "res-at-100",
-                    newtons = format!("{:.0}", spec.resistance(100.0 / 3.6))
-                ));
-
-                ui.separator();
-                powertrain::brake_panel(ui, &mut spec.brake, &mut spec.slip_protection);
-                ui.separator();
-                powertrain::drive_panel(ui, &mut spec.traction);
-
-                ui.separator();
-                equipment_panel(ui, spec);
-
-                ui.separator();
-                ui.label(egui::RichText::new(t!("group-behaviour")).strong());
-                let mut script = spec.script.clone().unwrap_or_default();
-                if ui
-                    .add(egui::TextEdit::singleline(&mut script).hint_text(t!("field-script-hint")))
-                    .changed()
-                {
-                    spec.script = (!script.is_empty()).then_some(script);
-                }
-            });
             if editor.spec.name != before.name || !dataless_eq(&editor.spec, &before) {
                 editor.dirty = true;
             }
@@ -330,8 +367,6 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
 /// What the equipment achieves also depends on the line — the LZB needs a conductor cable,
 /// the PZB needs track magnets.
 fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
-    ui.label(egui::RichText::new(t!("group-equipment")).strong());
-
     let mut fitted = matches!(spec.safety, SafetyEquipment::De { .. });
     if ui
         .checkbox(&mut fitted, t!("eq-german-protection"))
@@ -356,76 +391,74 @@ fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
         train_type,
     } = &mut spec.safety
     {
-        egui::Grid::new("safety").num_columns(2).show(ui, |ui| {
-            ui.label(t!("eq-pzb")).on_hover_text(t!("eq-pzb-hint"));
-            // Type designations of the equipment are names, not prose — they stay as they are.
-            combo(
-                ui,
-                "pzb",
-                pzb,
-                &[
-                    (None, t!("opt-not-fitted")),
-                    (Some(PzbVariant::I54), "Indusi I 54".into()),
-                    (Some(PzbVariant::I60), "Indusi I 60".into()),
-                    (Some(PzbVariant::I60M), "Indusi I 60M".into()),
-                    (Some(PzbVariant::I60R), "Indusi I 60R".into()),
-                    (Some(PzbVariant::Pzb60), "ÖBB PZB 60".into()),
-                    (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5".into()),
-                    (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0".into()),
-                ],
-            );
-            ui.end_row();
-
-            ui.label(t!("eq-train-type"))
-                .on_hover_text(t!("eq-train-type-hint"));
-            combo(
-                ui,
-                "train_type",
-                train_type,
-                &[
-                    (TrainType::O, t!("train-type-o")),
-                    (TrainType::M, t!("train-type-m")),
-                    (TrainType::U, t!("train-type-u")),
-                ],
-            );
-            ui.end_row();
-
-            ui.label(t!("eq-sifa")).on_hover_text(t!("eq-sifa-hint"));
-            combo(
-                ui,
-                "sifa",
-                sifa,
-                &[
-                    (None, t!("opt-not-fitted")),
-                    (Some(SifaKind::TimeTime), t!("sifa-time-time")),
-                    (Some(SifaKind::TimeDistance), t!("sifa-time-distance")),
-                    (Some(SifaKind::Rzm), "RZM".into()),
-                ],
-            );
-            ui.end_row();
-
-            ui.label(t!("eq-lzb"));
+        editor_ui::form_grid("safety").show(ui, |ui| {
+            row(ui, "eq-pzb", |ui| {
+                // Type designations of the equipment are names, not prose — they stay as they are.
+                combo(
+                    ui,
+                    "pzb",
+                    pzb,
+                    &[
+                        (None, t!("opt-not-fitted")),
+                        (Some(PzbVariant::I54), "Indusi I 54".into()),
+                        (Some(PzbVariant::I60), "Indusi I 60".into()),
+                        (Some(PzbVariant::I60M), "Indusi I 60M".into()),
+                        (Some(PzbVariant::I60R), "Indusi I 60R".into()),
+                        (Some(PzbVariant::Pzb60), "ÖBB PZB 60".into()),
+                        (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5".into()),
+                        (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0".into()),
+                    ],
+                );
+            });
+            row(ui, "eq-train-type", |ui| {
+                combo(
+                    ui,
+                    "train_type",
+                    train_type,
+                    &[
+                        (TrainType::O, t!("train-type-o")),
+                        (TrainType::M, t!("train-type-m")),
+                        (TrainType::U, t!("train-type-u")),
+                    ],
+                );
+            });
+            row(ui, "eq-sifa", |ui| {
+                combo(
+                    ui,
+                    "sifa",
+                    sifa,
+                    &[
+                        (None, t!("opt-not-fitted")),
+                        (Some(SifaKind::TimeTime), t!("sifa-time-time")),
+                        (Some(SifaKind::TimeDistance), t!("sifa-time-distance")),
+                        (Some(SifaKind::Rzm), "RZM".into()),
+                    ],
+                );
+            });
+            editor_ui::form_label(ui, t!("eq-lzb"));
             ui.checkbox(lzb, t!("eq-lzb-on-board"))
                 .on_hover_text(t!("eq-lzb-hint"));
             ui.end_row();
         });
+        ui.add_space(space::XS);
     }
 
     ui.checkbox(&mut spec.passenger_doors, t!("eq-passenger-doors"))
         .on_hover_text(t!("eq-passenger-doors-hint"));
-    ui.horizontal(|ui| {
-        ui.label(t!("eq-doors")).on_hover_text(t!("eq-doors-hint"));
-        combo(
-            ui,
-            "doors",
-            &mut spec.doors,
-            &[
-                (DoorSystem::None, t!("opt-not-fitted")),
-                (DoorSystem::Tb0, "TB0".into()),
-                (DoorSystem::Tav, "TAV".into()),
-                (DoorSystem::UicWtb, "UIC-WTB".into()),
-            ],
-        );
+    editor_ui::form_grid("doors").show(ui, |ui| {
+        row(ui, "eq-doors", |ui| {
+            combo(
+                ui,
+                "doors",
+                &mut spec.doors,
+                &[
+                    (DoorSystem::None, t!("opt-not-fitted")),
+                    (DoorSystem::Tb0, "TB0".into()),
+                    (DoorSystem::Tav, "TAV".into()),
+                    (DoorSystem::UicWtb, "UIC-WTB".into()),
+                ],
+            );
+        });
     });
 }
 
@@ -474,157 +507,188 @@ fn dataless_eq(a: &VehicleSpec, b: &VehicleSpec) -> bool {
 /// Right panel: model file, levels of detail, moving parts.
 fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) {
     egui::Panel::right("model")
-        .default_size(380.0)
+        .default_size(400.0)
         .resizable(true)
+        .frame(editor_ui::panel_frame())
         .show(root, |ui| {
-            ui.heading(t!("heading-model"));
-            let file = editor
-                .spec
-                .model
-                .as_ref()
-                .map(|m| m.file.clone())
-                .unwrap_or_default();
-            ui.horizontal(|ui| {
-                if ui.button(t!("action-import-gltf")).clicked() {
-                    import_model(editor, assets);
-                }
-                ui.label(if file.is_empty() {
-                    t!("common-none")
-                } else {
-                    file
-                });
-            });
-            ui.separator();
-
-            if editor.nodes.is_empty() {
-                ui.label(t!("model-none-loaded"));
-                ui.small(t!("model-conventions"));
-                return;
-            }
-
-            ui.label(egui::RichText::new(t!("group-lods")).strong());
-            if ui.button(t!("action-read-node-names")).clicked() {
-                let lods = model::detect_lods(&editor.nodes);
-                editor.model_mut().lods = lods;
-                editor.dirty = true;
-            }
-            let mut remove_lod = None;
-            let mut preview = editor.preview_lod;
-            let lods = editor.spec.model.as_mut().map(|m| &mut m.lods);
-            if let Some(lods) = lods {
-                for (i, lod) in lods.iter_mut().enumerate() {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    ui.label(editor_ui::heading(t!("heading-model")));
+                    ui.add_space(space::XS);
+                    let file = editor
+                        .spec
+                        .model
+                        .as_ref()
+                        .map(|m| m.file.clone())
+                        .unwrap_or_default();
                     ui.horizontal(|ui| {
-                        // Radio button: which level the viewport shows.
-                        if ui
-                            .selectable_label(preview == lod.level, format!("LOD{}", lod.level))
-                            .on_hover_text(t!("lod-show-hint"))
-                            .clicked()
-                        {
-                            preview = lod.level;
+                        if ui.button(t!("action-import-gltf")).clicked() {
+                            import_model(editor, assets);
                         }
-                        ui.add(
-                            egui::DragValue::new(&mut lod.distance)
-                                .speed(10.0)
-                                .range(10.0..=20_000.0)
-                                .suffix(" m"),
+                        let label = if file.is_empty() {
+                            egui::RichText::new(t!("common-none")).color(colors::TEXT_SECONDARY)
+                        } else {
+                            egui::RichText::new(file)
+                                .monospace()
+                                .color(colors::TEXT_SECONDARY)
+                        };
+                        ui.add(egui::Label::new(label).truncate());
+                    });
+                    ui.add_space(space::S);
+
+                    if editor.nodes.is_empty() {
+                        ui.label(t!("model-none-loaded"));
+                        ui.add_space(space::XS);
+                        ui.label(
+                            egui::RichText::new(t!("model-conventions"))
+                                .small()
+                                .color(colors::TEXT_SECONDARY),
                         );
-                        if ui.small_button("✕").clicked() {
-                            remove_lod = Some(i);
-                        }
-                    });
-                }
-            }
-            editor.preview_lod = preview;
-            if let Some(i) = remove_lod {
-                editor.model_mut().lods.remove(i);
-                editor.dirty = true;
-            }
-
-            ui.separator();
-            ui.label(egui::RichText::new(t!("group-parts")).strong());
-            if ui.button(t!("action-take-suggestions")).clicked() {
-                let parts: Vec<Part> = editor
-                    .nodes
-                    .iter()
-                    .filter_map(|n| n.suggestion.clone())
-                    .collect();
-                let model = editor.model_mut();
-                for part in parts {
-                    if !model.parts.iter().any(|p| p.node == part.node) {
-                        model.parts.push(part);
+                        return;
                     }
-                }
-                editor.dirty = true;
-            }
 
-            let mut remove_part = None;
-            let mut changed = false;
-            if let Some(model) = editor.spec.model.as_mut() {
-                for (i, part) in model.parts.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(&part.node);
-                        if ui.small_button("✕").clicked() {
-                            remove_part = Some(i);
-                        }
+                    editor_ui::section(ui, "lods", t!("group-lods"), |ui| {
+                        lod_list(ui, editor);
                     });
-                    ui.horizontal(|ui| {
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut part.function)
-                                    .desired_width(140.0)
-                                    .hint_text(t!("part-function-hint")),
-                            )
-                            .changed();
-                        changed |= motion_editor(ui, i, &mut part.motion);
+                    editor_ui::section(ui, "parts", t!("group-parts"), |ui| {
+                        parts_list(ui, editor);
                     });
-                    ui.separator();
-                }
-            }
-            if let Some(i) = remove_part {
-                editor.model_mut().parts.remove(i);
-                editor.dirty = true;
-            }
-            editor.dirty |= changed;
-
-            ui.label(egui::RichText::new(t!("group-nodes")).strong());
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let nodes = editor.nodes.clone();
-                for node in nodes {
-                    ui.horizontal(|ui| {
-                        let bound = editor
-                            .spec
-                            .model
-                            .as_ref()
-                            .is_some_and(|m| m.parts.iter().any(|p| p.node == node.name));
-                        if ui
-                            .add_enabled(!bound, egui::Button::new("+").small())
-                            .on_hover_text(t!("node-bind-hint"))
-                            .clicked()
-                        {
-                            let part = node.suggestion.clone().unwrap_or(Part {
-                                node: node.name.clone(),
-                                function: String::new(),
-                                motion: Motion::Visibility,
-                            });
-                            editor.model_mut().parts.push(part);
-                            editor.dirty = true;
-                        }
-                        let mut label = node.name.clone();
-                        if let Some(level) = node.lod {
-                            label.push_str(&format!("  · LOD{level}"));
-                        }
-                        if let Some(hint) = &node.suggestion {
-                            label.push_str(&format!("  · {}", hint.function));
-                        }
-                        ui.label(label);
+                    editor_ui::section(ui, "nodes", t!("group-nodes"), |ui| {
+                        node_list(ui, editor);
                     });
-                }
-            });
+                });
         });
 }
 
-/// Motion of a part: kind plus axis and amount.
-fn motion_editor(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
+fn lod_list(ui: &mut egui::Ui, editor: &mut Editor) {
+    if ui.button(t!("action-read-node-names")).clicked() {
+        let lods = model::detect_lods(&editor.nodes);
+        editor.model_mut().lods = lods;
+        editor.dirty = true;
+    }
+    let mut remove_lod = None;
+    let mut preview = editor.preview_lod;
+    if let Some(lods) = editor.spec.model.as_mut().map(|m| &mut m.lods) {
+        for (i, lod) in lods.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                // Radio button: which level the viewport shows.
+                if ui
+                    .selectable_label(preview == lod.level, format!("LOD{}", lod.level))
+                    .on_hover_text(t!("lod-show-hint"))
+                    .clicked()
+                {
+                    preview = lod.level;
+                }
+                ui.add(drag(&mut lod.distance, 10.0, 10.0..=20_000.0, "m"));
+                if ui.small_button("×").clicked() {
+                    remove_lod = Some(i);
+                }
+            });
+        }
+    }
+    editor.preview_lod = preview;
+    if let Some(i) = remove_lod {
+        editor.model_mut().lods.remove(i);
+        editor.dirty = true;
+    }
+}
+
+fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
+    if ui.button(t!("action-take-suggestions")).clicked() {
+        let parts: Vec<Part> = editor
+            .nodes
+            .iter()
+            .filter_map(|n| n.suggestion.clone())
+            .collect();
+        let model = editor.model_mut();
+        for part in parts {
+            if !model.parts.iter().any(|p| p.node == part.node) {
+                model.parts.push(part);
+            }
+        }
+        editor.dirty = true;
+    }
+    ui.add_space(space::XS);
+
+    let mut remove_part = None;
+    let mut changed = false;
+    if let Some(model) = editor.spec.model.as_mut() {
+        for (i, part) in model.parts.iter_mut().enumerate() {
+            editor_ui::card_frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&part.node).monospace());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("×").clicked() {
+                            remove_part = Some(i);
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut part.function)
+                                .desired_width(140.0)
+                                .hint_text(t!("part-function-hint")),
+                        )
+                        .changed();
+                    changed |= motion_combo(ui, i, &mut part.motion);
+                });
+                changed |= motion_params(ui, &mut part.motion);
+            });
+        }
+    }
+    if let Some(i) = remove_part {
+        editor.model_mut().parts.remove(i);
+        editor.dirty = true;
+    }
+    editor.dirty |= changed;
+}
+
+fn node_list(ui: &mut egui::Ui, editor: &mut Editor) {
+    let nodes = editor.nodes.clone();
+    for node in nodes {
+        ui.horizontal(|ui| {
+            let bound = editor
+                .spec
+                .model
+                .as_ref()
+                .is_some_and(|m| m.parts.iter().any(|p| p.node == node.name));
+            if ui
+                .add_enabled(!bound, egui::Button::new("+").small())
+                .on_hover_text(t!("node-bind-hint"))
+                .clicked()
+            {
+                let part = node.suggestion.clone().unwrap_or(Part {
+                    node: node.name.clone(),
+                    function: String::new(),
+                    motion: Motion::Visibility,
+                });
+                editor.model_mut().parts.push(part);
+                editor.dirty = true;
+            }
+            ui.label(egui::RichText::new(&node.name).monospace());
+            let mut extra = String::new();
+            if let Some(level) = node.lod {
+                extra.push_str(&format!(" · LOD{level}"));
+            }
+            if let Some(hint) = &node.suggestion {
+                extra.push_str(&format!(" · {}", hint.function));
+            }
+            if !extra.is_empty() {
+                ui.label(
+                    egui::RichText::new(extra)
+                        .small()
+                        .color(colors::TEXT_SECONDARY),
+                );
+            }
+        });
+    }
+}
+
+/// Kind of motion of a part.
+fn motion_combo(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
     let mut changed = false;
     let key = match motion {
         Motion::Visibility => "motion-visible",
@@ -633,7 +697,7 @@ fn motion_editor(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
     };
     egui::ComboBox::from_id_salt(("motion", id))
         .selected_text(t!(key))
-        .width(90.0)
+        .width(96.0)
         .show_ui(ui, |ui| {
             if ui
                 .selectable_label(key == "motion-visible", t!("motion-visible"))
@@ -663,19 +727,29 @@ fn motion_editor(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
                 changed = true;
             }
         });
+    changed
+}
+
+/// Axis and amount of a rotating or translating part.
+fn motion_params(ui: &mut egui::Ui, motion: &mut Motion) -> bool {
+    let mut changed = false;
     match motion {
         Motion::Visibility => {}
         Motion::Rotate { axis, degrees } => {
-            changed |= axis_editor(ui, axis);
-            changed |= ui
-                .add(egui::DragValue::new(degrees).speed(1.0).suffix(" °"))
-                .changed();
+            ui.horizontal(|ui| {
+                changed |= axis_editor(ui, axis);
+                changed |= ui
+                    .add(egui::DragValue::new(degrees).speed(1.0).suffix("\u{A0}°"))
+                    .changed();
+            });
         }
         Motion::Translate { axis, metres } => {
-            changed |= axis_editor(ui, axis);
-            changed |= ui
-                .add(egui::DragValue::new(metres).speed(0.01).suffix(" m"))
-                .changed();
+            ui.horizontal(|ui| {
+                changed |= axis_editor(ui, axis);
+                changed |= ui
+                    .add(egui::DragValue::new(metres).speed(0.01).suffix("\u{A0}m"))
+                    .changed();
+            });
         }
     }
     changed
@@ -683,37 +757,51 @@ fn motion_editor(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
 
 fn axis_editor(ui: &mut egui::Ui, axis: &mut [f32; 3]) -> bool {
     let mut changed = false;
-    for value in axis.iter_mut() {
+    // Axis letters are names, not prose.
+    for (label, value) in ["X", "Y", "Z"].iter().zip(axis.iter_mut()) {
+        ui.label(
+            egui::RichText::new(*label)
+                .small()
+                .color(colors::TEXT_SECONDARY),
+        );
         changed |= ui
-            .add(egui::DragValue::new(value).speed(0.1).range(-1.0..=1.0))
+            .add_sized(
+                egui::vec2(40.0, 20.0),
+                egui::DragValue::new(value).speed(0.1).range(-1.0..=1.0),
+            )
             .changed();
     }
     changed
 }
 
 fn status_bar(root: &mut egui::Ui, editor: &Editor) {
-    egui::Panel::bottom("status").show(root, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(&editor.status);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if editor.dirty {
-                    ui.label(t!("status-unsaved"));
-                }
-                ui.label(
-                    editor
-                        .path
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| t!("status-new-file")),
-                );
+    egui::Panel::bottom("status")
+        .frame(editor_ui::bar_frame())
+        .show(root, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(&editor.status);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            editor
+                                .path
+                                .as_ref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| t!("status-new-file")),
+                        )
+                        .color(colors::TEXT_SECONDARY),
+                    );
+                    if editor.dirty {
+                        ui.label(egui::RichText::new(t!("status-unsaved")).color(colors::WARN));
+                    }
+                });
             });
         });
-    });
 }
 
-/// A labelled row: `key` names the label, `key`-hint the tooltip.
+/// A labelled row of a form grid: `key` names the label, `key`-hint the tooltip.
 pub fn row(ui: &mut egui::Ui, key: &str, widget: impl FnOnce(&mut egui::Ui)) {
-    ui.label(t!(key)).on_hover_text(t!(&format!("{key}-hint")));
-    widget(ui);
+    editor_ui::form_label(ui, t!(key)).on_hover_text(t!(&format!("{key}-hint")));
+    ui.horizontal(|ui| widget(ui));
     ui.end_row();
 }

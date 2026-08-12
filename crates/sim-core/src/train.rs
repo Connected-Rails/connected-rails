@@ -1,4 +1,4 @@
-//! Fahrzeug- und Zugverbandsmodell.
+//! Vehicle and train consist model.
 
 use crate::brakes::{BrakeSpec, BrakeState};
 use crate::electric::{TractionSpec, TractionState};
@@ -6,7 +6,7 @@ use crate::safety::SafetySystems;
 use serde::{Deserialize, Serialize};
 use track_model::TrackPosition;
 
-/// Fahrwiderstand nach Davis: `R = a + b·v + c·v²` [N], `v` in m/s.
+/// Running resistance after Davis: `R = a + b·v + c·v²` [N], `v` in m/s.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Davis {
     pub a: f64,
@@ -21,23 +21,23 @@ impl Davis {
     }
 }
 
-/// Kupplungsparameter. Schraubenkupplung: Zugfeder und Puffer getrennt, dazwischen Spiel.
+/// Coupler parameters. Screw coupler: draw gear and buffers separate, slack in between.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CouplerSpec {
-    /// Gesamtspiel zwischen Zug- und Druckanlage [m] (Schraubenkupplung ~ 0,06–0,10 m).
+    /// Total slack between draw gear and buffing gear [m] (screw coupler ~ 0.06–0.10 m).
     pub slack: f64,
-    /// Steifigkeit der Zugeinrichtung [N/m].
+    /// Stiffness of the draw gear [N/m].
     pub draw_stiffness: f64,
-    /// Steifigkeit der Puffer [N/m].
+    /// Stiffness of the buffers [N/m].
     pub buffer_stiffness: f64,
-    /// Dämpfung [N·s/m].
+    /// Damping [N·s/m].
     pub damping: f64,
-    /// Bruchkraft [N] (Schraubenkupplung ~ 1 MN Mindestbruchlast).
+    /// Breaking force [N] (screw coupler ~ 1 MN minimum breaking load).
     pub breaking_force: f64,
 }
 
 impl CouplerSpec {
-    /// Übliche Schraubenkupplung (UIC 520) mit Seitenpuffern.
+    /// Common screw coupler (UIC 520) with side buffers.
     pub fn screw() -> Self {
         Self {
             slack: 0.08,
@@ -48,7 +48,7 @@ impl CouplerSpec {
         }
     }
 
-    /// Mittelpufferkupplung (Triebzug): steifer, praktisch spielfrei.
+    /// Centre buffer coupler (multiple unit): stiffer, practically free of slack.
     pub fn center_buffer() -> Self {
         Self {
             slack: 0.005,
@@ -60,18 +60,18 @@ impl CouplerSpec {
     }
 }
 
-/// Schienenzustand — beeinflusst den Kraftschlussbeiwert.
+/// Rail condition — influences the adhesion coefficient.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RailCondition {
     #[default]
     Dry,
     Wet,
-    /// Laub, Reif, Rollrost — deutlich reduzierter Kraftschluss.
+    /// Leaves, frost, surface rust — considerably reduced adhesion.
     Slippery,
 }
 
 impl RailCondition {
-    /// Faktor auf den Kraftschlussbeiwert nach Curtius/Kniffler.
+    /// Factor applied to the adhesion coefficient after Curtius/Kniffler.
     pub fn factor(self) -> f64 {
         match self {
             RailCondition::Dry => 1.0,
@@ -81,56 +81,57 @@ impl RailCondition {
     }
 }
 
-/// Statische Fahrzeugbeschreibung (aus der Fahrzeugdatenbank, RON).
+/// Static vehicle description (from the vehicle database, RON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VehicleSpec {
     pub name: String,
-    /// Länge über Puffer [m].
+    /// Length over buffers [m].
     pub length: f64,
-    /// Eigenmasse [kg].
+    /// Tare mass [kg].
     pub mass_empty: f64,
-    /// Zuschlag für rotierende Massen (0,05 Wagen … 0,25 Triebfahrzeug).
+    /// Allowance for rotating masses (0.05 coach … 0.25 powered vehicle).
     pub rotating_mass_factor: f64,
     pub davis: Davis,
     pub brake: BrakeSpec,
     #[serde(default)]
     pub traction: Option<TractionSpec>,
     pub coupler: CouplerSpec,
-    /// Anteil der Fahrzeugmasse auf angetriebenen Achsen (Lok: 1,0; Wagen: 0,0).
+    /// Share of the vehicle mass on driven axles (loco: 1.0; coach: 0.0).
     #[serde(default)]
     pub adhesive_mass_fraction: f64,
-    /// Fahrzeug hat Schleuder-/Gleitschutz.
+    /// Vehicle has wheel slip / wheel slide protection.
     #[serde(default)]
     pub slip_control: bool,
 }
 
-/// Laufzeitzustand eines Fahrzeugs.
+/// Runtime state of a vehicle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vehicle {
     pub spec: VehicleSpec,
-    /// Zuladung [kg].
+    /// Payload [kg].
     pub load: f64,
-    /// Zurückgelegter Weg entlang des Gleises [m], monoton in Fahrtrichtung.
+    /// Distance travelled along the track [m], monotonic in the direction of travel.
     pub x: f64,
-    /// Geschwindigkeit [m/s], positiv = Fahrtrichtung des Zuges.
+    /// Speed [m/s], positive = direction of travel of the train.
     pub v: f64,
-    /// Position des Fahrzeugmittelpunkts auf dem Gleisgraph.
+    /// Position of the vehicle centre on the track graph.
     pub pos: TrackPosition,
     pub brake: BrakeState,
     pub traction: TractionState,
-    /// Schlupfgeschwindigkeit der Treibachsen [m/s] (v1: pro Fahrzeug).
-    /// ponytail: kein Modell je Radsatz — für Schleuder-/Gleitschutz und Sound reicht das;
-    /// auf Radsätze aufteilen, sobald einzelne Achsen sichtbar/hörbar unterschieden werden.
+    /// Slip speed of the driven axles [m/s] (v1: per vehicle).
+    /// ponytail: no model per wheelset — enough for wheel slip/slide protection and sound;
+    /// split it up per wheelset as soon as individual axles are distinguished
+    /// visually/audibly.
     pub slip: f64,
-    /// Sanden aktiv.
+    /// Sanding active.
     pub sanding: bool,
-    /// Tatsächlich auf die Schiene übertragene Zugkraft [N] (nach Kraftschlussgrenze).
+    /// Tractive effort actually transmitted to the rail [N] (after the adhesion limit).
     #[serde(default)]
     pub tractive_effort: f64,
-    /// Tatsächlich wirkende Bremskraft [N] (nach Blending und Kraftschluss).
+    /// Brake force actually acting [N] (after blending and adhesion).
     #[serde(default)]
     pub brake_effort: f64,
-    /// Zugsicherungsausrüstung dieses Fahrzeugs.
+    /// Train protection equipment of this vehicle.
     #[serde(default)]
     pub safety: SafetySystems,
 }
@@ -153,17 +154,17 @@ impl Vehicle {
         }
     }
 
-    /// Gesamtmasse [kg].
+    /// Total mass [kg].
     pub fn mass(&self) -> f64 {
         self.spec.mass_empty + self.load
     }
 
-    /// Wirksame Masse inkl. rotierender Massen [kg].
+    /// Effective mass including rotating masses [kg].
     pub fn inertial_mass(&self) -> f64 {
         self.mass() * (1.0 + self.spec.rotating_mass_factor)
     }
 
-    /// Masse auf angetriebenen Achsen [kg].
+    /// Mass on driven axles [kg].
     pub fn adhesive_mass(&self) -> f64 {
         self.mass() * self.spec.adhesive_mass_fraction
     }
@@ -173,33 +174,33 @@ impl Vehicle {
     }
 }
 
-/// Zustand einer Kupplung zwischen zwei benachbarten Fahrzeugen.
+/// State of a coupler between two neighbouring vehicles.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct CouplerState {
-    /// Kraft [N], positiv = Zug, negativ = Druck (Puffer).
+    /// Force [N], positive = draw, negative = buff (buffers).
     pub force: f64,
-    /// Auslenkung aus der Sollage [m].
+    /// Deflection from the nominal position [m].
     pub extension: f64,
     pub broken: bool,
 }
 
-/// Ein Zugverband.
+/// A train consist.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Train {
-    /// Fahrzeuge von der Spitze zum Schluss.
+    /// Vehicles from the head to the rear.
     pub vehicles: Vec<Vehicle>,
-    /// Kupplungen: `couplers[i]` verbindet `vehicles[i]` und `vehicles[i+1]`.
+    /// Couplers: `couplers[i]` connects `vehicles[i]` and `vehicles[i+1]`.
     pub couplers: Vec<CouplerState>,
-    /// Index des besetzten Führerstands.
+    /// Index of the occupied cab.
     pub cab: usize,
     pub rail: RailCondition,
-    /// Zugnummer für Fahrplan/Zugfunk.
+    /// Train number for timetable/train radio.
     #[serde(default)]
     pub number: String,
 }
 
 impl Train {
-    /// Baut einen Zug; die Fahrzeuge werden ab `head` nach hinten aufgereiht.
+    /// Assembles a train; the vehicles are lined up backwards starting at `head`.
     pub fn assemble(
         mut vehicles: Vec<Vehicle>,
         head: TrackPosition,
@@ -208,7 +209,7 @@ impl Train {
         let mut x = 0.0;
         let mut scratch = Vec::new();
         for vehicle in &mut vehicles {
-            // Fahrzeugmitte liegt eine halbe Fahrzeuglänge hinter der Kupplungsstelle.
+            // The vehicle centre lies half a vehicle length behind the coupling point.
             let half = vehicle.spec.length / 2.0;
             x -= half;
             let mut p = head;
@@ -227,17 +228,17 @@ impl Train {
         }
     }
 
-    /// Gesamtmasse [kg].
+    /// Total mass [kg].
     pub fn mass(&self) -> f64 {
         self.vehicles.iter().map(Vehicle::mass).sum()
     }
 
-    /// Zuglänge [m].
+    /// Train length [m].
     pub fn length(&self) -> f64 {
         self.vehicles.iter().map(|v| v.spec.length).sum()
     }
 
-    /// Geschwindigkeit des Zuges [m/s] (Mittel über alle Fahrzeuge).
+    /// Speed of the train [m/s] (mean over all vehicles).
     pub fn speed(&self) -> f64 {
         if self.vehicles.is_empty() {
             return 0.0;
@@ -249,13 +250,13 @@ impl Train {
         self.speed() * 3.6
     }
 
-    /// Position der Zugspitze.
+    /// Position of the head of the train.
     pub fn head_position(&self) -> TrackPosition {
         let front = &self.vehicles[0];
         front.pos.offset_by_unchecked(front.spec.length / 2.0)
     }
 
-    /// Bremshundertstel des Zuges: Summe Bremsgewichte / Summe Massen · 100.
+    /// Braked weight percentage of the train: sum of braked weights / sum of masses · 100.
     pub fn brake_percentage(&self) -> f64 {
         let weight: f64 = self
             .vehicles
@@ -271,8 +272,8 @@ impl Train {
     }
 }
 
-/// Hilfs-Trait: Position um einen Betrag verschieben ohne Netzzugriff (nur `s`),
-/// für Zwecke, bei denen Kantenwechsel egal sind (z. B. Anzeige).
+/// Helper trait: shift a position by an amount without network access (only `s`),
+/// for purposes where edge changes do not matter (e.g. display).
 trait OffsetUnchecked {
     fn offset_by_unchecked(&self, d: f64) -> Self;
 }

@@ -1,7 +1,7 @@
-//! Kern der Zugsimulation: fester Zeitschritt, deterministisch, ohne Bevy (Plan Kap. 3.1).
+//! Core of the train simulation: fixed time step, deterministic, without Bevy (plan ch. 3.1).
 //!
-//! Reihenfolge je Schritt (Plan 3.2): Elektrik → Traktion/Bremse → Längsdynamik →
-//! Position auf dem Gleisgraph → Zugsicherung → Stellwerk → KI.
+//! Order per step (plan 3.2): electrics → traction/brake → longitudinal dynamics →
+//! position on the track graph → train protection → interlocking → AI.
 
 pub mod brakes;
 pub mod cab;
@@ -15,7 +15,7 @@ pub mod score;
 pub mod timetable;
 pub mod train;
 
-/// Erdbeschleunigung [m/s²].
+/// Gravitational acceleration [m/s²].
 pub const G: f64 = 9.806_65;
 
 use brakes::DriverBrakeValve;
@@ -26,48 +26,49 @@ use serde::{Deserialize, Serialize};
 use track_model::{DeviceKind, EdgeId, TrackNetwork, TrackPosition};
 use train::{Train, Vehicle};
 
-/// Laufzeitzustand eines Zuges, der nicht ins Fahrzeugmodell gehört.
+/// Runtime state of a train that does not belong in the vehicle model.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrainRuntime {
-    /// Gefahrener Weg [m], monoton — Bezug aller Wegüberwachungen der Zugsicherung.
+    /// Distance travelled [m], monotonic — reference for all distance supervisions
+    /// of the train protection.
     pub odometer: f64,
-    /// Letzte Ausgabe der Zugsicherung.
+    /// Last output of the train protection.
     #[serde(skip)]
     pub protection: ProtectionOutput,
-    /// Restweg ohne Fahrdrahtspannung (Schutzstrecke) [m].
+    /// Remaining distance without contact wire voltage (neutral section) [m].
     pub neutral_section_left: f64,
-    /// Zug steht wegen eines nicht befahrbaren Knotens.
+    /// Train is stopped because of a node that cannot be passed.
     pub blocked: bool,
-    /// Zuletzt empfangenes LZB-Telegramm (RON) und bis wohin es gesendet wird.
+    /// Last received LZB telegram (RON) and how far it is being transmitted.
     pub lzb_payload: Option<String>,
     pub lzb_until_odo: f64,
 }
 
-/// Die gesamte Simulation.
+/// The whole simulation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sim {
     pub net: TrackNetwork,
     pub interlock: Interlock,
     pub trains: Vec<Train>,
     pub runtime: Vec<TrainRuntime>,
-    /// Steuerstände: ein Eingabesatz je Zug (KI oder Spieler schreiben hier hinein).
+    /// Cabs: one set of inputs per train (AI or player write into it).
     pub controls: Vec<CabInputs>,
-    /// Simulationszeit [s].
+    /// Simulation time [s].
     pub time: f64,
     pub rng: rng::Rng,
-    /// Szenario mit Ereignissen und Meldungen (Plan 11.4).
+    /// Scenario with events and messages (plan 11.4).
     #[serde(default)]
     pub scenario: scenario::ScenarioRuntime,
-    /// Bewertung der Fahrt des Spielerzugs (Plan 11).
+    /// Scoring of the player train's run (plan 11).
     #[serde(default)]
     pub score: score::ScoreKeeper,
     accumulator: f64,
 }
 
 impl Sim {
-    /// Fester Physikzeitschritt [s] (200 Hz, Plan 3.1).
+    /// Fixed physics time step [s] (200 Hz, plan 3.1).
     pub const DT: f64 = 1.0 / 200.0;
-    /// Mehr als das wird pro Frame nicht nachgeholt (Spiral-of-death-Schutz).
+    /// No more than this is caught up per frame (spiral-of-death protection).
     pub const MAX_CATCHUP: f64 = 0.25;
 
     pub fn new(net: TrackNetwork, interlock: Interlock, seed: u64) -> Self {
@@ -85,7 +86,7 @@ impl Sim {
         }
     }
 
-    /// Szenario laden; der Spielerzug wird auch bewertet.
+    /// Load a scenario; the player train is scored as well.
     pub fn set_scenario(&mut self, scenario: scenario::Scenario, timetable: timetable::Timetable) {
         self.score = score::ScoreKeeper::new(scenario.player_train, timetable);
         self.scenario = scenario::ScenarioRuntime::new(scenario);
@@ -98,7 +99,7 @@ impl Sim {
         self.trains.len() - 1
     }
 
-    /// Treibt die Simulation um `dt` Sekunden Echtzeit voran (fester Zeitschritt intern).
+    /// Advances the simulation by `dt` seconds of real time (fixed time step internally).
     pub fn advance(&mut self, dt: f64) {
         self.accumulator = (self.accumulator + dt).min(Self::MAX_CATCHUP);
         while self.accumulator >= Self::DT {
@@ -107,19 +108,19 @@ impl Sim {
         }
     }
 
-    /// Ein fester Simulationsschritt.
+    /// One fixed simulation step.
     pub fn step(&mut self, dt: f64) {
         for i in 0..self.trains.len() {
             self.step_train(i, dt);
         }
 
-        // Stellwerk: Gleisfreimeldung, Fahrstraßen, Signale, Weichenläufe.
+        // Interlocking: track clear detection, routes, signals, switch movements.
         let occupied = self.occupied_edges();
         self.interlock.update_occupancy(&occupied);
         self.interlock.update(&mut self.net);
         self.net.update_switches(dt);
 
-        // Bewertung und Szenario zuletzt — sie sehen den fertigen Zustand des Schritts.
+        // Scoring and scenario last — they see the finished state of the step.
         let mut score = std::mem::take(&mut self.score);
         score.update(self, dt);
         self.score = score;
@@ -144,7 +145,7 @@ impl Sim {
         let cab = self.controls[index];
         let action = self.runtime[index].protection.action;
 
-        // Zwangsbremsungen übersteuern das Führerbremsventil und die Traktion.
+        // Forced braking overrides the driver's brake valve and the traction.
         let valve = match action {
             ProtectionAction::EmergencyBrake => DriverBrakeValve::Emergency,
             ProtectionAction::ForcedServiceBrake => DriverBrakeValve::Service(1.5),
@@ -152,7 +153,7 @@ impl Sim {
         };
         let traction_allowed = action == ProtectionAction::None;
 
-        // 1. Elektrik und Antrieb.
+        // 1. Electrics and drive.
         {
             let train = &mut self.trains[index];
             let neutral = self.runtime[index].neutral_section_left > 0.0;
@@ -168,7 +169,7 @@ impl Sim {
                 veh.traction.notch = if traction_allowed {
                     cab.throttle * cab.reverser.max(0) as f64
                 } else {
-                    // Bei Zwangsbremsung: Traktion ab, E-Bremse bleibt erlaubt.
+                    // On forced braking: traction off, dynamic brake stays allowed.
                     cab.throttle.min(0.0)
                 };
                 veh.sanding = cab.sanding;
@@ -176,10 +177,10 @@ impl Sim {
             }
         }
 
-        // 2. Bremse.
+        // 2. Brake.
         brakes::step(&mut self.trains[index], valve, cab.direct_brake, dt);
 
-        // 3./4. Längsdynamik und Position auf dem Gleisgraph.
+        // 3./4. Longitudinal dynamics and position on the track graph.
         let report = physics::step(&mut self.trains[index], &self.net, dt);
         self.runtime[index].blocked = report.blocked.is_some();
 
@@ -189,7 +190,7 @@ impl Sim {
             self.runtime[index].neutral_section_left -= dx;
         }
 
-        // 5. Zugsicherung: Streckengeräte auswerten.
+        // 5. Train protection: evaluate trackside devices.
         let events = self.collect_events(index, &report);
         let state = SafetyTrainState {
             v_kmh: self.trains[index].speed_kmh().abs(),
@@ -205,7 +206,7 @@ impl Sim {
         self.runtime[index].protection = out;
     }
 
-    /// Baut aus den überfahrenen Geräten die Ereignisse für die Zugsicherung.
+    /// Builds the events for the train protection from the devices that were passed.
     fn collect_events(
         &mut self,
         index: usize,
@@ -213,7 +214,7 @@ impl Sim {
     ) -> Vec<TracksideEvent> {
         let mut events = Vec::new();
         for (vehicle, passed) in &report.passed {
-            // Nur antennentragende Fahrzeuge lesen Streckengeräte.
+            // Only vehicles carrying an antenna read trackside devices.
             if matches!(
                 self.trains[index].vehicles[*vehicle].safety,
                 safety::SafetySystems::None
@@ -249,7 +250,7 @@ impl Sim {
             });
         }
 
-        // Der Linienleiter sendet fortlaufend, nicht nur beim Überfahren des Anfangs.
+        // The loop cable transmits continuously, not only when its start is passed.
         let rt = &self.runtime[index];
         if rt.odometer < rt.lzb_until_odo
             && !events.iter().any(|e| e.device == DeviceKind::LineConductor)
@@ -265,7 +266,7 @@ impl Sim {
         events
     }
 
-    /// Zustands-Hash für Determinismus- und Regressionstests (Plan 16.1/18).
+    /// State hash for determinism and regression tests (plan 16.1/18).
     pub fn state_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut mix = |x: u64| {
@@ -290,7 +291,7 @@ impl Sim {
     }
 }
 
-/// Kurzform zum Aufbau eines Zuges an einer Gleisposition.
+/// Shorthand for assembling a train at a track position.
 pub fn spawn(vehicles: Vec<Vehicle>, at: TrackPosition, net: &TrackNetwork) -> Train {
     Train::assemble(vehicles, at, net)
 }

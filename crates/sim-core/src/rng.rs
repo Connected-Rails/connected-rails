@@ -1,8 +1,8 @@
-//! Deterministischer Zufallsgenerator (Plan 16.1) — gleicher Seed, gleicher Lauf.
+//! Deterministic random number generator (plan 16.1) — same seed, same run.
 
 use serde::{Deserialize, Serialize};
 
-/// xorshift64*, ausreichend für Wetter, Störungen und Streuung von KI-Reaktionszeiten.
+/// xorshift64*, sufficient for weather, faults and the spread of AI reaction times.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rng {
     state: u64,
@@ -34,12 +34,12 @@ impl Rng {
         x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    /// Gleichverteilt in [0, 1).
+    /// Uniformly distributed in [0, 1).
     pub fn next_f64(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
-    /// Gleichverteilt in [lo, hi).
+    /// Uniformly distributed in [lo, hi).
     pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
         lo + (hi - lo) * self.next_f64()
     }

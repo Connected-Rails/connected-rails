@@ -1,4 +1,4 @@
-//! Prozedurales Gleisrendering und Floating-Origin-Synchronisation (Plan Kap. 4, 12).
+//! Procedural track rendering and floating-origin synchronisation (plan ch. 4, 12).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -7,40 +7,40 @@ use glam::DVec3;
 use track_model::{EdgeId, TrackNetwork};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
-/// Bezugspunkt des Renderings als Bevy-Ressource.
+/// Reference point of the rendering as a Bevy resource.
 #[derive(Resource)]
 pub struct Origin(pub RenderOrigin);
 
-/// Ein Objekt, dessen Geometrie im ENU-Frame eines festen Weltpunkts liegt
-/// (Gleis, Szenerie). Beim Origin-Rebase wird nur der Transform neu gesetzt.
+/// An object whose geometry lies in the ENU frame of a fixed world point
+/// (track, scenery). On an origin rebase only the transform is set anew.
 #[derive(Component)]
 pub struct WorldAnchored {
     pub anchor: EcefPos,
 }
 
-/// Eine Geländekachel — mit eigener Sichtweite, damit ferne Kacheln nicht gezeichnet werden.
+/// A terrain tile — with its own view distance so that distant tiles are not drawn.
 #[derive(Component)]
 pub struct TerrainChunk {
-    /// Umkreisradius der Kachel [m].
+    /// Circumscribed radius of the tile [m].
     pub radius: f32,
     pub lod: u8,
 }
 
-/// Ein Fahrzeug im Zug `train`, Fahrzeugindex `vehicle`.
+/// A vehicle in train `train`, vehicle index `vehicle`.
 #[derive(Component)]
 pub struct VehicleView {
     pub train: usize,
     pub vehicle: usize,
 }
 
-/// Spurweite [m].
+/// Track gauge [m].
 const GAUGE: f64 = 1.435;
-/// Halbe Breite des Schotterbetts [m].
+/// Half width of the ballast bed [m].
 const BALLAST_HALF: f64 = 2.6;
-/// Sampleabstand entlang der Kante [m].
+/// Sample spacing along the edge [m].
 const SAMPLE: f64 = 4.0;
 
-/// Baut Meshes für alle Kanten des Netzes und spawnt sie.
+/// Builds meshes for all edges of the network and spawns them.
 pub fn spawn_track(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -80,7 +80,7 @@ pub fn spawn_track(
     }
 }
 
-/// Erzeugt Schotterbett und Schienen einer Kante im ENU-Frame `frame`.
+/// Creates ballast bed and rails of an edge in the ENU frame `frame`.
 fn build_edge_meshes(net: &TrackNetwork, edge: EdgeId, frame: &EnuFrame) -> (Mesh, Mesh) {
     let e = net.edge(edge);
     let steps = ((e.length() / SAMPLE).ceil() as usize).max(1);
@@ -96,11 +96,11 @@ fn build_edge_meshes(net: &TrackNetwork, edge: EdgeId, frame: &EnuFrame) -> (Mes
         let up = frame.dir_to_local(pose.up);
         let right = tangent.cross(up).normalize();
 
-        // Schotterbett, 30 cm unter Schienenoberkante.
+        // Ballast bed, 30 cm below the rail head.
         let bed = center - up * 0.3;
         ballast.push_pair(bed - right * BALLAST_HALF, bed + right * BALLAST_HALF);
 
-        // Zwei Schienen als schmale Bänder.
+        // Two rails as narrow ribbons.
         let half = GAUGE / 2.0;
         rails.push_quad(
             center - right * (half + 0.04),
@@ -113,11 +113,11 @@ fn build_edge_meshes(net: &TrackNetwork, edge: EdgeId, frame: &EnuFrame) -> (Mes
     (ballast.build(), rails.build_pairs())
 }
 
-/// Sammelt ein Band aus Punktpaaren und baut daraus ein Dreiecksnetz.
+/// Collects a ribbon from point pairs and builds a triangle mesh from it.
 #[derive(Default)]
 struct RibbonBuilder {
     positions: Vec<[f32; 3]>,
-    /// Punkte je Querschnitt (2 für ein Band, 4 für zwei Schienen).
+    /// Points per cross section (2 for one ribbon, 4 for two rails).
     stride: usize,
 }
 
@@ -139,7 +139,7 @@ impl RibbonBuilder {
         self.build_with(&[(0, 1)])
     }
 
-    /// Zwei getrennte Bänder (linke und rechte Schiene).
+    /// Two separate ribbons (left and right rail).
     fn build_pairs(self) -> Mesh {
         self.build_with(&[(0, 1), (2, 3)])
     }
@@ -175,12 +175,12 @@ impl RibbonBuilder {
     }
 }
 
-/// ENU (x = Ost, y = Nord, z = oben) → Renderachsen (x = Ost, y = oben, z = −Nord).
+/// ENU (x = east, y = north, z = up) → render axes (x = east, y = up, z = −north).
 fn to_render(p: DVec3) -> [f32; 3] {
     [p.x as f32, p.z as f32, -p.y as f32]
 }
 
-/// Spawnt die Geländekacheln aus [`content::terrain`].
+/// Spawns the terrain tiles from [`content::terrain`].
 pub fn spawn_terrain(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -188,8 +188,8 @@ pub fn spawn_terrain(
     tiles: &[content::TerrainTile],
     origin: &RenderOrigin,
 ) {
-    // Je LOD-Stufe ein Material — so ist im Debug sichtbar, wo die Auflösung wechselt,
-    // und die Stufen lassen sich getrennt einfärben.
+    // One material per LOD level — that way it is visible in debug where the resolution
+    // changes, and the levels can be coloured separately.
     let colors = [
         Color::srgb(0.36, 0.45, 0.26),
         Color::srgb(0.37, 0.46, 0.27),
@@ -239,7 +239,7 @@ pub fn spawn_terrain(
     }
 }
 
-/// Setzt die Transforms aller weltverankerten Objekte neu — nach einem Origin-Rebase.
+/// Sets the transforms of all world-anchored objects anew — after an origin rebase.
 pub fn resync_anchored(origin: &RenderOrigin, query: &mut Query<(&WorldAnchored, &mut Transform)>) {
     for (anchored, mut transform) in query.iter_mut() {
         let frame = EnuFrame::at(anchored.anchor);

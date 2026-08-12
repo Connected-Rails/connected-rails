@@ -1,7 +1,7 @@
-//! Sifa (Sicherheitsfahrschaltung), Zeit-Zeit-Ausführung (Plan 9.2).
+//! Sifa (driver's safety device), time-time version (plan 9.2).
 //!
-//! Ablauf ab letzter Bedienung: 30 s → Leuchtmelder, +2,5 s → Hupe,
-//! +2,5 s → Zwangsbremsung. Lösen erst nach Pedalwechsel.
+//! Sequence since the last operation: 30 s → indicator lamp, +2.5 s → horn,
+//! +2.5 s → forced braking. Release only after the pedal has been changed.
 
 use crate::cab::{CabInputs, Edge};
 use crate::safety::{
@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SifaParams {
-    /// Zeit bis zum Leuchtmelder [s].
+    /// Time until the indicator lamp [s].
     pub lamp_after: f64,
-    /// Zusatzzeit bis zur Hupe [s].
+    /// Additional time until the horn [s].
     pub horn_after: f64,
-    /// Zusatzzeit bis zur Zwangsbremsung [s].
+    /// Additional time until forced braking [s].
     pub brake_after: f64,
-    /// Unterhalb dieser Geschwindigkeit ist die Sifa unwirksam [km/h].
+    /// Below this speed the Sifa is inactive [km/h].
     pub inactive_below: f64,
 }
 
@@ -37,11 +37,11 @@ impl Default for SifaParams {
 pub struct Sifa {
     pub params: SifaParams,
     isolated: bool,
-    /// Zeit seit der letzten Bedienung [s].
+    /// Time since the last operation [s].
     timer: f64,
-    /// Zwangsbremsung ausgelöst.
+    /// Forced braking triggered.
     braking: bool,
-    /// Nach der Zwangsbremsung ist ein Pedalwechsel nötig.
+    /// After forced braking a change of the pedal is required.
     needs_release: bool,
     pedal: Edge,
 }
@@ -85,7 +85,7 @@ impl TrainProtectionSystem for Sifa {
         let pressed = self.pedal.rising(cab.sifa);
 
         if train.v_kmh < self.params.inactive_below && !self.braking {
-            // Im Stillstand läuft die Sifa nicht mit.
+            // At standstill the Sifa does not run.
             self.timer = 0.0;
             self.needs_release = false;
             return ProtectionOutput::default();
@@ -93,7 +93,8 @@ impl TrainProtectionSystem for Sifa {
 
         if pressed {
             if self.braking {
-                // Zwangsbremsung lösen: nur mit Pedalwechsel (Loslassen war Voraussetzung).
+                // Release the forced braking: only by changing the pedal
+                // (letting go was the precondition).
                 self.braking = false;
             }
             self.timer = 0.0;
@@ -171,14 +172,14 @@ mod tests {
     fn lamp_horn_brake_sequence() {
         let mut sifa = Sifa::new();
         run(&mut sifa, 29.0, false);
-        assert!(!sifa.lamp(), "vor 30 s kein Leuchtmelder");
+        assert!(!sifa.lamp(), "no indicator lamp before 30 s");
         run(&mut sifa, 1.5, false);
         assert!(
             sifa.lamp() && !sifa.horn(),
-            "30 s: Leuchtmelder, noch keine Hupe"
+            "30 s: indicator lamp, no horn yet"
         );
         run(&mut sifa, 2.5, false);
-        assert!(sifa.horn(), "32,5 s: Hupe");
+        assert!(sifa.horn(), "32.5 s: horn");
         assert!(!sifa.is_braking());
         let out = run(&mut sifa, 2.6, false);
         assert_eq!(out.action, ProtectionAction::EmergencyBrake);
@@ -188,15 +189,19 @@ mod tests {
     fn pedal_resets_and_releases() {
         let mut sifa = Sifa::new();
         run(&mut sifa, 20.0, false);
-        run(&mut sifa, 0.2, true); // Bedienung
+        run(&mut sifa, 0.2, true); // operation
         assert!(sifa.timer() < 1.0);
 
-        // Bis zur Zwangsbremsung laufen lassen.
+        // Let it run until forced braking.
         run(&mut sifa, 40.0, false);
         assert!(sifa.is_braking());
-        // Dauerdruck ohne Wechsel hilft nicht — es zählt die steigende Flanke.
+        // Holding the pedal without changing it does not help — the rising edge counts.
         let out = run(&mut sifa, 1.0, true);
-        assert_eq!(out.action, ProtectionAction::None, "Pedalwechsel löst");
+        assert_eq!(
+            out.action,
+            ProtectionAction::None,
+            "changing the pedal releases"
+        );
         let out = run(&mut sifa, 1.0, true);
         assert_eq!(out.action, ProtectionAction::None);
     }

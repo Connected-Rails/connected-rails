@@ -1,31 +1,31 @@
-//! Fahrplan-Datenmodell (Plan 11).
+//! Timetable data model (plan 11).
 
 use serde::{Deserialize, Serialize};
 use track_model::{EdgeId, TrackNetwork, TrackPosition};
 
-/// Ein Fahrplanhalt.
+/// A scheduled stop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledStop {
-    /// Betriebsstelle.
+    /// Operating point.
     pub name: String,
-    /// Haltepunkt (Position der Zugspitze).
+    /// Stopping point (position of the head of the train).
     pub edge: EdgeId,
     pub s: f64,
-    /// Planmäßige Ankunft [s seit Simulationsbeginn].
+    /// Scheduled arrival [s since the start of the simulation].
     pub arrival: f64,
-    /// Planmäßige Abfahrt [s].
+    /// Scheduled departure [s].
     pub departure: f64,
-    /// Gleis (nur Anzeige/Fahrstraßenwahl).
+    /// Platform track (display / route selection only).
     #[serde(default)]
     pub platform: String,
 }
 
 impl ScheduledStop {
-    /// Entfernung von `from` bis zum Haltepunkt [m], falls er innerhalb `max` voraus liegt.
+    /// Distance from `from` to the stopping point [m], if it lies ahead within `max`.
     ///
-    /// ponytail: sucht nur auf dem Fahrweg vorwärts in Meterschritten statt mit einer
-    /// Graphsuche — bei 4 km Vorausschau sind das 4000 billige Schritte je Zug und Sekunde.
-    /// Durch eine echte Wegsuche ersetzen, wenn Fahrpläne über viele Weichen führen.
+    /// ponytail: searches only forwards along the path in metre steps instead of using a
+    /// graph search — with 4 km of look-ahead that is 4000 cheap steps per train and second.
+    /// Replace it with a real path search once timetables lead over many switches.
     pub fn distance_from(&self, net: &TrackNetwork, from: TrackPosition, max: f64) -> Option<f64> {
         if from.edge == self.edge {
             let d = (self.s - from.s) * from.dir as f64;
@@ -51,12 +51,12 @@ impl ScheduledStop {
     }
 }
 
-/// Fahrplan eines Zuges.
+/// Timetable of a train.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Timetable {
-    /// Zugnummer (z. B. „RE 4711").
+    /// Train number (e.g. "RE 4711").
     pub number: String,
-    /// Zuggattung.
+    /// Train category.
     #[serde(default)]
     pub category: String,
     pub stops: Vec<ScheduledStop>,
@@ -68,6 +68,6 @@ impl Timetable {
     }
 
     pub fn to_ron(&self) -> String {
-        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serialisierbar")
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serializable")
     }
 }

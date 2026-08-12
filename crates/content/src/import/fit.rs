@@ -1,25 +1,25 @@
-//! Bausteine der Trassierung: Abtastung, Richtungs- und Krümmungsverlauf, Profile.
+//! Building blocks of the alignment: sampling, heading and curvature profiles, profiles.
 //!
-//! Die eigentliche Rekonstruktion der Entwurfselemente steht in [`super::alignment`];
-//! hier liegt nur, was sie an Vorarbeit braucht.
+//! The actual reconstruction of the design elements lives in [`super::alignment`];
+//! here is only the preparatory work it needs.
 
 use glam::DVec2;
 use track_model::Segment;
 
-/// Ein abgetasteter Stützpunkt mit Zusatzdaten.
+/// A sampled support point with extra data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SamplePoint {
-    /// Lage im lokalen ENU-Frame [m].
+    /// Position in the local ENU frame [m].
     pub pos: DVec2,
-    /// Höhe über NHN [m].
+    /// Height above NHN [m].
     pub height: f64,
-    /// Zulässige Geschwindigkeit [km/h].
+    /// Permitted speed [km/h].
     pub speed: f64,
 }
 
-/// Tastet eine Polylinie in gleichen Abständen ab (lineare Interpolation).
+/// Samples a polyline at equal spacing (linear interpolation).
 ///
-/// Liefert je Stützpunkt `(Position, Bogenlänge, Index des Quellsegments)`.
+/// Returns per support point `(position, arc length, index of the source segment)`.
 pub fn resample(points: &[DVec2], step: f64) -> Vec<(DVec2, f64, usize)> {
     let mut out = Vec::new();
     if points.len() < 2 {
@@ -47,20 +47,20 @@ pub fn resample(points: &[DVec2], step: f64) -> Vec<(DVec2, f64, usize)> {
     out
 }
 
-/// Richtungsverlauf aus **Ausgleichsgeraden** über ein gleitendes Fenster.
+/// Heading profile from **best-fit lines** over a sliding window.
 ///
-/// Die naheliegende Variante — Richtung aus der Differenz zweier Nachbarpunkte — ist bei
-/// realen Daten unbrauchbar: bei ±2 m Punktrauschen und 20 m Abstand schwankt die so
-/// bestimmte Richtung um mehrere Grad, während der Unterschied zwischen einer Geraden und
-/// einem 8000-m-Bogen im Promillebereich liegt. Über ein Fenster von `2·w+1` Punkten
-/// (mehrere hundert Meter) mittelt sich das Rauschen dagegen weg.
+/// The obvious variant — heading from the difference of two neighbouring points — is
+/// useless on real data: with ±2 m point noise and 20 m spacing the heading determined
+/// that way varies by several degrees, while the difference between a straight and an
+/// 8000 m curve is in the per-mille range. Over a window of `2·w+1` points (several
+/// hundred metres) the noise averages out instead.
 pub(super) fn headings(points: &[SamplePoint], window: usize) -> Vec<f64> {
     let n = points.len();
     let w = window.max(1);
     let mut headings = Vec::with_capacity(n);
     for i in 0..n {
-        // An den Enden wird das Fenster nach innen verschoben statt einseitig verkürzt:
-        // ein asymmetrisches Fenster verdreht die Richtung und täuscht dort Bögen vor.
+        // At the ends the window is shifted inwards instead of shortened on one side:
+        // an asymmetric window twists the heading and fakes curves there.
         let lo = i.saturating_sub(w).min(n.saturating_sub(2 * w + 1));
         let hi = (lo + 2 * w).min(n - 1);
         headings.push(principal_direction(&points[lo..=hi]));
@@ -69,7 +69,7 @@ pub(super) fn headings(points: &[SamplePoint], window: usize) -> Vec<f64> {
     headings
 }
 
-/// Hauptachse einer Punktwolke — die Ausgleichsgerade in Richtung der Punktfolge.
+/// Principal axis of a point cloud — the best-fit line along the point sequence.
 fn principal_direction(points: &[SamplePoint]) -> f64 {
     if points.len() < 2 {
         return 0.0;
@@ -83,7 +83,7 @@ fn principal_direction(points: &[SamplePoint]) -> f64 {
         sxy += d.x * d.y;
     }
     let mut angle = 0.5 * (2.0 * sxy).atan2(sxx - syy);
-    // Die Hauptachse ist richtungslos — auf die Fahrtrichtung drehen.
+    // The principal axis has no direction — turn it to the direction of travel.
     let along = points[points.len() - 1].pos - points[0].pos;
     if DVec2::new(angle.cos(), angle.sin()).dot(along) < 0.0 {
         angle += std::f64::consts::PI;
@@ -91,10 +91,10 @@ fn principal_direction(points: &[SamplePoint]) -> f64 {
     angle
 }
 
-/// Krümmungsverlauf [1/m] aus dem Richtungsverlauf, geglättet.
+/// Curvature profile [1/m] from the heading profile, smoothed.
 ///
-/// `span` ist die Basislänge in Punkten, über die differenziert wird — sie muss zum
-/// Fenster der Richtungsschätzung passen, sonst wird nur Rauschen differenziert.
+/// `span` is the baseline length in points over which the derivative is taken — it has
+/// to match the window of the heading estimate, otherwise only noise is differentiated.
 pub(super) fn curvature(
     headings: &[f64],
     step: f64,
@@ -117,10 +117,10 @@ pub(super) fn curvature(
     }
     let mut curvature = smooth(&curvature, smoothing);
 
-    // An den Rändern steht das Richtungsfenster still (es kann nicht über die Daten
-    // hinausgreifen), dort käme sonst Krümmung null heraus. Führt ein Bogen bis ans
-    // Datenende, fehlten dadurch die letzten hundert Meter Drehung — deshalb wird der
-    // letzte belastbare Wert nach außen fortgeschrieben.
+    // At the borders the heading window stands still (it cannot reach beyond the data),
+    // so zero curvature would come out there. If a curve runs up to the end of the data,
+    // the last hundred metres of turning would be missing — therefore the last reliable
+    // value is extrapolated outwards.
     let n = curvature.len();
     let edge = edge.min(n / 2);
     for i in 0..edge {
@@ -130,7 +130,7 @@ pub(super) fn curvature(
     curvature
 }
 
-/// Neigungsstufen `(s, ‰)` aus den Höhen, auf 0,5 ‰ gerundet.
+/// Gradient steps `(s, ‰)` from the heights, rounded to 0.5 ‰.
 pub(super) fn grade_profile(points: &[SamplePoint], step: f64) -> Vec<(f64, f64)> {
     let mut grade = Vec::new();
     let mut last = f64::NAN;
@@ -148,7 +148,7 @@ pub(super) fn grade_profile(points: &[SamplePoint], step: f64) -> Vec<(f64, f64)
     grade
 }
 
-/// Geschwindigkeitsstufen `(s, km/h)`.
+/// Speed steps `(s, km/h)`.
 pub(super) fn speed_profile(points: &[SamplePoint], step: f64) -> Vec<(f64, f64)> {
     let mut speed = Vec::new();
     let mut last = f64::NAN;
@@ -161,11 +161,11 @@ pub(super) fn speed_profile(points: &[SamplePoint], step: f64) -> Vec<(f64, f64)
     speed
 }
 
-/// Größte Abweichung zwischen der gebauten Kette und den Stützpunkten [m].
+/// Largest deviation between the built chain and the support points [m].
 ///
-/// Die Kette wird einmal durchlaufen (nicht je Punkt neu ausgewertet) — sonst wäre die
-/// Prüfung bei 30 km Strecke quadratisch. Da Entwurfselemente andere Längen haben als
-/// der Abtastschritt, wird zu jeder Stelle der nächstgelegene Stützpunkt verglichen.
+/// The chain is walked once (not re-evaluated per point) — otherwise the check would be
+/// quadratic on a 30 km line. Since design elements have lengths other than the sampling
+/// step, the nearest support point is compared at every position.
 pub(super) fn deviation(segments: &[Segment], heading0: f64, points: &[SamplePoint]) -> f64 {
     if points.len() < 2 {
         return 0.0;
@@ -184,8 +184,8 @@ pub(super) fn deviation(segments: &[Segment], heading0: f64, points: &[SamplePoi
             let local = segment.len * i as f64 / sub as f64;
             let off = segment.offset(local);
             let p = pos + DVec2::new(ch * off.x - sh * off.y, sh * off.x + ch * off.y);
-            // Zwischen den Stützpunkten interpolieren: rundete man auf den nächsten,
-            // ginge der halbe Abtastschritt als scheinbare Abweichung in die Messung ein.
+            // Interpolate between the support points: rounding to the nearest one would
+            // let half the sampling step enter the measurement as apparent deviation.
             let t = (travelled + local) / step;
             let index = t.floor() as usize;
             if let (Some(a), Some(b)) = (points.get(index), points.get(index + 1)) {
@@ -201,7 +201,7 @@ pub(super) fn deviation(segments: &[Segment], heading0: f64, points: &[SamplePoi
     max
 }
 
-/// Winkelfolge stetig machen (keine 2π-Sprünge).
+/// Make an angle sequence continuous (no 2π jumps).
 fn unwrap_angles(angles: &mut [f64]) {
     for i in 1..angles.len() {
         let mut d = angles[i] - angles[i - 1];
@@ -216,7 +216,7 @@ fn unwrap_angles(angles: &mut [f64]) {
     }
 }
 
-/// Gleitender Mittelwert mit Fensterbreite `2·radius + 1`.
+/// Moving average with window width `2·radius + 1`.
 fn smooth(values: &[f64], radius: usize) -> Vec<f64> {
     if radius == 0 {
         return values.to_vec();
@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn resample_liefert_gleiche_abstaende() {
+    fn resample_yields_equal_spacing() {
         let pts = vec![
             DVec2::new(0.0, 0.0),
             DVec2::new(100.0, 0.0),
@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn kruemmung_einer_geraden_ist_null() {
+    fn curvature_of_a_straight_is_zero() {
         let pts: Vec<DVec2> = (0..40).map(|i| DVec2::new(i as f64 * 20.0, 0.0)).collect();
         let s = samples(&pts);
         let k = curvature(&headings(&s, 5), 20.0, 5, 3, 7);
@@ -271,8 +271,8 @@ mod tests {
     }
 
     #[test]
-    fn richtung_ueberlebt_rauschen() {
-        // Gerade nach Osten mit ±2 m Querversatz — die Richtung muss trotzdem stimmen.
+    fn heading_survives_noise() {
+        // Straight to the east with ±2 m lateral offset — the heading must still be right.
         let mut seed = 7u64;
         let mut rand = move || {
             seed = seed
@@ -287,15 +287,16 @@ mod tests {
 
         let windowed = headings(&s, 5);
         let mid = windowed[30];
-        assert!(mid.abs() < 0.02, "Fensterschätzung: {mid} rad");
+        assert!(mid.abs() < 0.02, "window estimate: {mid} rad");
 
-        // Zum Vergleich: aus Nachbardifferenzen wäre der Fehler eine Größenordnung größer.
+        // For comparison: from neighbour differences the error would be an order of
+        // magnitude larger.
         let naive = (pts[31] - pts[29]).y.atan2((pts[31] - pts[29]).x);
-        assert!(naive.abs() > mid.abs(), "naiv {naive} vs Fenster {mid}");
+        assert!(naive.abs() > mid.abs(), "naive {naive} vs window {mid}");
     }
 
     #[test]
-    fn kruemmung_eines_kreisbogens_trifft_den_kehrwert() {
+    fn curvature_of_a_circular_arc_matches_the_reciprocal() {
         let r = 800.0;
         let step = 20.0;
         let pts: Vec<DVec2> = (0..60)
@@ -311,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn neigungsprofil_kommt_aus_den_hoehen() {
+    fn gradient_profile_comes_from_the_heights() {
         let pts: Vec<DVec2> = (0..30).map(|i| DVec2::new(i as f64 * 20.0, 0.0)).collect();
         let mut s = samples(&pts);
         for (i, p) in s.iter_mut().enumerate() {

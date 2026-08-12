@@ -1,8 +1,8 @@
-//! Abnahme: durchspielbares Szenario mit Wertung (Plan Kap. 11.4, M7-Kriterium).
+//! Acceptance: playable scenario with scoring (plan ch. 11.4, M7 criterion).
 
 use ai_driver::AiDriver;
 use content::vehicles::{br101, de_pzb_lzb, passenger_coach, vehicle};
-use content::{musterbahn, nach_musterstadt, re_4711};
+use content::{musterbahn, re_4711, to_musterstadt};
 use sim_core::Sim;
 use sim_core::safety::SafetySystems;
 use sim_core::safety::de::TrainType;
@@ -27,27 +27,27 @@ fn scenario_sim(start: TrackPosition) -> (Sim, usize) {
             v.traction.pantograph = 1.0;
         }
     }
-    sim.set_scenario(nach_musterstadt(), re_4711());
+    sim.set_scenario(to_musterstadt(), re_4711());
     (sim, t)
 }
 
 #[test]
-fn ereignisse_loesen_der_reihe_nach_aus() {
+fn events_fire_one_after_another() {
     let (mut sim, t) = scenario_sim(TrackPosition::new(EdgeId(0), 100.0, 1));
     let mut ai = AiDriver::new(re_4711());
 
-    // Vor der Abfahrt ist noch nichts passiert.
+    // Nothing has happened before the departure.
     sim.step(Sim::DT);
     assert!(sim.scenario.fired_at("abfahrt").is_none());
 
     for _ in 0..2_000 {
         sim.step(Sim::DT);
     }
-    assert!(sim.scenario.fired_at("abfahrt").is_some(), "Zeitauslöser");
+    assert!(sim.scenario.fired_at("abfahrt").is_some(), "time trigger");
     assert_eq!(sim.scenario.messages.len(), 1);
     assert!(sim.scenario.messages[0].announcement);
 
-    // Fahren bis hinter km 1,2 → Positionsauslöser, danach der verkettete Regen.
+    // Drive past km 1.2 → position trigger, then the chained rain event.
     for _ in 0..60_000 {
         ai.drive(&mut sim, t, Sim::DT);
         sim.step(Sim::DT);
@@ -58,21 +58,21 @@ fn ereignisse_loesen_der_reihe_nach_aus() {
     let block = sim
         .scenario
         .fired_at("block_frei")
-        .expect("Positionsauslöser");
-    let regen = sim
+        .expect("position trigger");
+    let rain = sim
         .scenario
         .fired_at("regen")
-        .expect("verketteter Auslöser");
+        .expect("chained event trigger");
     assert!(
-        (regen - block - 30.0).abs() < 0.5,
-        "Verzögerung eingehalten: {block} → {regen}"
+        (rain - block - 30.0).abs() < 0.5,
+        "delay observed: {block} → {rain}"
     );
-    assert_eq!(sim.trains[t].rail, RailCondition::Wet, "Wetteraktion wirkt");
+    assert_eq!(sim.trains[t].rail, RailCondition::Wet, "weather applied");
 }
 
 #[test]
-fn szenario_wird_erfolgreich_beendet_und_bewertet() {
-    // Kurz vor dem Ziel starten, damit der Test in Sekunden läuft.
+fn scenario_finishes_successfully_and_is_scored() {
+    // Start shortly before the destination so the test runs in seconds.
     let (mut sim, t) = scenario_sim(TrackPosition::new(EdgeId(2), 1000.0, 1));
     let mut ai = AiDriver::new(re_4711());
 
@@ -84,35 +84,35 @@ fn szenario_wird_erfolgreich_beendet_und_bewertet() {
         }
     }
 
-    let outcome = sim.scenario.outcome.clone().expect("Szenario beendet");
-    assert!(outcome.success, "Ausgang: {}", outcome.reason);
+    let outcome = sim.scenario.outcome.clone().expect("scenario finished");
+    assert!(outcome.success, "outcome: {}", outcome.reason);
 
     let report = sim.score.report(sim.scenario.bonus);
-    assert_eq!(sim.score.stops.len(), 1, "Halt wurde gewertet");
+    assert_eq!(sim.score.stops.len(), 1, "stop was scored");
     let stop = &sim.score.stops[0];
     assert!(
         stop.position_error.abs() < 60.0,
-        "Halteplatzabweichung {:.1} m",
+        "stopping position error {:.1} m",
         stop.position_error
     );
-    assert_eq!(sim.score.forced_brakes, 0, "keine Zwangsbremsung");
-    assert!(sim.score.energy_kwh > 0.0, "Energieverbrauch erfasst");
+    assert_eq!(sim.score.forced_brakes, 0, "no forced braking");
+    assert!(sim.score.energy_kwh > 0.0, "energy use recorded");
     assert!(
         report.total > 0 && report.total <= report.base,
-        "Punktzahl {} unplausibel",
+        "score {} implausible",
         report.total
     );
     assert!(
-        report.summary().contains("Wertung:"),
-        "Zusammenfassung: {}",
+        report.summary().contains("Score:"),
+        "summary: {}",
         report.summary()
     );
 }
 
 #[test]
-fn zwangsbremsung_kostet_punkte() {
+fn forced_braking_costs_points() {
     let (mut sim, t) = scenario_sim(TrackPosition::new(EdgeId(0), 100.0, 1));
-    // Sifa nie bedienen → nach 35 s Zwangsbremsung.
+    // Never operate the Sifa → forced braking after 35 s.
     sim.controls[t].reverser = 1;
     sim.controls[t].throttle = 0.5;
     for _ in 0..12_000 {
@@ -127,18 +127,18 @@ fn zwangsbremsung_kostet_punkte() {
         report
             .items
             .iter()
-            .any(|i| i.reason.contains("Zwangsbremsung")),
-        "Abzug fehlt: {report:?}"
+            .any(|i| i.reason.contains("forced brake application")),
+        "deduction missing: {report:?}"
     );
     assert!(report.total < report.base);
-    // Das Szenario meldet die Zwangsbremsung ebenfalls.
+    // The scenario reports the forced braking as well.
     assert!(sim.scenario.fired_at("zwangsbremsung").is_some());
 }
 
 #[test]
-fn ueberschreitung_der_hoechstgeschwindigkeit_wird_gezaehlt() {
+fn exceeding_the_maximum_speed_is_counted() {
     let (mut sim, _t) = scenario_sim(TrackPosition::new(EdgeId(1), 100.0, 1));
-    // Abschnitt 1 erlaubt 130 km/h — wir setzen 170 km/h.
+    // Section 1 permits 130 km/h — we set 170 km/h.
     for v in &mut sim.trains[0].vehicles {
         v.v = 170.0 / 3.6;
     }
@@ -148,11 +148,11 @@ fn ueberschreitung_der_hoechstgeschwindigkeit_wird_gezaehlt() {
     assert!(sim.score.overspeed_seconds > 1.0);
     assert!(sim.score.max_overspeed > 30.0);
     let report = sim.score.report(0);
-    assert!(report.items.iter().any(|i| i.reason.contains("zu schnell")));
+    assert!(report.items.iter().any(|i| i.reason.contains("too fast")));
 }
 
 #[test]
-fn eigene_szenarien_laufen_aus_ron() {
+fn custom_scenarios_run_from_ron() {
     let text = r#"(
         name: "Testfahrt",
         description: "Selbst geschriebenes Szenario",
@@ -172,7 +172,7 @@ fn eigene_szenarien_laufen_aus_ron() {
             ),
         ],
     )"#;
-    let scenario = Scenario::from_ron(text).expect("RON lesbar");
+    let scenario = Scenario::from_ron(text).expect("RON readable");
     assert_eq!(scenario.events.len(), 2);
 
     let (mut sim, _t) = scenario_sim(TrackPosition::new(EdgeId(0), 100.0, 1));
@@ -182,12 +182,12 @@ fn eigene_szenarien_laufen_aus_ron() {
     }
     assert!(sim.scenario.is_finished());
     assert_eq!(sim.scenario.bonus, 10);
-    assert_eq!(sim.scenario.messages.len(), 2, "Meldung + Wertungshinweis");
+    assert_eq!(sim.scenario.messages.len(), 2, "message + score notice");
 }
 
 #[test]
-fn weichen_und_fahrstrassenaktionen_sind_verdrahtet() {
-    // Aktionen ohne passende Infrastruktur dürfen nicht abstürzen.
+fn switch_and_route_actions_are_wired() {
+    // Actions without matching infrastructure must not crash.
     let (mut sim, _t) = scenario_sim(TrackPosition::new(EdgeId(0), 100.0, 1));
     sim.set_scenario(
         Scenario {

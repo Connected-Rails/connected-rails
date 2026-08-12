@@ -1,4 +1,4 @@
-//! Fahrzeugdatenbank (Plan Kap. 15): RON-Dateien + eingebaute Referenzfahrzeuge.
+//! Vehicle database (plan ch. 15): RON files + built-in reference vehicles.
 
 use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec};
 use sim_core::electric::TractionSpec;
@@ -7,24 +7,24 @@ use sim_core::safety::de::{DeSafety, TrainType};
 use sim_core::train::{CouplerSpec, Davis, Vehicle, VehicleSpec};
 use track_model::TrackPosition;
 
-/// Lädt eine Fahrzeugdefinition aus RON.
+/// Loads a vehicle definition from RON.
 pub fn load_vehicle(ron_text: &str) -> Result<VehicleSpec, ron::error::SpannedError> {
     ron::from_str(ron_text)
 }
 
-/// Serialisiert eine Fahrzeugdefinition (für den Editor).
+/// Serializes a vehicle definition (for the editor).
 pub fn save_vehicle(spec: &VehicleSpec) -> String {
-    ron::ser::to_string_pretty(spec, ron::ser::PrettyConfig::default()).expect("serialisierbar")
+    ron::ser::to_string_pretty(spec, ron::ser::PrettyConfig::default()).expect("serializable")
 }
 
-/// BR 101 — Drehstromlok mit Umrichter, LZB/PZB, elektrische Bremse.
+/// BR 101 — three-phase loco with converter, LZB/PZB, electric brake.
 pub fn br101() -> VehicleSpec {
     VehicleSpec {
         name: "BR 101".into(),
         length: 19.1,
         mass_empty: 84_000.0,
         rotating_mass_factor: 0.20,
-        // Davis-Parameter grob nach Fahrzeugdatenblatt (a in N, b in N/(m/s), c in N/(m/s)²).
+        // Davis parameters roughly from the data sheet (a in N, b in N/(m/s), c in N/(m/s)²).
         davis: Davis {
             a: 2_200.0,
             b: 60.0,
@@ -47,7 +47,7 @@ pub fn br101() -> VehicleSpec {
     }
 }
 
-/// BR 110 — Altbau-E-Lok mit Trafo und Schaltwerk, PZB, keine E-Bremse.
+/// BR 110 — older electric loco with transformer and tap changer, PZB, no electric brake.
 pub fn br110() -> VehicleSpec {
     VehicleSpec {
         name: "BR 110".into(),
@@ -75,7 +75,7 @@ pub fn br110() -> VehicleSpec {
     }
 }
 
-/// BR 218 — Diesellok mit hydraulischem Getriebe.
+/// BR 218 — diesel loco with hydraulic transmission.
 pub fn br218() -> VehicleSpec {
     VehicleSpec {
         name: "BR 218".into(),
@@ -103,7 +103,7 @@ pub fn br218() -> VehicleSpec {
     }
 }
 
-/// Reisezugwagen (n-Wagen/Bnrz), Scheibenbremse, Bremsstellung P.
+/// Passenger coach (n-Wagen/Bnrz), disc brake, brake position P.
 pub fn passenger_coach() -> VehicleSpec {
     VehicleSpec {
         name: "Reisezugwagen".into(),
@@ -123,7 +123,7 @@ pub fn passenger_coach() -> VehicleSpec {
     }
 }
 
-/// Offener Güterwagen (Eaos), Klotzbremse, Bremsstellung G.
+/// Open freight wagon (Eaos), block brake, brake position G.
 pub fn freight_wagon() -> VehicleSpec {
     VehicleSpec {
         name: "Güterwagen Eaos".into(),
@@ -143,19 +143,19 @@ pub fn freight_wagon() -> VehicleSpec {
     }
 }
 
-/// Baut ein Fahrzeug an einer Gleisposition, optional mit deutscher Zugsicherung.
+/// Builds a vehicle at a track position, optionally with German train protection.
 pub fn vehicle(spec: VehicleSpec, pos: TrackPosition, safety: SafetySystems) -> Vehicle {
     let mut v = Vehicle::new(spec, pos);
     v.safety = safety;
     v
 }
 
-/// Ausstattung: Sifa + PZB.
+/// Equipment: Sifa + PZB.
 pub fn de_pzb(train_type: TrainType) -> SafetySystems {
     SafetySystems::De(DeSafety::pzb(train_type))
 }
 
-/// Ausstattung: Sifa + PZB + LZB.
+/// Equipment: Sifa + PZB + LZB.
 pub fn de_pzb_lzb(train_type: TrainType) -> SafetySystems {
     SafetySystems::De(DeSafety::pzb_lzb(train_type))
 }
@@ -174,7 +174,7 @@ mod tests {
             freight_wagon(),
         ] {
             let text = save_vehicle(&spec);
-            let back = load_vehicle(&text).expect("RON lesbar");
+            let back = load_vehicle(&text).expect("RON readable");
             assert_eq!(back.name, spec.name);
             assert_eq!(back.mass_empty, spec.mass_empty);
             assert_eq!(back.traction, spec.traction);
@@ -184,10 +184,10 @@ mod tests {
 
     #[test]
     fn brake_weights_are_plausible() {
-        // Bremsgewicht liegt bei Reisezugwagen über der Eigenmasse (Bremshundertstel > 100).
+        // For passenger coaches the brake weight exceeds the empty mass (brake percentage > 100).
         let coach = passenger_coach();
         assert!(coach.brake.brake_weight * 1000.0 > coach.mass_empty);
-        // Güterwagen in G bremst schwächer als seine Masse.
+        // A freight wagon in G brakes more weakly than its mass.
         let wagon = freight_wagon();
         assert!(wagon.brake.brake_weight * 1000.0 <= wagon.mass_empty * 1.1);
     }

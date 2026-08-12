@@ -1,414 +1,424 @@
-# Entwicklungsplan: Deutscher Zugsimulator auf Bevy (Arbeitstitel „TrainSim-DE")
+# Development plan: German train simulator on Bevy (working title "TrainSim-DE")
 
-Dieser Plan ist als vollständige Arbeitsanweisung für eine ausführende KI/ein Entwicklerteam geschrieben.
-Referenz-Featureumfang: MaSzyna EU07 (https://github.com/MaSzyna-EU07/maszyna), übertragen auf Deutschland
-mit deutschen Zugsicherungssystemen (PZB, LZB, Sifa, …) und einer Länder-Abstraktionsschicht.
-
----
-
-## 0. Zielbild
-
-Ein Simulator in Simulationstiefe von MaSzyna (kein Arcade-Spiel):
-
-- Physikalisch korrekte Fahrdynamik ganzer Züge (Längsdynamik, Kupplungen, Puffer).
-- Vollständige Druckluftbremssimulation (Hauptluftleitung als Rohrmodell, nicht nur „Bremskraft-Slider").
-- Elektrische Ausrüstung als Schaltungssimulation (Stromabnehmer, Hauptschalter, Fahrmotoren/Umrichter).
-- Deutsche Zugsicherung: Sifa, PZB 90, LZB 80/CE, später ETCS — hinter einer länderneutralen Abstraktion.
-- Deutsches Signalsystem (Ks, H/V, Hl) mit Stellwerkslogik (Fahrstraßen).
-- KI-Züge mit Fahrplänen, Ereignis-/Szenariosystem.
-- Begehbarer, voll bedienbarer 3D-Führerstand.
-- Große Welten (100+ km Strecken), georeferenziert (ETRS89/UTM), ohne f32-Präzisionsartefakte,
-  robust über UTM-Zonengrenzen hinweg.
-
-Nicht-Ziele (v1): Multiplayer (nur architektonisch vorbereiten), Fahrgastsimulation, dynamische Güterlogistik.
+This plan is written as a complete set of working instructions for an executing AI / developer team.
+Reference feature scope: MaSzyna EU07 (https://github.com/MaSzyna-EU07/maszyna), transferred to Germany
+with German train protection systems (PZB, LZB, Sifa, …) and a country abstraction layer.
 
 ---
 
-## 1. Feature-Inventar aus MaSzyna (Soll-Abdeckung)
+## 0. Vision
 
-Jedes Feature bekommt im Plan unten ein Kapitel. Checkliste dessen, was MaSzyna kann und wir abdecken müssen:
+A simulator with the simulation depth of MaSzyna (not an arcade game):
 
-| MaSzyna-Feature | Übernahme | Kapitel |
+- Physically correct driving dynamics of whole trains (longitudinal dynamics, couplers, buffers).
+- Full air brake simulation (brake pipe as a pipe model, not just a "braking force slider").
+- Electrical equipment as a circuit simulation (pantograph, main switch, traction motors/converters).
+- German train protection: Sifa, PZB 90, LZB 80/CE, later ETCS — behind a country-neutral abstraction.
+- German signalling system (Ks, H/V, Hl) with interlocking logic (routes).
+- AI trains with timetables, event/scenario system.
+- Walkable, fully operable 3D cab.
+- Large worlds (100+ km lines), georeferenced (ETRS89/UTM), without f32 precision artefacts,
+  robust across UTM zone boundaries.
+
+Non-goals (v1): multiplayer (only architecturally prepared), passenger simulation, dynamic freight logistics.
+
+---
+
+## 1. Feature inventory from MaSzyna (target coverage)
+
+Every feature gets a chapter in the plan below. Checklist of what MaSzyna can do and we must cover:
+
+| MaSzyna feature | Adoption | Chapter |
 |---|---|---|
-| Längsdynamik ganzer Züge (Kupplung/Puffer-Federn, Reißen von Kupplungen) | ja | 6 |
-| Adhäsionsmodell, Schleudern/Gleiten, Sanden | ja | 6 |
-| Druckluftbremse (Führerbremsventil, Steuerventile, HL/HB-Drücke, Bremsstellungen G/P/R(+Mg)) | ja | 7 |
-| Elektrische Traktion (Fahrschalter, Anfahrwiderstände / Schaltwerk / Umrichter, Feldschwächung) | ja (dt. Fahrzeuge: Schaltwerk BR 110/140, Umrichter BR 101/185/423, Diesel BR 218/br 648) | 8 |
-| Oberleitung mit Spannung/Stromabnehmer-Interaktion, Hauptschalter, Zugsammelschiene | ja | 8 |
-| Zugsicherung (dort SHP/CA/Radiostop) | ersetzt durch Sifa/PZB/LZB + Abstraktion | 9 |
-| Landesspezifische Signale (dort PL) | ersetzt durch Ks/H/V/Hl + Stellwerk | 10 |
-| Zugfunk (dort Radio-Zew) | GSM-R-artiger Zugfunk, Nothalt-Ruf | 10.5 |
-| KI-Fahrer, Fahrpläne, Zugbildung | ja | 11 |
-| Event-/Szenariosystem (Trigger, Weichen stellen, Ansagen) | ja | 11.4 |
-| Interaktiver 3D-Führerstand (alle Schalter klickbar, Instrumente) | ja | 12 |
-| Innen-/Außenkameras, freie Kamera | ja | 12.4 |
-| 3D-Sound (Fahrgeräusche, Ansagen, positional) | ja | 13 |
-| Wetter, Tag/Nacht, Jahreszeiten | ja | 14 |
-| Streckeneditor / Content-Pipeline (dort .scn/.e3d) | eigenes Format + Importer | 15 |
-| Physik-Konsole/Debug-Tools | ja (egui-Overlays) | 16.3 |
+| Longitudinal dynamics of whole trains (coupler/buffer springs, coupler breakage) | yes | 6 |
+| Adhesion model, wheel slip/slide, sanding | yes | 6 |
+| Air brake (driver's brake valve, control valves, brake pipe/main reservoir pressures, brake positions G/P/R(+Mg)) | yes | 7 |
+| Electric traction (power controller, starting resistors / tap changer / converter, field weakening) | yes (German vehicles: tap changer BR 110/140, converter BR 101/185/423, diesel BR 218/BR 648) | 8 |
+| Overhead line with voltage/pantograph interaction, main switch, train line | yes | 8 |
+| Train protection (there SHP/CA/Radiostop) | replaced by Sifa/PZB/LZB + abstraction | 9 |
+| Country-specific signals (there PL) | replaced by Ks/H/V/Hl + interlocking | 10 |
+| Train radio (there Radio-Zew) | GSM-R-style train radio, emergency call | 10.5 |
+| AI driver, timetables, train formation | yes | 11 |
+| Event/scenario system (triggers, setting switches, announcements) | yes | 11.4 |
+| Interactive 3D cab (all switches clickable, instruments) | yes | 12 |
+| Interior/exterior cameras, free camera | yes | 12.4 |
+| 3D sound (running noise, announcements, positional) | yes | 13 |
+| Weather, day/night, seasons | yes | 14 |
+| Line editor / content pipeline (there .scn/.e3d) | own format + importer | 15 |
+| Physics console/debug tools | yes (egui overlays) | 16.3 |
 
 ---
 
-## 2. Tech-Stack
+## 2. Tech stack
 
-- **Sprache:** Rust (stable), Edition 2024.
-- **Engine:** Bevy, aktuellste stabile Version zum Projektstart (>= 0.15). Rendering, ECS, Asset-System,
-  Audio (`bevy_audio` reicht zunächst; bei Bedarf `kira`).
-- **UI:** `bevy_egui` für Debug/Editor-UI; Führerstand-Instrumente als 3D-Meshes + Shader, nicht als 2D-UI.
-- **Geodäsie:** `proj4rs` oder `geodesy` (reines Rust) für ETRS89/UTM ↔ ECEF/ENU-Umrechnung im Importer.
-- **Serialisierung:** `serde` + RON für handeditierbare Configs, binäres Format (`bincode`/eigenes Chunk-Format)
-  für kompilierte Streckendaten.
-- **Physik:** Eigenimplementierung (Längsdynamik/Pneumatik sind domänenspezifisch — Rapier o. Ä. hilft hier nicht,
-  nur ggf. für Kollisionen/Ragdoll-Kram später).
-- **Repo-Struktur:** Cargo-Workspace, ein Crate pro Domäne (siehe 3.1).
+- **Language:** Rust (stable), edition 2024.
+- **Engine:** Bevy, latest stable version at project start (>= 0.15). Rendering, ECS, asset system,
+  audio (`bevy_audio` suffices for now; `kira` if needed).
+- **UI:** `bevy_egui` for debug/editor UI; cab instruments as 3D meshes + shaders, not as 2D UI.
+- **Geodesy:** `proj4rs` or `geodesy` (pure Rust) for ETRS89/UTM ↔ ECEF/ENU conversion in the importer.
+- **Serialisation:** `serde` + RON for hand-editable configs, binary format (`bincode`/own chunk format)
+  for compiled line data.
+- **Physics:** own implementation (longitudinal dynamics/pneumatics are domain-specific — Rapier and the like
+  do not help here, at most for collisions/ragdoll matters later).
+- **Repo structure:** Cargo workspace, one crate per domain (see 3.1).
 
 ---
 
-## 3. Architektur
+## 3. Architecture
 
-### 3.1 Workspace-Layout
+### 3.1 Workspace layout
 
 ```
 train-sim/
 ├─ crates/
-│  ├─ sim-core/          # Fixed-Timestep-Simulation, KEINE Bevy-Abhängigkeit (testbar, headless)
-│  │   ├─ physics/       #   Längsdynamik, Adhäsion
-│  │   ├─ brakes/        #   Pneumatik
-│  │   ├─ electric/      #   Traktion, Bordnetz
-│  │   ├─ safety/        #   Zugsicherungs-Abstraktion + Länderimplementierungen
-│  │   └─ interlock/     #   Signale, Fahrstraßen, Blocklogik
-│  ├─ world-coords/      # f64-Weltkoordinaten, Origin-Shifting, Geo-Umrechnung
-│  ├─ track-model/       # Gleisgeometrie, Topologie, Streckendaten-Format
-│  ├─ content/           # Asset-Formate, Importer (inkl. Geo-Reprojektion), Fahrzeug-Definitionen
-│  ├─ ai-driver/         # KI-Triebfahrzeugführer, Fahrplan
-│  ├─ app/               # Bevy-App: Rendering, Kamera, Input, Audio, UI; bindet sim-core an ECS
-│  └─ editor/            # Streckeneditor (eigene Bevy-App, nutzt app-Crates)
+│  ├─ sim-core/          # fixed-timestep simulation, NO Bevy dependency (testable, headless)
+│  │   ├─ physics/       #   longitudinal dynamics, adhesion
+│  │   ├─ brakes/        #   pneumatics
+│  │   ├─ electric/      #   traction, on-board power
+│  │   ├─ safety/        #   train protection abstraction + country implementations
+│  │   └─ interlock/     #   signals, routes, block logic
+│  ├─ world-coords/      # f64 world coordinates, origin shifting, geo conversion
+│  ├─ track-model/       # track geometry, topology, line data format
+│  ├─ content/           # asset formats, importer (incl. geo reprojection), vehicle definitions
+│  ├─ ai-driver/         # AI train driver, timetable
+│  ├─ app/               # Bevy app: rendering, camera, input, audio, UI; binds sim-core to ECS
+│  └─ editor/            # line editor (own Bevy app, uses app crates)
 └─ assets/
 ```
 
-**Kernregel:** `sim-core` ist eine reine Rust-Lib mit fixem Zeitschritt (empfohlen 100–200 Hz Physik,
-Pneumatik ggf. Substeps), deterministisch, ohne Bevy. Die Bevy-App tickt sie und spiegelt Zustand in
-ECS-Komponenten für Rendering/Audio/UI. Das macht alles headless testbar und hält Multiplayer später offen.
+**Core rule:** `sim-core` is a pure Rust lib with a fixed time step (recommended 100–200 Hz physics,
+pneumatics with substeps if needed), deterministic, without Bevy. The Bevy app ticks it and mirrors state
+into ECS components for rendering/audio/UI. That keeps everything headless-testable and leaves multiplayer
+open for later.
 
-### 3.2 Datenfluss pro Frame
+### 3.2 Data flow per frame
 
-1. Input → Führerstand-Bedienelemente (Stellwerte).
-2. `sim-core::step(dt)` in festen Schritten (Akkumulator): Elektrik → Traktion/Bremse → Längsdynamik →
-   Position auf Gleisgraph → Zugsicherung → Stellwerk/Signale → KI.
-3. Sync nach ECS: Fahrzeugposen (f64 → gerendert relativ zum Origin), Instrumentenwerte, Soundtrigger.
-4. Rendering/Audio/UI.
+1. Input → cab controls (set values).
+2. `sim-core::step(dt)` in fixed steps (accumulator): electrics → traction/brake → longitudinal dynamics →
+   position on the track graph → train protection → interlocking/signals → AI.
+3. Sync to ECS: vehicle poses (f64 → rendered relative to the origin), instrument values, sound triggers.
+4. Rendering/audio/UI.
 
 ---
 
-## 4. Koordinatensystem & große Welten (kritisch, zuerst festzurren)
+## 4. Coordinate system & large worlds (critical, nail down first)
 
-### 4.1 Problemstellung
+### 4.1 Problem statement
 
-- Deutschland liegt in UTM-Zone 32N und 33N (Grenze bei 12° Ost, quer durch Ostdeutschland).
-  Strecken (z. B. Berlin–Hannover) kreuzen die Zonengrenze. UTM-Koordinaten zweier Zonen sind
-  nicht zusammensteckbar; an der Naht entstehen Sprung + Richtungs-/Maßstabsfehler.
-- f32 (Bevy `Transform`) hat bei UTM-Ostwerten (~500 000 m) nur noch ~3 cm Auflösung → Jitter.
+- Germany lies in UTM zones 32N and 33N (boundary at 12° east, straight through eastern Germany).
+  Lines (e.g. Berlin–Hanover) cross the zone boundary. UTM coordinates from two zones cannot be joined;
+  at the seam you get a jump plus direction/scale errors.
+- f32 (Bevy `Transform`) has only ~3 cm resolution at UTM eastings (~500,000 m) → jitter.
 
-### 4.2 Lösung (verbindlich)
+### 4.2 Solution (binding)
 
-**Interne Weltkoordinaten: ECEF in f64.** Ein globales, kartesisches, projektionsfreies System —
-keine Zonen, keine Nähte, kein Verzerrungsproblem, ganz Deutschland (oder Europa) in einem Frame.
+**Internal world coordinates: ECEF in f64.** A global, Cartesian, projection-free system —
+no zones, no seams, no distortion problem, all of Germany (or Europe) in one frame.
 
-- Alle Simulation (Gleisgeometrie, Fahrzeugpositionen) rechnet in `DVec3` (f64) im ECEF-Frame
-  (ETRS89-Ellipsoid). f64 hat bei Erdradius ~6,4e6 m eine Auflösung < 1 µm — mehr als genug.
-- **Rendering: Floating Origin.** Ein `RenderOrigin`-Ressource hält Position (DVec3) + Rotation
-  (lokales ENU-Frame am Originpunkt, damit „oben" = +Y bleibt). Beim Sync wird jede Pose als
-  `(f64-Pose − Origin)` in f32-`Transform` geschrieben. Origin springt neu (an Kameraposition),
-  sobald die Kamera > ~4 km vom Origin entfernt ist; beim Sprung wird auch die ENU-Rotation neu
-  bestimmt → Erdkrümmung ist automatisch korrekt (weit entfernte Strecke liegt „unter dem Horizont"),
-  ohne dass wir sie je explizit modellieren.
-- **UTM nur im Importer:** Quelldaten (DB-Geodaten, OSM, DGM in UTM32/33) werden beim Streckenimport
-  per `geodesy`/`proj4rs` nach ECEF reprojiziert. Zur Laufzeit existiert UTM nicht.
-  Zonengrenzen sind damit vollständig ein Importer-Problem: Importer nimmt pro Datei deren CRS entgegen
-  (EPSG-Code in den Metadaten) und rechnet um — fertig.
-- Höhen: DGM-Höhen (DHHN2016) über Geoid-Offset (näherungsweise konstant pro Strecke, ~46–50 m in DE;
-  v1: konstanter Offset pro Strecke im Streckenheader) auf ellipsoidische Höhe bringen.
+- All simulation (track geometry, vehicle positions) computes in `DVec3` (f64) in the ECEF frame
+  (ETRS89 ellipsoid). At an earth radius of ~6.4e6 m, f64 has a resolution < 1 µm — more than enough.
+- **Rendering: floating origin.** A `RenderOrigin` resource holds position (DVec3) + rotation
+  (local ENU frame at the origin point, so that "up" stays +Y). On sync, every pose is written as
+  `(f64 pose − origin)` into an f32 `Transform`. The origin jumps anew (to the camera position) as soon
+  as the camera is > ~4 km away from it; on the jump the ENU rotation is redetermined as well → earth
+  curvature is automatically correct (a distant line lies "below the horizon") without us ever modelling
+  it explicitly.
+- **UTM only in the importer:** source data (DB geodata, OSM, DGM in UTM32/33) is reprojected to ECEF
+  during the line import via `geodesy`/`proj4rs`. At runtime, UTM does not exist.
+  Zone boundaries are thus entirely an importer problem: the importer takes each file's CRS
+  (EPSG code from the metadata) and converts — done.
+- Heights: DGM heights (DHHN2016) are brought to ellipsoidal height via a geoid offset (approximately
+  constant per line, ~46–50 m in Germany; v1: constant offset per line in the line header).
 
-`world-coords`-Crate liefert: `EcefPos(DVec3)`, `RenderOrigin`, Sync-System, `geo::to_ecef(lat/lon/h)`,
-`enu_frame_at(pos)`. Abnahmetest: zwei Punkte 300 km auseinander, Kamera fährt hin und her, kein Jitter,
-keine sichtbaren Sprünge beim Origin-Rebase.
+The `world-coords` crate provides: `EcefPos(DVec3)`, `RenderOrigin`, sync system, `geo::to_ecef(lat/lon/h)`,
+`enu_frame_at(pos)`. Acceptance test: two points 300 km apart, camera travels back and forth, no jitter,
+no visible jumps on origin rebase.
 
 ### 4.3 Streaming
 
-- Welt in Tiles (z. B. 2×2 km, Schlüssel = quantisierte ECEF/ENU-Koordinate der Strecke).
-- Async-Laden über Bevy-Assets, Laderadius um Kamera + um alle aktiven Züge (KI-Züge simulieren
-  auch ungeladen weiter — Gleisgraph + Fahrplandaten sind immer resident, nur Grafik/Detailkollision streamt).
+- World in tiles (e.g. 2×2 km, key = quantised ECEF/ENU coordinate of the line).
+- Async loading via Bevy assets, load radius around the camera + around all active trains (AI trains keep
+  simulating even when unloaded — track graph + timetable data are always resident, only
+  graphics/detail collision stream).
 
 ---
 
-## 5. Gleis- & Streckendatenmodell (`track-model`)
+## 5. Track & line data model (`track-model`)
 
-- **Topologie:** Graph aus `TrackNode` (Weichen, Stumpfgleisenden, Verbindungen) und `TrackEdge`.
-- **Geometrie pro Edge:** Segmentliste aus Gerade / Kreisbogen / Klothoide (Übergangsbogen) + Überhöhungsrampe.
-  Gespeichert im lokalen ENU-Frame des Tiles, zur Laufzeit nach ECEF aufgelöst.
-  API: `eval(edge, s) -> (EcefPos, Tangente, Überhöhung)` — alles fährt auf Bogenlänge `s`.
-- **Zugposition:** Kette von `(EdgeId, s, Richtung)` pro Radsatz/Drehgestell — Fahrzeuge sind gleisgebunden,
-  keine Freikörper-3D-Physik fürs Fahren.
-- **Weichen:** Zustand (Lage links/rechts, aufgefahren), Umlaufzeit, Verschluss durch Stellwerk.
-- **Streckenausrüstung als Trackside-Objekte** mit Position `(EdgeId, s)`: Signale, PZB-Magnete,
-  LZB-Linienleiter-Abschnitte, Balisen (ETCS-ready), Geschwindigkeitstafeln (Lf), Neigungswechsel, Bahnsteige,
-  Haltetafeln, Blockgrenzen. Länderneutral als `TracksideDevice { kind: DeviceKind, payload: ron::Value }` —
-  die Länder-Plugins (Kap. 9) interpretieren ihre Gerätetypen selbst.
-- Geschwindigkeits- und Neigungsprofil als Stufenfunktion über `s` pro Strecke.
-
----
-
-## 6. Fahrphysik (`sim-core::physics`)
-
-Fixed Timestep, pro Zug:
-
-- **Fahrzeug** = Starrkörper auf Gleis mit Masse (leer/beladen), rotierende Massen (Zuschlagfaktor),
-  Länge, Laufwiderstand (Davis-Formel a+bv+cv², Fahrzeugdatenbank-Parameter), Bogen- und Steigungswiderstand
-  aus Gleisgeometrie.
-- **Zugverband:** Fahrzeuge über Kupplungselemente verbunden: Feder-Dämpfer mit Spiel (Schraubenkupplung:
-  Zugfeder + Puffer getrennt, Losfahren „Zug strecken" spürbar; Mittelpufferkupplung steifer).
-  Kupplungsbruch bei Überlast (konfigurierbar). Integration: semi-implizit Euler, Substepping wenn steif.
-- **Adhäsion:** Kraftschlussgrenze µ(v, Schienenzustand [trocken/nass/Laub]), Schleudern/Gleiten pro
-  Triebfahrzeug (v1: pro Fahrzeug, nicht pro Radsatz — `// ponytail`-Kommentar setzen), Sanden erhöht µ.
-  Gleitschutz/Schleuderschutz als Fahrzeug-Feature.
-- **Abnahmetests (headless):** Auslaufversuch gegen Davis-Sollkurve, Anfahren am Berg,
-  Bremswegtabellen (siehe 7) gegen Literaturwerte (Minden-Werte) ±5 %.
+- **Topology:** graph of `TrackNode` (switches, buffer stops, connections) and `TrackEdge`.
+- **Geometry per edge:** segment list of straight / circular arc / clothoid (transition curve) + cant ramp.
+  Stored in the tile's local ENU frame, resolved to ECEF at runtime.
+  API: `eval(edge, s) -> (EcefPos, tangent, cant)` — everything runs on arc length `s`.
+- **Train position:** chain of `(EdgeId, s, direction)` per wheelset/bogie — vehicles are track-bound,
+  no free-body 3D physics for driving.
+- **Switches:** state (position left/right, trailed), throw time, locking by the interlocking.
+- **Lineside equipment as trackside objects** with position `(EdgeId, s)`: signals, PZB magnets,
+  LZB loop cable sections, balises (ETCS-ready), speed boards (Lf), gradient changes, platforms,
+  stop boards, block boundaries. Country-neutral as `TracksideDevice { kind: DeviceKind, payload: ron::Value }` —
+  the country plugins (ch. 9) interpret their own device types.
+- Speed and gradient profile as a step function over `s` per line.
 
 ---
 
-## 7. Bremssystem (`sim-core::brakes`)
+## 6. Driving physics (`sim-core::physics`)
 
-MaSzyna-Niveau, d. h. echte Pneumatik:
+Fixed timestep, per train:
 
-- **Hauptluftleitung (HL)** als 1D-Rohrmodell entlang des Zuges: pro Fahrzeug ein Volumenknoten,
-  Drosselverbindungen zwischen Fahrzeugen → Druckwellen-Laufzeit, Durchschlagsgeschwindigkeit,
-  langer Güterzug bremst hinten später. (v1: Knotenmodell reicht; kein PDE-Löser.)
-- **Führerbremsventil** (Stellungen Füllen/Fahrt/Abschluss/Betriebsbremsstufen/Schnellbremsung),
-  zeitabhängiges Füllen/Entlüften, Angleicher.
-- **Steuerventil** pro Fahrzeug (KE-Ventil-Verhalten): Dreidrucksystem, Bremsstellungen **G/P/R**,
-  Lastabbremsung (automatisch/manuell umstellbar), Lösestoß, Erschöpfbarkeit über R-Behälter-Volumen.
-- **Weitere:** Zusatzbremse (direkte Bremse) auf Tfz, E-Bremse (dynamisch) mit Blending,
-  Mg-Bremse (bei R+Mg und Schnellbremsung), Federspeicher/Handbremse, Notbremse (Fahrgast),
-  Hauptluftbehälter + Kompressor (Druckwächter), Bremsprobe-Ablauf (voll/vereinfacht) als Szenario-Feature.
-- **Ausgabe:** Klotz-/Scheibenbremskraft → in Längsdynamik; Bremszylinder-/HL-/HB-Manometerwerte für Führerstand.
-- **Abnahmetest:** Bremshundertstel-Berechnung eines Beispielzugs, Schnellbremsweg aus 100 km/h gegen Sollwert.
-
----
-
-## 8. Elektrik & Antrieb (`sim-core::electric`)
-
-Komponentenbasierte Bordnetz-Simulation (gerichteter Schaltungsgraph, kein SPICE):
-
-- **Hochspannung:** Stromabnehmer (Heben/Senken mit Laufzeit, Kontakt zur Oberleitung nur wo Fahrdraht
-  vorhanden; Schutzstrecken = spannungslose Abschnitte als Trackside-Objekt), Hauptschalter,
-  Oberspannungswandler, 15 kV 16,7 Hz (DE) — Spannungsniveau ist Länder-/Streckenparameter.
-- **Traktionsstränge** (Fahrzeugdatenbank wählt Typ):
-  1. **Trafo + Schaltwerk** (Altbau-E-Loks BR 110/140/141): Stufenschalter mit Schaltzeit, Fahrmotorkennlinien.
-  2. **Umrichter/Drehstrom** (BR 101/185/423/ICE): Zug-/Bremskraft-Sollwert über AFB-fähigen Hebel,
-     Kennfeld Zugkraft über v, Wirkungsgrad.
-  3. **Diesel** (BR 218 hydraulisch, BR 648 mechanisch/hydraulisch): Motorkennfeld, Getriebe/Wandler.
-- **Hilfsbetriebe:** Batterie, Zugsammelschiene (Heizung), Kompressor, Lüfter — als Verbraucher mit
-  Zuständen, relevant für Aufrüst-Prozedur.
-- **Aufrüsten** als vollständige Prozedur: Batterie ein → Bügel heben → Hauptschalter ein → Luftpresser →
-  Zugsicherung testen. Checklisten-Ereignisse fürs Tutorial-System.
+- **Vehicle** = rigid body on the track with mass (empty/loaded), rotating masses (surcharge factor),
+  length, running resistance (Davis formula a+bv+cv², vehicle database parameters), curve and gradient
+  resistance from the track geometry.
+- **Train consist:** vehicles connected via coupling elements: spring-damper with slack (screw coupling:
+  draw spring + buffer separately, "stretching the train" on departure is noticeable; centre buffer coupler
+  stiffer). Coupler breakage on overload (configurable). Integration: semi-implicit Euler, substepping when stiff.
+- **Adhesion:** adhesion limit µ(v, rail condition [dry/wet/leaves]), wheel slip/slide per
+  traction unit (v1: per vehicle, not per wheelset — add a `// ponytail` comment), sanding raises µ.
+  Wheel slide/slip protection as a vehicle feature.
+- **Acceptance tests (headless):** coasting trial against the Davis target curve, starting on a gradient,
+  braking distance tables (see 7) against literature values (Minden values) ±5 %.
 
 ---
 
-## 9. Zugsicherung (`sim-core::safety`) — Kernstück
+## 7. Brake system (`sim-core::brakes`)
 
-### 9.1 Länder-Abstraktion
+MaSzyna level, i.e. real pneumatics:
+
+- **Brake pipe** as a 1D pipe model along the train: one volume node per vehicle,
+  throttle connections between vehicles → pressure wave travel time, propagation speed,
+  a long freight train brakes later at the rear. (v1: a node model suffices; no PDE solver.)
+- **Driver's brake valve** (positions fill/running/lap/service brake steps/emergency brake),
+  time-dependent filling/venting, equalising.
+- **Control valve** per vehicle (KE valve behaviour): three-pressure system, brake positions **G/P/R**,
+  load braking (switchable automatically/manually), release surge, exhaustibility via auxiliary reservoir volume.
+- **Further:** direct brake on the traction unit, electric (dynamic) brake with blending,
+  Mg brake (with R+Mg and emergency braking), spring-applied/hand brake, passenger emergency brake,
+  main reservoir + compressor (pressure switch), brake test procedure (full/simplified) as a scenario feature.
+- **Output:** block/disc braking force → into longitudinal dynamics; brake cylinder/brake pipe/main reservoir
+  gauge values for the cab.
+- **Acceptance test:** braked weight percentage calculation of an example train, emergency braking distance
+  from 100 km/h against the target value.
+
+---
+
+## 8. Electrics & traction (`sim-core::electric`)
+
+Component-based on-board power simulation (directed circuit graph, no SPICE):
+
+- **High voltage:** pantograph (raise/lower with travel time, contact with the overhead line only where a
+  contact wire exists; neutral sections = de-energised sections as trackside objects), main switch,
+  high-voltage transformer, 15 kV 16.7 Hz (Germany) — the voltage level is a country/line parameter.
+- **Traction chains** (the vehicle database picks the type):
+  1. **Transformer + tap changer** (older electric locos BR 110/140/141): step switch with switching time,
+     traction motor characteristics.
+  2. **Converter/three-phase** (BR 101/185/423/ICE): tractive/braking effort setpoint via an AFB-capable lever,
+     tractive effort map over v, efficiency.
+  3. **Diesel** (BR 218 hydraulic, BR 648 mechanical/hydraulic): engine map, gearbox/torque converter.
+- **Auxiliaries:** battery, train line (heating), compressor, fans — as consumers with
+  states, relevant for the start-up procedure.
+- **Start-up** as a complete procedure: battery on → raise pantograph → main switch on → air compressor →
+  test train protection. Checklist events for the tutorial system.
+
+---
+
+## 9. Train protection (`sim-core::safety`) — the centrepiece
+
+### 9.1 Country abstraction
 
 ```rust
-// Länderneutrale Schnittstelle. Jedes System ist eine Zustandsmaschine mit definierten Ein-/Ausgängen.
+// Country-neutral interface. Every system is a state machine with defined inputs/outputs.
 pub trait TrainProtectionSystem {
     fn update(&mut self, dt: f64, train: &TrainState, cab: &CabInputs,
               events: &[TracksideEvent]) -> ProtectionOutput;
-    fn indicators(&self) -> &[Indicator];      // Leuchtmelder/Anzeigen für den Führerstand
-    fn isolate(&mut self, isolated: bool);      // Störschalter
+    fn indicators(&self) -> &[Indicator];      // indicator lamps/displays for the cab
+    fn isolate(&mut self, isolated: bool);      // isolating switch
 }
 
 pub struct TracksideEvent { pub device: DeviceKind, pub payload: ron::Value, pub s_offset: f64 }
 pub enum ProtectionAction { None, ForcedServiceBrake, EmergencyBrake, TractionCutOff }
-pub struct ProtectionOutput { pub action: ProtectionAction, pub speed_limit: Option<f64>, /* Anzeigen … */ }
+pub struct ProtectionOutput { pub action: ProtectionAction, pub speed_limit: Option<f64>, /* displays … */ }
 ```
 
-- Ein Fahrzeug trägt eine Liste `Vec<Box<dyn TrainProtectionSystem>>` (aus Fahrzeugdatenbank).
-- Trackside-Geräte (Kap. 5) erzeugen `TracksideEvent`s, wenn ein antennentragendes Fahrzeug sie überfährt.
-- **Länderpaket** = Bündel aus (Zugsicherungs-Implementierungen + Signalsystem-Definition + Trackside-Gerätetypen
-  + Regelwerk-Parametern), als Rust-Modul/Plugin registriert. DE ist das erste; die polnischen (SHP/CA)
-  oder österreichischen Systeme wären spätere Pakete gegen dieselbe API.
+- A vehicle carries a list `Vec<Box<dyn TrainProtectionSystem>>` (from the vehicle database).
+- Trackside devices (ch. 5) generate `TracksideEvent`s when an antenna-carrying vehicle passes over them.
+- A **country package** = a bundle of (train protection implementations + signalling system definition +
+  trackside device types + rulebook parameters), registered as a Rust module/plugin. DE is the first;
+  the Polish (SHP/CA) or Austrian systems would be later packages against the same API.
 
-### 9.2 Sifa (zuerst implementieren — einfachste Zustandsmaschine)
+### 9.2 Sifa (implement first — the simplest state machine)
 
-- Zeit-Zeit-Sifa (Standard DE): Pedal/Taster; nach 30 s ohne Bedienung → Leuchtmelder, +2,5 s → Hupe,
-  +2,5 s → Zwangsbremsung (Schnellbremsung), Lösen erst nach Pedalwechsel. Parameter je Fahrzeug.
-- Abschaltbar (Störschalter, protokolliert).
+- Time-time Sifa (German standard): pedal/button; after 30 s without operation → indicator lamp,
+  +2.5 s → buzzer, +2.5 s → forced braking (emergency brake), release only after a pedal change.
+  Parameters per vehicle.
+- Can be switched off (isolating switch, logged).
 
-### 9.3 PZB 90 (vollständig, das Herzstück für DE-Betrieb)
+### 9.3 PZB 90 (complete, the heart of German operation)
 
-- **Streckenseite:** 500-Hz-, 1000-Hz-, 2000-Hz-Gleismagnete als Trackside-Geräte; Wirksamkeit
-  signalabhängig (1000 Hz aktiv bei Vr0/Vr2, 2000 Hz bei Hp0 — Kopplung ans Signalsystem, Kap. 10).
-- **Fahrzeugseite, komplette PZB-90-Logik:**
-  - Zugarten O/M/U mit allen Prüfgeschwindigkeiten und Bremskurven (165/125/105 → 85/70/55 usw.).
-  - 1000-Hz-Beeinflussung: Wachsam innerhalb 4 s, Überwachung 1000 Hz für 1250 m, Bremskurve,
-    Befreiung nach 700 m (Frei-Taste), LM 1000 Hz.
-  - 500-Hz-Beeinflussung: sofortige Überwachung (65/50/40 abfallend auf 45/35/25), 250 m, keine Befreiung.
-  - Restriktive Überwachung (45/25 km/h) nach Halt oder v < 10 km/h für > 15 s innerhalb Überwachung.
-  - 2000 Hz → Zwangsbremsung; Befehl-40-Taste (Vorbeifahrt am Halt zeigenden Signal mit Befehl, ≤ 40 km/h,
-    LM Befehl).
-  - Zwangsbremslogik: Schnellbremsung bis Stillstand, Freigabe per Wachsam+Bedingungen.
-  - Alle Leuchtmelder (85/70/55, 1000 Hz, 500 Hz, Befehl) + Wachsam/Frei/Befehl-Taster als CabInputs.
-- **Abnahme:** Testszenarien pro Regelfall (Tabelle der PZB-90-Überwachungsfälle), headless als Unit-Tests.
+- **Lineside:** 500 Hz, 1000 Hz, 2000 Hz track magnets as trackside devices; activation is
+  signal-dependent (1000 Hz active at Vr0/Vr2, 2000 Hz at Hp0 — coupling to the signalling system, ch. 10).
+- **On-board, complete PZB 90 logic:**
+  - Train categories O/M/U with all check speeds and braking curves (165/125/105 → 85/70/55 etc.).
+  - 1000 Hz influence: acknowledge within 4 s, 1000 Hz supervision for 1250 m, braking curve,
+    exemption after 700 m (release button), 1000 Hz indicator lamp.
+  - 500 Hz influence: immediate supervision (65/50/40 falling to 45/35/25), 250 m, no exemption.
+  - Restrictive supervision (45/25 km/h) after a stop or v < 10 km/h for > 15 s within supervision.
+  - 2000 Hz → forced braking; override 40 button (passing a signal at danger with written order, ≤ 40 km/h,
+    override indicator lamp).
+  - Forced braking logic: emergency brake to a standstill, release via acknowledge + conditions.
+  - All indicator lamps (85/70/55, 1000 Hz, 500 Hz, override) + acknowledge/release/override buttons as CabInputs.
+- **Acceptance:** test scenarios per standard case (table of PZB 90 supervision cases), headless as unit tests.
 
 ### 9.4 LZB 80/CE
 
-- **Streckenseite:** Linienleiter-Abschnitte (Bereichskennung, Blockeinteilung) als Trackside-Abschnittsobjekt;
-  LZB-Zentrale als Teil der Stellwerkssimulation vergibt Fahrterlaubnis (Zielentfernung, Zielgeschwindigkeit)
-  aus Fahrstraßen-/Blockzustand.
-- **Fahrzeugseite:** Aufnahmeprüfung/Übernahme (Ü-Taster), Führung per Soll-/Ziel-Geschwindigkeit und
-  Zielentfernung (MFA-Anzeigen: v-Soll, v-Ziel, Zielentfernung, Ü/G/EL/ENDE/V40/B-Leuchtmelder),
-  Bremskurvenüberwachung mit Zwangsbremsung, Ende-Verfahren (LZB-Ende → Übergabe an PZB), Ausfall-Verfahren.
-  CIR-ELKE-Modus als Parameter (kürzere Blöcke, höhere Grenzen — reine Dateneinstellung).
-- Unter LZB-Führung: PZB-Magnete unterdrückt (korrektes Zusammenspiel LZB↔PZB).
-- **AFB** (separates Fahrzeug-Feature, kein Zugsicherungssystem): v-Soll-Regler, nutzt LZB-Sollwerte.
+- **Lineside:** loop cable sections (area identifier, block division) as trackside section objects;
+  the LZB centre as part of the interlocking simulation issues the movement authority (distance to target,
+  target speed) from the route/block state.
+- **On-board:** entry check/takeover (takeover button), guidance via target/goal speed and
+  distance to target (MFA displays: v-target, v-goal, distance to target, Ü/G/EL/ENDE/V40/B indicator lamps),
+  braking curve supervision with forced braking, end procedure (LZB end → handover to PZB), failure procedure.
+  CIR-ELKE mode as a parameter (shorter blocks, higher limits — purely a data setting).
+- Under LZB guidance: PZB magnets suppressed (correct LZB↔PZB interaction).
+- **AFB** (a separate vehicle feature, not a train protection system): target speed controller, uses the
+  LZB setpoints.
 
-### 9.5 Weitere DE-Systeme (nach LZB, Reihenfolge nach Bedarf)
+### 9.5 Further German systems (after LZB, order as needed)
 
-- **ETCS** L1 Limited Supervision/L2 (Balisen sind als Trackside-Kind schon vorgesehen; DMI-Anzeige;
-  Umfang v2 — Architektur muss es nur nicht verbauen).
-- **ZBS** (Berliner S-Bahn), **GNT/Neigetechnik**, **Türsteuerung TAV/TB0**: v2+, gleiche Trait-API.
+- **ETCS** L1 Limited Supervision/L2 (balises are already provided for as a trackside kind; DMI display;
+  scope v2 — the architecture just must not preclude it).
+- **ZBS** (Berlin S-Bahn), **GNT/tilting technology**, **door control TAV/TB0**: v2+, same trait API.
 
-### 9.6 Zugfunk
+### 9.6 Train radio
 
-- GSM-R-artig: Kanalwahl, Registrierung per Zugnummer, Notruf (löst bei KI-Zügen im Umkreis Schnellbremsung
-  aus), Ansagen vom „Fdl" (Szenario-Skript). v1: UI + Notruf, keine Sprachsimulation.
-
----
-
-## 10. Signalsystem & Stellwerk (`sim-core::interlock`)
-
-### 10.1 Signalsystem-Abstraktion
-
-- Ein Signal = Zustandsautomat mit Begriffen (`SignalAspect`), Definition datengetrieben pro Länderpaket:
-  Begriffe, Lampenbilder (für Rendering), Verknüpfungsregeln (Vorsignal zeigt x, wenn Hauptsignal y),
-  zugehörige Zugsicherungs-Wirkungen (welcher Magnet wann aktiv).
-- **DE-Paket v1:** Ks-System (Ks1/Ks2, Zs3/Zs3v-Anzeiger, Mastschilder, Zs1, Kennlicht) **und**
-  H/V-System (Hp0/1/2, Vr0/1/2, Sh1) — beides ist verbreitet. Hl (Ostnetz) v2. Lf-/Ne-/Zs-Tafeln als
-  passive Trackside-Objekte.
-- **Beispiel Datendefinition:** `signals_de.ron` beschreibt Begriffe & Regeln; Renderer mappt Begriff →
-  Lampen an Signal-Mesh.
-
-### 10.2 Stellwerkslogik
-
-- **Fahrstraßen:** definiert als Weg von Start- zu Zielsignal über Weichenlagen; Verschluss (Weichen
-  festgelegt), Flankenschutz (v1: nur Weichenverschluss, kein vollständiger Flankenschutzgraph —
-  `// ponytail`), Durchrutschweg, Auflösung durch Zugfahrt (Achszähler-Abschnitte = Gleisfreimeldung).
-- **Blocksicherung** auf der Strecke: Selbstblock (Signal hinter Zug auf Halt, frei wenn Block geräumt).
-- **Betrieb:** v1 vollautomatisch aus Fahrplan (Zuglenkung: Fahrstraße wird angefordert, wenn Zug laut
-  Fahrplan naht). Manuelles Stellwerk-UI (Spieler als Fdl) = v2, Architektur (Anfrage → Verschluss →
-  Signal) trägt das bereits.
-- LZB-Zentrale (9.4) liest denselben Block-/Fahrstraßenzustand.
+- GSM-R-style: channel selection, registration by train number, emergency call (triggers emergency braking
+  on AI trains in the vicinity), announcements from the dispatcher (scenario script). v1: UI + emergency call,
+  no speech simulation.
 
 ---
 
-## 11. KI & Fahrplan (`ai-driver`)
+## 10. Signalling system & interlocking (`sim-core::interlock`)
 
-- **Fahrplan-Datenmodell:** Züge mit Zugnummer, Gattung, Fahrzeugkonfiguration, Ankunft/Abfahrt je
-  Betriebsstelle, Gleisangabe. RON/CSV-Import.
-- **KI-Triebfahrzeugführer** (fährt dieselbe Fahrzeugsimulation wie der Spieler — keine Cheat-Physik):
-  Geschwindigkeitsregler mit vorausschauender Bremskurvenplanung auf Basis Streckenprofil + Signalbegriffe
-  (die KI „sieht" Signale/La-Stellen über den Gleisgraph voraus), Halt am Bahnsteig (Haltetafel-Position),
-  Abfahrt nach Fahrplan + Abfahrsignal, Bedienung von Sifa/PZB (Wachsam quittieren), Störfall = einfach
-  liegenbleiben + Funkmeldung (v1).
-- **Zugbildung:** Rangieren v2; v1 Züge spawnen/despawnen an Schattenbahnhöfen (Portale am Streckenrand).
-- **Szenario-/Eventsystem:** Trigger (Zeit, Zugposition, Zustand) → Aktionen (Signal/Weiche, Ansage,
-  Wetterwechsel, Punktewertung, Nachricht). RON-basiert, entspricht MaSzynas Eventsystem.
-- **Bewertung:** Fahrplantreue, Halteplatz-Genauigkeit, verbotene Zwangsbremsungen, Energieverbrauch → Log + Score.
+### 10.1 Signalling system abstraction
+
+- A signal = a state machine with aspects (`SignalAspect`), the definition data-driven per country package:
+  aspects, lamp images (for rendering), linking rules (the distant signal shows x when the main signal shows y),
+  associated train protection effects (which magnet is active when).
+- **German package v1:** the Ks system (Ks1/Ks2, Zs3/Zs3v indicators, mast signs, Zs1, marker light) **and**
+  the H/V system (Hp0/1/2, Vr0/1/2, Sh1) — both are widespread. Hl (eastern network) v2. Lf/Ne/Zs boards as
+  passive trackside objects.
+- **Example data definition:** `signals_de.ron` describes aspects & rules; the renderer maps aspect →
+  lamps on the signal mesh.
+
+### 10.2 Interlocking logic
+
+- **Routes:** defined as a path from the start to the destination signal via switch positions; locking
+  (switches fixed), flank protection (v1: only switch locking, no complete flank protection graph —
+  `// ponytail`), overlap, release by the train movement (axle counter sections = track clear detection).
+- **Block safety** on the line: automatic block (the signal behind the train goes to danger, clears when the
+  block is vacated).
+- **Operation:** v1 fully automatic from the timetable (train routing: a route is requested when a train
+  approaches per the timetable). A manual interlocking UI (player as dispatcher) = v2, the architecture
+  (request → locking → signal) already supports it.
+- The LZB centre (9.4) reads the same block/route state.
 
 ---
 
-## 12. Führerstand, Input, Kameras (`app`)
+## 11. AI & timetable (`ai-driver`)
 
-- **3D-Führerstand:** Fahrzeugmodell mit benannten Interaktions-Nodes (`lever_fbv`, `btn_pzb_wachsam`, …).
-  Mapping-Datei pro Fahrzeug verbindet Node ↔ Sim-Input (Achse/Taster/Schalter mit Rastungen).
-  Maus-Interaktion per Raycast (klicken/ziehen), daneben komplette Tastaturbelegung und Gamepad/RailDriver
-  (v2: RailDriver-HID).
-- **Instrumente:** Zeiger als rotierende Sub-Meshes (Manometer HL/HB/C, Tacho), MFA/EBuLa/Displays als
-  Render-to-Texture (egui-in-world oder eigene Shader). Leuchtmelder = Emissive-Toggle.
-- **Zugverband begehbar:** v2. v1: Führerstand + Außenkameras.
-- **Kameras:** Führerstand (Kopf frei schwenkbar), Außen-Orbit, frei fliegend, Gleis-/Vorbeifahrt-Kamera.
-- **Zugriff auf alles per Tastatur** (MaSzyna-Prinzip): vollständige Bedienbarkeit ohne Maus.
+- **Timetable data model:** trains with train number, category, vehicle configuration, arrival/departure per
+  operating point, track assignment. RON/CSV import.
+- **AI train driver** (drives the same vehicle simulation as the player — no cheat physics):
+  speed controller with look-ahead braking curve planning based on the line profile + signal aspects
+  (the AI "sees" signals/temporary speed restrictions ahead via the track graph), stopping at the platform
+  (stop board position), departure per timetable + departure signal, operation of Sifa/PZB (acknowledging),
+  incident = simply come to a stand + radio message (v1).
+- **Train formation:** shunting v2; v1 trains spawn/despawn at fiddle yards (portals at the edge of the line).
+- **Scenario/event system:** triggers (time, train position, state) → actions (signal/switch, announcement,
+  weather change, scoring, message). RON-based, equivalent to MaSzyna's event system.
+- **Scoring:** timetable adherence, stopping accuracy, prohibited forced brake applications, energy
+  consumption → log + score.
+
+---
+
+## 12. Cab, input, cameras (`app`)
+
+- **3D cab:** vehicle model with named interaction nodes (`lever_fbv`, `btn_pzb_wachsam`, …).
+  A mapping file per vehicle connects node ↔ sim input (axis/button/switch with detents).
+  Mouse interaction via raycast (click/drag), alongside a complete keyboard layout and gamepad/RailDriver
+  (v2: RailDriver HID).
+- **Instruments:** needles as rotating sub-meshes (brake pipe/main reservoir/cylinder gauges, speedometer),
+  MFA/EBuLa/displays as render-to-texture (egui-in-world or custom shaders). Indicator lamps = emissive toggle.
+- **Walkable consist:** v2. v1: cab + exterior cameras.
+- **Cameras:** cab (head freely pannable), exterior orbit, free-flying, lineside/pass-by camera.
+- **Access to everything via keyboard** (the MaSzyna principle): fully operable without a mouse.
 
 ## 13. Audio
 
-- Positionaler 3D-Sound: Fahrmotor/Dieselmotor (RPM-abhängige Loops mit Crossfade), Schaltwerk,
-  Kompressor, Bremsenzischen (an Ventil-Events der Pneumatik gekoppelt!), Klotzbremsen-Kreischen,
-  Schienenstöße geschwindigkeitsabhängig, Kurvenquietschen, Weichenpoltern (an Gleisgeometrie-Events),
-  Signalhorn/Makrofon, Sifa-Hupe, PZB-Zwangsbremsung, Ansagen.
-- Sound-Definitionen in Fahrzeugdatei (Event → Sample + Kurven). Innen-/Außenfilter (Lowpass im Cab).
+- Positional 3D sound: traction/diesel engine (RPM-dependent loops with crossfade), tap changer,
+  compressor, brake hiss (coupled to valve events of the pneumatics!), block brake squeal,
+  rail joints depending on speed, curve squeal, switch rumble (tied to track geometry events),
+  horn, Sifa buzzer, PZB forced braking, announcements.
+- Sound definitions in the vehicle file (event → sample + curves). Interior/exterior filter (lowpass in the cab).
 
-## 14. Umgebung & Rendering
+## 14. Environment & rendering
 
-- Terrain aus DGM (Importer, Kap. 15), Textur-Splatting; Vegetation/Gebäude als gestreamte Instanzen.
-- Oberleitung prozedural aus Streckendaten (Masten, Kettenwerk als Mesh/Shader-Kurven).
-- Tag/Nacht (Sonnenstand nach Datum/Ort — Position ist ja georeferenziert), Wetter (Regen/Schnee/Nebel,
-  beeinflusst Adhäsion Kap. 6 und Sicht), Jahreszeiten v2.
-- Nachtbeleuchtung: Signale, Bahnsteige, Führerstand-Instrumentenbeleuchtung, Fernlicht/Spitzensignal.
+- Terrain from the DGM (importer, ch. 15), texture splatting; vegetation/buildings as streamed instances.
+- Overhead line procedurally from the line data (masts, catenary as mesh/shader curves).
+- Day/night (sun position by date/location — the position is georeferenced after all), weather
+  (rain/snow/fog, affects adhesion ch. 6 and visibility), seasons v2.
+- Night lighting: signals, platforms, cab instrument lighting, headlights/marker lights.
 
-## 15. Content-Pipeline & Editor
+## 15. Content pipeline & editor
 
-- **Fahrzeugdefinition:** RON-Datei (Masse, Davis, Bremsausrüstung, Traktionstyp+Kennfelder,
-  Zugsicherungsausrüstung, Sounds, Cab-Mapping) + glTF-Modelle. Entspricht MaSzynas .fiz/.mmd, aber lesbar.
-- **Streckenquellformat:** editierbares RON (Gleisgraph, Geometrie, Trackside-Geräte, Fahrstraßen,
-  Szenerie-Platzierungen) → Compiler baut binäre Tiles (Kap. 4.3).
-- **Importer:** OSM-Gleisdaten (Grobtrassierung) + DGM (Geländehöhe) als Startpunkt einer Strecke;
-  CRS-Reprojektion hier (Kap. 4.2). Kein MaSzyna-.scn-Importer (Aufwand > Nutzen, anderes Land).
-- **Editor** (`editor`-Crate, eigene Bevy-App): Gleisverlegung (Klothoiden-Werkzeug), Trackside-Geräte
-  setzen (mit Regelprüfung: „1000-Hz-Magnet fehlt am Vorsignal"), Fahrstraßen-Definition, Szenerie,
-  Fahrplan-Editor. Editor kommt früh (M3), sonst gibt es keinen Content.
+- **Vehicle definition:** RON file (mass, Davis, brake equipment, traction type + maps,
+  train protection equipment, sounds, cab mapping) + glTF models. Equivalent to MaSzyna's .fiz/.mmd, but readable.
+- **Line source format:** editable RON (track graph, geometry, trackside devices, routes,
+  scenery placements) → the compiler builds binary tiles (ch. 4.3).
+- **Importer:** OSM track data (rough alignment) + DGM (terrain height) as the starting point of a line;
+  CRS reprojection happens here (ch. 4.2). No MaSzyna .scn importer (effort > benefit, different country).
+- **Editor** (`editor` crate, its own Bevy app): track laying (clothoid tool), placing trackside devices
+  (with rule checking: "1000 Hz magnet missing at the distant signal"), route definition, scenery,
+  timetable editor. The editor comes early (M3), otherwise there is no content.
 
-## 16. Querschnittsthemen
+## 16. Cross-cutting concerns
 
-1. **Determinismus:** sim-core mit fixem Timestep + eigener RNG mit Seed → Replays, Regressionstests, MP-Option.
-2. **Save/Load:** kompletter sim-core-Zustand serialisierbar (serde) — von Anfang an, nachrüsten ist Hölle.
-3. **Debug-Tools:** egui-Overlays: Bremsdruck-Diagramm längs des Zuges, Kraftschluss, Zugsicherungs-Zustandsmaschine,
-   Gleisgraph-Ansicht, Signal-/Fahrstraßenzustand, Zeitraffer/Pause/Einzelschritt.
-4. **Lokalisierung:** UI-Strings extern (fluent), DE zuerst, EN mitführen.
-5. **Modding:** alle Inhalte aus `assets/` + RON — Fahrzeuge/Strecken/Länderpakete ohne Recompile
-   (Länderpaket-Logik in Rust bleibt Compile-Zeit; Daten sind frei).
+1. **Determinism:** sim-core with a fixed timestep + own seeded RNG → replays, regression tests, MP option.
+2. **Save/load:** the complete sim-core state serialisable (serde) — from the start, retrofitting is hell.
+3. **Debug tools:** egui overlays: brake pressure diagram along the train, adhesion, train protection state
+   machine, track graph view, signal/route state, fast-forward/pause/single step.
+4. **Localisation:** UI strings external (fluent), German first, English carried along.
+5. **Modding:** all content from `assets/` + RON — vehicles/lines/country packages without recompiling
+   (country package logic in Rust stays compile-time; data is free).
 
 ---
 
-## 17. Meilensteine (jeweils mit Abnahmekriterium)
+## 17. Milestones (each with an acceptance criterion)
 
-| M | Inhalt | Abnahme |
+| M | Contents | Acceptance |
 |---|---|---|
-| **M0** | Workspace, `world-coords` (ECEF f64 + Floating Origin), Testszene 300 km, Kamera | Kein Jitter/Sprung bei 300 km Distanzflug |
-| **M1** | `track-model` (Graph, Klothoiden, eval), prozedurales Gleisrendering, Fahrzeug fährt per Konstantgeschwindigkeit auf Testoval, Streaming-Rohbau | Fahrt über Weiche, Tile-Streaming ohne Ruckler |
-| **M2** | Längsdynamik + Bremse (Kap. 6+7), eine E-Lok (Umrichter-Typ) + 5 Wagen, Basissounds, Basis-Cab (Tastatur) | Headless-Bremswegtests grün; anfahren/bremsen fühlbar korrekt |
-| **M3** | Sifa + PZB 90 komplett, H/V+Ks-Signale statisch, **Editor v1** (Gleise+Geräte) | Alle PZB-Testfälle als Unit-Tests grün; Testfahrt mit 1000/500/2000-Hz-Fällen |
-| **M4** | Stellwerk (Fahrstraßen, Selbstblock), KI-Züge + Fahrplan, Signal-Dynamik | Spieler + 3 KI-Züge auf 20-km-Strecke, konfliktfrei nach Fahrplan |
-| **M5** | LZB 80 + AFB, MFA-Anzeigen, Schaltwerk-Lok (BR 110) als 2. Traktionstyp | LZB-Führung inkl. Ende-/Ausfallverfahren; Übergang LZB→PZB |
-| **M6** | 3D-Cab voll interaktiv (Maus), Aufrüst-Prozedur, Audio-Vollausbau, Wetter+Nacht | „Kalte Lok" bis Streckenfahrt komplett per Maus im Cab |
-| **M7** | Pilotstrecke (~30 km real, aus OSM/DGM importiert, über nichts weniger als eine UTM-Zonengrenze wenn machbar), Szenariosystem, Bewertung, Save/Load | Durchspielbares 45-min-Szenario mit Wertung |
-| v2+ | ETCS, ZBS, GNT, Diesel-Detailmodelle, Rangieren, Fdl-Modus, Multiplayer, RailDriver | — |
+| **M0** | Workspace, `world-coords` (ECEF f64 + floating origin), 300 km test scene, camera | No jitter/jump on a 300 km distance flight |
+| **M1** | `track-model` (graph, clothoids, eval), procedural track rendering, vehicle runs at constant speed on a test oval, streaming skeleton | Run over a switch, tile streaming without stutter |
+| **M2** | Longitudinal dynamics + brake (ch. 6+7), one electric loco (converter type) + 5 coaches, basic sounds, basic cab (keyboard) | Headless braking distance tests green; starting/braking feels correct |
+| **M3** | Sifa + PZB 90 complete, H/V + Ks signals static, **editor v1** (tracks + devices) | All PZB test cases green as unit tests; test run with 1000/500/2000 Hz cases |
+| **M4** | Interlocking (routes, automatic block), AI trains + timetable, signal dynamics | Player + 3 AI trains on a 20 km line, conflict-free per timetable |
+| **M5** | LZB 80 + AFB, MFA displays, tap-changer loco (BR 110) as a 2nd traction type | LZB guidance incl. end/failure procedures; transition LZB→PZB |
+| **M6** | 3D cab fully interactive (mouse), start-up procedure, full audio, weather + night | "Cold loco" through to a line run entirely by mouse in the cab |
+| **M7** | Pilot line (~30 km real, imported from OSM/DGM, across no less than one UTM zone boundary if feasible), scenario system, scoring, save/load | A playable 45-minute scenario with scoring |
+| v2+ | ETCS, ZBS, GNT, detailed diesel models, shunting, dispatcher mode, multiplayer, RailDriver | — |
 
-Reihenfolge-Begründung: Koordinaten zuerst (Fundament, nicht nachrüstbar), Physik vor Zugsicherung
-(Zwangsbremsung braucht echte Bremse), Editor vor Content, LZB nach Stellwerk (braucht Blockdaten).
+Rationale for the order: coordinates first (foundation, cannot be retrofitted), physics before train protection
+(forced braking needs a real brake), editor before content, LZB after the interlocking (needs block data).
 
-## 18. Teststrategie
+## 18. Test strategy
 
-- `sim-core` headless: Unit-Tests je Zustandsmaschine (PZB-Fälle tabellengetrieben!), Physik gegen
-  Literaturwerte, Determinismus-Test (2 Läufe, gleicher Seed, identischer Zustands-Hash).
-- Szenario-Regressionstests: aufgezeichnete Input-Replays, Soll-Endzustand.
-- CI: `cargo test` + clippy + fmt; Rendering nur Smoke-Test (App startet, 100 Frames).
+- `sim-core` headless: unit tests per state machine (PZB cases table-driven!), physics against
+  literature values, determinism test (2 runs, same seed, identical state hash).
+- Scenario regression tests: recorded input replays, target end state.
+- CI: `cargo test` + clippy + fmt; rendering only as a smoke test (app starts, 100 frames).
 
-## 19. Risiken
+## 19. Risks
 
-| Risiko | Gegenmaßnahme |
+| Risk | Countermeasure |
 |---|---|
-| Pneumatik-Modell wird numerisch instabil | Substepping, implizite Knotenlösung, früh Referenztests |
-| Bevy-Breaking-Changes | sim-core Bevy-frei; App-Schicht dünn halten; Bevy-Version pro Meilenstein pinnen |
-| Content-Flaschenhals (Strecken bauen ist teuer) | Editor früh (M3), OSM/DGM-Import, prozedurale Oberleitung/Szenerie |
-| Zugsicherungs-Regelwerk falsch umgesetzt | Testfälle aus Richtlinie 483 (PZB/LZB-Bedienvorschriften) ableiten, tabellengetrieben |
-| f64-ECEF-Fehler schleichen sich in f32-Pfade | `EcefPos` als Newtype, Clippy-Lint/Review: kein `as f32` außerhalb des Origin-Sync |
+| The pneumatics model becomes numerically unstable | Substepping, implicit node solution, reference tests early |
+| Bevy breaking changes | sim-core Bevy-free; keep the app layer thin; pin the Bevy version per milestone |
+| Content bottleneck (building lines is expensive) | Editor early (M3), OSM/DGM import, procedural overhead line/scenery |
+| Train protection rulebook implemented incorrectly | Derive test cases from Richtlinie 483 (PZB/LZB operating rules), table-driven |
+| f64 ECEF errors creep into f32 paths | `EcefPos` as a newtype, clippy lint/review: no `as f32` outside the origin sync |

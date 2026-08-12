@@ -1,30 +1,30 @@
-//! Vorausschau auf dem Gleisgraph: Geschwindigkeitsprofil und Signale (Plan Kap. 11).
+//! Look-ahead on the track graph: speed profile and signals (plan ch. 11).
 
 use sim_core::interlock::Interlock;
 use track_model::{DeviceKind, EdgeSide, TrackNetwork, TrackPosition};
 
-/// Eine vorausliegende Geschwindigkeitsvorgabe.
+/// A speed restriction lying ahead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Restriction {
-    /// Entfernung ab der aktuellen Position [m].
+    /// Distance from the current position [m].
     pub distance: f64,
-    /// Ab dort zulässige Geschwindigkeit [km/h] (0 = Halt).
+    /// Speed permitted from there on [km/h] (0 = stop).
     pub speed: f64,
 }
 
-/// Ergebnis der Vorausschau.
+/// Result of the look-ahead.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lookahead {
-    /// Zulässige Geschwindigkeit an der aktuellen Position [km/h].
+    /// Permitted speed at the current position [km/h].
     pub current: f64,
-    /// Vorausliegende Einschränkungen, nach Entfernung sortiert.
+    /// Restrictions lying ahead, sorted by distance.
     pub restrictions: Vec<Restriction>,
 }
 
 impl Lookahead {
-    /// Erlaubte Geschwindigkeit [km/h] unter Berücksichtigung aller Bremskurven.
+    /// Permitted speed [km/h] taking all braking curves into account.
     ///
-    /// `decel` ist die geplante Verzögerung [m/s²], `margin` ein Vorhalteweg [m].
+    /// `decel` is the planned deceleration [m/s²], `margin` a lead distance [m].
     pub fn permitted(&self, decel: f64, margin: f64) -> f64 {
         let mut v = self.current;
         for r in &self.restrictions {
@@ -36,7 +36,7 @@ impl Lookahead {
         v.max(0.0)
     }
 
-    /// Entfernung bis zum nächsten Halt [m], falls einer voraus liegt.
+    /// Distance to the next stop [m], if one lies ahead.
     pub fn distance_to_stop(&self) -> Option<f64> {
         self.restrictions
             .iter()
@@ -45,7 +45,7 @@ impl Lookahead {
     }
 }
 
-/// Schaut `distance` Meter voraus und sammelt Geschwindigkeitsprofil und Signalbegriffe.
+/// Looks `distance` metres ahead and collects the speed profile and signal aspects.
 pub fn scan(
     net: &TrackNetwork,
     interlock: &Interlock,
@@ -59,7 +59,7 @@ pub fn scan(
 
     let mut pos = from;
     let mut travelled = 0.0;
-    // Kantenweise vorwärts, maximal 64 Kanten (Schutz gegen Ringschluss).
+    // Edge by edge forwards, at most 64 edges (protection against loops).
     for _ in 0..64 {
         let edge = net.edge(pos.edge);
         let (lo, hi) = if pos.dir > 0 {
@@ -70,7 +70,7 @@ pub fn scan(
         let remaining = distance - travelled;
         let span = (hi - lo).min(remaining);
 
-        // Geschwindigkeitsstufen dieser Kante.
+        // Speed steps of this edge.
         for (s, v) in edge.speed.steps().iter().copied() {
             if s < lo || s > hi {
                 continue;
@@ -85,7 +85,7 @@ pub fn scan(
             });
         }
 
-        // Signale auf dieser Kante.
+        // Signals on this edge.
         for device in net.devices_on(pos.edge) {
             if device.kind != DeviceKind::Signal
                 || device.s < lo
@@ -118,7 +118,7 @@ pub fn scan(
             break;
         }
 
-        // Über den Knoten zur nächsten Kante.
+        // Across the node to the next edge.
         let side = if pos.dir > 0 {
             EdgeSide::End
         } else {
@@ -130,7 +130,7 @@ pub fn scan(
             edge.from
         };
         let Ok(next) = net.continuation(node, track_model::EdgeEnd::new(pos.edge, side)) else {
-            // Fahrweg endet (Prellbock, Weiche liegt falsch) → Halt an dieser Stelle.
+            // Route ends (buffer stop, switch set the wrong way) → stop at this point.
             out.restrictions.push(Restriction {
                 distance: travelled,
                 speed: 0.0,

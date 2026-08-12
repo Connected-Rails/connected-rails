@@ -1,8 +1,8 @@
-//! Szenario- und Ereignissystem (Plan Kap. 11.4).
+//! Scenario and event system (plan ch. 11.4).
 //!
-//! Ein Szenario ist eine RON-Datei aus Ereignissen: jedes hat einen Auslöser (Zeit,
-//! Zugposition, Zustand) und Aktionen (Weiche/Signal stellen, Ansage, Wertung, Ende).
-//! Ausgewertet wird in jedem Simulationsschritt, nach Physik und Stellwerk.
+//! A scenario is a RON file of events: each has a trigger (time, train position, state)
+//! and actions (set switch/signal, announcement, scoring, end).
+//! It is evaluated in every simulation step, after physics and interlocking.
 
 use crate::Sim;
 use crate::interlock::{RouteId, SignalId};
@@ -10,42 +10,42 @@ use crate::train::RailCondition;
 use serde::{Deserialize, Serialize};
 use track_model::{EdgeId, NodeId, SwitchPosition};
 
-/// Auslöser eines Ereignisses.
+/// Trigger of an event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Trigger {
-    /// Ab dieser Simulationszeit [s].
+    /// From this simulation time onwards [s].
     Time(f64),
-    /// Zugspitze hat die Stelle `(edge, s)` erreicht oder überfahren.
+    /// The head of the train has reached or passed the point `(edge, s)`.
     TrainPast { train: usize, edge: EdgeId, s: f64 },
-    /// Zug steht innerhalb `radius` um `(edge, s)`.
+    /// The train is standing within `radius` of `(edge, s)`.
     TrainStopped {
         train: usize,
         edge: EdgeId,
         s: f64,
         radius: f64,
     },
-    /// Geschwindigkeit über dem Schwellwert [km/h].
+    /// Speed above the threshold [km/h].
     SpeedAbove { train: usize, kmh: f64 },
-    /// Geschwindigkeit unter dem Schwellwert [km/h].
+    /// Speed below the threshold [km/h].
     SpeedBelow { train: usize, kmh: f64 },
-    /// Signal zeigt Halt (`stop = true`) bzw. Fahrt (`stop = false`).
+    /// The signal shows stop (`stop = true`) or proceed (`stop = false`).
     SignalStop { signal: SignalId, stop: bool },
-    /// Die Zugsicherung hat eingegriffen.
+    /// The train protection has intervened.
     ForcedBrake { train: usize },
-    /// `delay` Sekunden nachdem das Ereignis `event` ausgelöst hat.
+    /// `delay` seconds after the event `event` has fired.
     After { event: String, delay: f64 },
-    /// Alle Teilbedingungen erfüllt.
+    /// All sub-conditions fulfilled.
     All(Vec<Trigger>),
-    /// Mindestens eine Teilbedingung erfüllt.
+    /// At least one sub-condition fulfilled.
     Any(Vec<Trigger>),
 }
 
-/// Was ein Ereignis auslöst.
+/// What an event triggers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Action {
-    /// Meldung an den Spieler (Fahrplanhinweis, Fdl-Anweisung).
+    /// Message to the player (timetable note, dispatcher instruction).
     Message(String),
-    /// Ansage über Zugfunk/Lautsprecher (v1: Text, Audio folgt mit Kap. 13).
+    /// Announcement over train radio/loudspeaker (v1: text, audio follows with ch. 13).
     Announcement(String),
     SetSwitch {
         node: NodeId,
@@ -53,28 +53,28 @@ pub enum Action {
     },
     RequestRoute(RouteId),
     ReleaseRoute(RouteId),
-    /// Wetterwechsel — wirkt über den Kraftschluss auf die Fahrdynamik.
+    /// Change of weather — acts on the driving dynamics via the adhesion.
     SetRail(RailCondition),
-    /// Punkte gutschreiben oder abziehen.
+    /// Award or deduct points.
     Score {
         points: i32,
         reason: String,
     },
-    /// Szenario beenden.
+    /// Finish the scenario.
     Finish {
         success: bool,
         reason: String,
     },
 }
 
-/// Ein Ereignis des Szenarios.
+/// An event of the scenario.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
-    /// Eindeutiger Name — Bezug für [`Trigger::After`].
+    /// Unique name — reference for [`Trigger::After`].
     pub name: String,
     pub trigger: Trigger,
     pub actions: Vec<Action>,
-    /// Nur einmal auslösen (Regelfall).
+    /// Fire only once (the normal case).
     #[serde(default = "yes")]
     pub once: bool,
 }
@@ -83,13 +83,13 @@ fn yes() -> bool {
     true
 }
 
-/// Ein vollständiges Szenario.
+/// A complete scenario.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scenario {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// Zug, den der Spieler fährt.
+    /// The train the player drives.
     #[serde(default)]
     pub player_train: usize,
     #[serde(default)]
@@ -102,20 +102,20 @@ impl Scenario {
     }
 
     pub fn to_ron(&self) -> String {
-        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serialisierbar")
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serializable")
     }
 }
 
-/// Eine Meldung an den Spieler.
+/// A message to the player.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub time: f64,
     pub text: String,
-    /// Ansage statt Textmeldung.
+    /// Announcement instead of a text message.
     pub announcement: bool,
 }
 
-/// Ausgang eines Szenarios.
+/// Outcome of a scenario.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Outcome {
     pub success: bool,
@@ -123,15 +123,15 @@ pub struct Outcome {
     pub time: f64,
 }
 
-/// Laufzeitzustand des Szenarios.
+/// Runtime state of the scenario.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScenarioRuntime {
     pub scenario: Scenario,
-    /// Auslösezeit je Ereignis (`None` = noch nicht ausgelöst).
+    /// Firing time per event (`None` = not fired yet).
     fired_at: Vec<Option<f64>>,
     pub messages: Vec<Message>,
     pub outcome: Option<Outcome>,
-    /// Punkte aus [`Action::Score`].
+    /// Points from [`Action::Score`].
     pub bonus: i32,
 }
 
@@ -150,23 +150,23 @@ impl ScenarioRuntime {
         self.outcome.is_some()
     }
 
-    /// Zuletzt ausgegebene Meldungen (für HUD).
+    /// The most recently issued messages (for the HUD).
     pub fn recent_messages(&self, count: usize) -> &[Message] {
         let start = self.messages.len().saturating_sub(count);
         &self.messages[start..]
     }
 
-    /// Hat das Ereignis `name` bereits ausgelöst?
+    /// Has the event `name` already fired?
     pub fn fired_at(&self, name: &str) -> Option<f64> {
         let index = self.scenario.events.iter().position(|e| e.name == name)?;
         self.fired_at.get(index).copied().flatten()
     }
 }
 
-/// Ein Auswertungsschritt: prüft alle Auslöser und führt fällige Aktionen aus.
+/// One evaluation step: checks all triggers and executes the due actions.
 ///
-/// Steht außerhalb von [`ScenarioRuntime`], weil die Aktionen auf die ganze Simulation
-/// wirken (Weichen, Fahrstraßen, Wetter).
+/// It lives outside [`ScenarioRuntime`] because the actions act on the whole simulation
+/// (switches, routes, weather).
 pub fn step(sim: &mut Sim) {
     if sim.scenario.is_finished() || sim.scenario.scenario.events.is_empty() {
         return;
@@ -192,7 +192,7 @@ pub fn step(sim: &mut Sim) {
     }
 }
 
-/// Prüft einen Auslöser gegen den aktuellen Simulationszustand.
+/// Checks a trigger against the current simulation state.
 fn evaluate(trigger: &Trigger, sim: &Sim) -> bool {
     match trigger {
         Trigger::Time(t) => sim.time >= *t,
@@ -236,7 +236,7 @@ fn evaluate(trigger: &Trigger, sim: &Sim) -> bool {
     }
 }
 
-/// Führt eine Aktion aus.
+/// Executes an action.
 fn apply(action: &Action, sim: &mut Sim) {
     let time = sim.time;
     match action {

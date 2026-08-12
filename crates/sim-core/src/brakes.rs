@@ -1,38 +1,38 @@
-//! Druckluftbremse (Plan Kap. 7).
+//! Air brake (plan ch. 7).
 //!
-//! Modelliert wird echte Pneumatik, kein Bremskraft-Slider:
-//! Hauptluftleitung als Knotenkette entlang des Zuges, je Fahrzeug ein KE-Steuerventil
-//! (Dreidrucksystem) mit Steuerkammer, Vorratsluftbehälter und Bremszylinder.
+//! Real pneumatics are modelled, not a brake-force slider:
+//! the brake pipe as a chain of nodes along the train, one KE control valve per vehicle
+//! (three-pressure system) with control chamber, auxiliary reservoir and brake cylinder.
 
 use crate::G;
 use crate::train::Train;
 use serde::{Deserialize, Serialize};
 
-/// Regelbetriebsdruck der Hauptluftleitung [bar].
+/// Nominal operating pressure of the brake pipe [bar].
 pub const PIPE_NOMINAL: f64 = 5.0;
-/// Fülldruck beim Füllstoß [bar].
+/// Charging pressure during the release surge [bar].
 pub const PIPE_OVERCHARGE: f64 = 5.4;
-/// Ansprechdruckabsenkung des Steuerventils [bar].
+/// Pressure drop at which the control valve responds [bar].
 pub const RESPONSE_DROP: f64 = 0.3;
-/// Absenkung für Vollbremsung [bar].
+/// Pressure drop for a full service application [bar].
 pub const FULL_SERVICE_DROP: f64 = 1.5;
 
-/// Bremsstellung (Umstellgriff am Fahrzeug).
+/// Brake position (changeover handle on the vehicle).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BrakePosition {
-    /// Güterzug, lange Übergangszeiten.
+    /// Freight train, long transition times.
     G,
-    /// Personenzug.
+    /// Passenger train.
     #[default]
     P,
-    /// Schnellbremsstellung, höhere Bremskraft im oberen Geschwindigkeitsbereich.
+    /// Rapid brake position, higher brake force in the upper speed range.
     R,
-    /// R mit Magnetschienenbremse.
+    /// R with magnetic track brake.
     RMg,
 }
 
 impl BrakePosition {
-    /// Füllzeit des Bremszylinders (0 → 95 %) [s].
+    /// Filling time of the brake cylinder (0 → 95 %) [s].
     pub fn apply_time(self) -> f64 {
         match self {
             BrakePosition::G => 22.0,
@@ -40,7 +40,7 @@ impl BrakePosition {
         }
     }
 
-    /// Lösezeit des Bremszylinders [s].
+    /// Release time of the brake cylinder [s].
     pub fn release_time(self) -> f64 {
         match self {
             BrakePosition::G => 50.0,
@@ -52,7 +52,7 @@ impl BrakePosition {
         matches!(self, BrakePosition::RMg)
     }
 
-    /// Kraftzuschlag im R-Bereich oberhalb 60 km/h.
+    /// Force bonus in the R range above 60 km/h.
     pub fn high_speed_factor(self, v_kmh: f64) -> f64 {
         match self {
             BrakePosition::R | BrakePosition::RMg if v_kmh > 60.0 => 1.35,
@@ -61,21 +61,21 @@ impl BrakePosition {
     }
 }
 
-/// Bremsbauart — bestimmt den Reibwertverlauf über der Geschwindigkeit.
+/// Brake type — determines how the friction coefficient varies with speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BrakeKind {
-    /// Klotzbremse (Grauguss): Reibwert fällt stark mit der Geschwindigkeit.
+    /// Block brake (cast iron): friction coefficient drops sharply with speed.
     #[default]
     Block,
-    /// Scheibenbremse: nahezu konstanter Reibwert.
+    /// Disc brake: nearly constant friction coefficient.
     Disc,
 }
 
 impl BrakeKind {
-    /// Reibwertfaktor bezogen auf Stillstand.
-    /// ponytail: zwei glatte Kurven statt Karwatzki-Tabellen — genügt für Bremswege
-    /// im Prozentbereich; echte Belagkennfelder je Bauart nachrüsten, wenn
-    /// Bremstafel-Feinabgleich ansteht.
+    /// Friction factor relative to standstill.
+    /// ponytail: two smooth curves instead of Karwatzki tables — good enough for braking
+    /// distances within a few percent; add real pad characteristic maps per type when
+    /// fine-tuning against the braking table is due.
     pub fn friction_factor(self, v_kmh: f64) -> f64 {
         let v = v_kmh.abs();
         match self {
@@ -85,39 +85,39 @@ impl BrakeKind {
     }
 }
 
-/// Bremsausrüstung eines Fahrzeugs.
+/// Brake equipment of a vehicle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BrakeSpec {
     pub kind: BrakeKind,
     pub position: BrakePosition,
-    /// Bremsgewicht [t] — Grundlage der Bremshundertstel.
+    /// Braked weight [t] — basis of the braked weight percentage.
     pub brake_weight: f64,
-    /// Bremskraft bei vollem Bremszylinderdruck und Stillstand [N].
+    /// Brake force at full brake cylinder pressure and standstill [N].
     pub max_force: f64,
-    /// Höchster Bremszylinderdruck [bar].
+    /// Highest brake cylinder pressure [bar].
     pub max_cylinder: f64,
-    /// Volumenverhältnis Bremszylinder / Vorratsluftbehälter (Erschöpfbarkeit).
+    /// Volume ratio brake cylinder / auxiliary reservoir (exhaustibility).
     pub cylinder_to_reservoir: f64,
-    /// Magnetschienenbremse vorhanden.
+    /// Magnetic track brake fitted.
     #[serde(default)]
     pub has_mg: bool,
-    /// Kraft der Magnetschienenbremse [N].
+    /// Force of the magnetic track brake [N].
     #[serde(default)]
     pub mg_force: f64,
-    /// Zusatzbremse (direkte Bremse) vorhanden — nur Triebfahrzeuge.
+    /// Direct brake fitted — powered vehicles only.
     #[serde(default)]
     pub has_direct: bool,
-    /// Federspeicher-/Handbremskraft [N].
+    /// Spring-applied parking / hand brake force [N].
     #[serde(default)]
     pub parking_force: f64,
 }
 
 impl BrakeSpec {
-    /// Bremsausrüstung aus dem Bremsgewicht ableiten.
+    /// Derive the brake equipment from the braked weight.
     ///
-    /// Der Faktor ist gegen die Bremstafel kalibriert: ein Zug mit 100 Bremshundertsteln
-    /// kommt aus 100 km/h mit Schnellbremsung in der Größenordnung 500 m zum Stehen
-    /// (siehe Test `schnellbremsung_aus_100_kmh`).
+    /// The factor is calibrated against the braking table: a train with a braked weight
+    /// percentage of 100 comes to a stand from 100 km/h with emergency braking in the
+    /// order of 500 m (see test `schnellbremsung_aus_100_kmh`).
     pub fn from_brake_weight(brake_weight_t: f64, kind: BrakeKind) -> Self {
         Self {
             kind,
@@ -151,26 +151,26 @@ impl BrakeSpec {
     }
 }
 
-/// Laufzeitzustand der Bremse eines Fahrzeugs. Alle Drücke in bar (Überdruck).
+/// Runtime state of a vehicle's brake. All pressures in bar (gauge pressure).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BrakeState {
-    /// Hauptluftleitung an diesem Fahrzeug.
+    /// Brake pipe at this vehicle.
     pub pipe: f64,
-    /// Steuerkammer (Referenzdruck des Steuerventils).
+    /// Control chamber (reference pressure of the control valve).
     pub control_reservoir: f64,
-    /// Vorratsluftbehälter (R-Behälter).
+    /// Auxiliary reservoir (R reservoir).
     pub aux_reservoir: f64,
-    /// Bremszylinderdruck aus der selbsttätigen Bremse.
+    /// Brake cylinder pressure from the automatic brake.
     pub cylinder: f64,
-    /// Bremszylinderdruck aus der Zusatzbremse (direkte Bremse).
+    /// Brake cylinder pressure from the direct brake.
     pub direct_cylinder: f64,
-    /// Hauptluftbehälter (nur Triebfahrzeuge).
+    /// Main reservoir (powered vehicles only).
     pub main_reservoir: f64,
-    /// Magnetschienenbremse angelegt.
+    /// Magnetic track brake applied.
     pub mg_applied: bool,
-    /// Federspeicher-/Handbremse angelegt.
+    /// Spring-applied parking / hand brake applied.
     pub parking_applied: bool,
-    /// Aktuelle Bremskraft [N] (Ausgabe an die Längsdynamik).
+    /// Current brake force [N] (output to the longitudinal dynamics).
     pub force: f64,
 }
 
@@ -190,29 +190,29 @@ impl BrakeState {
         }
     }
 
-    /// Gelöst?
+    /// Released?
     pub fn released(&self) -> bool {
         self.cylinder < 0.15 && self.direct_cylinder < 0.15
     }
 }
 
-/// Stellung des Führerbremsventils.
+/// Position of the driver's brake valve.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum DriverBrakeValve {
-    /// Füllstellung (Füllstoß, HL über Regeldruck).
+    /// Filling position (release surge, brake pipe above nominal pressure).
     Fill,
-    /// Fahrtstellung — HL auf Regeldruck, angeglichen.
+    /// Running position — brake pipe at nominal pressure, kept level.
     Release,
-    /// Abschlussstellung — keine Verbindung, Druck bleibt stehen.
+    /// Lap position — no connection, pressure stays where it is.
     Lap,
-    /// Betriebsbremsung mit Druckabsenkung [bar] gegenüber Regeldruck.
+    /// Service application with a pressure drop [bar] below nominal pressure.
     Service(f64),
-    /// Schnellbremsung.
+    /// Emergency braking.
     Emergency,
 }
 
 impl DriverBrakeValve {
-    /// Solldruck der Hauptluftleitung am Führerbremsventil [bar].
+    /// Target pressure of the brake pipe at the driver's brake valve [bar].
     pub fn target_pressure(self) -> Option<f64> {
         match self {
             DriverBrakeValve::Fill => Some(PIPE_OVERCHARGE),
@@ -225,7 +225,8 @@ impl DriverBrakeValve {
         }
     }
 
-    /// Fluss zum Sollwert [bar/s]: Füllen langsamer als Entlüften, Schnellbremsung sehr schnell.
+    /// Flow towards the target value [bar/s]: charging slower than venting,
+    /// emergency braking very fast.
     pub fn flow_rate(self) -> f64 {
         match self {
             DriverBrakeValve::Fill => 1.2,
@@ -237,15 +238,15 @@ impl DriverBrakeValve {
     }
 }
 
-/// Leitwert zwischen zwei benachbarten Fahrzeugen [1/s].
+/// Conductance between two neighbouring vehicles [1/s].
 ///
-/// ponytail: Knotenmodell statt Rohr-PDE (Plan 7). Die Druckabsenkung läuft dadurch
-/// diffusiv statt als Welle nach hinten — Reihenfolge und Verzögerung stimmen
-/// qualitativ (langer Güterzug bremst hinten später), die exakte
-/// Durchschlagsgeschwindigkeit nicht. Upgrade-Pfad: Charakteristikenverfahren je Rohrabschnitt.
+/// ponytail: node model instead of a pipe PDE (plan 7). The pressure drop therefore
+/// propagates diffusively instead of as a wave towards the rear — order and delay are
+/// qualitatively right (a long freight train brakes later at the rear), the exact
+/// propagation speed is not. Upgrade path: method of characteristics per pipe section.
 pub const PIPE_CONDUCTANCE: f64 = 6.0;
 
-/// Ein Simulationsschritt der gesamten Bremsanlage eines Zuges.
+/// One simulation step of the whole brake system of a train.
 pub fn step(train: &mut Train, valve: DriverBrakeValve, direct: f64, dt: f64) {
     update_pipe(train, valve, dt);
     let cab = train.cab;
@@ -264,7 +265,7 @@ pub fn step(train: &mut Train, valve: DriverBrakeValve, direct: f64, dt: f64) {
     }
 }
 
-/// Druckausgleich in der Hauptluftleitung inklusive Führerbremsventil.
+/// Pressure equalisation in the brake pipe including the driver's brake valve.
 fn update_pipe(train: &mut Train, valve: DriverBrakeValve, dt: f64) {
     let n = train.vehicles.len();
     let pressures: Vec<f64> = train.vehicles.iter().map(|v| v.brake.pipe).collect();
@@ -276,7 +277,7 @@ fn update_pipe(train: &mut Train, valve: DriverBrakeValve, dt: f64) {
         if i + 1 < n {
             flow += PIPE_CONDUCTANCE * (pressures[i + 1] - pressures[i]);
         }
-        // Verbrauch durch das Steuerventil beim Nachspeisen des Vorratsbehälters.
+        // Consumption by the control valve while recharging the auxiliary reservoir.
         let veh = &train.vehicles[i];
         if veh.brake.aux_reservoir < veh.brake.pipe {
             flow -= 0.15 * (veh.brake.pipe - veh.brake.aux_reservoir);
@@ -284,7 +285,7 @@ fn update_pipe(train: &mut Train, valve: DriverBrakeValve, dt: f64) {
         let p = &mut train.vehicles[i].brake.pipe;
         *p = (*p + flow * dt).clamp(0.0, PIPE_OVERCHARGE);
     }
-    // Führerbremsventil wirkt am besetzten Führerstand.
+    // The driver's brake valve acts at the occupied cab.
     if let Some(target) = valve.target_pressure() {
         let cab = train.cab.min(n.saturating_sub(1));
         let p = &mut train.vehicles[cab].brake.pipe;
@@ -292,10 +293,11 @@ fn update_pipe(train: &mut Train, valve: DriverBrakeValve, dt: f64) {
     }
 }
 
-/// KE-Steuerventil: Dreidrucksystem mit Steuerkammer, Vorratsbehälter und Bremszylinder.
+/// KE control valve: three-pressure system with control chamber, auxiliary reservoir
+/// and brake cylinder.
 fn update_control_valve(state: &mut BrakeState, spec: &BrakeSpec, dt: f64) {
-    // Steuerkammer folgt der HL nur beim Lösen/Füllen (und nie über Regeldruck hinaus,
-    // sonst würde der Füllstoß die Bremse „überladen").
+    // The control chamber follows the brake pipe only while releasing/charging (and never
+    // beyond nominal pressure, otherwise the release surge would "overcharge" the brake).
     if state.pipe >= state.control_reservoir {
         approach(
             &mut state.control_reservoir,
@@ -304,7 +306,7 @@ fn update_control_valve(state: &mut BrakeState, spec: &BrakeSpec, dt: f64) {
             dt,
         );
     }
-    // Vorratsbehälter wird aus der HL nachgespeist.
+    // The auxiliary reservoir is recharged from the brake pipe.
     if state.pipe > state.aux_reservoir {
         approach(&mut state.aux_reservoir, state.pipe, 0.15, dt);
     }
@@ -313,11 +315,11 @@ fn update_control_valve(state: &mut BrakeState, spec: &BrakeSpec, dt: f64) {
     let target = if drop <= RESPONSE_DROP {
         0.0
     } else {
-        // Voller Zylinderdruck bei Vollbremsungsabsenkung.
+        // Full cylinder pressure at the full service pressure drop.
         let ratio = spec.max_cylinder / (FULL_SERVICE_DROP - RESPONSE_DROP);
         ((drop - RESPONSE_DROP) * ratio).min(spec.max_cylinder)
     };
-    // Erschöpfbarkeit: der Zylinder kann nie über den Vorratsbehälter hinaus gefüllt werden.
+    // Exhaustibility: the cylinder can never be charged beyond the auxiliary reservoir.
     let target = target.min(state.aux_reservoir);
 
     let rate = if target > state.cylinder {
@@ -328,14 +330,14 @@ fn update_control_valve(state: &mut BrakeState, spec: &BrakeSpec, dt: f64) {
     };
     let before = state.cylinder;
     approach(&mut state.cylinder, target, rate, dt);
-    // Luftverbrauch aus dem Vorratsbehälter.
+    // Air consumption from the auxiliary reservoir.
     let delta = state.cylinder - before;
     if delta > 0.0 {
         state.aux_reservoir = (state.aux_reservoir - delta * spec.cylinder_to_reservoir).max(0.0);
     }
 }
 
-/// Bremskraft eines Fahrzeugs [N].
+/// Brake force of a vehicle [N].
 fn brake_force(spec: &BrakeSpec, state: &BrakeState, v_kmh: f64) -> f64 {
     let cylinder = state.cylinder.max(state.direct_cylinder);
     let mut f = cylinder / spec.max_cylinder
@@ -351,7 +353,7 @@ fn brake_force(spec: &BrakeSpec, state: &BrakeState, v_kmh: f64) -> f64 {
     f.max(0.0)
 }
 
-/// Bewegt `value` mit maximaler Rate `rate` [Einheit/s] auf `target` zu.
+/// Moves `value` towards `target` at a maximum rate of `rate` [unit/s].
 pub(crate) fn approach(value: &mut f64, target: f64, rate: f64, dt: f64) {
     let max_step = rate * dt;
     let diff = target - *value;

@@ -1,4 +1,4 @@
-//! Länderpaket Deutschland: Sifa, PZB 90, LZB 80 (Plan 9.2–9.4).
+//! Country package Germany: Sifa, PZB 90, LZB 80 (plan 9.2–9.4).
 
 pub mod lzb;
 pub mod pzb;
@@ -14,7 +14,7 @@ pub use lzb::{Lzb80, LzbMode, LzbTelegram};
 pub use pzb::{MagnetFrequency, MagnetPayload, Pzb90, PzbTrip, TrainType};
 pub use sifa::Sifa;
 
-/// Zugsicherungsausrüstung eines deutschen Fahrzeugs.
+/// Train protection equipment of a German vehicle.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeSafety {
     pub sifa: Option<Sifa>,
@@ -23,7 +23,7 @@ pub struct DeSafety {
 }
 
 impl DeSafety {
-    /// Übliche Ausstattung einer Streckenlok: Sifa + PZB.
+    /// Usual equipment of a main line loco: Sifa + PZB.
     pub fn pzb(train_type: TrainType) -> Self {
         Self {
             sifa: Some(Sifa::new()),
@@ -32,7 +32,7 @@ impl DeSafety {
         }
     }
 
-    /// Ausstattung mit LZB (BR 101/120/ICE).
+    /// Equipment with LZB (BR 101/120/ICE).
     pub fn pzb_lzb(train_type: TrainType) -> Self {
         Self {
             sifa: Some(Sifa::new()),
@@ -54,7 +54,7 @@ impl DeSafety {
             out = out.merge(s.update(dt, train, cab, events));
         }
 
-        // Unter LZB-Führung sind die PZB-Magnete unterdrückt (Plan 9.4).
+        // Under LZB guidance the PZB magnets are suppressed (plan 9.4).
         let lzb_guiding = self.lzb.is_some_and(|l| l.is_guiding());
         if let Some(l) = &mut self.lzb {
             out = out.merge(l.update(dt, train, cab, events));
@@ -91,7 +91,7 @@ mod tests {
     use track_model::DeviceKind;
 
     #[test]
-    fn lzb_fuehrung_unterdrueckt_pzb_magnete() {
+    fn lzb_guidance_suppresses_pzb_magnets() {
         let mut de = DeSafety::pzb_lzb(TrainType::O);
         let state = SafetyTrainState {
             v_kmh: 120.0,
@@ -99,7 +99,7 @@ mod tests {
         };
         let mut cab = CabInputs::default();
 
-        // LZB aufnehmen und übernehmen.
+        // Pick up the LZB and take over.
         let telegram = LzbTelegram {
             permitted_speed: 160.0,
             target_speed: 160.0,
@@ -114,12 +114,12 @@ mod tests {
             active: true,
         };
         de.update(0.1, &state, &cab, &[ev]);
-        cab.lzb_uebernahme = true;
+        cab.lzb_takeover = true;
         de.update(0.1, &state, &cab, &[]);
-        cab.lzb_uebernahme = false;
+        cab.lzb_takeover = false;
         assert!(de.lzb.unwrap().is_guiding());
 
-        // Ein 2000-Hz-Magnet darf jetzt nichts auslösen.
+        // A 2000 Hz magnet must not trigger anything now.
         let magnet = TracksideEvent {
             device: DeviceKind::Magnet,
             payload: ron::to_string(&MagnetPayload::hz2000(0)).unwrap(),

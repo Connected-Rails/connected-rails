@@ -1,4 +1,4 @@
-//! Kachelbeschaffung: Cache zuerst, Netz nur wenn nötig — und nie im Hauptthread.
+//! Tile fetching: cache first, network only when needed — and never on the main thread.
 
 use crate::cache::{CacheKey, CacheStats, TileCache};
 use crate::config::ImageryConfig;
@@ -7,46 +7,46 @@ use std::collections::HashSet;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-/// Eine entschlüsselte Kachel, fertig zum Hochladen in die Grafikkarte.
+/// A decoded tile, ready to be uploaded to the graphics card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedTile {
     pub tile: TileId,
     pub width: u32,
     pub height: u32,
-    /// RGBA8, zeilenweise von oben nach unten.
+    /// RGBA8, row by row from top to bottom.
     pub pixels: Vec<u8>,
 }
 
-/// Stand einer angefragten Kachel.
+/// State of a requested tile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TileState {
-    /// Wird geladen oder entschlüsselt.
+    /// Being fetched or decoded.
     Pending,
-    /// Nicht vorhanden und (im Offlinebetrieb) auch nicht beschaffbar.
+    /// Not present and (in offline mode) not obtainable either.
     Unavailable,
-    /// Fertig — wird über [`ImagerySource::drain`] ausgeliefert.
+    /// Done — delivered via [`ImagerySource::drain`].
     Ready,
 }
 
-/// Ergebnis eines Ladeauftrags.
+/// Result of a load job.
 enum Loaded {
     Tile(Box<DecodedTile>),
     Failed(TileId, String),
 }
 
-/// Beschafft Kacheln für den aktiven Anbieter.
+/// Fetches tiles for the active provider.
 pub struct ImagerySource {
     config: ImageryConfig,
     cache: Arc<Mutex<TileCache>>,
     jobs: Option<Sender<Job>>,
-    /// Hinter einem Mutex, damit die Quelle als Bevy-Ressource taugt:
-    /// `Receiver` ist `Send`, aber nicht `Sync`.
+    /// Behind a mutex so the source works as a Bevy resource:
+    /// `Receiver` is `Send`, but not `Sync`.
     results: Mutex<Receiver<Loaded>>,
     results_sender: Sender<Loaded>,
     pending: HashSet<TileId>,
     failed: HashSet<TileId>,
     workers: Vec<std::thread::JoinHandle<()>>,
-    /// Fehlermeldungen für die Anzeige (jüngste zuletzt).
+    /// Error messages for display (newest last).
     pub errors: Vec<String>,
 }
 
@@ -69,8 +69,8 @@ impl ImagerySource {
         let (job_sender, job_receiver) = channel::<Job>();
         let job_receiver = Arc::new(Mutex::new(job_receiver));
 
-        // Feste Anzahl Arbeitsthreads — mehr Parallelität belastet die Dienste, ohne
-        // dass der Editor schneller wird.
+        // Fixed number of worker threads — more concurrency loads the services without
+        // making the editor any faster.
         let mut workers = Vec::new();
         for _ in 0..config.request.parallel.clamp(1, 16) {
             let receiver = job_receiver.clone();
@@ -105,10 +105,10 @@ impl ImagerySource {
         &self.config
     }
 
-    /// Konfiguration austauschen (Anbieterwechsel, Zoom, Offline …).
+    /// Replace the configuration (provider switch, zoom, offline …).
     ///
-    /// Wechselt der Anbieter, werden laufende Anfragen verworfen — ihre Kacheln
-    /// gehören zum alten Bild.
+    /// If the provider changes, in-flight requests are discarded — their tiles
+    /// belong to the old imagery.
     pub fn set_config(&mut self, config: ImageryConfig) {
         let provider_changed = config.active != self.config.active;
         let cache_changed = config.cache != self.config.cache;
@@ -138,7 +138,7 @@ impl ImagerySource {
         self.failed.clear();
     }
 
-    /// Kachel anfordern. Liegt sie im Cache, ist sie sofort über [`Self::drain`] da.
+    /// Request a tile. If cached, it arrives immediately via [`Self::drain`].
     pub fn request(&mut self, tile: TileId) -> TileState {
         let Some(provider) = self.config.provider() else {
             return TileState::Unavailable;
@@ -162,14 +162,14 @@ impl ImagerySource {
         if let Some(bytes) = cached {
             self.pending.insert(tile);
             let sender = self.results_sender.clone();
-            // Entschlüsseln kostet Millisekunden — auch das gehört nicht in den Hauptthread.
+            // Decoding costs milliseconds — that does not belong on the main thread either.
             std::thread::spawn(move || {
                 let _ = sender.send(decode(tile, &bytes));
             });
             return TileState::Pending;
         }
 
-        // 2. Netz — außer im Offlinebetrieb.
+        // 2. Network — except in offline mode.
         if self.config.cache.offline {
             self.failed.insert(tile);
             return TileState::Unavailable;
@@ -199,7 +199,7 @@ impl ImagerySource {
         }
     }
 
-    /// Fertige Kacheln abholen (nicht blockierend).
+    /// Collect finished tiles (non-blocking).
     pub fn drain(&mut self) -> Vec<DecodedTile> {
         let mut ready = Vec::new();
         let Ok(results) = self.results.lock() else {
@@ -231,12 +231,12 @@ impl ImagerySource {
         ready
     }
 
-    /// Wie viele Kacheln gerade unterwegs sind.
+    /// How many tiles are currently in flight.
     pub fn pending(&self) -> usize {
         self.pending.len()
     }
 
-    /// Fehlgeschlagene Kacheln erneut zulassen.
+    /// Allow failed tiles to be requested again.
     pub fn retry_failed(&mut self) {
         self.failed.clear();
         self.errors.clear();
@@ -245,7 +245,7 @@ impl ImagerySource {
 
 impl Drop for ImagerySource {
     fn drop(&mut self) {
-        // Sender schließen, damit die Arbeitsthreads ihre Schleife verlassen.
+        // Close the sender so the worker threads leave their loop.
         self.jobs.take();
         for worker in self.workers.drain(..) {
             let _ = worker.join();
@@ -253,7 +253,7 @@ impl Drop for ImagerySource {
     }
 }
 
-/// Einen Ladeauftrag ausführen: herunterladen, ablegen, entschlüsseln.
+/// Run a load job: download, store, decode.
 fn run_job(job: Job) {
     let mut last_error = String::new();
     for attempt in 0..=job.retries {
@@ -265,7 +265,7 @@ fn run_job(job: Job) {
                 let _ = job.results.send(decode(job.tile, &bytes));
                 return;
             }
-            Ok(_) => last_error = "leere Antwort".into(),
+            Ok(_) => last_error = "empty response".into(),
             Err(e) => last_error = e,
         }
         if attempt < job.retries {
@@ -290,7 +290,7 @@ fn download(url: &str, user_agent: &str, timeout: std::time::Duration) -> Result
     Ok(body)
 }
 
-/// Bilddaten nach RGBA8 entschlüsseln.
+/// Decode image data to RGBA8.
 fn decode(tile: TileId, bytes: &[u8]) -> Loaded {
     match image::load_from_memory(bytes) {
         Ok(image) => {
@@ -302,7 +302,7 @@ fn decode(tile: TileId, bytes: &[u8]) -> Loaded {
                 pixels: rgba.into_raw(),
             }))
         }
-        Err(e) => Loaded::Failed(tile, format!("Bild nicht lesbar: {e}")),
+        Err(e) => Loaded::Failed(tile, format!("image not readable: {e}")),
     }
 }
 
@@ -331,7 +331,7 @@ mod tests {
             providers: vec![Provider {
                 id: "test".into(),
                 name: "Test".into(),
-                // Absichtlich unerreichbar: kein Test darf ins Netz gehen.
+                // Deliberately unreachable: no test may go to the network.
                 url: TileUrl::Template("https://example.invalid/{z}/{x}/{y}.png".into()),
                 subdomains: Vec::new(),
                 min_zoom: 0,
@@ -353,7 +353,7 @@ mod tests {
         }
     }
 
-    /// Wartet, bis eine Kachel fertig ist (oder die Zeit abläuft).
+    /// Waits until a tile is ready (or the time runs out).
     fn wait(source: &mut ImagerySource) -> Vec<DecodedTile> {
         for _ in 0..200 {
             let ready = source.drain();
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn kachel_aus_dem_cache_wird_entschluesselt() {
+    fn tile_from_the_cache_is_decoded() {
         let config = config("cached", true);
         let tile = TileId::new(14, 100, 200);
         {
@@ -391,23 +391,23 @@ mod tests {
     }
 
     #[test]
-    fn offline_geht_nicht_ins_netz() {
+    fn offline_does_not_go_to_the_network() {
         let config = config("offline", true);
         let mut source = ImagerySource::new(config.clone());
         let tile = TileId::new(10, 1, 1);
         assert_eq!(source.request(tile), TileState::Unavailable);
-        // Auch beim zweiten Mal — der Fehlschlag ist gemerkt.
+        // The second time as well — the failed attempt is remembered.
         assert_eq!(source.request(tile), TileState::Unavailable);
         assert!(source.drain().is_empty());
 
-        // Nach `retry_failed` wird es erneut versucht (bleibt offline erfolglos).
+        // After `retry_failed` it is tried again (stays unsuccessful while offline).
         source.retry_failed();
         assert_eq!(source.request(tile), TileState::Unavailable);
         std::fs::remove_dir_all(config.cache.directory).ok();
     }
 
     #[test]
-    fn unerreichbarer_dienst_meldet_einen_fehler() {
+    fn unreachable_service_reports_an_error() {
         let mut config = config("unreachable", false);
         config.request.retries = 0;
         config.request.timeout_seconds = 1;
@@ -423,23 +423,23 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert_eq!(source.pending(), 0, "Auftrag muss abgeschlossen werden");
-        assert!(!source.errors.is_empty(), "Fehler wird gemeldet");
+        assert_eq!(source.pending(), 0, "job must be completed");
+        assert!(!source.errors.is_empty(), "error is reported");
         assert!(
             source.errors[0].contains("example.invalid"),
             "{:?}",
             source.errors
         );
-        // Danach wird die Kachel nicht erneut angefragt.
+        // Afterwards the tile is not requested again.
         assert_eq!(source.request(tile), TileState::Unavailable);
         std::fs::remove_dir_all(directory).ok();
     }
 
     #[test]
-    fn anbieterwechsel_verwirft_laufende_anfragen() {
+    fn provider_switch_discards_in_flight_requests() {
         let mut config = config("switch", true);
         config.providers.push(Provider {
-            id: "zweiter".into(),
+            id: "second".into(),
             ..config.providers[0].clone()
         });
         let directory = config.cache.directory.clone();
@@ -448,15 +448,15 @@ mod tests {
         source.request(tile);
 
         let mut next = config;
-        next.active = "zweiter".into();
+        next.active = "second".into();
         source.set_config(next);
         assert_eq!(source.pending(), 0);
-        assert_eq!(source.config().active, "zweiter");
+        assert_eq!(source.config().active, "second");
         std::fs::remove_dir_all(directory).ok();
     }
 
     #[test]
-    fn cache_leeren_wirkt() {
+    fn clearing_the_cache_takes_effect() {
         let config = config("clear", true);
         let tile = TileId::new(11, 4, 4);
         {
@@ -472,7 +472,7 @@ mod tests {
         assert_eq!(
             source.request(tile),
             TileState::Unavailable,
-            "offline und leer"
+            "offline and empty"
         );
         std::fs::remove_dir_all(config.cache.directory).ok();
     }

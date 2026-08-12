@@ -1,10 +1,10 @@
-//! Konfiguration des Luftbild-Overlays — vollständig aus einer RON-Datei steuerbar.
+//! Configuration of the aerial imagery overlay — fully driven by a RON file.
 
 use crate::tiles::TileId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Bildformat der Kacheln.
+/// Image format of the tiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ImageFormat {
     #[default]
@@ -28,15 +28,15 @@ impl ImageFormat {
     }
 }
 
-/// Wie die Kachel-URL gebildet wird.
+/// How the tile URL is built.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TileUrl {
-    /// Kachelschema `z/x/y` (Slippy Map, WMTS-RESTful).
+    /// Tile scheme `z/x/y` (Slippy Map, WMTS RESTful).
     ///
-    /// Platzhalter: `{z}` `{x}` `{y}` `{-y}` (TMS-Zählung), `{s}` (Subdomain),
-    /// `{key}` (Zugangsschlüssel).
+    /// Placeholders: `{z}` `{x}` `{y}` `{-y}` (TMS counting), `{s}` (subdomain),
+    /// `{key}` (access key).
     Template(String),
-    /// WMS: die Kachelgrenzen werden als `BBOX` in EPSG:3857 angehängt.
+    /// WMS: the tile bounds are appended as `BBOX` in EPSG:3857.
     Wms {
         endpoint: String,
         layers: String,
@@ -44,7 +44,7 @@ pub enum TileUrl {
         version: String,
         #[serde(default)]
         styles: String,
-        /// Zusätzliche Parameter, z. B. `("TRANSPARENT", "TRUE")`.
+        /// Additional parameters, e.g. `("TRANSPARENT", "TRUE")`.
         #[serde(default)]
         extra: Vec<(String, String)>,
     },
@@ -54,15 +54,15 @@ fn wms_version() -> String {
     "1.3.0".into()
 }
 
-/// Ein Bildanbieter.
+/// An imagery provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Provider {
-    /// Kurzname zur Auswahl (`active`).
+    /// Short name used for selection (`active`).
     pub id: String,
-    /// Anzeigename.
+    /// Display name.
     pub name: String,
     pub url: TileUrl,
-    /// Subdomains für `{s}`.
+    /// Subdomains for `{s}`.
     #[serde(default)]
     pub subdomains: Vec<String>,
     #[serde(default)]
@@ -73,13 +73,13 @@ pub struct Provider {
     pub tile_size: u32,
     #[serde(default)]
     pub format: ImageFormat,
-    /// Pflichtangabe des Anbieters — gehört sichtbar ins Bild.
+    /// Mandatory credit of the provider — belongs visibly in the image.
     #[serde(default)]
     pub attribution: String,
-    /// Zugangsschlüssel für `{key}`.
+    /// Access key for `{key}`.
     #[serde(default)]
     pub api_key: Option<String>,
-    /// Hinweis zu Nutzungsbedingungen.
+    /// Note about the terms of use.
     #[serde(default)]
     pub note: String,
 }
@@ -93,15 +93,15 @@ fn default_tile_size() -> u32 {
 }
 
 impl Provider {
-    /// Baut die URL einer Kachel.
+    /// Builds the URL of a tile.
     pub fn tile_url(&self, tile: TileId) -> String {
         match &self.url {
             TileUrl::Template(template) => {
                 let subdomain = if self.subdomains.is_empty() {
                     String::new()
                 } else {
-                    // Verteilung über die Subdomains, aber deterministisch — sonst
-                    // landet dieselbe Kachel bei jedem Lauf in einem anderen Cache.
+                    // Spread across the subdomains, but deterministically — otherwise
+                    // the same tile ends up in a different cache on every run.
                     let index = (tile.x as usize + tile.y as usize) % self.subdomains.len();
                     self.subdomains[index].clone()
                 };
@@ -141,33 +141,33 @@ impl Provider {
         }
     }
 
-    /// Zoomstufe auf den Bereich des Anbieters begrenzen.
+    /// Clamp the zoom level to the provider's range.
     pub fn clamp_zoom(&self, zoom: u8) -> u8 {
         zoom.clamp(self.min_zoom, self.max_zoom)
     }
 }
 
-/// Woher die Zoomstufe kommt.
+/// Where the zoom level comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ZoomMode {
-    /// Feste Stufe.
+    /// Fixed level.
     Fixed(u8),
-    /// Aus der gewünschten Bodenauflösung [m/Pixel] bestimmt.
+    /// Derived from the target ground resolution [m/pixel].
     Resolution(f64),
 }
 
-/// Einstellungen des Kachel-Caches.
+/// Settings of the tile cache.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CacheConfig {
-    /// Ablageort der Kacheln.
+    /// Storage location of the tiles.
     pub directory: PathBuf,
-    /// Obergrenze des Plattenplatzes [Byte]; 0 = unbegrenzt.
+    /// Upper limit of the disk space [bytes]; 0 = unlimited.
     pub max_bytes: u64,
-    /// Wie viele Kacheln zusätzlich im Arbeitsspeicher gehalten werden.
+    /// How many tiles are additionally kept in memory.
     pub memory_tiles: usize,
-    /// Nur aus dem Cache lesen, nichts nachladen.
+    /// Only read from the cache, fetch nothing.
     pub offline: bool,
-    /// Kacheln nach dieser Zeit erneut laden [Tage]; 0 = nie.
+    /// Reload tiles after this time [days]; 0 = never.
     pub max_age_days: u64,
 }
 
@@ -183,13 +183,13 @@ impl Default for CacheConfig {
     }
 }
 
-/// Einstellungen der Abrufe.
+/// Settings of the fetches.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestConfig {
-    /// `User-Agent` — viele Dienste verlangen einen aussagekräftigen Eintrag.
+    /// `User-Agent` — many services require a meaningful entry.
     pub user_agent: String,
     pub timeout_seconds: u64,
-    /// Wie viele Kacheln gleichzeitig geladen werden.
+    /// How many tiles are fetched concurrently.
     pub parallel: usize,
     pub retries: u32,
 }
@@ -205,26 +205,26 @@ impl Default for RequestConfig {
     }
 }
 
-/// Die vollständige Overlay-Konfiguration.
+/// The complete overlay configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageryConfig {
-    /// Overlay überhaupt anzeigen.
+    /// Show the overlay at all.
     pub enabled: bool,
-    /// `id` des aktiven Anbieters.
+    /// `id` of the active provider.
     pub active: String,
-    /// Deckkraft 0…1.
+    /// Opacity 0…1.
     pub opacity: f32,
     pub zoom: ZoomMode,
-    /// Umkreis um die Kamera, für den Kacheln geladen werden [m]. Zusammen mit
-    /// `max_tiles` bestimmt er, wie viele Kacheln ein Bild kostet: bei 0,5 m/Pixel ist
-    /// eine Kachel rund 90 m breit.
+    /// Load radius around the camera for which tiles are fetched [m]. Together with
+    /// `max_tiles` it determines how many tiles an image costs: at 0.5 m/pixel a
+    /// tile is about 90 m wide.
     pub radius: f64,
-    /// Obergrenze gleichzeitig sichtbarer Kacheln.
+    /// Upper limit of simultaneously visible tiles.
     pub max_tiles: usize,
-    /// Manuelle Verschiebung des Bildes gegen die Karte [m] (Ost/Nord) — Luftbilder
-    /// sind gegenüber der Gleislage oft um Meter versetzt.
+    /// Manual image offset against the map [m] (east/north) — aerial imagery is
+    /// often off by metres relative to the track position.
     pub offset: (f64, f64),
-    /// Höhe des Overlays über der Schienenoberkante [m]; negativ = darunter.
+    /// Height of the overlay above the rail head [m]; negative = below it.
     pub height_offset: f64,
     pub cache: CacheConfig,
     pub request: RequestConfig,
@@ -250,7 +250,7 @@ impl Default for ImageryConfig {
 }
 
 impl ImageryConfig {
-    /// Lädt die Konfiguration; fehlt die Datei, wird die Vorgabe geschrieben.
+    /// Loads the configuration; if the file is missing, the default is written.
     pub fn load_or_create(path: impl Into<PathBuf>) -> (Self, Option<String>) {
         let path = path.into();
         match std::fs::read_to_string(&path) {
@@ -259,7 +259,7 @@ impl ImageryConfig {
                 Err(e) => (
                     Self::default(),
                     Some(format!(
-                        "{} nicht lesbar ({e}) — Vorgabe aktiv",
+                        "{} not readable ({e}) — default active",
                         path.display()
                     )),
                 ),
@@ -267,8 +267,8 @@ impl ImageryConfig {
             Err(_) => {
                 let config = Self::default();
                 let message = match config.save(&path) {
-                    Ok(()) => format!("{} angelegt", path.display()),
-                    Err(e) => format!("{} nicht schreibbar: {e}", path.display()),
+                    Ok(()) => format!("{} created", path.display()),
+                    Err(e) => format!("{} not writable: {e}", path.display()),
                 };
                 (config, Some(message))
             }
@@ -284,7 +284,7 @@ impl ImageryConfig {
         std::fs::write(path, text)
     }
 
-    /// Der aktive Anbieter (oder der erste, falls die `id` unbekannt ist).
+    /// The active provider (or the first one, if the `id` is unknown).
     pub fn provider(&self) -> Option<&Provider> {
         self.providers
             .iter()
@@ -292,7 +292,7 @@ impl ImageryConfig {
             .or_else(|| self.providers.first())
     }
 
-    /// Nächsten Anbieter aktivieren.
+    /// Activate the next provider.
     pub fn cycle_provider(&mut self) {
         if self.providers.is_empty() {
             return;
@@ -307,7 +307,7 @@ impl ImageryConfig {
             .clone();
     }
 
-    /// Zoomstufe für eine Position, begrenzt auf den Bereich des Anbieters.
+    /// Zoom level for a position, clamped to the provider's range.
     pub fn zoom_for(&self, lat: f64) -> u8 {
         let Some(provider) = self.provider() else {
             return 0;
@@ -325,11 +325,11 @@ impl ImageryConfig {
     }
 }
 
-/// Mitgelieferte Anbieter.
+/// Bundled providers.
 ///
-/// Die URLs sind Ausgangspunkte, keine Zusicherung: Verfügbarkeit und
-/// Nutzungsbedingungen jedes Dienstes sind vor dem Einsatz zu prüfen — insbesondere für
-/// Massenabrufe. Eigene Anbieter kommen einfach in die Konfigurationsdatei.
+/// The URLs are starting points, not a guarantee: availability and terms of use of
+/// every service have to be checked before use — especially for bulk fetching.
+/// Custom providers simply go into the configuration file.
 pub fn predefined_providers() -> Vec<Provider> {
     vec![
         Provider {
@@ -347,11 +347,11 @@ pub fn predefined_providers() -> Vec<Provider> {
             format: ImageFormat::Jpeg,
             attribution: "Esri, Maxar, Earthstar Geographics".into(),
             api_key: None,
-            note: "Nutzungsbedingungen von Esri beachten.".into(),
+            note: "Observe the Esri terms of use.".into(),
         },
         Provider {
             id: "bkg_topplus_open".into(),
-            name: "BKG TopPlusOpen (Karte)".into(),
+            name: "BKG TopPlusOpen (map)".into(),
             url: TileUrl::Template(
                 "https://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/web/\
                  default/WEBMERCATOR/{z}/{y}/{x}.png"
@@ -364,7 +364,7 @@ pub fn predefined_providers() -> Vec<Provider> {
             format: ImageFormat::Png,
             attribution: "© Bundesamt für Kartographie und Geodäsie".into(),
             api_key: None,
-            note: "Offene Daten des BKG; keine Luftbilder, aber gute Referenzkarte.".into(),
+            note: "Open data from the BKG; no aerial imagery, but a good reference map.".into(),
         },
         Provider {
             id: "osm_standard".into(),
@@ -377,11 +377,11 @@ pub fn predefined_providers() -> Vec<Provider> {
             format: ImageFormat::Png,
             attribution: "© OpenStreetMap-Mitwirkende".into(),
             api_key: None,
-            note: "Nur für den Editorbetrieb, kein Massenabruf (Tile Usage Policy).".into(),
+            note: "Editor use only, no bulk fetching (Tile Usage Policy).".into(),
         },
         Provider {
             id: "dop_wms_vorlage".into(),
-            name: "Digitales Orthophoto (WMS-Vorlage)".into(),
+            name: "Digital orthophoto (WMS template)".into(),
             url: TileUrl::Wms {
                 endpoint: "https://example.invalid/dop/wms".into(),
                 layers: "dop".into(),
@@ -396,8 +396,8 @@ pub fn predefined_providers() -> Vec<Provider> {
             format: ImageFormat::Jpeg,
             attribution: "Landesvermessungsamt".into(),
             api_key: None,
-            note: "Vorlage: Endpunkt und Layer des gewünschten DOP-Dienstes eintragen. \
-                   Die Länder liefern ihre Orthophotos meist als WMS."
+            note: "Template: enter the endpoint and layer of the desired DOP service. \
+                   The German states usually serve their orthophotos as WMS."
                 .into(),
         },
     ]
@@ -418,32 +418,32 @@ mod tests {
             tile_size: 256,
             format: ImageFormat::Png,
             attribution: String::new(),
-            api_key: Some("geheim".into()),
+            api_key: Some("secret".into()),
             note: String::new(),
         }
     }
 
     #[test]
-    fn platzhalter_werden_ersetzt() {
+    fn placeholders_are_replaced() {
         let p = provider("https://x/{z}/{x}/{y}.png?key={key}");
         assert_eq!(
             p.tile_url(TileId::new(14, 8800, 5375)),
-            "https://x/14/8800/5375.png?key=geheim"
+            "https://x/14/8800/5375.png?key=secret"
         );
     }
 
     #[test]
-    fn tms_und_subdomain() {
+    fn tms_and_subdomain() {
         let p = provider("https://{s}.x/{z}/{x}/{-y}.png");
         let url = p.tile_url(TileId::new(2, 1, 0));
         assert!(url.ends_with("/2/1/3.png"), "{url}");
-        // Deterministische Verteilung: dieselbe Kachel, dieselbe Subdomain.
+        // Deterministic distribution: same tile, same subdomain.
         assert_eq!(url, p.tile_url(TileId::new(2, 1, 0)));
         assert!(url.starts_with("https://b.x/"), "{url}");
     }
 
     #[test]
-    fn wms_bekommt_bbox_in_mercator_metern() {
+    fn wms_gets_bbox_in_mercator_metres() {
         let p = Provider {
             url: TileUrl::Wms {
                 endpoint: "https://x/wms?token=1".into(),
@@ -467,16 +467,16 @@ mod tests {
     }
 
     #[test]
-    fn zoomstufe_bleibt_im_bereich_des_anbieters() {
+    fn zoom_level_stays_within_the_provider_range() {
         let mut config = ImageryConfig {
             providers: vec![provider("{z}")],
             active: "test".into(),
             zoom: ZoomMode::Fixed(22),
             ..Default::default()
         };
-        assert_eq!(config.zoom_for(52.0), 18, "auf max_zoom begrenzt");
+        assert_eq!(config.zoom_for(52.0), 18, "clamped to max_zoom");
         config.zoom = ZoomMode::Fixed(0);
-        assert_eq!(config.zoom_for(52.0), 2, "auf min_zoom angehoben");
+        assert_eq!(config.zoom_for(52.0), 2, "raised to min_zoom");
         config.zoom = ZoomMode::Resolution(0.5);
         assert_eq!(config.zoom_for(52.0), 18);
         config.zoom = ZoomMode::Resolution(50.0);
@@ -484,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn anbieter_durchschalten() {
+    fn cycle_through_providers() {
         let mut config = ImageryConfig::default();
         let first = config.active.clone();
         assert!(config.provider().is_some());
@@ -493,32 +493,32 @@ mod tests {
         for _ in 0..config.providers.len() {
             config.cycle_provider();
         }
-        assert_ne!(config.active, first, "Durchlauf endet nicht am Anfang");
+        assert_ne!(config.active, first, "cycle does not end at the beginning");
     }
 
     #[test]
-    fn unbekannter_anbieter_faellt_auf_den_ersten_zurueck() {
+    fn unknown_provider_falls_back_to_the_first_one() {
         let config = ImageryConfig {
-            active: "gibtsnicht".into(),
+            active: "does_not_exist".into(),
             ..Default::default()
         };
         assert_eq!(config.provider().unwrap().id, "esri_world_imagery");
     }
 
     #[test]
-    fn konfiguration_ueberlebt_ron() {
+    fn configuration_survives_ron() {
         let config = ImageryConfig::default();
         let text = ron::ser::to_string_pretty(&config, ron::ser::PrettyConfig::default()).unwrap();
-        let back: ImageryConfig = ron::from_str(&text).expect("RON lesbar");
+        let back: ImageryConfig = ron::from_str(&text).expect("RON readable");
         assert_eq!(back, config);
         assert!(text.contains("esri_world_imagery"));
     }
 
     #[test]
-    fn eigener_anbieter_aus_ron() {
+    fn custom_provider_from_ron() {
         let text = r#"(
             enabled: true,
-            active: "eigener",
+            active: "custom",
             opacity: 0.5,
             zoom: Fixed(17),
             radius: 400.0,
@@ -526,7 +526,7 @@ mod tests {
             offset: (2.5, -1.0),
             height_offset: 0.0,
             cache: (
-                directory: "eigener/cache",
+                directory: "custom/cache",
                 max_bytes: 1000000,
                 memory_tiles: 32,
                 offline: true,
@@ -539,17 +539,17 @@ mod tests {
                 retries: 0,
             ),
             providers: [(
-                id: "eigener",
-                name: "Eigener Dienst",
+                id: "custom",
+                name: "Custom service",
                 url: Template("https://intern/dop/{z}/{x}/{y}.jpg"),
                 max_zoom: 20,
                 tile_size: 512,
                 format: Jpeg,
-                attribution: "Eigene Befliegung",
+                attribution: "Own aerial survey",
             )],
         )"#;
-        let config: ImageryConfig = ron::from_str(text).expect("RON lesbar");
-        assert_eq!(config.provider().unwrap().name, "Eigener Dienst");
+        let config: ImageryConfig = ron::from_str(text).expect("RON readable");
+        assert_eq!(config.provider().unwrap().name, "Custom service");
         assert_eq!(config.zoom_for(52.0), 17);
         assert!(config.cache.offline);
         assert_eq!(config.offset, (2.5, -1.0));
@@ -560,16 +560,16 @@ mod tests {
     }
 
     #[test]
-    fn fehlende_datei_wird_angelegt() {
+    fn missing_file_is_created() {
         let dir = std::env::temp_dir().join("trainsim-imagery-config");
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("imagery.ron");
 
         let (config, message) = ImageryConfig::load_or_create(&path);
-        assert!(message.unwrap().contains("angelegt"));
+        assert!(message.unwrap().contains("created"));
         assert!(path.exists());
 
-        // Beim zweiten Mal wird gelesen, nicht überschrieben.
+        // The second time it is read, not overwritten.
         let (again, message) = ImageryConfig::load_or_create(&path);
         assert!(message.is_none());
         assert_eq!(again, config);

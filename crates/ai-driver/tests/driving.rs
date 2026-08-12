@@ -1,4 +1,4 @@
-//! Abnahme M4: KI fährt nach Fahrplan, hält am Signal und am Bahnsteig.
+//! Acceptance M4: AI runs to the timetable, stops at the signal and at the platform.
 
 use ai_driver::{AiDriver, DriverState, ScheduledStop, Timetable};
 use content::musterbahn;
@@ -46,11 +46,11 @@ fn timetable_to_platform() -> Timetable {
 }
 
 #[test]
-fn ki_faehrt_an_und_haelt_geschwindigkeit() {
+fn ai_accelerates_and_keeps_speed() {
     let (mut sim, t) = sim_with_train(100.0);
     let mut ai = AiDriver::new(Timetable::default());
-    // Bis zum Ende des ersten Abschnitts fahren (dort gilt 160 km/h) und dabei die
-    // höchste erreichte Geschwindigkeit mitschreiben.
+    // Drive to the end of the first section (160 km/h applies there) and record the
+    // highest speed reached along the way.
     let mut v_max: f64 = 0.0;
     for _ in 0..40_000 {
         ai.drive(&mut sim, t, Sim::DT);
@@ -61,20 +61,20 @@ fn ki_faehrt_an_und_haelt_geschwindigkeit() {
         }
         let v = sim.trains[t].speed_kmh();
         v_max = v_max.max(v);
-        // Die zulässige Geschwindigkeit darf nie überschritten werden.
+        // The permitted speed must never be exceeded.
         assert!(
             v <= head.speed_limit(&sim.net) + 2.0,
-            "KI zu schnell: {v:.1} km/h bei zulässigen {} km/h",
+            "AI too fast: {v:.1} km/h with {} km/h permitted",
             head.speed_limit(&sim.net)
         );
     }
-    // Der Zug beschleunigt auf dem 3 km langen Abschnitt so weit, wie es Zugkraft und
-    // die Bremskurve auf den anschließenden 130er-Abschnitt zulassen.
+    // On the 3 km long section the train accelerates as far as tractive effort and
+    // the braking curve onto the following 130 km/h section allow.
     assert!(
         (120.0..=160.0).contains(&v_max),
-        "KI schöpft die Strecke nicht aus: {v_max} km/h"
+        "AI does not use the line to the full: {v_max} km/h"
     );
-    // Keine Zwangsbremsung unterwegs.
+    // No forced braking on the way.
     assert_eq!(
         sim.runtime[t].protection.action,
         sim_core::safety::ProtectionAction::None
@@ -82,9 +82,9 @@ fn ki_faehrt_an_und_haelt_geschwindigkeit() {
 }
 
 #[test]
-fn ki_haelt_vor_halt_zeigendem_signal() {
+fn ai_stops_in_front_of_signal_at_stop() {
     let (mut sim, t) = sim_with_train(100.0);
-    // Zweiten Zug in den Folgeabschnitt stellen → Blocksignal bei km 2,0 zeigt Halt.
+    // Place a second train in the following section → block signal at km 2.0 shows stop.
     let blocker_head = TrackPosition::new(EdgeId(1), 200.0, 1);
     let blocker = Train::assemble(
         vec![vehicle(
@@ -106,18 +106,18 @@ fn ki_haelt_vor_halt_zeigendem_signal() {
         }
     }
     let head = sim.trains[t].vehicles[0].pos;
-    assert!(sim.trains[t].speed_kmh() < 1.0, "Zug muss stehen");
+    assert!(sim.trains[t].speed_kmh() < 1.0, "train must be standing");
     assert!(
         head.s < 2000.0,
-        "Zug ist am Halt zeigenden Signal vorbeigefahren (s = {})",
+        "train passed the signal at stop (s = {})",
         head.s
     );
     assert!(
         head.s > 1500.0,
-        "Zug hat viel zu früh gehalten (s = {})",
+        "train stopped far too early (s = {})",
         head.s
     );
-    // Die PZB darf dabei nicht eingegriffen haben — die KI hat rechtzeitig gebremst.
+    // The PZB must not have intervened — the AI braked in time.
     assert_eq!(
         sim.runtime[t].protection.action,
         sim_core::safety::ProtectionAction::None
@@ -125,8 +125,8 @@ fn ki_haelt_vor_halt_zeigendem_signal() {
 }
 
 #[test]
-fn ki_haelt_am_bahnsteig_und_faehrt_nach_fahrplan_ab() {
-    // Kurz vor dem Bahnsteig starten, damit der Test schnell bleibt.
+fn ai_stops_at_platform_and_departs_on_time() {
+    // Start shortly before the platform so the test stays fast.
     let line = musterbahn().compile().unwrap();
     let mut sim = Sim::new(line.net, line.interlock, 7);
     let head = TrackPosition::new(EdgeId(2), 1200.0, 1);
@@ -150,11 +150,11 @@ fn ki_haelt_am_bahnsteig_und_faehrt_nach_fahrplan_ab() {
             break;
         }
     }
-    assert_eq!(ai.state, DriverState::Dwelling, "KI hat nicht gehalten");
+    assert_eq!(ai.state, DriverState::Dwelling, "AI did not stop");
     let head = sim.trains[t].vehicles[0].pos;
     let error = (head.s - 2600.0).abs();
     assert!(
         error < 60.0,
-        "Haltegenauigkeit {error:.1} m am Bahnsteig zu schlecht"
+        "stopping accuracy {error:.1} m at the platform is too poor"
     );
 }

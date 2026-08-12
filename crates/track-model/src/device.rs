@@ -1,7 +1,8 @@
-//! Streckenausrüstung („Trackside"), länderneutral (Plan Kap. 5).
+//! Trackside equipment, country-neutral (plan ch. 5).
 //!
-//! Die Gerätetypen sind bewusst nur grob typisiert; die fachliche Bedeutung des `payload`
-//! kennt allein das jeweilige Länderpaket (`sim-core::safety::de` für Deutschland).
+//! The device kinds are deliberately only coarsely typed; the domain meaning of the
+//! `payload` is known only to the respective country package (`sim-core::safety::de`
+//! for Germany).
 
 use crate::network::EdgeId;
 use serde::{Deserialize, Serialize};
@@ -15,15 +16,15 @@ impl DeviceId {
     }
 }
 
-/// Für welche Fahrtrichtung ein Gerät gilt.
+/// Which direction of travel a device applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Facing {
-    /// Nur in Richtung wachsender Bogenlänge.
+    /// Only in the direction of increasing arc length.
     #[default]
     Forward,
-    /// Nur in Richtung fallender Bogenlänge.
+    /// Only in the direction of decreasing arc length.
     Backward,
-    /// Beide Richtungen.
+    /// Both directions.
     Both,
 }
 
@@ -37,51 +38,51 @@ impl Facing {
     }
 }
 
-/// Gerätetyp. Länderspezifische Ausprägung steckt im `payload`.
+/// Device kind. The country-specific flavour lives in the `payload`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DeviceKind {
-    /// Haupt-, Vor- oder Sperrsignal; `payload` enthält Signaltyp und Verknüpfung.
+    /// Main, distant or shunting signal; `payload` holds signal type and linkage.
     Signal,
-    /// Punktförmiger Gleismagnet (PZB 500/1000/2000 Hz).
+    /// Intermittent track magnet (PZB 500/1000/2000 Hz).
     Magnet,
-    /// Beginn/Ende eines Linienleiterabschnitts (LZB).
+    /// Start/end of a line conductor section (LZB).
     LineConductor,
     /// Balise (ETCS-ready).
     Balise,
-    /// Geschwindigkeitstafel (Lf 1–7).
+    /// Speed board (Lf 1–7).
     SpeedBoard,
-    /// Bahnsteig mit Länge und Name.
+    /// Platform with length and name.
     Platform,
-    /// Halte-/Haltepunkttafel (Ne 5, H-Tafel).
+    /// Stop board / halt board (Ne 5, H board).
     StopBoard,
-    /// Blockgrenze / Achszählpunkt.
+    /// Block boundary / axle counting point.
     BlockMarker,
-    /// Schutzstrecke (spannungsloser Abschnitt).
+    /// Neutral section (de-energised section).
     NeutralSection,
-    /// Sonstiges, für Länderpakete offen.
+    /// Anything else, open for country packages.
     Other(String),
 }
 
-/// Ein Gerät an einer Stelle `(edge, s)` des Netzes.
+/// A device at a location `(edge, s)` in the network.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracksideDevice {
     #[serde(default = "default_device_id")]
     pub id: DeviceId,
     pub kind: DeviceKind,
     pub edge: EdgeId,
-    /// Bogenlänge auf der Kante [m].
+    /// Arc length along the edge [m].
     pub s: f64,
     #[serde(default)]
     pub facing: Facing,
-    /// Seitlicher Versatz für die Darstellung [m], positiv = links der Fahrtrichtung.
+    /// Lateral offset for rendering [m], positive = left of the direction of travel.
     #[serde(default)]
     pub lateral_offset: f64,
-    /// Länderspezifische Nutzdaten als RON-Text.
+    /// Country-specific payload data as RON text.
     ///
-    /// ponytail: Text statt `ron::Value` — `Value` verliert Unit-Enum-Varianten
-    /// (`Hz1000` wird beim Parsen zu `Unit`), damit wäre kein Payload-Typ mit Enum
-    /// deserialisierbar. Der Text bleibt handeditierbar und kostet nur ein `from_str`
-    /// beim Auslesen; bei messbarer Last die geparste Form je Gerät cachen.
+    /// ponytail: text instead of `ron::Value` — `Value` loses unit enum variants
+    /// (`Hz1000` becomes `Unit` when parsed), so no payload type with an enum would
+    /// be deserialisable. The text stays hand-editable and only costs one `from_str`
+    /// when read; cache the parsed form per device if the load becomes measurable.
     #[serde(default = "unit_payload")]
     pub payload: String,
 }
@@ -112,13 +113,13 @@ impl TracksideDevice {
         self
     }
 
-    /// Setzt das Payload aus einer serialisierbaren Struktur.
+    /// Sets the payload from a serialisable structure.
     pub fn with_payload<T: Serialize>(mut self, payload: &T) -> Self {
-        self.payload = ron::to_string(payload).expect("payload serialisierbar");
+        self.payload = ron::to_string(payload).expect("payload serialisable");
         self
     }
 
-    /// Liest das Payload als Zieltyp.
+    /// Reads the payload as the target type.
     pub fn payload_as<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
         ron::from_str(&self.payload).ok()
     }

@@ -1,17 +1,17 @@
-//! Geländemeshes aus dem DGM (Plan Kap. 14).
+//! Terrain meshes from the DGM (plan ch. 14).
 //!
-//! Erzeugt wird nur der Korridor um die Strecke, gekachelt und mit
-//! entfernungsabhängiger Auflösung. Gerechnet wird durchgehend in UTM — das ist das
-//! System des DGM, dadurch kostet jeder Stützpunkt genau eine Projektion statt drei.
+//! Only the corridor around the line is generated, split into tiles and with a
+//! distance-dependent resolution. Everything is computed in UTM — that is the system of
+//! the DGM, so each support point costs exactly one projection instead of three.
 //!
-//! Die Kennzahl, um die es geht: ein Quadratkilometer DGM1 hat zwei Millionen Dreiecke.
-//! Deshalb
+//! The number that matters: one square kilometre of DGM1 has two million triangles.
+//! Hence
 //!
-//! * **Kacheln** (Vorgabe 512 m) → Frustum-Culling und Sichtweitenbegrenzung je Kachel,
-//! * **LOD nach Gleisabstand** → 4 m am Gleis, 32 m am Rand des Korridors,
-//! * **Schürzen** an den Kachelrändern → keine Risse zwischen verschiedenen Stufen,
-//! * **Einschnitt/Damm**: nahe am Gleis wird das Gelände auf die Schienenhöhe gezogen,
-//!   sonst läge die Trasse im Hügel.
+//! * **tiles** (512 m by default) → frustum culling and view distance limit per tile,
+//! * **LOD by track distance** → 4 m at the track, 32 m at the edge of the corridor,
+//! * **skirts** at the tile borders → no cracks between different levels,
+//! * **cutting/embankment**: close to the track the terrain is pulled up to the rail
+//!   height, otherwise the alignment would sit inside the hill.
 
 use crate::import::dgm::TerrainSource;
 use glam::DVec2;
@@ -19,30 +19,30 @@ use std::collections::HashMap;
 use track_model::TrackNetwork;
 use world_coords::{EcefPos, EnuFrame, geo};
 
-/// Einstellungen der Geländeerzeugung.
+/// Settings for the terrain generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TerrainOptions {
-    /// UTM-Zone, in der gerechnet wird (die des DGM).
+    /// UTM zone used for the computation (that of the DGM).
     pub zone: u8,
-    /// Geoid-Undulation der Strecke [m] (NHN → ellipsoidisch).
+    /// Geoid undulation of the line [m] (NHN → ellipsoidal).
     pub geoid_offset: f64,
-    /// Kantenlänge einer Geländekachel [m].
+    /// Edge length of a terrain tile [m].
     pub tile_size: f64,
-    /// Wie weit neben dem Gleis Gelände entsteht [m].
+    /// How far beside the track terrain is generated [m].
     pub radius: f64,
-    /// Feinste Rasterweite [m] (gilt im Korridor).
+    /// Finest grid spacing [m] (applies inside the corridor).
     pub base_step: f64,
-    /// Bis hierhin gilt die feinste Stufe [m].
+    /// Up to here the finest level applies [m].
     pub corridor: f64,
-    /// Bis hierhin folgt das Gelände exakt der Schienenhöhe [m].
+    /// Up to here the terrain follows the rail height exactly [m].
     pub flatten: f64,
-    /// Bis hierhin wird zwischen Schienen- und Geländehöhe überblendet [m].
+    /// Up to here rail and terrain height are blended [m].
     pub blend: f64,
-    /// Höhe der Schürze an den Kachelrändern [m].
+    /// Height of the skirt at the tile borders [m].
     pub skirt: f64,
-    /// Höhe, wo kein DGM vorliegt [m] (NHN).
+    /// Height where no DGM is available [m] (NHN).
     pub fallback_height: f64,
-    /// Abtastabstand der Gleisachse [m].
+    /// Sampling distance along the track centreline [m].
     pub centerline_step: f64,
 }
 
@@ -64,19 +64,19 @@ impl Default for TerrainOptions {
     }
 }
 
-/// Eine fertige Geländekachel — rohe Meshdaten, damit `content` ohne Bevy auskommt.
+/// A finished terrain tile — raw mesh data, so that `content` works without Bevy.
 #[derive(Debug, Clone)]
 pub struct TerrainTile {
-    /// Ursprung des lokalen ENU-Frames (Kachelmitte) in Weltkoordinaten.
+    /// Origin of the local ENU frame (tile centre) in world coordinates.
     pub anchor: EcefPos,
-    /// Positionen in Renderachsen (x = Ost, y = oben, z = −Nord), relativ zum Anker.
+    /// Positions in render axes (x = east, y = up, z = −north), relative to the anchor.
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
-    /// Verwendete Rasterweite [m].
+    /// Grid spacing used [m].
     pub step: f64,
-    /// LOD-Stufe (0 = feinste).
+    /// LOD level (0 = finest).
     pub lod: u8,
-    /// Umkreisradius um den Anker [m] — für Sichtweite und Culling.
+    /// Bounding radius around the anchor [m] — for view distance and culling.
     pub radius: f32,
 }
 
@@ -86,31 +86,31 @@ impl TerrainTile {
     }
 }
 
-/// Kennzahlen eines Geländeaufbaus.
+/// Key figures of a terrain build.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TerrainStats {
     pub tiles: usize,
     pub vertices: usize,
     pub triangles: usize,
-    /// Stützpunkte ohne DGM-Wert (Ersatzhöhe verwendet).
+    /// Support points without a DGM value (fallback height used).
     pub missing: usize,
-    /// Wie oft eine DGM-Kachel von der Platte gelesen wurde.
+    /// How often a DGM tile was read from disk.
     pub tile_loads: usize,
 }
 
 impl TerrainStats {
-    /// Grobe Größe der Meshdaten im Speicher [Byte].
+    /// Rough size of the mesh data in memory [bytes].
     pub fn memory(&self) -> usize {
         self.vertices * 12 + self.triangles * 12
     }
 }
 
-/// Ein Stützpunkt der Gleisachse in UTM.
+/// The support points of the track centreline in UTM.
 struct Centerline {
     points: Vec<DVec2>,
-    /// Ellipsoidische Höhe der Schienenoberkante [m].
+    /// Ellipsoidal height of the top of rail [m].
     heights: Vec<f64>,
-    /// Beschleunigter Nachbarschaftsindex.
+    /// Accelerated neighbourhood index.
     grid: HashMap<(i64, i64), Vec<usize>>,
     cell: f64,
 }
@@ -144,7 +144,7 @@ impl Centerline {
         }
     }
 
-    /// Nächster Achspunkt in der Nachbarschaft: `(Abstand, Höhe)`.
+    /// Nearest centreline point in the neighbourhood: `(distance, height)`.
     fn nearest(&self, p: DVec2) -> Option<(f64, f64)> {
         let (kx, ky) = key(p, self.cell);
         let mut best: Option<(f64, f64)> = None;
@@ -164,7 +164,7 @@ impl Centerline {
         best
     }
 
-    /// Abstand zur Achse ohne Nachbarschaftsindex (nur für Prüfungen).
+    /// Distance to the centreline without the neighbourhood index (checks only).
     #[cfg(test)]
     fn distance_scan(&self, p: DVec2) -> f64 {
         self.points
@@ -173,11 +173,12 @@ impl Centerline {
             .fold(f64::INFINITY, f64::min)
     }
 
-    /// Abstand der Achse zur **Fläche** einer Kachel (0, wenn das Gleis hindurchführt).
+    /// Distance from the centreline to the **area** of a tile (0 if the track runs
+    /// through it).
     ///
-    /// Der Abstand zum Kachelmittelpunkt taugt dafür nicht: eine 512-m-Kachel, durch die
-    /// das Gleis läuft, hat ihren Mittelpunkt trotzdem hunderte Meter daneben — sie
-    /// bekäme sonst die grobe Stufe.
+    /// The distance to the tile centre is no good for this: a 512 m tile the track runs
+    /// through still has its centre hundreds of metres to the side — it would
+    /// otherwise get the coarse level.
     fn distance_to_rect(&self, min: DVec2, size: f64) -> f64 {
         let max = min + DVec2::splat(size);
         self.points
@@ -194,10 +195,10 @@ fn key(p: DVec2, cell: f64) -> (i64, i64) {
     ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64)
 }
 
-/// Baut das Gelände um alle Gleise des Netzes.
+/// Builds the terrain around all tracks of the network.
 ///
-/// `source` darf `None` sein — dann entsteht ebenes Gelände auf `fallback_height`,
-/// was für Testszenen und Strecken ohne DGM genügt.
+/// `source` may be `None` — then flat terrain at `fallback_height` is created, which
+/// is enough for test scenes and lines without a DGM.
 pub fn build(
     net: &TrackNetwork,
     source: Option<&mut TerrainSource>,
@@ -208,8 +209,8 @@ pub fn build(
         return (Vec::new(), TerrainStats::default());
     }
 
-    // Kachelraster über den Korridor legen. Reihenfolge sortiert, damit derselbe
-    // Streckenzustand immer dieselben Kacheln in derselben Folge ergibt.
+    // Lay a tile grid over the corridor. Sorted order, so that the same line state
+    // always yields the same tiles in the same sequence.
     let mut key_set: std::collections::HashSet<(i64, i64)> = std::collections::HashSet::new();
     let reach = (options.radius / options.tile_size).ceil() as i64;
     for p in &centerline.points {
@@ -233,7 +234,7 @@ pub fn build(
             k.1 as f64 * options.tile_size,
         );
         let distance = centerline.distance_to_rect(min, options.tile_size);
-        // Kacheln, die den Korridor nicht berühren, entfallen ganz.
+        // Tiles that do not touch the corridor are dropped entirely.
         if distance > options.radius {
             continue;
         }
@@ -259,7 +260,7 @@ pub fn build(
     (tiles, stats)
 }
 
-/// Rasterweite und LOD-Stufe nach Abstand zur Gleisachse.
+/// Grid spacing and LOD level by distance to the track centreline.
 fn level_of_detail(distance: f64, options: &TerrainOptions) -> (f64, u8) {
     let base = options.base_step;
     if distance <= options.corridor {
@@ -273,7 +274,7 @@ fn level_of_detail(distance: f64, options: &TerrainOptions) -> (f64, u8) {
     }
 }
 
-/// Baut eine einzelne Kachel.
+/// Builds a single tile.
 fn build_tile(
     min: DVec2,
     step: f64,
@@ -286,7 +287,7 @@ fn build_tile(
     let n = (options.tile_size / step).round().max(1.0) as usize;
     let center = min + DVec2::splat(options.tile_size / 2.0);
 
-    // Anker in der Kachelmitte, damit die lokalen f32-Koordinaten klein bleiben.
+    // Anchor at the tile centre, so that the local f32 coordinates stay small.
     let (clat, clon) = geo::from_utm(center.x, center.y, options.zone);
     let anchor = geo::to_ecef(clat, clon, 0.0);
     let frame = EnuFrame::at(anchor);
@@ -306,7 +307,7 @@ fn build_tile(
                     options.fallback_height + options.geoid_offset
                 });
 
-            // Einschnitt/Damm: am Gleis exakt Schienenhöhe, dann überblenden.
+            // Cutting/embankment: exactly rail height at the track, then blend.
             let height = match centerline.nearest(p) {
                 Some((d, rail)) if d <= options.flatten => rail,
                 Some((d, rail)) if d <= options.blend => {
@@ -323,7 +324,7 @@ fn build_tile(
         }
     }
 
-    // Reguläre Triangulierung.
+    // Regular triangulation.
     let row = n + 1;
     let mut indices = Vec::with_capacity(n * n * 6);
     for iy in 0..n {
@@ -336,8 +337,8 @@ fn build_tile(
         }
     }
 
-    // Schürze: der Rand wird nach unten verlängert, damit an LOD-Grenzen keine
-    // Risse sichtbar werden.
+    // Skirt: the border is extended downwards so that no cracks become visible at
+    // LOD boundaries.
     add_skirt(
         &mut positions,
         &mut indices,
@@ -360,7 +361,7 @@ fn build_tile(
     }
 }
 
-/// Hängt eine senkrechte Schürze an den Kachelrand.
+/// Attaches a vertical skirt to the tile border.
 #[allow(clippy::too_many_arguments)]
 fn add_skirt(
     positions: &mut Vec<[f32; 3]>,
@@ -373,11 +374,11 @@ fn add_skirt(
     options: &TerrainOptions,
 ) {
     let row = n + 1;
-    // Randpunkte einmal im Uhrzeigersinn.
-    let border: Vec<usize> = (0..row) // Südrand
-        .chain((1..row).map(|iy| iy * row + n)) // Ostrand
-        .chain((0..n).rev().map(|ix| n * row + ix)) // Nordrand
-        .chain((0..n).rev().map(|iy| iy * row)) // Westrand
+    // Border points once clockwise.
+    let border: Vec<usize> = (0..row) // south edge
+        .chain((1..row).map(|iy| iy * row + n)) // east edge
+        .chain((0..n).rev().map(|ix| n * row + ix)) // north edge
+        .chain((0..n).rev().map(|iy| iy * row)) // west edge
         .collect();
 
     let first_skirt = positions.len() as u32;
@@ -400,7 +401,7 @@ fn add_skirt(
     }
 }
 
-/// ENU (x = Ost, y = Nord, z = oben) → Renderachsen.
+/// ENU (x = east, y = north, z = up) → render axes.
 fn to_render(p: glam::DVec3) -> [f32; 3] {
     [p.x as f32, p.z as f32, -p.y as f32]
 }
@@ -411,7 +412,7 @@ mod tests {
     use crate::import::dgm::{HeightTile, TerrainSource};
     use track_model::{EdgeId, NodeKind, Segment, TrackEdge, TrackNetwork};
 
-    /// Gerade Teststrecke von 1 km bei 52° N, 10° O.
+    /// Straight 1 km test line at 52° N, 10° E.
     fn test_net() -> TrackNetwork {
         let mut net = TrackNetwork::new();
         let a = net.add_node(NodeKind::Buffer);
@@ -427,7 +428,7 @@ mod tests {
         net
     }
 
-    /// DGM mit 25 m Raster über dem Testgebiet: Hang, der nach Norden ansteigt.
+    /// DGM with a 25 m grid over the test area: a slope rising towards the north.
     fn test_source() -> TerrainSource {
         let (e0, n0) = geo::to_utm(52.0f64.to_radians(), 10.0f64.to_radians(), 32);
         let mut text = String::new();
@@ -450,14 +451,14 @@ mod tests {
     }
 
     #[test]
-    fn gelaende_entsteht_nur_im_korridor() {
+    fn terrain_is_generated_only_in_the_corridor() {
         let net = test_net();
         let mut source = test_source();
         let (tiles, stats) = build(&net, Some(&mut source), &options());
 
         assert!(stats.tiles > 0);
         assert_eq!(tiles.len(), stats.tiles);
-        // Alle Kacheln liegen im Umkreis der Strecke.
+        // All tiles lie within the radius around the line.
         let centerline = Centerline::build(&net, &options());
         for tile in &tiles {
             let (lat, lon, _) = geo::from_ecef(tile.anchor);
@@ -465,22 +466,22 @@ mod tests {
             let d = centerline.distance_scan(DVec2::new(e, n));
             assert!(
                 d <= options().radius + options().tile_size,
-                "Kachel {d:.0} m abseits"
+                "tile {d:.0} m off the line"
             );
         }
     }
 
     #[test]
-    fn lod_wird_mit_dem_abstand_grober() {
+    fn lod_gets_coarser_with_distance() {
         let net = test_net();
         let mut source = test_source();
         let (tiles, _) = build(&net, Some(&mut source), &options());
 
-        let fein = tiles.iter().filter(|t| t.lod == 0).count();
-        let grob = tiles.iter().filter(|t| t.lod > 0).count();
-        assert!(fein > 0 && grob > 0, "fein {fein}, grob {grob}");
+        let fine = tiles.iter().filter(|t| t.lod == 0).count();
+        let coarse = tiles.iter().filter(|t| t.lod > 0).count();
+        assert!(fine > 0 && coarse > 0, "fine {fine}, coarse {coarse}");
 
-        // Feine Kacheln haben die Grundschrittweite, grobe ein Vielfaches davon.
+        // Fine tiles have the base step, coarse ones a multiple of it.
         for tile in &tiles {
             let expected = options().base_step * 2f64.powi(tile.lod as i32);
             assert_eq!(tile.step, expected, "LOD {}", tile.lod);
@@ -488,61 +489,62 @@ mod tests {
     }
 
     #[test]
-    fn dreieckszahl_bleibt_beherrschbar() {
+    fn triangle_count_stays_manageable() {
         let net = test_net();
         let mut source = test_source();
         let (_, stats) = build(&net, Some(&mut source), &options());
 
-        // Zum Vergleich: derselbe Korridor in voller DGM1-Auflösung.
+        // For comparison: the same corridor at full DGM1 resolution.
         let area = 1000.0 * 2.0 * options().radius; // m²
         let full_detail = area as usize * 2;
         assert!(
             stats.triangles * 5 < full_detail,
-            "{} Dreiecke gegenüber {} bei 1 m Raster",
+            "{} triangles versus {} at a 1 m grid",
             stats.triangles,
             full_detail
         );
-        // Und trotzdem genug für ein sichtbares Gelände.
+        // And still enough for visible terrain.
         assert!(stats.triangles > 10_000);
-        assert!(stats.memory() < 40 * 1024 * 1024, "{} Byte", stats.memory());
+        assert!(
+            stats.memory() < 40 * 1024 * 1024,
+            "{} bytes",
+            stats.memory()
+        );
 
-        // Der eigentliche Hebel ist die Staffelung: je LOD-Stufe viertelt sich die
-        // Dreieckszahl einer gleich großen Kachel.
+        // The real lever is the grading: with each LOD level the triangle count of an
+        // equally sized tile is quartered.
         let (tiles, _) = build(&net, Some(&mut test_source()), &options());
         let per_lod = |lod: u8| tiles.iter().find(|t| t.lod == lod).map(|t| t.triangles());
-        if let (Some(fein), Some(grob)) = (per_lod(0), per_lod(1)) {
-            let ratio = fein as f64 / grob as f64;
-            assert!(
-                (3.0..5.0).contains(&ratio),
-                "Verhältnis LOD0:LOD1 = {ratio}"
-            );
+        if let (Some(fine), Some(coarse)) = (per_lod(0), per_lod(1)) {
+            let ratio = fine as f64 / coarse as f64;
+            assert!((3.0..5.0).contains(&ratio), "ratio LOD0:LOD1 = {ratio}");
         }
     }
 
     #[test]
-    fn gelaende_folgt_am_gleis_der_schienenhoehe() {
+    fn terrain_follows_the_rail_height_at_the_track() {
         let net = test_net();
         let options = options();
         let centerline = Centerline::build(&net, &options);
         let (tiles, _) = build(&net, Some(&mut test_source()), &options);
 
-        // Testdaten müssen sich unterscheiden, sonst prüft der Test nichts.
+        // The test data must differ, otherwise the test checks nothing.
         let p = centerline.points[10];
         let (_, rail) = centerline.nearest(p).unwrap();
         let ground = test_source().height_at_utm(p.x, p.y).unwrap() + options.geoid_offset;
         assert!(
             (ground - rail).abs() > 0.5,
-            "Gelände und Schienenhöhe müssen auseinanderliegen: {ground} vs {rail}"
+            "terrain and rail height must differ: {ground} vs {rail}"
         );
 
-        // Jeden Geländepunkt zurückrechnen und mit dem Erwartungswert vergleichen:
-        // am Gleis Schienenhöhe, weit weg DGM-Höhe.
+        // Convert every terrain point back and compare it with the expected value:
+        // rail height at the track, DGM height far away.
         let mut source = test_source();
         let mut checked_rail = 0;
         let mut checked_far = 0;
         for tile in &tiles {
             let frame = EnuFrame::at(tile.anchor);
-            // Nur die Rasterpunkte prüfen — die Schürze hängt absichtlich darunter.
+            // Only check the grid points — the skirt hangs below on purpose.
             let n = (options.tile_size / tile.step).round() as usize;
             let grid_vertices = (n + 1) * (n + 1);
             for pos in &tile.positions[..grid_vertices] {
@@ -556,34 +558,34 @@ mod tests {
                 if d < options.flatten * 0.5 && height > 0.0 {
                     assert!(
                         (height - rail).abs() < 0.5,
-                        "am Gleis (d = {d:.1} m): {height:.2} statt {rail:.2}"
+                        "at the track (d = {d:.1} m): {height:.2} instead of {rail:.2}"
                     );
                     checked_rail += 1;
                 } else if d > options.blend * 2.0 && d < options.blend * 3.0 {
                     let ground = source.height_at_utm(e, n).unwrap() + options.geoid_offset;
                     assert!(
                         (height - ground).abs() < 0.5,
-                        "abseits (d = {d:.1} m): {height:.2} statt {ground:.2}"
+                        "off the track (d = {d:.1} m): {height:.2} instead of {ground:.2}"
                     );
                     checked_far += 1;
                 }
             }
         }
-        assert!(checked_rail > 10, "zu wenige Punkte am Gleis geprüft");
-        assert!(checked_far > 10, "zu wenige Punkte abseits geprüft");
+        assert!(checked_rail > 10, "too few points checked at the track");
+        assert!(checked_far > 10, "too few points checked off the track");
     }
 
     #[test]
-    fn ohne_dgm_entsteht_ebenes_gelaende() {
+    fn without_a_dgm_the_terrain_is_flat() {
         let net = test_net();
         let (tiles, stats) = build(&net, None, &options());
         assert!(!tiles.is_empty());
-        assert!(stats.missing > 0, "fehlende Höhen werden gezählt");
+        assert!(stats.missing > 0, "missing heights are counted");
         assert_eq!(stats.tile_loads, 0);
     }
 
     #[test]
-    fn kacheln_haben_schuerzen() {
+    fn tiles_have_skirts() {
         let net = test_net();
         let mut source = test_source();
         let (tiles, _) = build(&net, Some(&mut source), &options());
@@ -592,11 +594,11 @@ mod tests {
         let grid_vertices = (n + 1) * (n + 1);
         assert!(
             tile.positions.len() > grid_vertices,
-            "Schürzenpunkte fehlen: {} vs {}",
+            "skirt points are missing: {} vs {}",
             tile.positions.len(),
             grid_vertices
         );
-        // Der tiefste Punkt liegt unter dem Raster.
+        // The lowest point lies below the grid.
         let min_y = tile
             .positions
             .iter()

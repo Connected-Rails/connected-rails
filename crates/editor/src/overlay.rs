@@ -1,4 +1,4 @@
-//! Luftbild-Overlay: Kacheln anfordern, als Flächen in die Welt legen, wieder aufräumen.
+//! Aerial imagery overlay: request tiles, place them as quads in the world, clean up again.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;
@@ -10,27 +10,27 @@ use imagery::{DecodedTile, ImageryConfig, ImagerySource, TileId, tiles};
 use std::collections::HashMap;
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
-/// Eine im Bild liegende Kachel.
+/// A tile placed in the imagery.
 #[derive(Component)]
 pub struct OverlayTile {
-    /// Welche Kachel hier liegt — für Fehlersuche und spätere Neuzuordnung.
+    /// Which tile lies here — for debugging and later re-assignment.
     #[allow(dead_code)]
     pub tile: TileId,
-    /// Ankerpunkt des lokalen Frames — für das Nachführen beim Origin-Rebase.
+    /// Anchor point of the local frame — for following up on an origin rebase.
     pub anchor: EcefPos,
 }
 
-/// Laufzeitzustand des Overlays.
+/// Runtime state of the overlay.
 #[derive(Resource)]
 pub struct Overlay {
     pub source: ImagerySource,
-    /// Welche Kachel hängt an welcher Entität.
+    /// Which tile belongs to which entity.
     entities: HashMap<TileId, Entity>,
-    /// Höhe, auf der das Bild liegt (ellipsoidisch) [m].
+    /// Height at which the imagery lies (ellipsoidal) [m].
     pub base_height: f64,
-    /// Zuletzt verwendete Zoomstufe.
+    /// Most recently used zoom level.
     pub zoom: u8,
-    /// Meldung für die Anzeige.
+    /// Message for the display.
     pub status: String,
 }
 
@@ -53,13 +53,13 @@ impl Overlay {
         self.entities.len()
     }
 
-    /// Konfiguration ändern — alle Kacheln werden neu aufgebaut.
+    /// Change the configuration — all tiles are rebuilt.
     pub fn apply(&mut self, commands: &mut Commands, config: ImageryConfig) {
         self.clear(commands);
         self.source.set_config(config);
     }
 
-    /// Alle Kachelflächen entfernen.
+    /// Remove all tile quads.
     pub fn clear(&mut self, commands: &mut Commands) {
         for (_, entity) in self.entities.drain() {
             commands.entity(entity).despawn();
@@ -67,7 +67,7 @@ impl Overlay {
     }
 }
 
-/// Ein Bildpunkt je Frame: Kacheln anfordern, fertige einhängen, ferne entfernen.
+/// One imagery step per frame: request tiles, attach finished ones, remove distant ones.
 #[allow(clippy::too_many_arguments)]
 pub fn update(
     mut commands: Commands,
@@ -85,12 +85,12 @@ pub fn update(
         return;
     }
 
-    // Sichtbarer Ausschnitt um den Blickpunkt. `from_ecef` liefert Bogenmaß, das
-    // Kachelraster rechnet in Grad.
+    // Visible extent around the view point. `from_ecef` returns radians, the
+    // tile grid works in degrees.
     let (lat, lon) = crate::focus_degrees(focus.position);
     let zoom = overlay.config().zoom_for(lat);
     if zoom != overlay.zoom {
-        // Zoomwechsel: die alten Kacheln passen nicht mehr.
+        // Zoom change: the old tiles no longer fit.
         overlay.clear(&mut commands);
         overlay.zoom = zoom;
     }
@@ -100,7 +100,7 @@ pub fn update(
     let max_tiles = overlay.config().max_tiles.max(1);
     let wanted = tiles::covering(bounds, zoom, max_tiles);
 
-    // Nicht mehr benötigte Kacheln abräumen.
+    // Clear away tiles that are no longer needed.
     let keep: std::collections::HashSet<TileId> = wanted.iter().copied().collect();
     let stale: Vec<TileId> = overlay
         .entities
@@ -114,14 +114,14 @@ pub fn update(
         }
     }
 
-    // Fehlende anfordern.
+    // Request the missing ones.
     for tile in &wanted {
         if !overlay.entities.contains_key(tile) {
             overlay.source.request(*tile);
         }
     }
 
-    // Fertige einhängen.
+    // Attach the finished ones.
     let ready = overlay.source.drain();
     if ready.is_empty() {
         return;
@@ -148,7 +148,7 @@ pub fn update(
     }
 }
 
-/// Nach einem Origin-Rebase die Kachelflächen neu ausrichten.
+/// Re-align the tile quads after an origin rebase.
 pub fn resync<F: bevy::ecs::query::QueryFilter>(
     origin: &RenderOrigin,
     query: &mut Query<(&OverlayTile, &mut Transform), F>,
@@ -161,14 +161,14 @@ pub fn resync<F: bevy::ecs::query::QueryFilter>(
     }
 }
 
-/// Geografischer Ausschnitt um einen Punkt `(west, süd, ost, nord)` in Grad.
+/// Geographic extent around a point `(west, south, east, north)` in degrees.
 fn bounds_around(lat: f64, lon: f64, radius: f64) -> (f64, f64, f64, f64) {
     let d_lat = radius / 111_320.0;
     let d_lon = radius / (111_320.0 * lat.to_radians().cos().abs().max(1e-6));
     (lon - d_lon, lat - d_lat, lon + d_lon, lat + d_lat)
 }
 
-/// Legt eine Kachel als texturierte Fläche in die Welt.
+/// Places a tile as a textured quad in the world.
 #[allow(clippy::too_many_arguments)]
 fn spawn_tile(
     commands: &mut Commands,
@@ -186,7 +186,7 @@ fn spawn_tile(
     let anchor = geo::to_ecef_deg(clat, clon, height);
     let frame = EnuFrame::at(anchor);
 
-    // Eckpunkte im lokalen Frame der Kachel, inklusive der manuellen Verschiebung.
+    // Corner points in the local frame of the tile, including the manual offset.
     let corner = |lat: f64, lon: f64| {
         let world = geo::to_ecef_deg(lat, lon, height);
         let local = frame.to_local(world) + DVec3::new(offset.0, offset.1, 0.0);
@@ -225,7 +225,7 @@ fn spawn_tile(
         base_color_texture: Some(texture),
         base_color: Color::srgba(1.0, 1.0, 1.0, opacity),
         alpha_mode: AlphaMode::Blend,
-        // Luftbilder sollen so aussehen wie geliefert, nicht beleuchtet werden.
+        // Aerial imagery should look as delivered, not be lit.
         unlit: true,
         ..default()
     });

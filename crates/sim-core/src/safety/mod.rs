@@ -1,8 +1,8 @@
-//! Zugsicherung: länderneutrale Abstraktion + Länderpakete (Plan Kap. 9).
+//! Train protection: country-neutral abstraction + country packages (plan ch. 9).
 //!
-//! Jedes Zugsicherungssystem ist eine Zustandsmaschine mit definierten Ein-/Ausgängen.
-//! Die Fahrzeugseite kennt nur [`TrainProtectionSystem`]; welche Systeme ein Fahrzeug
-//! trägt, steht in der Fahrzeugdatenbank.
+//! Every train protection system is a state machine with defined inputs/outputs.
+//! The vehicle side only knows [`TrainProtectionSystem`]; which systems a vehicle carries
+//! is stated in the vehicle database.
 
 pub mod de;
 
@@ -10,21 +10,21 @@ use crate::cab::CabInputs;
 use serde::{Deserialize, Serialize};
 use track_model::DeviceKind;
 
-/// Was die Zugsicherung dem Fahrzeug befiehlt.
+/// What the train protection commands the vehicle to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ProtectionAction {
     #[default]
     None,
-    /// Zwangsbremsung als Betriebsbremsung (z. B. LZB-Betriebsbremsung).
+    /// Forced braking as a service application (e.g. LZB service braking).
     ForcedServiceBrake,
-    /// Zwangsbremsung als Schnellbremsung (PZB, Sifa).
+    /// Forced braking as an emergency application (PZB, Sifa).
     EmergencyBrake,
-    /// Nur Traktionsabschaltung.
+    /// Traction cut-off only.
     TractionCutOff,
 }
 
 impl ProtectionAction {
-    /// Die schärfere von zwei Anforderungen.
+    /// The stricter of two requests.
     pub fn max(self, other: Self) -> Self {
         use ProtectionAction::*;
         let rank = |a: Self| match a {
@@ -41,7 +41,7 @@ impl ProtectionAction {
     }
 }
 
-/// Zustand eines Leuchtmelders/einer Anzeige im Führerstand.
+/// State of an indicator lamp / a display in the cab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LampState {
     #[default]
@@ -50,12 +50,12 @@ pub enum LampState {
     Blinking,
 }
 
-/// Eine Anzeige der Zugsicherung (Leuchtmelder oder Zahlenwert für MFA/EBuLa).
+/// A display of the train protection (indicator lamp or numeric value for MFA/EBuLa).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Indicator {
     pub name: &'static str,
     pub lamp: LampState,
-    /// Zahlenwert für Anzeigeinstrumente (v-Soll, v-Ziel, Zielentfernung).
+    /// Numeric value for display instruments (v-Soll, v-Ziel, distance to target).
     pub value: Option<f64>,
 }
 
@@ -85,22 +85,22 @@ impl Indicator {
     }
 }
 
-/// Ausgabe eines Zugsicherungssystems nach einem Schritt.
+/// Output of a train protection system after one step.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProtectionOutput {
     pub action: ProtectionAction,
-    /// Überwachungsgeschwindigkeit [km/h], falls das System eine vorgibt.
+    /// Supervision speed [km/h], if the system prescribes one.
     pub speed_limit: Option<f64>,
-    /// Zielgeschwindigkeit [km/h] (LZB/ETCS).
+    /// Target speed [km/h] (LZB/ETCS).
     pub target_speed: Option<f64>,
-    /// Zielentfernung [m] (LZB/ETCS).
+    /// Distance to target [m] (LZB/ETCS).
     pub target_distance: Option<f64>,
-    /// System verlangt eine Bedienung (für Sound: Hupe/Zwangsbremsung).
+    /// The system demands an operation (for sound: horn/forced braking).
     pub alert: bool,
 }
 
 impl ProtectionOutput {
-    /// Zwei Ausgaben zusammenfassen (mehrere Systeme an einem Fahrzeug).
+    /// Combine two outputs (several systems on one vehicle).
     pub fn merge(self, other: Self) -> Self {
         Self {
             action: self.action.max(other.action),
@@ -120,29 +120,30 @@ fn min_option(a: Option<f64>, b: Option<f64>) -> Option<f64> {
     }
 }
 
-/// Ein von einem antennentragenden Fahrzeug überfahrenes Streckengerät.
+/// A trackside device passed by a vehicle carrying an antenna.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TracksideEvent {
     pub device: DeviceKind,
-    /// Nutzdaten als RON-Text (siehe `TracksideDevice::payload`).
+    /// Payload as RON text (see `TracksideDevice::payload`).
     pub payload: String,
-    /// Wie weit hinter der Fahrzeugantenne das Gerät inzwischen liegt [m].
+    /// How far behind the vehicle antenna the device now lies [m].
     pub s_offset: f64,
-    /// Wirksamkeit — bei signalabhängigen Magneten entscheidet das Stellwerk
-    /// (1000 Hz nur bei Vr0/Vr2, 2000 Hz nur bei Hp0).
+    /// Activation — for signal-dependent magnets the interlocking decides
+    /// (1000 Hz only with Vr0/Vr2, 2000 Hz only with Hp0).
     pub active: bool,
 }
 
-/// Fahrzeugzustand, soweit die Zugsicherung ihn braucht.
+/// Vehicle state as far as the train protection needs it.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SafetyTrainState {
-    /// Geschwindigkeit [km/h], Betrag.
+    /// Speed [km/h], magnitude.
     pub v_kmh: f64,
-    /// Monoton wachsender Fahrweg [m] — Bezug für alle Wegüberwachungen.
+    /// Monotonically increasing distance travelled [m] — reference for all distance
+    /// supervisions.
     pub odometer: f64,
-    /// Zulässige Geschwindigkeit an der aktuellen Stelle [km/h].
+    /// Permitted speed at the current location [km/h].
     pub line_speed: f64,
-    /// Bremsung aktiv (für die Freigabelogik).
+    /// Braking active (for the release logic).
     pub braking: bool,
 }
 
@@ -152,7 +153,7 @@ impl SafetyTrainState {
     }
 }
 
-/// Länderneutrale Schnittstelle jedes Zugsicherungssystems.
+/// Country-neutral interface of every train protection system.
 pub trait TrainProtectionSystem {
     fn update(
         &mut self,
@@ -162,28 +163,29 @@ pub trait TrainProtectionSystem {
         events: &[TracksideEvent],
     ) -> ProtectionOutput;
 
-    /// Leuchtmelder/Anzeigen für den Führerstand.
+    /// Indicator lamps / displays for the cab.
     fn indicators(&self) -> Vec<Indicator>;
 
-    /// Störschalter.
+    /// Isolating switch.
     fn isolate(&mut self, isolated: bool);
 
     fn is_isolated(&self) -> bool;
 
-    /// Kurzname für Debug-Overlays.
+    /// Short name for debug overlays.
     fn name(&self) -> &'static str;
 }
 
-/// Zugsicherungsausrüstung eines Fahrzeugs.
+/// Train protection equipment of a vehicle.
 ///
-/// Länderpakete sind Compile-Zeit-Rust (Plan 9.1); deshalb ein Enum statt `Vec<Box<dyn …>>` —
-/// so bleiben Klonen und Serialisieren (Save/Load, Replays) ohne Zusatzcode möglich.
+/// Country packages are compile-time Rust (plan 9.1); hence an enum instead of
+/// `Vec<Box<dyn …>>` — that way cloning and serialising (save/load, replays) stay possible
+/// without extra code.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub enum SafetySystems {
-    /// Fahrzeug ohne Zugsicherung (Wagen).
+    /// Vehicle without train protection (coach).
     #[default]
     None,
-    /// Deutsches Paket: Sifa, PZB 90, LZB 80.
+    /// German package: Sifa, PZB 90, LZB 80.
     De(de::DeSafety),
 }
 

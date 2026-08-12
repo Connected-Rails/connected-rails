@@ -1,31 +1,31 @@
-//! Längsdynamik des Zugverbands (Plan Kap. 6).
+//! Longitudinal dynamics of the train consist (plan ch. 6).
 //!
-//! Jedes Fahrzeug ist ein Massenpunkt auf dem Gleis; Nachbarn sind über Feder-Dämpfer
-//! mit Spiel gekoppelt. Integration: semi-implizites Euler mit fester Schrittweite.
+//! Every vehicle is a point mass on the track; neighbours are coupled by spring-dampers
+//! with slack. Integration: semi-implicit Euler with a fixed step size.
 
 use crate::G;
 use crate::train::{RailCondition, Train, Vehicle};
 use track_model::{AdvanceError, PassedDevice, TrackNetwork};
 
-/// Ergebnis eines Physikschritts.
+/// Result of a physics step.
 #[derive(Debug, Default, Clone)]
 pub struct StepReport {
-    /// Überfahrene Streckengeräte, je Fahrzeugindex.
+    /// Trackside devices that were passed, per vehicle index.
     pub passed: Vec<(usize, PassedDevice)>,
-    /// Zug ist an einem nicht befahrbaren Knoten aufgelaufen.
+    /// The train has run up against a node that cannot be passed.
     pub blocked: Option<AdvanceError>,
-    /// Gerissene Kupplungen (Index in `Train::couplers`).
+    /// Broken couplers (index into `Train::couplers`).
     pub broken_couplers: Vec<usize>,
 }
 
-/// Kraftschlussbeiwert nach Curtius/Kniffler, mit Schienenzustand und Sanden.
+/// Adhesion coefficient after Curtius/Kniffler, with rail condition and sanding.
 pub fn adhesion_coefficient(v_kmh: f64, rail: RailCondition, sanding: bool) -> f64 {
     let base = 7.5 / (v_kmh.abs() + 44.0) + 0.161;
     let sand = if sanding { 1.25 } else { 1.0 };
     base * rail.factor() * sand
 }
 
-/// Bogenwiderstand nach Röckl [N] für Masse `m` [kg] und Krümmung `k` [1/m].
+/// Curve resistance after Röckl [N] for mass `m` [kg] and curvature `k` [1/m].
 pub fn curve_resistance(m: f64, k: f64) -> f64 {
     let radius = if k.abs() < 1e-9 {
         return 0.0;
@@ -40,10 +40,10 @@ pub fn curve_resistance(m: f64, k: f64) -> f64 {
     m * G / 1000.0 * specific
 }
 
-/// Ein Schritt der Längsdynamik.
+/// One step of the longitudinal dynamics.
 ///
-/// `dt` sollte klein genug für die Kupplungssteifigkeit sein (200 Hz sind für
-/// Schraubenkupplungen ausreichend); Aufrufer kann substepping betreiben.
+/// `dt` should be small enough for the coupler stiffness (200 Hz is sufficient for
+/// screw couplers); the caller may use substepping.
 pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
     let mut report = StepReport::default();
     let n = train.vehicles.len();
@@ -51,7 +51,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         return report;
     }
 
-    // 1. Kupplungskräfte aus Auslenkung und Relativgeschwindigkeit.
+    // 1. Coupler forces from deflection and relative speed.
     for i in 0..n - 1 {
         if train.couplers[i].broken {
             train.couplers[i].force = 0.0;
@@ -81,7 +81,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         train.couplers[i].force = force;
     }
 
-    // 2. Kräfte je Fahrzeug und Integration der Geschwindigkeit.
+    // 2. Forces per vehicle and integration of the speed.
     for i in 0..n {
         let coupler_front = if i > 0 {
             train.couplers[i - 1].force
@@ -105,7 +105,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         let grade = veh.mass() * G * pose.grade / 1000.0;
         let curve = curve_resistance(veh.mass(), pose.curvature);
 
-        // Widerstände wirken immer gegen die Bewegung, Bremse ebenso.
+        // Resistances always act against the motion, and so does the brake.
         let dir = if veh.v.abs() < 1e-4 {
             0.0
         } else {
@@ -116,7 +116,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         if dir != 0.0 {
             force -= dir * opposing;
         } else {
-            // Stillstand: Haftreibung/Bremse halten, solange die Restkraft kleiner ist.
+            // Standstill: static friction/brake hold as long as the residual force is smaller.
             if force.abs() <= opposing {
                 force = 0.0;
             } else {
@@ -126,7 +126,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
 
         let a = force / veh.inertial_mass();
         let v_new = veh.v + a * dt;
-        // Nulldurchgang durch Bremskraft nicht überschießen lassen.
+        // Do not let the brake force overshoot through zero.
         veh.v = if dir != 0.0 && v_new * dir < 0.0 && traction.abs() < opposing {
             0.0
         } else {
@@ -134,7 +134,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         };
     }
 
-    // 3. Positionen fortschreiben.
+    // 3. Advance the positions.
     for i in 0..n {
         let veh = &mut train.vehicles[i];
         let dx = veh.v * dt;
@@ -156,7 +156,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
     report
 }
 
-/// Zugkraft nach Kraftschlussgrenze; erzeugt Schleudern und regelt es ggf. ab.
+/// Tractive effort limited by adhesion; produces wheel slip and reduces it if necessary.
 fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
     let demand = veh.traction.force.max(0.0);
     if demand <= 0.0 {
@@ -165,11 +165,11 @@ fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
     }
     let limit = limit(veh, rail);
     if demand > limit && limit > 0.0 {
-        // Überschusskraft beschleunigt die Treibradsätze → Schlupf wächst.
+        // Excess force accelerates the driven wheelsets → slip grows.
         veh.slip += (demand - limit) / veh.inertial_mass() * dt;
-        let mut transmitted = limit * 0.9; // Gleitreibung < Haftreibung
+        let mut transmitted = limit * 0.9; // sliding friction < static friction
         if veh.spec.slip_control && veh.slip > 0.3 {
-            // Schleuderschutz nimmt Zugkraft zurück, bis der Schlupf abgebaut ist.
+            // Wheel slip protection reduces the tractive effort until the slip is gone.
             transmitted *= 0.6;
         }
         transmitted
@@ -179,13 +179,13 @@ fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
     }
 }
 
-/// Bremskraft nach Kraftschlussgrenze inkl. Blending mit der elektrischen Bremse.
+/// Brake force limited by adhesion, including blending with the dynamic brake.
 fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
-    // Blending: die E-Bremse ersetzt die Druckluftbremse am Triebfahrzeug, sie addiert
-    // sich nicht dazu (sonst würde das Tfz im Zugverband überbremst).
+    // Blending: the dynamic brake replaces the air brake on the powered vehicle, it does
+    // not add to it (otherwise the loco would be overbraked within the consist).
     let electric = (-veh.traction.force).max(0.0);
     let mut f = veh.brake.force.max(electric);
-    // Magnetschienenbremse wirkt schienengebunden, nicht über den Radkraftschluss.
+    // The magnetic track brake acts on the rail, not through the wheel adhesion.
     let adhesion_bound = adhesion_coefficient(veh.v * 3.6, rail, veh.sanding) * veh.mass() * G;
     let mg = if veh.brake.mg_applied {
         veh.spec.brake.mg_force
@@ -194,7 +194,7 @@ fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
     };
     let wheel = (f - mg).max(0.0);
     if wheel > adhesion_bound {
-        // Gleiten: der Gleitschutz löst die Bremse kurz an.
+        // Wheel slide: the wheel slide protection briefly releases the brake.
         veh.slip -= (wheel - adhesion_bound) / veh.inertial_mass() * dt;
         f = if veh.spec.slip_control {
             adhesion_bound * 0.85 + mg

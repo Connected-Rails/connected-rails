@@ -1,40 +1,39 @@
-//! Trassierung: aus einer verrauschten Punktfolge echte Entwurfselemente machen.
+//! Alignment: turning a noisy point sequence into real design elements.
 //!
-//! Die naive Variante (Krümmung glätten und je Abtastschritt ein Segment) ergibt eine
-//! befahrbare, aber erfundene Krümmungsfolge. Hier wird stattdessen rekonstruiert, was
-//! ein Trassierer entworfen hätte:
+//! The naive variant (smooth the curvature and emit one segment per sampling step) yields
+//! a drivable but invented curvature sequence. Instead, what an alignment engineer would
+//! have designed is reconstructed here:
 //!
-//! 1. **Abschnitte trennen**: gerade Bereiche und Bögen anhand der geglätteten Krümmung.
-//! 2. **Radius ausgleichen**: Kreisausgleich (Kåsa) über den ganzen Bogen — das Rauschen
-//!    der Stützpunkte mittelt sich mit √n heraus, während eine lokale Differenz daran
-//!    scheitert (Pfeilhöhe einer 50-m-Sehne bei R = 1000 m: 31 cm gegenüber Metern
-//!    Punktrauschen).
-//! 3. **Richtungsänderung erhalten**: die gemessene Gesamtdrehung je Bogen bleibt
-//!    erhalten, damit die Trasse nicht vom Original wegläuft.
-//! 4. **Übergangsbögen und Überhöhung rechnen**: was sich aus den Daten nicht messen
-//!    lässt, kommt aus dem Regelwerk — Überhöhung aus Radius und Streckengeschwindigkeit,
-//!    Rampenlänge daraus.
+//! 1. **Separate sections**: straight stretches and curves based on the smoothed
+//!    curvature.
+//! 2. **Fit the radius**: circle fit (Kåsa) over the whole curve — the noise of the
+//!    support points averages out with √n, while a local difference fails at this (versine
+//!    of a 50 m chord at R = 1000 m: 31 cm against metres of point noise).
+//! 3. **Preserve the change of direction**: the measured total turn per curve is kept, so
+//!    that the alignment does not drift away from the original.
+//! 4. **Compute transition curves and cant**: what cannot be measured from the data comes
+//!    from the rulebook — cant from radius and line speed, ramp length from that.
 //!
-//! Ergebnis ist eine Kette aus Gerade – Klothoide – Kreisbogen – Klothoide – Gerade,
-//! also genau die Darstellung, die `track-model` ohnehin führt.
+//! The result is a chain of straight – clothoid – circular arc – clothoid – straight,
+//! that is exactly the representation `track-model` keeps anyway.
 
 use super::fit::SamplePoint;
 use glam::DVec2;
 use track_model::Segment;
 
-/// Regelwerk für die Überhöhung.
+/// Rulebook for the cant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CantRules {
-    /// Höchste zulässige Überhöhung [mm].
+    /// Highest permitted cant [mm].
     pub max_cant: f64,
-    /// Zugelassener Überhöhungsfehlbetrag [mm] — so viel weniger als der Ausgleichswert
-    /// wird eingebaut, damit langsamere Züge die Kurve nicht „nach innen" fahren.
+    /// Permitted cant deficiency [mm] — that much less than the equilibrium value is
+    /// applied, so that slower trains do not ride the curve "inwards".
     pub deficiency: f64,
-    /// Rundung der eingebauten Überhöhung [mm].
+    /// Rounding of the applied cant [mm].
     pub round_to: f64,
-    /// Rampenneigung 1:(faktor·v) — bei 160 km/h und 100 mm also 1:1600, sprich 160 m.
+    /// Ramp gradient 1:(factor·v) — at 160 km/h and 100 mm that is 1:1600, i.e. 160 m.
     pub ramp_factor: f64,
-    /// Kürzeste Übergangsrampe [m].
+    /// Shortest transition ramp [m].
     pub min_ramp: f64,
 }
 
@@ -51,10 +50,10 @@ impl Default for CantRules {
 }
 
 impl CantRules {
-    /// Ausgleichsüberhöhung [mm]: `ü = 11,8 · v²/R`.
+    /// Equilibrium cant [mm]: `u = 11.8 · v²/R`.
     ///
-    /// Herleitung: `ü = G·v²/(g·R)` mit Radaufstandsbreite `G = 1500 mm`;
-    /// mit `v` in km/h wird der Vorfaktor `1500/(9,81·3,6²) = 11,8`.
+    /// Derivation: `u = G·v²/(g·R)` with wheel contact width `G = 1500 mm`;
+    /// with `v` in km/h the prefactor becomes `1500/(9.81·3.6²) = 11.8`.
     pub fn equilibrium(radius: f64, v_kmh: f64) -> f64 {
         if radius.abs() < 1.0 {
             return 0.0;
@@ -62,55 +61,56 @@ impl CantRules {
         11.8 * v_kmh * v_kmh / radius.abs()
     }
 
-    /// Tatsächlich einzubauende Überhöhung [mm].
+    /// Cant that is actually applied [mm].
     pub fn applied(&self, radius: f64, v_kmh: f64) -> f64 {
         let raw = (Self::equilibrium(radius, v_kmh) - self.deficiency).clamp(0.0, self.max_cant);
         (raw / self.round_to).round() * self.round_to
     }
 
-    /// Länge der Überhöhungsrampe [m] — zugleich die Mindestlänge des Übergangsbogens.
+    /// Length of the cant ramp [m] — at the same time the minimum length of the
+    /// transition curve.
     pub fn ramp_length(&self, cant_mm: f64, v_kmh: f64) -> f64 {
         (cant_mm / 1000.0 * self.ramp_factor * v_kmh).max(self.min_ramp)
     }
 
-    /// Auf die Einbaustufe runden.
+    /// Round to the installation step.
     pub fn round(&self, cant_mm: f64) -> f64 {
         (cant_mm.clamp(0.0, self.max_cant) / self.round_to).round() * self.round_to
     }
 }
 
-/// Einstellungen der Trassierung.
+/// Alignment settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlignmentOptions {
-    /// Abtastabstand der Stützpunkte [m].
+    /// Sampling distance of the support points [m].
     pub sample: f64,
-    /// Fenster der Richtungsschätzung (Punkte je Seite) — bei 20 m Abstand entsprechen
-    /// 5 Punkte einer Basislänge von 200 m, über die sich Punktrauschen herausmittelt.
+    /// Window of the heading estimate (points per side) — at 20 m spacing 5 points
+    /// correspond to a baseline of 200 m, over which point noise averages out.
     pub window: usize,
-    /// Basislänge der Krümmungsbildung (Punkte je Seite). Groß = rauschfest,
-    /// klein = scharfe Abschnittsgrenzen.
+    /// Baseline of the curvature computation (points per side). Large = noise-resistant,
+    /// small = sharp section boundaries.
     pub curvature_span: usize,
-    /// Glättungsfenster der Krümmung (Punkte je Seite).
+    /// Smoothing window of the curvature (points per side).
     pub smoothing: usize,
-    /// Ab diesem Radius gilt der Abschnitt als gerade [m].
+    /// From this radius on the section counts as straight [m].
     ///
-    /// Fahrdynamisch wäre schon ab ~8 km alles gerade — geometrisch nicht: ein
-    /// 15-km-Bogen läuft über zwei Kilometer um mehr als 100 m von der Geraden weg.
-    /// Deshalb wird großzügig als Bogen eingestuft; ein 30-km-Bogen bekommt ohnehin
-    /// keine Überhöhung.
+    /// In terms of running dynamics everything from ~8 km on would be straight —
+    /// geometrically not: a 15 km curve runs more than 100 m away from the straight over
+    /// two kilometres. Therefore curves are classified generously; a 30 km curve gets no
+    /// cant anyway.
     pub straight_radius: f64,
-    /// Kürzestes eigenständiges Element [m].
+    /// Shortest standalone element [m].
     ///
-    /// Wirkt zugleich als Rauschfilter: kürzere „Bögen" in verrauschten Quelldaten sind
-    /// fast immer Digitalisierungsfehler und werden dem Nachbarabschnitt zugeschlagen.
+    /// Acts as a noise filter at the same time: shorter "curves" in noisy source data are
+    /// almost always digitisation errors and are merged into the neighbouring section.
     pub min_element: f64,
-    /// Radien auf die Regelreihe runden.
+    /// Round radii to the standard series.
     pub snap_radii: bool,
-    /// Nur runden, wenn der Regelradius innerhalb dieser relativen Abweichung liegt.
-    /// Sonst bleibt der gemessene Wert stehen — ein aufgezwungener Regelradius, der
-    /// mehrere Prozent danebenliegt, verzieht die ganze Kurve.
+    /// Only round if the standard radius lies within this relative deviation. Otherwise
+    /// the measured value stays — a forced standard radius that is several percent off
+    /// distorts the whole curve.
     pub snap_tolerance: f64,
-    /// Regelradien, auf die gerundet wird [m].
+    /// Standard radii that are rounded to [m].
     pub preferred_radii: Vec<f64>,
     pub cant: CantRules,
 }
@@ -132,7 +132,7 @@ impl Default for AlignmentOptions {
     }
 }
 
-/// Übliche Entwurfsradien: fein gestuft im engen Bereich, gröber bei großen Radien.
+/// Common design radii: finely stepped in the tight range, coarser for large radii.
 fn preferred_radii() -> Vec<f64> {
     let mut radii = vec![150.0, 180.0, 190.0, 200.0, 225.0, 250.0, 275.0];
     let mut r = 300.0;
@@ -151,44 +151,44 @@ fn preferred_radii() -> Vec<f64> {
     radii
 }
 
-/// Art eines Entwurfselements.
+/// Kind of a design element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementKind {
     Straight,
-    /// Übergangsbogen (Klothoide).
+    /// Transition curve (clothoid).
     Transition,
     Arc,
 }
 
-/// Ein Entwurfselement — das, was im Trassierungsplan stünde.
+/// A design element — what would be written in the alignment plan.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Element {
     pub kind: ElementKind,
-    /// Beginn ab Streckenanfang [m].
+    /// Start measured from the beginning of the line [m].
     pub start_s: f64,
     pub length: f64,
-    /// Radius [m], positiv = Linksbogen.
+    /// Radius [m], positive = left-hand curve.
     pub radius: Option<f64>,
-    /// Überhöhung am Elementende [mm].
+    /// Cant at the end of the element [mm].
     pub cant: f64,
-    /// Zulässige Geschwindigkeit, mit der gerechnet wurde [km/h].
+    /// Permitted speed that was used in the computation [km/h].
     pub speed: f64,
 }
 
-/// Ergebnis der Trassierung.
+/// Result of the alignment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Alignment {
     pub segments: Vec<Segment>,
-    /// Entwurfselemente — Grundlage für Editor und Streckenband.
+    /// Design elements — the basis for the editor and the line diagram.
     pub elements: Vec<Element>,
-    /// Überhöhungsstufen `(s, mm)`.
+    /// Cant steps `(s, mm)`.
     pub cant: Vec<(f64, f64)>,
-    /// Neigungsstufen `(s, ‰)`.
+    /// Gradient steps `(s, ‰)`.
     pub grade: Vec<(f64, f64)>,
-    /// Geschwindigkeitsstufen `(s, km/h)`.
+    /// Speed steps `(s, km/h)`.
     pub speed: Vec<(f64, f64)>,
     pub start_heading: f64,
-    /// Größte Abweichung von der Punktfolge [m].
+    /// Largest deviation from the point sequence [m].
     pub max_deviation: f64,
 }
 
@@ -197,7 +197,7 @@ impl Alignment {
         self.segments.iter().map(|s| s.len).sum()
     }
 
-    /// Anzahl Bögen — Kennzahl für den Importbericht.
+    /// Number of curves — a metric for the import report.
     pub fn arcs(&self) -> usize {
         self.elements
             .iter()
@@ -206,7 +206,7 @@ impl Alignment {
     }
 }
 
-/// Ein zusammenhängender Abschnitt gleicher Art in der Punktfolge.
+/// A contiguous section of the same kind within the point sequence.
 #[derive(Debug, Clone, Copy)]
 struct Run {
     start: usize,
@@ -220,9 +220,9 @@ impl Run {
     }
 }
 
-/// Trassiert die Punktfolge.
+/// Aligns the point sequence.
 pub fn fit(points: &[SamplePoint], options: &AlignmentOptions) -> Alignment {
-    assert!(points.len() >= 3, "mindestens drei Stützpunkte nötig");
+    assert!(points.len() >= 3, "at least three support points required");
     let h = options.sample;
     let headings = super::fit::headings(points, options.window);
     let curvature = super::fit::curvature(
@@ -235,7 +235,7 @@ pub fn fit(points: &[SamplePoint], options: &AlignmentOptions) -> Alignment {
 
     let runs = segment(&curvature, options);
 
-    // Je Bogen: Radius ausgleichen und Drehwinkel messen.
+    // Per curve: fit the radius and measure the turn angle.
     let mut plan: Vec<PlannedRun> = Vec::new();
     for (index, run) in runs.iter().enumerate() {
         if !run.curved {
@@ -251,20 +251,20 @@ pub fn fit(points: &[SamplePoint], options: &AlignmentOptions) -> Alignment {
             continue;
         }
         let turn = measure_turn(&runs, index, &headings, &curvature, h);
-        // Radius aus Länge und Drehwinkel — immer bestimmbar und in sich stimmig.
+        // Radius from length and turn angle — always determinable and self-consistent.
         let from_turn = if turn.abs() > 1e-9 {
             run.len(h) / turn.abs()
         } else {
             options.straight_radius
         };
-        // Der Kreisausgleich ist genauer, solange er zum Abschnitt passt. Weicht die
-        // Bogenlänge R·Δθ um mehr als ein Viertel von der gemessenen Abschnittslänge ab,
-        // passen Radius und Drehwinkel nicht zusammen — dann würde die Strecke beim Bau
-        // um diesen Betrag kürzer oder länger. In dem Fall gilt der stimmige Wert.
-        // Ein Abschnitt besteht aus Bogen und zwei Übergangsbögen, seine Länge ist also
-        // größer als R·Δθ — aber nicht beliebig: liegt der Bogen außerhalb dieses
-        // Rahmens, passen Radius und Drehwinkel nicht zusammen (etwa bei stetig
-        // zunehmender Krümmung), und der in sich stimmige Wert gewinnt.
+        // The circle fit is more accurate as long as it matches the section. If the arc
+        // length R·Δθ deviates by more than a quarter from the measured section length,
+        // radius and turn angle do not fit together — the line would then be shorter or
+        // longer by that amount when built. In that case the consistent value applies.
+        // A section consists of a curve and two transition curves, so its length is
+        // larger than R·Δθ — but not arbitrarily: if the curve lies outside this range,
+        // radius and turn angle do not fit together (for instance with steadily
+        // increasing curvature), and the self-consistent value wins.
         let measured = match fit_radius(points, run) {
             Some(fitted)
                 if (0.4 * run.len(h)..1.25 * run.len(h)).contains(&(fitted * turn.abs())) =>
@@ -280,11 +280,11 @@ pub fn fit(points: &[SamplePoint], options: &AlignmentOptions) -> Alignment {
         };
         let speed = run_speed(points, run);
 
-        // Überhöhung und Übergangslänge kommen aus dem Regelwerk, nicht aus den Daten:
-        // die Länge eines Übergangsbogens lässt sich aus verrauschten Stützpunkten nicht
-        // zurückgewinnen (die Abschnittsgrenze ist um über hundert Meter unsicher), die
-        // Regelrampe zur eingebauten Überhöhung dagegen ist eindeutig bestimmt.
-        // Aus den Daten stammen Lage, Radius und Drehwinkel des Bogens.
+        // Cant and transition length come from the rulebook, not from the data: the
+        // length of a transition curve cannot be recovered from noisy support points (the
+        // section boundary is uncertain by more than a hundred metres), whereas the
+        // standard ramp for the applied cant is uniquely determined. Position, radius and
+        // turn angle of the curve come from the data.
         let cant = options.cant.applied(radius, speed);
         let ramp = options.cant.ramp_length(cant, speed).min(run.len(h) * 0.45);
         plan.push(PlannedRun {
@@ -301,28 +301,28 @@ pub fn fit(points: &[SamplePoint], options: &AlignmentOptions) -> Alignment {
     build(&plan, points, &headings, options)
 }
 
-/// Ein Abschnitt mit den bereits bestimmten Entwurfsgrößen.
+/// A section with the design values already determined.
 #[derive(Debug, Clone, Copy)]
 struct PlannedRun {
     run: Run,
-    /// Vorzeichenbehafteter Radius [m]; `None` = Gerade.
+    /// Signed radius [m]; `None` = straight.
     radius: Option<f64>,
-    /// Gemessene Richtungsänderung [rad].
+    /// Measured change of direction [rad].
     turn: f64,
-    /// Anfang und Ende des Bogenkerns als Bogenlänge ab Streckenanfang [m] —
-    /// dort erreicht die Krümmung mindestens die Hälfte der Bogenkrümmung.
+    /// Start and end of the curve core as arc length from the start of the line [m] —
+    /// there the curvature reaches at least half of the curve curvature.
     core: (f64, f64),
     cant: f64,
     ramp: f64,
     speed: f64,
 }
 
-/// Kernbereich eines Bogens: dort erreicht die Krümmung mindestens die Hälfte der
-/// Bogenkrümmung.
+/// Core range of a curve: there the curvature reaches at least half of the curve
+/// curvature.
 ///
-/// Seine Grenzen liegen — anders als die Abschnittsgrenzen — in der Mitte der jeweiligen
-/// Übergangsbögen und sind gegen die Verschmierung der Schätzung unempfindlich, weil diese
-/// symmetrisch wirkt. Sie sind damit der belastbarste Anhaltspunkt für die Lage des Bogens.
+/// Unlike the section boundaries, its boundaries lie in the middle of the respective
+/// transition curves and are insensitive to the smearing of the estimate, because that
+/// acts symmetrically. They are thus the most reliable clue to the position of the curve.
 fn arc_core(curvature: &[f64], run: &Run, k_arc: f64, step: f64) -> (f64, f64) {
     let threshold = k_arc.abs() * 0.5;
     let core: Vec<usize> = (run.start..=run.end.min(curvature.len() - 1))
@@ -334,12 +334,12 @@ fn arc_core(curvature: &[f64], run: &Run, k_arc: f64, step: f64) -> (f64, f64) {
     }
 }
 
-/// Richtungsänderung eines Bogens [rad].
+/// Change of direction of a curve [rad].
 ///
-/// Gemessen wird zwischen den **Mitten der benachbarten Geraden**, nicht an den
-/// Abschnittsgrenzen: dort steckt im Schätzfenster schon Krümmung, was den Winkel
-/// systematisch zu klein macht — und ein um ein Prozent zu kleiner Drehwinkel schiebt
-/// die Trasse hinter der Kurve um Meter zur Seite.
+/// Measured between the **midpoints of the neighbouring straights**, not at the section
+/// boundaries: there the estimation window already contains curvature, which makes the
+/// angle systematically too small — and a turn angle that is one percent too small pushes
+/// the alignment metres sideways behind the curve.
 fn measure_turn(runs: &[Run], index: usize, headings: &[f64], curvature: &[f64], step: f64) -> f64 {
     let mid = |run: &Run| (run.start + run.end) / 2;
     let previous = index
@@ -351,9 +351,9 @@ fn measure_turn(runs: &[Run], index: usize, headings: &[f64], curvature: &[f64],
     if let (Some(previous), Some(next)) = (previous, next) {
         return headings[mid(next)] - headings[mid(previous)];
     }
-    // Am Datenrand fehlt eine der beiden Geraden. Die Richtung am äußersten Stützpunkt
-    // taugt dort nicht — ihr Schätzfenster liegt nach innen verschoben und unterschätzt
-    // die Drehung. Stattdessen wird die Krümmung über den Abschnitt aufintegriert.
+    // At the edge of the data one of the two straights is missing. The heading at the
+    // outermost support point is no good there — its estimation window is shifted inwards
+    // and underestimates the turn. Instead the curvature is integrated over the section.
     let run = &runs[index];
     curvature[run.start..=run.end.min(curvature.len() - 1)]
         .iter()
@@ -361,12 +361,12 @@ fn measure_turn(runs: &[Run], index: usize, headings: &[f64], curvature: &[f64],
         * step
 }
 
-/// Punktfolge in gerade und gekrümmte Abschnitte zerlegen.
+/// Split the point sequence into straight and curved sections.
 ///
-/// Klassifiziert wird je Stützpunkt (Rechtsbogen / gerade / Linksbogen); anschließend
-/// werden zu kurze Läufe von ihren Nachbarn verschluckt. Ohne diesen Schritt zerfällt
-/// ein Bogen bei verrauschten Daten in Dutzende Schnipsel, und der Kreisausgleich
-/// bekommt zu wenige Punkte.
+/// Classification is done per support point (right-hand curve / straight / left-hand
+/// curve); afterwards runs that are too short are swallowed by their neighbours. Without
+/// this step a curve falls apart into dozens of shreds on noisy data, and the circle fit
+/// gets too few points.
 fn segment(curvature: &[f64], options: &AlignmentOptions) -> Vec<Run> {
     let threshold = 1.0 / options.straight_radius;
     let min_points = (options.min_element / options.sample).ceil().max(2.0) as usize;
@@ -381,7 +381,7 @@ fn segment(curvature: &[f64], options: &AlignmentOptions) -> Vec<Run> {
             }
         })
         .collect();
-    // Mehrere Durchgänge: nach dem Verschlucken können neue kurze Läufe entstehen.
+    // Several passes: after swallowing, new short runs can appear.
     for _ in 0..4 {
         if !despeckle(&mut class, min_points) {
             break;
@@ -408,8 +408,8 @@ fn segment(curvature: &[f64], options: &AlignmentOptions) -> Vec<Run> {
     runs
 }
 
-/// Läufe unterhalb der Mindestlänge dem längeren Nachbarn zuschlagen.
-/// Gibt zurück, ob etwas geändert wurde.
+/// Merge runs below the minimum length into the longer neighbour.
+/// Returns whether anything was changed.
 fn despeckle(class: &mut [i8], min_points: usize) -> bool {
     let n = class.len();
     let mut bounds: Vec<(usize, usize)> = Vec::new();
@@ -451,7 +451,7 @@ fn despeckle(class: &mut [i8], min_points: usize) -> bool {
     changed
 }
 
-/// Zulässige Geschwindigkeit eines Abschnitts (die kleinste darin).
+/// Permitted speed of a section (the smallest one within it).
 fn run_speed(points: &[SamplePoint], run: &Run) -> f64 {
     points[run.start..=run.end.min(points.len() - 1)]
         .iter()
@@ -459,10 +459,10 @@ fn run_speed(points: &[SamplePoint], run: &Run) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
-/// Kreisausgleich nach Kåsa über den Kern des Bogens.
+/// Circle fit after Kåsa over the core of the curve.
 ///
-/// Die äußeren 20 % bleiben außen vor — dort liegen die Übergangsbögen, deren Krümmung
-/// noch nicht dem Kreis entspricht.
+/// The outer 20 % are left out — that is where the transition curves lie, whose curvature
+/// does not yet match the circle.
 fn fit_radius(points: &[SamplePoint], run: &Run) -> Option<f64> {
     let count = run.end - run.start;
     if count < 4 {
@@ -474,7 +474,7 @@ fn fit_radius(points: &[SamplePoint], run: &Run) -> Option<f64> {
         return None;
     }
 
-    // Ausgleich von x² + y² + D·x + E·y + F = 0 im Schwerpunktsystem.
+    // Fit of x² + y² + D·x + E·y + F = 0 in the centroid system.
     let mean = slice.iter().fold(DVec2::ZERO, |a, p| a + p.pos) / slice.len() as f64;
     let (mut sxx, mut syy, mut sxy) = (0.0, 0.0, 0.0);
     let (mut sxz, mut syz) = (0.0, 0.0);
@@ -504,7 +504,7 @@ fn fit_radius(points: &[SamplePoint], run: &Run) -> Option<f64> {
     radius.is_finite().then_some(radius)
 }
 
-/// Nächstgelegener Regelradius.
+/// Nearest standard radius.
 fn snap(radius: f64, preferred: &[f64], tolerance: f64) -> f64 {
     preferred
         .iter()
@@ -514,7 +514,7 @@ fn snap(radius: f64, preferred: &[f64], tolerance: f64) -> f64 {
         .unwrap_or(radius)
 }
 
-/// Baut aus den geplanten Abschnitten die Segmentkette samt Überhöhungsband.
+/// Builds the segment chain including the cant band from the planned sections.
 fn build(
     plan: &[PlannedRun],
     points: &[SamplePoint],
@@ -527,10 +527,10 @@ fn build(
     let mut cant_steps: Vec<(f64, f64)> = vec![(0.0, 0.0)];
     let mut s = 0.0;
 
-    // Jeder Bogen wird um seine Mitte gelegt und behält seinen Drehwinkel
-    // (L_bogen = R·Δθ − L_rampe); die Geraden füllen die Lücken dazwischen. Die
-    // Bogenmitte ist die einzige Größe, die sich aus verrauschten Daten zuverlässig
-    // bestimmen lässt — Anfang und Ende eines Bogens nicht.
+    // Every curve is placed around its midpoint and keeps its turn angle
+    // (L_arc = R·Δθ − L_ramp); the straights fill the gaps in between. The curve midpoint
+    // is the only quantity that can be reliably determined from noisy data — the start
+    // and end of a curve cannot.
     let total = plan.last().map_or(0.0, |p| p.run.end as f64 * h);
     let mut lengths: Vec<f64> = vec![0.0; plan.len()];
     let mut cursor = 0.0;
@@ -542,10 +542,10 @@ fn build(
             (radius.abs() * planned.turn.abs() - planned.ramp).max(options.min_element * 0.25);
         let built = 2.0 * planned.ramp + arc;
 
-        // Verankert wird am Bogenkern, und zwar an der Seite, an der eine Gerade
-        // anschließt: dort ist die Lage am besten bestimmt (der Kernbeginn liegt in der
-        // Mitte des Übergangsbogens, also eine halbe Rampe hinter dessen Anfang).
-        // Endet der Bogen am Datenrand, wird die andere Seite verankert.
+        // The anchor is the curve core, on the side where a straight adjoins: there the
+        // position is determined best (the start of the core lies in the middle of the
+        // transition curve, i.e. half a ramp behind its beginning). If the curve ends at
+        // the edge of the data, the other side is anchored.
         let has_previous = i > 0 && plan[i - 1].radius.is_none();
         let has_next = i + 1 < plan.len() && plan[i + 1].radius.is_none();
         let start = match (has_previous, has_next) {
@@ -561,9 +561,9 @@ fn build(
         lengths[i] = built;
         cursor = start + built;
     }
-    // Der Rest hinter dem letzten Bogen gehört zur letzten Geraden. Gibt es keine
-    // (die Daten enden im Bogen), bleibt die Kette entsprechend kürzer — Länge zu
-    // erfinden wäre schlimmer als sie zu verlieren.
+    // The remainder behind the last curve belongs to the last straight. If there is none
+    // (the data ends inside the curve), the chain stays correspondingly shorter —
+    // inventing length would be worse than losing it.
     if let Some(last) = lengths.len().checked_sub(1)
         && plan[last].radius.is_none()
     {
@@ -574,8 +574,8 @@ fn build(
         let run_len = lengths[index].max(0.0);
         match planned.radius {
             None => {
-                // Die Geraden behalten ihre gemessene Länge; die Übergangsbögen liegen
-                // vollständig im jeweiligen Bogenabschnitt (siehe L_rampe oben).
+                // The straights keep their measured length; the transition curves lie
+                // entirely within the respective curve section (see L_ramp above).
                 let length = run_len.max(options.min_element * 0.25);
                 push_element(
                     &mut segments,
@@ -590,8 +590,8 @@ fn build(
             }
             Some(radius) => {
                 let k = 1.0 / radius;
-                // Abschnittslänge und Drehwinkel bleiben erhalten:
-                // L_abschnitt = 2·L_rampe + L_bogen und Δθ = (L_bogen + L_rampe)/R.
+                // Section length and turn angle are preserved:
+                // L_section = 2·L_ramp + L_arc and Δθ = (L_arc + L_ramp)/R.
                 let ramp = planned.ramp.min(run_len * 0.45);
                 let arc_len = (run_len - 2.0 * ramp).max(options.min_element * 0.25);
 
@@ -673,11 +673,11 @@ fn push_element(
     segments.push(segment);
 }
 
-/// Überhöhungsrampe als Stufen — `StepProfile` kennt keine Interpolation.
+/// Cant ramp as steps — `StepProfile` does not know interpolation.
 ///
-/// ponytail: 10-m-Stufen statt eines linearen Profils. Der Sprung je Stufe liegt bei
-/// wenigen Millimetern und ist im Wanken nicht spürbar; wenn `StepProfile` einmal
-/// interpolieren kann, entfällt das hier.
+/// ponytail: 10 m steps instead of a linear profile. The jump per step is a few
+/// millimetres and is not noticeable in the roll motion; once `StepProfile` can
+/// interpolate, this can go away.
 fn ramp_cant(steps: &mut Vec<(f64, f64)>, start: f64, length: f64, from: f64, to: f64) {
     if length <= 0.0 {
         return;
@@ -693,8 +693,8 @@ fn ramp_cant(steps: &mut Vec<(f64, f64)>, start: f64, length: f64, from: f64, to
 mod tests {
     use super::*;
 
-    /// Erzeugt eine Trasse aus Entwurfselementen und tastet sie ab —
-    /// das Gegenstück zu dem, was der Fitter rekonstruieren soll.
+    /// Builds a track from design elements and samples it —
+    /// the counterpart to what the fitter is supposed to reconstruct.
     fn design_track(radius: f64, transition: f64, arc: f64, noise: f64) -> Vec<SamplePoint> {
         let step = 20.0;
         let mut pts = Vec::new();
@@ -709,7 +709,7 @@ mod tests {
         };
 
         let plan: Vec<(f64, f64, f64)> = vec![
-            // (Länge, k_start, k_ende)
+            // (length, k_start, k_end)
             (600.0, 0.0, 0.0),
             (transition, 0.0, 1.0 / radius),
             (arc, 1.0 / radius, 1.0 / radius),
@@ -734,31 +734,31 @@ mod tests {
     }
 
     #[test]
-    fn ueberhoehung_folgt_der_formel() {
+    fn cant_follows_the_formula() {
         let rules = CantRules::default();
-        // 160 km/h in R = 2000 m: Ausgleichsüberhöhung 11,8·160²/2000 = 151 mm.
+        // 160 km/h at R = 2000 m: equilibrium cant 11.8·160²/2000 = 151 mm.
         let eq = CantRules::equilibrium(2000.0, 160.0);
         assert!((eq - 151.0).abs() < 1.0, "{eq}");
-        // Eingebaut wird sie abzüglich des zugelassenen Fehlbetrags, auf 5 mm gerundet.
+        // It is applied minus the permitted deficiency, rounded to 5 mm.
         assert_eq!(rules.applied(2000.0, 160.0), 90.0);
-        // Enge Kurven laufen in die Obergrenze.
+        // Tight curves run into the upper limit.
         assert_eq!(rules.applied(300.0, 100.0), rules.max_cant);
-        // Auf der Geraden keine Überhöhung.
+        // No cant on the straight.
         assert_eq!(rules.applied(50_000.0, 160.0), 0.0);
-        // Rampe: 90 mm bei 160 km/h → 1:1600, also 144 m.
+        // Ramp: 90 mm at 160 km/h → 1:1600, i.e. 144 m.
         assert!((rules.ramp_length(90.0, 160.0) - 144.0).abs() < 1.0);
     }
 
     #[test]
-    fn entwurfselemente_werden_zurueckgewonnen() {
-        // Regelkonforme Quelle: die Übergangslänge entspricht der Rampe, die zur
-        // Überhöhung dieses Bogens gehört (R = 1200 m bei 160 km/h → 160 mm → 256 m).
+    fn design_elements_are_recovered() {
+        // Source conforming to the rulebook: the transition length equals the ramp that
+        // belongs to the cant of this curve (R = 1200 m at 160 km/h → 160 mm → 256 m).
         let rules = CantRules::default();
         let transition = rules.ramp_length(rules.applied(1200.0, 160.0), 160.0);
         let points = design_track(1200.0, transition, 400.0, 0.0);
         let alignment = fit(&points, &AlignmentOptions::default());
 
-        // Erwartet: Gerade – Übergang – Bogen – Übergang – Gerade.
+        // Expected: straight – transition – curve – transition – straight.
         let kinds: Vec<ElementKind> = alignment.elements.iter().map(|e| e.kind).collect();
         assert_eq!(
             kinds,
@@ -774,82 +774,79 @@ mod tests {
         );
         assert_eq!(alignment.arcs(), 1);
 
-        // Radius auf den Regelwert getroffen.
+        // Radius hits the standard value.
         let arc = alignment
             .elements
             .iter()
             .find(|e| e.kind == ElementKind::Arc)
             .unwrap();
         assert_eq!(arc.radius.unwrap().abs(), 1200.0);
-        // Ein paar Meter Rest bleiben — dieselbe Größenordnung, in der auch die
-        // Quelldaten selbst liegen (OSM aus Luftbildern: ±2…5 m). Genauer zu werden
-        // hätte hier keinen Informationswert mehr.
+        // A few metres remain — the same order of magnitude as the source data itself
+        // (OSM from aerial imagery: ±2…5 m). Getting more accurate would have no
+        // information value here any more.
         assert!(
             alignment.max_deviation < 6.0,
-            "Rekonstruktionsfehler {:.1} m",
+            "reconstruction error {:.1} m",
             alignment.max_deviation
         );
 
-        // Die Elementlängen treffen den Entwurf.
+        // The element lengths match the design.
         let built_transition = alignment.elements[1].length;
         assert!(
             (built_transition - transition).abs() < 30.0,
-            "Übergangsbogen {built_transition:.0} m statt {transition:.0} m"
+            "transition curve {built_transition:.0} m instead of {transition:.0} m"
         );
     }
 
     #[test]
-    fn abweichende_uebergangsboegen_bleiben_im_rahmen() {
-        // Quelle mit einem kürzeren Übergangsbogen, als das Regelwerk zur Überhöhung
-        // vorsieht. Rekonstruiert wird trotzdem regelkonform — die Trasse weicht dadurch
-        // sichtbar, aber begrenzt ab. Aus verrauschten Punkten ist die tatsächliche
-        // Übergangslänge nicht rückgewinnbar; die Abschnittsgrenze ist um mehr als
-        // hundert Meter unsicher.
+    fn deviating_transition_curves_stay_within_bounds() {
+        // Source with a shorter transition curve than the rulebook prescribes for the
+        // cant. The reconstruction is conforming to the rulebook nevertheless — the
+        // alignment thereby deviates visibly, but in a bounded way. From noisy points the
+        // actual transition length cannot be recovered; the section boundary is uncertain
+        // by more than a hundred metres.
         let points = design_track(1200.0, 120.0, 400.0, 0.0);
         let alignment = fit(&points, &AlignmentOptions::default());
         assert_eq!(alignment.arcs(), 1);
         assert!(
             alignment.max_deviation < 12.0,
-            "Abweichung {:.1} m",
+            "deviation {:.1} m",
             alignment.max_deviation
         );
     }
 
     #[test]
-    fn radius_ueberlebt_verrauschte_punkte() {
-        // ±2 m Rauschen — die Größenordnung von OSM aus Luftbildern.
+    fn radius_survives_noisy_points() {
+        // ±2 m noise — the order of magnitude of OSM from aerial imagery.
         let points = design_track(800.0, 100.0, 500.0, 2.0);
         let alignment = fit(&points, &AlignmentOptions::default());
         let arc = alignment
             .elements
             .iter()
             .find(|e| e.kind == ElementKind::Arc)
-            .expect("Bogen erkannt");
+            .expect("curve detected");
         let radius = arc.radius.unwrap().abs();
         assert!(
             (radius - 800.0).abs() <= 100.0,
-            "Radius {radius} statt 800 m"
+            "radius {radius} instead of 800 m"
         );
     }
 
     #[test]
-    fn ueberhoehung_landet_im_band() {
+    fn cant_ends_up_in_the_band() {
         let points = design_track(1200.0, 120.0, 400.0, 0.0);
         let alignment = fit(&points, &AlignmentOptions::default());
 
         let rules = CantRules::default();
         let max_cant = alignment.cant.iter().map(|(_, c)| *c).fold(0.0, f64::max);
 
-        // Eingebaut wird der kleinere von zwei Werten: was das Regelwerk für Radius und
-        // Geschwindigkeit vorsieht, und was die vorhandene Rampe hergibt.
+        // The smaller of two values is applied: what the rulebook prescribes for radius
+        // and speed, and what the available ramp allows.
         assert!(
             max_cant <= rules.applied(1200.0, 160.0),
-            "über dem Regelwert: {max_cant}"
+            "above the standard value: {max_cant}"
         );
-        assert!(
-            max_cant > 40.0,
-            "Überhöhung sollte spürbar sein: {max_cant}"
-        );
+        assert!(max_cant > 40.0, "cant should be noticeable: {max_cant}");
         let ramp = alignment
             .elements
             .iter()
@@ -858,14 +855,14 @@ mod tests {
             .length;
         assert!(
             ramp >= rules.ramp_length(max_cant, 160.0) - 1.0,
-            "Rampe {ramp:.0} m zu kurz für {max_cant} mm"
+            "ramp {ramp:.0} m too short for {max_cant} mm"
         );
 
-        // Anfang und Ende liegen überhöhungsfrei.
+        // Start and end are free of cant.
         assert_eq!(alignment.cant[0], (0.0, 0.0));
         assert_eq!(alignment.cant.last().unwrap().1, 0.0);
 
-        // Die Rampe steigt monoton bis zum Bogen und fällt danach wieder.
+        // The ramp rises monotonically up to the curve and falls again afterwards.
         let peak = alignment
             .cant
             .iter()
@@ -873,12 +870,12 @@ mod tests {
             .unwrap();
         assert!(
             alignment.cant[..=peak].windows(2).all(|w| w[1].1 >= w[0].1),
-            "Rampe steigt nicht monoton"
+            "ramp does not rise monotonically"
         );
     }
 
     #[test]
-    fn gerade_bleibt_ein_einziges_element() {
+    fn straight_stays_a_single_element() {
         let points: Vec<SamplePoint> = (0..60)
             .map(|i| SamplePoint {
                 pos: DVec2::new(i as f64 * 20.0, 0.0),
@@ -893,8 +890,8 @@ mod tests {
     }
 
     #[test]
-    fn gegenboegen_werden_getrennt() {
-        // S-Kurve: erst links, dann rechts.
+    fn reverse_curves_are_separated() {
+        // S-curve: first left, then right.
         let step = 20.0;
         let mut pos = DVec2::ZERO;
         let mut heading = 0.0f64;
@@ -924,12 +921,12 @@ mod tests {
             .collect();
         assert!(
             radii[0].signum() != radii[1].signum(),
-            "Gegenbögen müssen entgegengesetzt sein: {radii:?}"
+            "reverse curves must be in opposite directions: {radii:?}"
         );
     }
 
     #[test]
-    fn ohne_rundung_bleibt_der_gemessene_radius() {
+    fn without_snapping_the_measured_radius_remains() {
         let points = design_track(1150.0, 120.0, 400.0, 0.0);
         let options = AlignmentOptions {
             snap_radii: false,
@@ -943,6 +940,6 @@ mod tests {
             .unwrap();
         let radius = arc.radius.unwrap().abs();
         assert!((radius - 1150.0).abs() < 60.0, "{radius}");
-        assert_ne!(radius, 1200.0, "ohne Rundung kein Regelwert");
+        assert_ne!(radius, 1200.0, "no standard value without snapping");
     }
 }

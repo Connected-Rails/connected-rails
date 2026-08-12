@@ -1,16 +1,16 @@
-//! Weltkoordinaten für große Strecken (Kap. 4 des Plans).
+//! World coordinates for long lines (chapter 4 of the plan).
 //!
-//! Intern rechnet alles in **ECEF (f64)** auf dem GRS80/ETRS89-Ellipsoid: ein globales,
-//! kartesisches System ohne Projektionszonen und ohne Nähte. Gerendert wird relativ zu einem
-//! [`RenderOrigin`] (Floating Origin) in f32 — der einzige Ort, an dem `as f32` erlaubt ist.
+//! Internally everything is computed in **ECEF (f64)** on the GRS80/ETRS89 ellipsoid: a global,
+//! cartesian system without projection zones and without seams. Rendering happens relative to a
+//! [`RenderOrigin`] (floating origin) in f32 — the only place where `as f32` is allowed.
 
 use glam::{DQuat, DVec3, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 pub mod geo;
 
-/// Position im ECEF-Frame (Meter, f64). Newtype, damit f32-Pfade nicht versehentlich
-/// Weltkoordinaten aufnehmen (siehe Risiko-Tabelle Kap. 19).
+/// Position in the ECEF frame (metres, f64). Newtype so that f32 paths cannot accidentally
+/// take world coordinates (see risk table in chapter 19).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EcefPos(pub DVec3);
 
@@ -19,7 +19,7 @@ impl EcefPos {
         Self(DVec3::new(x, y, z))
     }
 
-    /// Abstand zweier Weltpunkte (Sehne, nicht Bogenlänge).
+    /// Distance between two world points (chord, not arc length).
     pub fn distance(self, other: EcefPos) -> f64 {
         self.0.distance(other.0)
     }
@@ -31,9 +31,9 @@ impl From<DVec3> for EcefPos {
     }
 }
 
-/// Lokales ENU-Frame (East/North/Up) an einem Punkt der Erdoberfläche.
+/// Local ENU frame (east/north/up) at a point on the earth's surface.
 ///
-/// Konvention Richtung Renderer (Bevy, Y = oben, -Z = vorn):
+/// Convention towards the renderer (Bevy, Y = up, -Z = forward):
 /// `x = East`, `y = Up`, `z = -North`.
 #[derive(Debug, Clone, Copy)]
 pub struct EnuFrame {
@@ -44,7 +44,7 @@ pub struct EnuFrame {
 }
 
 impl EnuFrame {
-    /// ENU-Basis am gegebenen ECEF-Punkt (aus dessen geodätischer Breite/Länge).
+    /// ENU basis at the given ECEF point (from its geodetic latitude/longitude).
     pub fn at(origin: EcefPos) -> Self {
         let (lat, lon, _h) = geo::from_ecef(origin);
         let (sla, cla) = lat.sin_cos();
@@ -57,56 +57,56 @@ impl EnuFrame {
         }
     }
 
-    /// ECEF-Punkt → lokale ENU-Koordinaten (f64, Meter).
+    /// ECEF point → local ENU coordinates (f64, metres).
     pub fn to_local(&self, p: EcefPos) -> DVec3 {
         let d = p.0 - self.origin;
         DVec3::new(d.dot(self.east), d.dot(self.north), d.dot(self.up))
     }
 
-    /// Lokale ENU-Koordinaten → ECEF.
+    /// Local ENU coordinates → ECEF.
     pub fn to_ecef(&self, local: DVec3) -> EcefPos {
         EcefPos(self.origin + self.east * local.x + self.north * local.y + self.up * local.z)
     }
 
-    /// Wie [`EnuFrame::to_ecef`], aber mit Erdkrümmungskorrektur der Tangentialebene.
+    /// Like [`EnuFrame::to_ecef`], but with earth curvature correction of the tangent plane.
     ///
-    /// Ohne Korrektur „steigt" die ENU-Ebene mit `d²/(2R)` von der Erdoberfläche weg
-    /// (bei 1 km: 8 cm, bei 10 km: 7,8 m). Gleisgeometrie wird eben geplant und mit dieser
-    /// Korrektur auf die Kugel gelegt — so bleiben lange Kanten in einem Frame nutzbar.
+    /// Without the correction the ENU plane "rises" away from the earth's surface by `d²/(2R)`
+    /// (at 1 km: 8 cm, at 10 km: 7.8 m). Track geometry is planned flat and mapped onto the
+    /// sphere with this correction — that keeps long edges usable within a single frame.
     pub fn to_ecef_curved(&self, local: DVec3) -> EcefPos {
         let r = self.origin.length().max(1.0);
         let drop = (local.x * local.x + local.y * local.y) / (2.0 * r);
         self.to_ecef(DVec3::new(local.x, local.y, local.z - drop))
     }
 
-    /// ECEF-Richtungsvektor → lokale ENU-Richtung (ohne Translation).
+    /// ECEF direction vector → local ENU direction (without translation).
     pub fn dir_to_local(&self, d: DVec3) -> DVec3 {
         DVec3::new(d.dot(self.east), d.dot(self.north), d.dot(self.up))
     }
 
-    /// Lokale ENU-Richtung → ECEF-Richtung.
+    /// Local ENU direction → ECEF direction.
     pub fn dir_to_ecef(&self, local: DVec3) -> DVec3 {
         self.east * local.x + self.north * local.y + self.up * local.z
     }
 
-    /// Rotation ECEF → ENU als Quaternion (f64).
+    /// Rotation ECEF → ENU as a quaternion (f64).
     pub fn rotation(&self) -> DQuat {
         DQuat::from_mat3(&glam::DMat3::from_cols(self.east, self.north, self.up).transpose())
     }
 }
 
-/// Bezugspunkt des Renderings. Alle `Transform`s sind relativ dazu.
+/// Reference point of the rendering. All `Transform`s are relative to it.
 ///
-/// Springt neu, sobald die Kamera weiter als [`RenderOrigin::REBASE_DISTANCE`] entfernt ist.
-/// Beim Sprung wird das ENU-Frame neu bestimmt — dadurch stimmt die Erdkrümmung automatisch,
-/// ohne sie je explizit zu modellieren.
+/// It jumps as soon as the camera is farther away than [`RenderOrigin::REBASE_DISTANCE`].
+/// On a jump the ENU frame is recomputed — this way the earth curvature is correct
+/// automatically, without ever modelling it explicitly.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderOrigin {
     frame: EnuFrame,
 }
 
 impl RenderOrigin {
-    /// Ab dieser Kameradistanz wird der Origin nachgeführt.
+    /// From this camera distance on, the origin is moved along.
     pub const REBASE_DISTANCE: f64 = 4_000.0;
 
     pub fn new(origin: EcefPos) -> Self {
@@ -123,9 +123,9 @@ impl RenderOrigin {
         EcefPos(self.frame.origin)
     }
 
-    /// Setzt den Origin auf die Kameraposition, falls sie zu weit weg ist.
-    /// Gibt `true` zurück, wenn ein Rebase stattgefunden hat (dann müssen alle
-    /// gerenderten Posen neu berechnet werden).
+    /// Sets the origin to the camera position if it is too far away.
+    /// Returns `true` if a rebase happened (in that case all rendered poses
+    /// have to be recomputed).
     pub fn rebase_if_needed(&mut self, camera: EcefPos) -> bool {
         if self.position().distance(camera) <= Self::REBASE_DISTANCE {
             return false;
@@ -134,28 +134,28 @@ impl RenderOrigin {
         true
     }
 
-    /// Weltposition → Renderposition. **Der einzige erlaubte f64→f32-Übergang.**
+    /// World position → render position. **The only allowed f64→f32 transition.**
     pub fn to_render(&self, p: EcefPos) -> Vec3 {
         let l = self.frame.to_local(p);
         Vec3::new(l.x as f32, l.z as f32, -l.y as f32)
     }
 
-    /// Renderposition → Weltposition (für Picking/Editor).
+    /// Render position → world position (for picking/editor).
     pub fn from_render(&self, v: Vec3) -> EcefPos {
         self.frame
             .to_ecef(DVec3::new(v.x as f64, -v.z as f64, v.y as f64))
     }
 
-    /// Weltrichtung (ECEF) → Renderrichtung (normiert bleibt normiert).
+    /// World direction (ECEF) → render direction (normalised stays normalised).
     pub fn dir_to_render(&self, d: DVec3) -> Vec3 {
         let l = self.frame.dir_to_local(d);
         Vec3::new(l.x as f32, l.z as f32, -l.y as f32)
     }
 
-    /// Transform eines Objekts, dessen Geometrie im ENU-Frame `frame` vorliegt.
+    /// Transform of an object whose geometry is given in the ENU frame `frame`.
     ///
-    /// Damit müssen beim Origin-Rebase nur die Transforms neu gesetzt werden, nicht die
-    /// Meshes: Gleisgeometrie wird einmal im Frame ihrer Kante gebaut und bleibt gültig.
+    /// This way an origin rebase only requires resetting the transforms, not the
+    /// meshes: track geometry is built once in the frame of its edge and stays valid.
     pub fn frame_transform(&self, frame: &EnuFrame) -> (Vec3, Quat) {
         let translation = self.to_render(EcefPos(frame.origin));
         let x = self.dir_to_render(frame.east);
@@ -165,8 +165,9 @@ impl RenderOrigin {
         (translation, rotation)
     }
 
-    /// Orientierung aus Vorwärts- und Aufwärtsrichtung (beide ECEF) für den Renderer.
-    /// `forward` zeigt in Fahrtrichtung, das Ergebnis folgt Bevys Konvention (-Z = vorn).
+    /// Orientation from forward and up direction (both ECEF) for the renderer.
+    /// `forward` points in the direction of travel, the result follows Bevy's
+    /// convention (-Z = forward).
     pub fn look_rotation(&self, forward: DVec3, up: DVec3) -> Quat {
         let f = self.dir_to_render(forward).normalize_or_zero();
         let u = self.dir_to_render(up).normalize_or_zero();
@@ -214,27 +215,27 @@ mod tests {
         assert!(f.east.dot(f.north).abs() < 1e-12);
         assert!(f.east.dot(f.up).abs() < 1e-12);
         assert!(f.north.dot(f.up).abs() < 1e-12);
-        // Up zeigt vom Erdmittelpunkt weg.
+        // Up points away from the centre of the earth.
         assert!(f.up.dot(f.origin.normalize()) > 0.999);
-        // Nord zeigt auf der Nordhalbkugel Richtung Pol (+Z).
+        // In the northern hemisphere north points towards the pole (+Z).
         assert!(f.north.z > 0.0);
     }
 
     #[test]
     fn berlin_hannover_distance_matches_reality() {
-        // Luftlinie ~ 249 km.
+        // Straight-line distance ~ 249 km.
         let d = deg(BERLIN).distance(deg(HANNOVER));
         assert!((d - 249_000.0).abs() < 3_000.0, "d = {d}");
     }
 
-    /// Abnahmetest M0: 300 km Distanz, kein Präzisionsverlust, kein Sprung beim Rebase.
+    /// Acceptance test M0: 300 km distance, no loss of precision, no jump on rebase.
     #[test]
     fn no_jitter_over_300km_flight_with_rebasing() {
         let start = deg(BERLIN);
         let frame = EnuFrame::at(start);
-        // Zielpunkt 300 km östlich auf gleicher Höhe.
+        // Target point 300 km to the east at the same height.
         let target = frame.to_ecef(DVec3::new(300_000.0, 0.0, 0.0));
-        // Ein ortsfester Prüfpfahl 10 m neben dem Ziel.
+        // A stationary reference post 10 m next to the target.
         let post = frame.to_ecef(DVec3::new(300_010.0, 0.0, 0.0));
 
         let mut origin = RenderOrigin::new(start);
@@ -247,37 +248,34 @@ mod tests {
             if origin.rebase_if_needed(cam) {
                 rebases += 1;
             }
-            // Relativvektor Kamera→Pfahl muss stetig und exakt bleiben, egal welcher Origin.
-            // Der Abstand zum fernen Prüfpfahl schrumpft gleichmäßig um die Schrittweite.
-            // Ein Origin-Rebase (inkl. neuer ENU-Rotation) darf daran nichts ändern.
+            // The relative vector camera→post must stay continuous and exact, whichever
+            // origin is active. The distance to the far reference post shrinks evenly by
+            // the step size. An origin rebase (incl. new ENU rotation) must not change that.
             let r = (origin.to_render(post) - origin.to_render(cam)).length();
             if let Some(prev) = last_render {
                 let delta = prev - r;
-                // Toleranz 0,5 m: der ferne Pfahl selbst liegt bei ~300 km in f32 und ist
-                // dort auf ~3 cm quantisiert — für Fernsicht irrelevant, im Nahfeld unten
-                // wird auf 1 mm geprüft. Ein Rebase-Sprung wäre hier dreistellig.
-                assert!(
-                    (delta - 100.0).abs() < 0.5,
-                    "Sprung bei i={i}: Δ = {delta} m"
-                );
+                // Tolerance 0.5 m: the far post itself sits at ~300 km in f32 and is
+                // quantised to ~3 cm there — irrelevant for distant view, the near field
+                // below is checked to 1 mm. A rebase jump would be three digits here.
+                assert!((delta - 100.0).abs() < 0.5, "jump at i={i}: Δ = {delta} m");
             }
             last_render = Some(r);
 
-            // Nahfeld: ein Pfahl 10 m neben der Kamera bleibt millimetergenau.
+            // Near field: a post 10 m next to the camera stays millimetre-accurate.
             let near = EcefPos(cam.0 + EnuFrame::at(cam).east * 10.0);
             let dn = (origin.to_render(near) - origin.to_render(cam)).length();
-            assert!((dn - 10.0).abs() < 1e-3, "Nahfeld-Jitter bei i={i}: {dn}");
+            assert!((dn - 10.0).abs() < 1e-3, "near-field jitter at i={i}: {dn}");
 
-            // Renderkoordinaten bleiben klein → f32 behält Millimeterauflösung.
+            // Render coordinates stay small → f32 keeps millimetre resolution.
             let c = origin.to_render(cam);
             assert!(
                 c.length() <= RenderOrigin::REBASE_DISTANCE as f32 + 200.0,
-                "Origin zu weit weg: {c:?}"
+                "origin too far away: {c:?}"
             );
         }
-        assert!(rebases > 50, "Rebase hat nicht gegriffen ({rebases})");
+        assert!(rebases > 50, "rebase did not kick in ({rebases})");
 
-        // Am Ziel: Abstand zum Pfahl exakt 10 m, in f32-Renderkoordinaten.
+        // At the target: distance to the post exactly 10 m, in f32 render coordinates.
         let d = (origin.to_render(post) - origin.to_render(target)).length();
         assert!((d - 10.0).abs() < 1e-3, "d = {d}");
     }

@@ -1,8 +1,8 @@
-//! Kommandozeilenwerkzeug: OSM (Overpass-JSON) + DGM → Streckenquelldatei (RON).
+//! Command line tool: OSM (Overpass JSON) + DGM → line source file (RON).
 //!
 //! ```text
-//! import-line strecke.json [--dgm dgm.xyz --epsg 25832] [--name "Musterbahn"]
-//!                          [--sample 20] [--smoothing 3] [--out strecke.ron]
+//! import-line line.json [--dgm dgm.xyz --epsg 25832] [--name "Musterbahn"]
+//!                       [--sample 20] [--smoothing 3] [--out line.ron]
 //! ```
 
 use content::import::dgm::TerrainSource;
@@ -13,8 +13,8 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "--help" {
         eprintln!(
-            "Aufruf: import-line <overpass.json> [--dgm <datei.xyz> --epsg <25832>] \
-             [--name <Name>] [--sample <m>] [--smoothing <n>] [--no-snap]              [--max-cant <mm>] [--out <datei.ron>]"
+            "Usage: import-line <overpass.json> [--dgm <file.xyz> --epsg <25832>] \
+             [--name <name>] [--sample <m>] [--smoothing <n>] [--no-snap]              [--max-cant <mm>] [--out <file.ron>]"
         );
         return ExitCode::from(2);
     }
@@ -28,17 +28,17 @@ fn main() -> ExitCode {
 
     let osm_path = &args[0];
     let Ok(osm_json) = std::fs::read_to_string(osm_path) else {
-        eprintln!("Fehler: {osm_path} nicht lesbar");
+        eprintln!("Error: {osm_path} is not readable");
         return ExitCode::FAILURE;
     };
 
     let epsg: u32 = flag("--epsg").and_then(|v| v.parse().ok()).unwrap_or(25832);
     let Some(zone) = world_coords::geo::utm_zone_from_epsg(epsg) else {
-        eprintln!("Fehler: EPSG:{epsg} ist keine unterstützte UTM-Zone (25831…25835)");
+        eprintln!("Error: EPSG:{epsg} is not a supported UTM zone (25831…25835)");
         return ExitCode::FAILURE;
     };
 
-    // --dgm nimmt eine Datei oder ein ganzes Verzeichnis voller Kacheln.
+    // --dgm takes a single file or a whole directory full of tiles.
     let mut grid = match flag("--dgm") {
         Some(path) => {
             let p = std::path::Path::new(&path);
@@ -55,11 +55,11 @@ fn main() -> ExitCode {
             };
             match source {
                 Ok(s) => {
-                    eprintln!("DGM: {} Kachel(n) aus {path}", s.tile_count());
+                    eprintln!("DGM: {} tile(s) from {path}", s.tile_count());
                     Some(s)
                 }
                 Err(e) => {
-                    eprintln!("Fehler im DGM: {e}");
+                    eprintln!("Error in the DGM: {e}");
                     return ExitCode::FAILURE;
                 }
             }
@@ -90,13 +90,13 @@ fn main() -> ExitCode {
     let (line, report) = match import_line(&osm_json, grid.as_mut(), &options) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("Import fehlgeschlagen: {e}");
+            eprintln!("Import failed: {e}");
             return ExitCode::FAILURE;
         }
     };
 
     eprintln!(
-        "{}: {:.0} m, {} Kanten, {} Elemente ({} Bögen), Höhen {:.0} %",
+        "{}: {:.0} m, {} edges, {} elements ({} curves), heights {:.0} %",
         line.name,
         report.length,
         report.edges,
@@ -105,7 +105,7 @@ fn main() -> ExitCode {
         report.height_coverage * 100.0
     );
     eprintln!(
-        "  kleinster Radius {}, größte Überhöhung {:.0} mm, Abweichung zur OSM-Linie {:.1} m",
+        "  smallest radius {}, largest cant {:.0} mm, deviation from the OSM line {:.1} m",
         report
             .min_radius
             .map(|r| format!("{r:.0} m"))
@@ -114,17 +114,17 @@ fn main() -> ExitCode {
         report.max_deviation
     );
     for w in &report.warnings {
-        eprintln!("Hinweis: {w}");
+        eprintln!("Note: {w}");
     }
 
     let ron = line.to_ron();
     match flag("--out") {
         Some(path) => {
             if std::fs::write(&path, ron).is_err() {
-                eprintln!("Fehler: {path} nicht schreibbar");
+                eprintln!("Error: {path} is not writable");
                 return ExitCode::FAILURE;
             }
-            eprintln!("geschrieben: {path}");
+            eprintln!("written: {path}");
         }
         None => println!("{ron}"),
     }

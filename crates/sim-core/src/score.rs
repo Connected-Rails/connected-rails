@@ -1,27 +1,27 @@
-//! Bewertung einer Fahrt (Plan Kap. 11): Fahrplantreue, Halteplatz-Genauigkeit,
-//! verbotene Zwangsbremsungen, Geschwindigkeitsüberschreitungen, Energieverbrauch.
+//! Scoring of a run (plan ch. 11): timetable adherence, stopping accuracy,
+//! forbidden forced brake applications, overspeed, energy consumption.
 
 use crate::Sim;
 use crate::safety::ProtectionAction;
 use crate::timetable::Timetable;
 use serde::{Deserialize, Serialize};
 
-/// Gewichtung der Bewertungskriterien.
+/// Weighting of the scoring criteria.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ScoringRules {
-    /// Ausgangspunktzahl.
+    /// Initial number of points.
     pub base: i32,
-    /// Abzug je Meter Halteplatzabweichung über der Toleranz.
+    /// Deduction per metre of stopping point deviation beyond the tolerance.
     pub per_meter_off: f64,
-    /// Toleranz des Halteplatzes [m].
+    /// Tolerance of the stopping point [m].
     pub stop_tolerance: f64,
-    /// Abzug je Minute Verspätung (und halber Satz für Verfrühung).
+    /// Deduction per minute late (and half that rate for being early).
     pub per_minute_late: f64,
-    /// Abzug je Zwangsbremsung.
+    /// Deduction per forced brake application.
     pub per_forced_brake: f64,
-    /// Abzug je Sekunde Geschwindigkeitsüberschreitung.
+    /// Deduction per second of overspeed.
     pub per_overspeed_second: f64,
-    /// Abzug je Kilowattstunde Fahrenergie.
+    /// Deduction per kilowatt hour of traction energy.
     pub per_kwh: f64,
 }
 
@@ -39,20 +39,20 @@ impl Default for ScoringRules {
     }
 }
 
-/// Ergebnis eines Fahrplanhalts.
+/// Result of a scheduled stop.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StopReport {
     pub name: String,
-    /// Abweichung vom Haltepunkt [m], positiv = überfahren.
+    /// Deviation from the stopping point [m], positive = overshot.
     pub position_error: f64,
-    /// Abweichung von der Ankunftszeit [s], positiv = verspätet.
+    /// Deviation from the arrival time [s], positive = late.
     pub delay: f64,
 }
 
-/// Beobachtet die Fahrt und sammelt die Bewertungsgrößen.
+/// Observes the run and collects the scoring quantities.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoreKeeper {
-    /// Bewerteter Zug.
+    /// The train being scored.
     pub train: usize,
     pub timetable: Timetable,
     pub rules: ScoringRules,
@@ -60,9 +60,9 @@ pub struct ScoreKeeper {
     pub stops: Vec<StopReport>,
     pub forced_brakes: u32,
     pub overspeed_seconds: f64,
-    /// Höchste gemessene Überschreitung [km/h].
+    /// Highest measured overspeed [km/h].
     pub max_overspeed: f64,
-    /// Aufgenommene Fahrenergie am Rad [kWh].
+    /// Traction energy taken at the wheel [kWh].
     pub energy_kwh: f64,
     pub distance_m: f64,
     prev_action: ProtectionAction,
@@ -97,7 +97,7 @@ impl ScoreKeeper {
         }
     }
 
-    /// Wertet einen Simulationsschritt aus.
+    /// Evaluates one simulation step.
     pub fn update(&mut self, sim: &Sim, dt: f64) {
         let Some(train) = sim.trains.get(self.train) else {
             return;
@@ -106,7 +106,8 @@ impl ScoreKeeper {
         let v = train.speed().abs();
         self.distance_m += v * dt;
 
-        // Fahrenergie am Rad (nur Traktion; die Rückspeisung der E-Bremse zählt v1 nicht).
+        // Traction energy at the wheel (traction only; regeneration of the dynamic brake
+        // does not count in v1).
         let power: f64 = train
             .vehicles
             .iter()
@@ -114,21 +115,21 @@ impl ScoreKeeper {
             .sum();
         self.energy_kwh += power * dt / 3_600_000.0;
 
-        // Zwangsbremsungen: jede neue Anforderung zählt einmal.
+        // Forced brake applications: every new request counts once.
         let action = sim.runtime[self.train].protection.action;
         if action != ProtectionAction::None && self.prev_action == ProtectionAction::None {
             self.forced_brakes += 1;
         }
         self.prev_action = action;
 
-        // Geschwindigkeitsüberschreitung gegenüber der zulässigen Geschwindigkeit.
+        // Overspeed with respect to the permitted speed.
         let limit = train.vehicles[0].pos.speed_limit(&sim.net);
         if v_kmh > limit + 3.0 {
             self.overspeed_seconds += dt;
             self.max_overspeed = self.max_overspeed.max(v_kmh - limit);
         }
 
-        // Halt am Bahnsteig erkennen: Übergang Fahrt → Stillstand in Haltepunktnähe.
+        // Detect a stop at the platform: transition running → standstill near a stopping point.
         let moving = v_kmh > 1.0;
         if self.was_moving && !moving {
             self.record_stop(sim);
@@ -156,7 +157,7 @@ impl ScoreKeeper {
         self.next_stop += 1;
     }
 
-    /// Punktestand mit Aufschlüsselung.
+    /// Score with a breakdown.
     pub fn report(&self, bonus: i32) -> ScoreReport {
         let r = &self.rules;
         let mut items = Vec::new();
@@ -165,7 +166,7 @@ impl ScoreKeeper {
             let off = (stop.position_error.abs() - r.stop_tolerance).max(0.0);
             if off > 0.0 {
                 items.push(ScoreItem {
-                    reason: format!("Halteplatz {} um {:.0} m verfehlt", stop.name, off),
+                    reason: format!("Stopping point {} missed by {:.0} m", stop.name, off),
                     points: -(off * r.per_meter_off) as i32,
                 });
             }
@@ -173,21 +174,21 @@ impl ScoreKeeper {
             if minutes.abs() > 0.5 {
                 let factor = if minutes > 0.0 { 1.0 } else { 0.5 };
                 items.push(ScoreItem {
-                    reason: format!("{} {:+.1} min gegenüber Fahrplan", stop.name, minutes),
+                    reason: format!("{} {:+.1} min against the timetable", stop.name, minutes),
                     points: -(minutes.abs() * r.per_minute_late * factor) as i32,
                 });
             }
         }
         if self.forced_brakes > 0 {
             items.push(ScoreItem {
-                reason: format!("{} Zwangsbremsung(en)", self.forced_brakes),
+                reason: format!("{} forced brake application(s)", self.forced_brakes),
                 points: -((self.forced_brakes as f64 * r.per_forced_brake) as i32),
             });
         }
         if self.overspeed_seconds > 0.0 {
             items.push(ScoreItem {
                 reason: format!(
-                    "{:.0} s zu schnell (max. {:+.0} km/h)",
+                    "{:.0} s too fast (max. {:+.0} km/h)",
                     self.overspeed_seconds, self.max_overspeed
                 ),
                 points: -((self.overspeed_seconds * r.per_overspeed_second) as i32),
@@ -195,13 +196,13 @@ impl ScoreKeeper {
         }
         if self.energy_kwh > 0.0 {
             items.push(ScoreItem {
-                reason: format!("{:.0} kWh Fahrenergie", self.energy_kwh),
+                reason: format!("{:.0} kWh traction energy", self.energy_kwh),
                 points: -((self.energy_kwh * r.per_kwh) as i32),
             });
         }
         if bonus != 0 {
             items.push(ScoreItem {
-                reason: "Szenario-Wertung".into(),
+                reason: "Scenario score".into(),
                 points: bonus,
             });
         }
@@ -229,9 +230,9 @@ pub struct ScoreReport {
 }
 
 impl ScoreReport {
-    /// Mehrzeilige Zusammenfassung für HUD und Log.
+    /// Multi-line summary for HUD and log.
     pub fn summary(&self) -> String {
-        let mut lines = vec![format!("Wertung: {} von {}", self.total, self.base)];
+        let mut lines = vec![format!("Score: {} of {}", self.total, self.base)];
         for item in &self.items {
             lines.push(format!("  {:+5}  {}", item.points, item.reason));
         }

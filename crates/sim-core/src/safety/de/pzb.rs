@@ -1,9 +1,10 @@
-//! PZB 90 (Punktförmige Zugbeeinflussung), vollständige Fahrzeuglogik (Plan 9.3).
+//! PZB 90 (intermittent train protection), complete on-board logic (plan 9.3).
 //!
-//! Streckenseitig wirken 500-Hz-, 1000-Hz- und 2000-Hz-Gleismagnete; ihre Wirksamkeit
-//! hängt am Signalbegriff und wird vom Stellwerk entschieden (`TracksideEvent::active`).
+//! On the trackside, 500 Hz, 1000 Hz and 2000 Hz track magnets are effective; their
+//! activation depends on the signal aspect and is decided by the interlocking
+//! (`TracksideEvent::active`).
 //!
-//! Zahlenwerte nach Ril 483.0111 (PZB 90, Zugarten O/M/U).
+//! Numeric values according to Ril 483.0111 (PZB 90, train categories O/M/U).
 
 use crate::cab::{CabInputs, Edge};
 use crate::safety::{
@@ -13,7 +14,7 @@ use crate::safety::{
 use serde::{Deserialize, Serialize};
 use track_model::DeviceKind;
 
-/// Frequenz eines Gleismagneten.
+/// Frequency of a track magnet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MagnetFrequency {
     Hz500,
@@ -21,23 +22,23 @@ pub enum MagnetFrequency {
     Hz2000,
 }
 
-/// Payload eines Magnet-Streckengeräts.
+/// Payload of a magnet trackside device.
 ///
-/// `signal`/`activation` liest das Stellwerk (`interlock::DeviceLink`), `frequency` die PZB —
-/// beide Seiten ignorieren die Felder der jeweils anderen.
+/// `signal`/`activation` are read by the interlocking (`interlock::DeviceLink`),
+/// `frequency` by the PZB — each side ignores the other's fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MagnetPayload {
     pub frequency: MagnetFrequency,
-    /// Zugehöriges Signal, dessen Begriff über die Wirksamkeit entscheidet.
+    /// Associated signal whose aspect decides the activation.
     #[serde(default)]
     pub signal: Option<u32>,
-    /// Wann der Magnet wirksam ist.
+    /// When the magnet is active.
     #[serde(default)]
     pub activation: crate::interlock::Activation,
 }
 
 impl MagnetPayload {
-    /// 1000-Hz-Magnet am Vorsignal — wirksam bei angekündigter Einschränkung.
+    /// 1000 Hz magnet at the distant signal — active with an announced restriction.
     pub fn hz1000(signal: u32) -> Self {
         Self {
             frequency: MagnetFrequency::Hz1000,
@@ -46,7 +47,7 @@ impl MagnetPayload {
         }
     }
 
-    /// 500-Hz-Magnet vor dem Hauptsignal — wirksam bei Halt.
+    /// 500 Hz magnet ahead of the main signal — active at stop.
     pub fn hz500(signal: u32) -> Self {
         Self {
             frequency: MagnetFrequency::Hz500,
@@ -55,7 +56,7 @@ impl MagnetPayload {
         }
     }
 
-    /// 2000-Hz-Magnet am Hauptsignal — wirksam bei Halt.
+    /// 2000 Hz magnet at the main signal — active at stop.
     pub fn hz2000(signal: u32) -> Self {
         Self {
             frequency: MagnetFrequency::Hz2000,
@@ -65,28 +66,28 @@ impl MagnetPayload {
     }
 }
 
-/// Zugart nach Bremshundertsteln/Höchstgeschwindigkeit.
+/// Train category by braked weight percentage / maximum speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TrainType {
-    /// Obere Zugart (schnellfahrende Reisezüge).
+    /// Upper train category (fast passenger trains).
     #[default]
     O,
-    /// Mittlere Zugart.
+    /// Middle train category.
     M,
-    /// Untere Zugart (Güterzüge).
+    /// Lower train category (freight trains).
     U,
 }
 
-/// Überwachungsparameter einer Zugart.
+/// Supervision parameters of a train category.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PzbParams {
     pub v1000_start: f64,
     pub v1000_end: f64,
-    /// Zeit der 1000-Hz-Bremskurve [s].
+    /// Duration of the 1000 Hz braking curve [s].
     pub t1000: f64,
     pub v500_start: f64,
     pub v500_end: f64,
-    /// Leuchtmelder-Beschriftung der Zugart.
+    /// Indicator lamp label of the train category.
     pub lamp: &'static str,
 }
 
@@ -121,35 +122,35 @@ impl TrainType {
     }
 }
 
-/// Überwachungsgeschwindigkeit der restriktiven Überwachung [km/h].
+/// Supervision speed of the restrictive supervision [km/h].
 pub const V_RESTRICTIVE: f64 = 45.0;
-/// Restriktive 500-Hz-Kurve: von 45 auf 25 km/h.
+/// Restrictive 500 Hz curve: from 45 down to 25 km/h.
 pub const V_RESTRICTIVE_500_END: f64 = 25.0;
-/// Überwachte Geschwindigkeit bei Befehl 40 [km/h].
-pub const V_BEFEHL: f64 = 40.0;
-/// Länge der 1000-Hz-Überwachung [m].
+/// Supervised speed with the override (Befehl 40) [km/h].
+pub const V_OVERRIDE: f64 = 40.0;
+/// Length of the 1000 Hz supervision [m].
 pub const D_1000: f64 = 1250.0;
-/// Länge der 500-Hz-Überwachung [m].
+/// Length of the 500 Hz supervision [m].
 pub const D_500: f64 = 250.0;
-/// Weg der 500-Hz-Bremskurve [m].
+/// Distance of the 500 Hz braking curve [m].
 pub const D_500_CURVE: f64 = 153.0;
-/// Ab diesem Weg innerhalb der 1000-Hz-Überwachung ist Befreiung zulässig [m].
-pub const D_FREI: f64 = 700.0;
-/// Zeit für die Wachsamkeitsbedienung nach 1000-Hz-Beeinflussung [s].
-pub const T_WACHSAM: f64 = 4.0;
-/// Ab dieser Langsamfahrzeit unter 10 km/h greift die restriktive Überwachung [s].
+/// From this distance within the 1000 Hz supervision an exemption is permitted [m].
+pub const D_EXEMPT: f64 = 700.0;
+/// Time allowed for the acknowledgement after a 1000 Hz influence [s].
+pub const T_ACKNOWLEDGE: f64 = 4.0;
+/// From this time running below 10 km/h the restrictive supervision takes effect [s].
 pub const T_SLOW: f64 = 15.0;
-/// Geschwindigkeitsschwelle für die restriktive Überwachung [km/h].
+/// Speed threshold for the restrictive supervision [km/h].
 pub const V_SLOW: f64 = 10.0;
 
-/// Auslöser einer Zwangsbremsung.
+/// Trigger of a forced braking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PzbTrip {
-    /// Wachsamkeit nicht innerhalb 4 s bedient.
+    /// Acknowledgement not given within 4 s.
     MissingAcknowledge,
-    /// Überwachungsgeschwindigkeit überschritten.
+    /// Supervision speed exceeded.
     Overspeed,
-    /// 2000-Hz-Beeinflussung (Halt zeigendes Signal).
+    /// 2000 Hz influence (signal showing stop).
     Magnet2000,
 }
 
@@ -166,23 +167,23 @@ struct Monitor500 {
     start_odo: f64,
 }
 
-/// Die PZB-90-Fahrzeugeinrichtung.
+/// The PZB 90 on-board equipment.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Pzb90 {
     pub train_type: TrainType,
     isolated: bool,
     m1000: Option<Monitor1000>,
     m500: Option<Monitor500>,
-    /// Restriktive Überwachung aktiv.
+    /// Restrictive supervision active.
     restrictive: bool,
-    /// Befehl-40-Taste gedrückt.
-    befehl: bool,
+    /// Override (Befehl 40) button pressed.
+    override_40: bool,
     trip: Option<PzbTrip>,
-    /// Zeit unter 10 km/h innerhalb einer Überwachung [s].
+    /// Time below 10 km/h within a supervision [s].
     slow_timer: f64,
-    wachsam: Edge,
-    frei: Edge,
-    /// Aktuelle Überwachungsgeschwindigkeit [km/h], zuletzt berechnet.
+    acknowledge: Edge,
+    exempt: Edge,
+    /// Current supervision speed [km/h], as computed last.
     limit: Option<f64>,
 }
 
@@ -202,7 +203,7 @@ impl Pzb90 {
         self.restrictive
     }
 
-    /// Aktuelle Überwachungsgeschwindigkeit [km/h], falls überwacht wird.
+    /// Current supervision speed [km/h], if a supervision is running.
     pub fn supervised_speed(&self) -> Option<f64> {
         self.limit
     }
@@ -215,16 +216,18 @@ impl Pzb90 {
         self.m500.is_some()
     }
 
-    /// Ist die Befreiung gerade zulässig?
+    /// Is the exemption currently permitted?
     pub fn release_allowed(&self, odometer: f64) -> bool {
-        self.m1000.is_some_and(|m| odometer - m.start_odo >= D_FREI) && !self.restrictive
+        self.m1000
+            .is_some_and(|m| odometer - m.start_odo >= D_EXEMPT)
+            && !self.restrictive
     }
 
     fn params(&self) -> PzbParams {
         self.train_type.params()
     }
 
-    /// Überwachungsgeschwindigkeit aus allen aktiven Beeinflussungen.
+    /// Supervision speed derived from all active influences.
     fn compute_limit(&self, odometer: f64) -> Option<f64> {
         let p = self.params();
         let mut limit: Option<f64> = None;
@@ -249,8 +252,8 @@ impl Pzb90 {
             };
             take(start + (end - start) * d);
         }
-        if self.befehl {
-            take(V_BEFEHL);
+        if self.override_40 {
+            take(V_OVERRIDE);
         }
         limit
     }
@@ -262,7 +265,7 @@ impl Pzb90 {
         let Some(payload) = ron_payload(event) else {
             return;
         };
-        // Der Magnet liegt bereits `s_offset` hinter der Antenne.
+        // The magnet already lies `s_offset` behind the antenna.
         let start_odo = odometer - event.s_offset;
         match payload.frequency {
             MagnetFrequency::Hz1000 => {
@@ -278,8 +281,8 @@ impl Pzb90 {
                 self.m500 = Some(Monitor500 { start_odo });
             }
             MagnetFrequency::Hz2000 => {
-                // Befehl 40 unterdrückt die 2000-Hz-Beeinflussung.
-                if !self.befehl {
+                // The override (Befehl 40) suppresses the 2000 Hz influence.
+                if !self.override_40 {
                     self.trip = Some(PzbTrip::Magnet2000);
                 }
             }
@@ -308,21 +311,21 @@ impl TrainProtectionSystem for Pzb90 {
             return ProtectionOutput::default();
         }
 
-        self.befehl = cab.pzb_befehl;
-        let wachsam = self.wachsam.rising(cab.pzb_wachsam);
-        let frei = self.frei.rising(cab.pzb_frei);
+        self.override_40 = cab.pzb_override;
+        let acknowledge = self.acknowledge.rising(cab.pzb_acknowledge);
+        let exempt = self.exempt.rising(cab.pzb_exempt);
 
         for e in events {
             self.handle_event(e, train.odometer);
         }
 
-        // Wachsamkeitsbedienung.
-        if wachsam {
+        // Acknowledgement.
+        if acknowledge {
             if let Some(m) = &mut self.m1000 {
                 m.acknowledged = true;
             }
             if self.trip.is_some() && train.standstill() {
-                // Zwangsbremsung freigeben — danach gilt restriktive Überwachung.
+                // Release the forced braking — afterwards the restrictive supervision applies.
                 self.trip = None;
                 self.restrictive = true;
                 if self.m1000.is_none() {
@@ -336,18 +339,18 @@ impl TrainProtectionSystem for Pzb90 {
             }
         }
 
-        // Befreiung (Frei-Taste) ab 700 m, nicht in restriktiver Überwachung.
-        if frei && self.release_allowed(train.odometer) {
+        // Exemption (Frei button) from 700 m onwards, not in restrictive supervision.
+        if exempt && self.release_allowed(train.odometer) {
             self.m1000 = None;
             self.slow_timer = 0.0;
         }
 
-        // Zeiten und Wege fortschreiben.
+        // Advance times and distances.
         if let Some(m) = &mut self.m1000 {
             m.elapsed += dt;
             if !m.acknowledged {
                 m.ack_timer += dt;
-                if m.ack_timer > T_WACHSAM {
+                if m.ack_timer > T_ACKNOWLEDGE {
                     self.trip = Some(PzbTrip::MissingAcknowledge);
                 }
             }
@@ -363,8 +366,8 @@ impl TrainProtectionSystem for Pzb90 {
             self.m500 = None;
         }
 
-        // Restriktive Überwachung: Halt oder länger als 15 s unter 10 km/h
-        // innerhalb einer Überwachung.
+        // Restrictive supervision: stop, or running longer than 15 s below 10 km/h
+        // within a supervision.
         if self.m1000.is_some() || self.m500.is_some() {
             if train.v_kmh < V_SLOW {
                 self.slow_timer += dt;
@@ -379,7 +382,7 @@ impl TrainProtectionSystem for Pzb90 {
             self.slow_timer = 0.0;
         }
 
-        // Geschwindigkeitsüberwachung.
+        // Speed supervision.
         let limit = self.compute_limit(train.odometer);
         self.limit = limit;
         if let Some(l) = limit
@@ -406,7 +409,7 @@ impl TrainProtectionSystem for Pzb90 {
         vec![
             Indicator::lamp("pzb_1000hz", self.m1000.is_some()),
             Indicator::lamp("pzb_500hz", self.m500.is_some()),
-            Indicator::lamp("pzb_befehl", self.befehl),
+            Indicator::lamp("pzb_befehl", self.override_40),
             Indicator::state(
                 p.lamp,
                 if self.restrictive {
@@ -437,7 +440,7 @@ impl TrainProtectionSystem for Pzb90 {
 mod tests {
     use super::*;
 
-    /// Kleiner Prüfstand: fährt den Zug mit konstanter Geschwindigkeit und Tastendrücken.
+    /// Small test rig: runs the train at constant speed with button presses.
     struct Rig {
         pzb: Pzb90,
         state: SafetyTrainState,
@@ -476,7 +479,7 @@ mod tests {
             self.out = self.pzb.update(0.0, &self.state, &self.cab, &[event]);
         }
 
-        /// Fährt `seconds` Sekunden weiter (Weg aus der Geschwindigkeit).
+        /// Runs on for `seconds` seconds (distance derived from the speed).
         fn run(&mut self, seconds: f64) {
             let dt = 0.05;
             for _ in 0..(seconds / dt).round() as u32 {
@@ -485,7 +488,7 @@ mod tests {
             }
         }
 
-        /// Fährt `meters` Meter weiter.
+        /// Runs on for `meters` metres.
         fn drive(&mut self, meters: f64) {
             if self.state.v_kmh <= 0.0 {
                 return;
@@ -503,12 +506,12 @@ mod tests {
             self.run(0.05);
         }
 
-        fn wachsam(&mut self) {
-            self.press(|c| c.pzb_wachsam = true);
+        fn acknowledge(&mut self) {
+            self.press(|c| c.pzb_acknowledge = true);
         }
 
-        fn frei(&mut self) {
-            self.press(|c| c.pzb_frei = true);
+        fn exempt(&mut self) {
+            self.press(|c| c.pzb_exempt = true);
         }
 
         fn braking(&self) -> bool {
@@ -517,112 +520,112 @@ mod tests {
     }
 
     #[test]
-    fn tausend_hertz_ohne_wachsam_bremst_zwangs() {
+    fn thousand_hertz_without_acknowledge_forces_braking() {
         let mut r = Rig::new(TrainType::O, 120.0);
         r.magnet(MagnetFrequency::Hz1000);
         r.run(3.0);
-        assert!(!r.braking(), "innerhalb 4 s noch keine Zwangsbremsung");
+        assert!(!r.braking(), "no forced braking within 4 s yet");
         r.run(2.0);
         assert!(r.braking());
         assert_eq!(r.pzb.trip(), Some(PzbTrip::MissingAcknowledge));
     }
 
     #[test]
-    fn tausend_hertz_mit_wachsam_ueberwacht_bremskurve() {
+    fn thousand_hertz_with_acknowledge_supervises_braking_curve() {
         let mut r = Rig::new(TrainType::O, 120.0);
         r.magnet(MagnetFrequency::Hz1000);
-        r.wachsam();
+        r.acknowledge();
         r.run(3.0);
         assert!(!r.braking());
-        // Kurve 165 → 85 km/h in 23 s: nach 20 s liegt die Grenze bei ~ 95 km/h.
+        // Curve 165 → 85 km/h in 23 s: after 20 s the limit is at ~ 95 km/h.
         let limit = r.pzb.supervised_speed().unwrap();
-        assert!(limit > 130.0 && limit < 160.0, "nach 3 s: {limit}");
+        assert!(limit > 130.0 && limit < 160.0, "after 3 s: {limit}");
         r.run(17.0);
         let limit = r.pzb.supervised_speed().unwrap();
-        assert!(limit > 85.0 && limit < 100.0, "nach 20 s: {limit}");
-        // Mit 120 km/h wird die Kurve überschritten, sobald sie unter 120 fällt.
+        assert!(limit > 85.0 && limit < 100.0, "after 20 s: {limit}");
+        // At 120 km/h the curve is exceeded as soon as it drops below 120.
         r.run(10.0);
-        assert!(r.braking(), "Bremskurve überschritten");
+        assert!(r.braking(), "braking curve exceeded");
         assert_eq!(r.pzb.trip(), Some(PzbTrip::Overspeed));
     }
 
     #[test]
-    fn tausend_hertz_befreiung_erst_ab_700_m() {
+    fn thousand_hertz_exemption_only_from_700_m() {
         let mut r = Rig::new(TrainType::O, 80.0);
         r.magnet(MagnetFrequency::Hz1000);
-        r.wachsam();
+        r.acknowledge();
         r.drive(600.0);
-        r.frei();
-        assert!(r.pzb.monitoring_1000(), "vor 700 m keine Befreiung");
+        r.exempt();
+        assert!(r.pzb.monitoring_1000(), "no exemption before 700 m");
         r.drive(150.0);
-        r.frei();
-        assert!(!r.pzb.monitoring_1000(), "ab 700 m Befreiung möglich");
+        r.exempt();
+        assert!(!r.pzb.monitoring_1000(), "exemption possible from 700 m");
         assert!(r.pzb.supervised_speed().is_none());
     }
 
     #[test]
-    fn tausend_hertz_ueberwachung_endet_nach_1250_m() {
+    fn thousand_hertz_supervision_ends_after_1250_m() {
         let mut r = Rig::new(TrainType::O, 80.0);
         r.magnet(MagnetFrequency::Hz1000);
-        r.wachsam();
+        r.acknowledge();
         r.drive(1300.0);
         assert!(!r.pzb.monitoring_1000());
         assert!(!r.braking());
     }
 
     #[test]
-    fn fuenfhundert_hertz_ueberwacht_sofort_ohne_befreiung() {
+    fn five_hundred_hertz_supervises_immediately_without_exemption() {
         let mut r = Rig::new(TrainType::O, 60.0);
         r.magnet(MagnetFrequency::Hz500);
-        // Sofortige Überwachung: 65 km/h fallend, keine Quittierung nötig.
+        // Immediate supervision: 65 km/h falling, no acknowledgement required.
         assert!(!r.braking());
         r.drive(50.0);
-        r.frei();
-        assert!(r.pzb.monitoring_500(), "500 Hz kennt keine Befreiung");
-        // Nach 153 m liegt die Grenze bei 45 km/h → 60 km/h löst aus.
+        r.exempt();
+        assert!(r.pzb.monitoring_500(), "500 Hz knows no exemption");
+        // After 153 m the limit is at 45 km/h → 60 km/h trips it.
         r.drive(120.0);
         assert!(r.braking());
         assert_eq!(r.pzb.trip(), Some(PzbTrip::Overspeed));
     }
 
     #[test]
-    fn zweitausend_hertz_bremst_sofort_befehl_unterdrueckt() {
+    fn two_thousand_hertz_brakes_immediately_override_suppresses() {
         let mut r = Rig::new(TrainType::O, 60.0);
         r.magnet(MagnetFrequency::Hz2000);
         assert!(r.braking());
         assert_eq!(r.pzb.trip(), Some(PzbTrip::Magnet2000));
 
-        // Mit gedrückter Befehlstaste bleibt die Beeinflussung aus, 40 km/h werden überwacht.
+        // With the override button pressed there is no influence, 40 km/h are supervised.
         let mut r = Rig::new(TrainType::O, 35.0);
-        r.cab.pzb_befehl = true;
+        r.cab.pzb_override = true;
         r.run(0.1);
         r.magnet(MagnetFrequency::Hz2000);
         r.run(1.0);
         assert!(!r.braking());
-        assert_eq!(r.pzb.supervised_speed(), Some(V_BEFEHL));
+        assert_eq!(r.pzb.supervised_speed(), Some(V_OVERRIDE));
     }
 
     #[test]
-    fn restriktive_ueberwachung_nach_halt() {
+    fn restrictive_supervision_after_stop() {
         let mut r = Rig::new(TrainType::O, 80.0);
         r.magnet(MagnetFrequency::Hz1000);
-        r.wachsam();
+        r.acknowledge();
         r.drive(200.0);
         r.state.v_kmh = 0.0;
         r.run(1.0);
         assert!(r.pzb.is_restrictive());
         assert_eq!(r.pzb.supervised_speed(), Some(V_RESTRICTIVE));
-        // Anfahren auf 50 km/h löst die Zwangsbremsung aus.
+        // Accelerating to 50 km/h triggers the forced braking.
         r.state.v_kmh = 50.0;
         r.run(0.5);
         assert!(r.braking());
     }
 
     #[test]
-    fn restriktive_ueberwachung_nach_15_s_unter_10_kmh() {
+    fn restrictive_supervision_after_15_s_below_10_kmh() {
         let mut r = Rig::new(TrainType::O, 8.0);
         r.magnet(MagnetFrequency::Hz1000);
-        r.wachsam();
+        r.acknowledge();
         r.run(10.0);
         assert!(!r.pzb.is_restrictive());
         r.run(7.0);
@@ -630,30 +633,33 @@ mod tests {
     }
 
     #[test]
-    fn zwangsbremsung_loest_nur_im_stillstand() {
+    fn forced_braking_releases_only_at_standstill() {
         let mut r = Rig::new(TrainType::O, 60.0);
         r.magnet(MagnetFrequency::Hz2000);
         assert!(r.braking());
-        r.wachsam();
-        assert!(r.braking(), "in Fahrt keine Freigabe");
+        r.acknowledge();
+        assert!(r.braking(), "no release while running");
         r.state.v_kmh = 0.0;
         r.run(0.5);
-        r.wachsam();
-        assert!(!r.braking(), "im Stillstand mit Wachsam lösbar");
-        assert!(r.pzb.is_restrictive(), "danach restriktive Überwachung");
+        r.acknowledge();
+        assert!(
+            !r.braking(),
+            "releasable at standstill with the Wachsam button"
+        );
+        assert!(r.pzb.is_restrictive(), "restrictive supervision afterwards");
     }
 
     #[test]
-    fn zugart_u_hat_niedrigere_pruefgeschwindigkeiten() {
+    fn train_category_u_has_lower_check_speeds() {
         let mut r = Rig::new(TrainType::U, 50.0);
         r.magnet(MagnetFrequency::Hz500);
         r.drive(160.0);
-        // U: 40 → 25 km/h; mit 50 km/h sofort zu schnell.
+        // U: 40 → 25 km/h; at 50 km/h immediately too fast.
         assert!(r.braking());
     }
 
     #[test]
-    fn unwirksamer_magnet_loest_nichts_aus() {
+    fn inactive_magnet_triggers_nothing() {
         let mut r = Rig::new(TrainType::O, 100.0);
         let payload = ron::to_string(&MagnetPayload::hz2000(0)).unwrap();
         let event = TracksideEvent {

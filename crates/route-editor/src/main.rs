@@ -17,6 +17,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use content::LineSource;
 use glam::DVec3;
+use i18n::t;
 use imagery::{ImageryConfig, ZoomMode};
 use overlay::{Overlay, OverlayTile};
 use track_model::TrackNetwork;
@@ -102,7 +103,7 @@ fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
-            title: "TrainSim-DE — Route editor".into(),
+            title: t!("window-route-editor"),
             ..default()
         }),
         ..default()
@@ -250,12 +251,12 @@ fn open_line(
     let source = match std::fs::read_to_string(&path).map(|t| LineSource::from_ron(&t)) {
         Ok(Ok(source)) => source,
         _ => {
-            overlay.status = format!("{} not readable", path.display());
+            overlay.status = t!("status-not-readable", file = path.display());
             return;
         }
     };
     let Ok(compiled) = source.compile() else {
-        overlay.status = format!("{} does not compile", path.display());
+        overlay.status = t!("status-not-compiling", file = path.display());
         return;
     };
 
@@ -270,7 +271,7 @@ fn open_line(
     origin.0 = RenderOrigin::new(focus.position);
     spawn_track(&mut commands, &mut meshes, &mut materials, &net, &origin.0);
 
-    overlay.status = format!("{} loaded", path.display());
+    overlay.status = t!("status-loaded", file = path.display());
     line.name = source.name.clone();
     line.path = Some(path.display().to_string());
     line.net = net;
@@ -412,21 +413,21 @@ fn overlay_control(
     if menu.clear_cache {
         overlay.source.clear_cache();
         overlay.clear(&mut commands);
-        overlay.status = "Cache cleared".into();
+        overlay.status = t!("status-cache-cleared");
     }
     if menu.retry_failed {
         overlay.source.retry_failed();
-        overlay.status = "Failed attempts reset".into();
+        overlay.status = t!("status-retry-reset");
     }
     if menu.save_config {
         overlay.status = match config.save(&config_path.0) {
-            Ok(()) => format!("{} saved", config_path.0),
-            Err(e) => format!("Saving failed: {e}"),
+            Ok(()) => t!("status-saved", file = config_path.0),
+            Err(e) => t!("status-save-failed", error = e),
         };
     }
     if menu.load_config {
         let (loaded, message) = ImageryConfig::load_or_create(&config_path.0);
-        overlay.status = message.unwrap_or_else(|| format!("{} loaded", config_path.0));
+        overlay.status = message.unwrap_or_else(|| t!("status-loaded", file = config_path.0));
         overlay.apply(&mut commands, loaded);
         return;
     }
@@ -496,22 +497,22 @@ fn overlay_control(
     if keys.just_pressed(KeyCode::KeyC) {
         overlay.source.clear_cache();
         overlay.clear(&mut commands);
-        overlay.status = "Cache cleared".into();
+        overlay.status = t!("status-cache-cleared");
     }
     if keys.just_pressed(KeyCode::KeyR) {
         overlay.source.retry_failed();
-        overlay.status = "Failed attempts reset".into();
+        overlay.status = t!("status-retry-reset");
     }
     if keys.just_pressed(KeyCode::F5) {
         let (loaded, message) = ImageryConfig::load_or_create(&config_path.0);
-        overlay.status = message.unwrap_or_else(|| format!("{} loaded", config_path.0));
+        overlay.status = message.unwrap_or_else(|| t!("status-loaded", file = config_path.0));
         overlay.apply(&mut commands, loaded);
         return;
     }
     if keys.just_pressed(KeyCode::F2) {
         overlay.status = match config.save(&config_path.0) {
-            Ok(()) => format!("{} saved", config_path.0),
-            Err(e) => format!("Saving failed: {e}"),
+            Ok(()) => t!("status-saved", file = config_path.0),
+            Err(e) => t!("status-save-failed", error = e),
         };
     }
 

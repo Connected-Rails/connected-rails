@@ -4,19 +4,14 @@
 //! form: control valve, friction pairing, reservoir volumes on one side, motor, engine map
 //! and torque converters on the other.
 
+use crate::ui::row;
 use bevy_egui::egui;
+use i18n::t;
 use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec, ControlValve, SlipProtection};
 use sim_core::drive::{
     Circuit, CircuitKind, DieselEngine, DynamicBrake, Governor, HydrodynamicBrake, MAX_CIRCUITS,
     SeriesMotor, TractionSpec, Transmission,
 };
-
-/// A labelled row with a tooltip.
-fn row(ui: &mut egui::Ui, label: &str, hint: &str, widget: impl FnOnce(&mut egui::Ui)) {
-    ui.label(label).on_hover_text(hint);
-    widget(ui);
-    ui.end_row();
-}
 
 fn drag(ui: &mut egui::Ui, value: &mut f64, speed: f64, range: std::ops::RangeInclusive<f64>) {
     ui.add(egui::DragValue::new(value).speed(speed).range(range));
@@ -24,183 +19,175 @@ fn drag(ui: &mut egui::Ui, value: &mut f64, speed: f64, range: std::ops::RangeIn
 
 /// Brake equipment.
 pub fn brake_panel(ui: &mut egui::Ui, brake: &mut BrakeSpec, slip: &mut SlipProtection) {
-    ui.label(egui::RichText::new("Brake").strong());
+    ui.label(egui::RichText::new(t!("group-brake")).strong());
     egui::Grid::new("brake").num_columns(2).show(ui, |ui| {
-        row(ui, "Control valve", "which control valve is fitted", |ui| {
+        row(ui, "brk-valve", |ui| {
             valve_combo(ui, &mut brake.valve);
         });
-        row(
-            ui,
-            "Brake position",
-            "G freight · P passenger · R rapid · R+Mg with magnetic track brake",
-            |ui| {
-                position_combo(ui, &mut brake.position);
-            },
-        );
-        row(
-            ui,
-            "Friction pairing",
-            "how the friction coefficient runs over speed",
-            |ui| {
-                kind_combo(ui, &mut brake.kind);
-            },
-        );
-        row(
-            ui,
-            "Braked weight",
-            "t — from the vehicle's anscriptions",
-            |ui| {
-                drag(ui, &mut brake.brake_weight, 0.5, 0.0..=200.0);
-            },
-        );
-        row(
-            ui,
-            "Brake force",
-            "N at full cylinder pressure and standstill",
-            |ui| {
-                ui.horizontal(|ui| {
-                    drag(ui, &mut brake.max_force, 500.0, 0.0..=1_000_000.0);
-                    if ui
-                        .button("Suggest")
-                        .on_hover_text("from the braked weight")
-                        .clicked()
-                    {
-                        brake.max_force =
-                            BrakeSpec::from_brake_weight(brake.brake_weight, brake.kind.clone())
-                                .max_force;
-                    }
-                });
-            },
-        );
-        row(ui, "Cylinder pressure", "bar at a full application", |ui| {
+        row(ui, "brk-position", |ui| {
+            position_combo(ui, &mut brake.position);
+        });
+        row(ui, "brk-friction", |ui| {
+            kind_combo(ui, &mut brake.kind);
+        });
+        row(ui, "brk-weight", |ui| {
+            drag(ui, &mut brake.brake_weight, 0.5, 0.0..=200.0);
+        });
+        row(ui, "brk-force", |ui| {
+            ui.horizontal(|ui| {
+                drag(ui, &mut brake.max_force, 500.0, 0.0..=1_000_000.0);
+                if ui
+                    .button(t!("action-suggest"))
+                    .on_hover_text(t!("brk-force-suggest-hint"))
+                    .clicked()
+                {
+                    brake.max_force =
+                        BrakeSpec::from_brake_weight(brake.brake_weight, brake.kind.clone())
+                            .max_force;
+                }
+            });
+        });
+        row(ui, "brk-cylinder", |ui| {
             drag(ui, &mut brake.max_cylinder, 0.05, 0.5..=6.0);
         });
-        row(
-            ui,
-            "Cylinder / reservoir",
-            "volume ratio — decides how quickly the brake exhausts itself",
-            |ui| {
-                drag(ui, &mut brake.cylinder_to_reservoir, 0.01, 0.05..=1.0);
-            },
-        );
+        row(ui, "brk-cyl-reservoir", |ui| {
+            drag(ui, &mut brake.cylinder_to_reservoir, 0.01, 0.05..=1.0);
+        });
     });
 
     ui.separator();
-    ui.label(egui::RichText::new("Additional brakes").strong());
-    ui.checkbox(&mut brake.has_mg, "Magnetic track brake");
+    ui.label(egui::RichText::new(t!("group-additional-brakes")).strong());
+    ui.checkbox(&mut brake.has_mg, t!("brk-mg"));
     if brake.has_mg {
         ui.horizontal(|ui| {
-            ui.label("Force");
+            ui.label(t!("label-force"));
             drag(ui, &mut brake.mg_force, 500.0, 0.0..=400_000.0);
             ui.label("N");
         });
     }
-    ui.checkbox(&mut brake.has_direct, "Direct (additional) brake");
+    ui.checkbox(&mut brake.has_direct, t!("brk-direct"));
     if brake.has_direct {
         ui.horizontal(|ui| {
-            ui.label("Cylinder pressure")
-                .on_hover_text("bar; 0 = same as the automatic brake");
+            ui.label(t!("brk-cylinder"))
+                .on_hover_text(t!("brk-direct-cylinder-hint"));
             drag(ui, &mut brake.direct_max_cylinder, 0.05, 0.0..=6.0);
         });
     }
     ui.horizontal(|ui| {
-        ui.label("Parking brake");
+        ui.label(t!("brk-parking"));
         drag(ui, &mut brake.parking_force, 500.0, 0.0..=400_000.0);
         ui.label("N");
     });
-    ui.checkbox(&mut brake.spring_parking, "Spring-applied (Federspeicher)")
-        .on_hover_text("held off by air — applies by itself when the main reservoir runs empty");
-    ui.checkbox(&mut brake.pilot_controlled, "Pre-controlled cylinder")
-        .on_hover_text("relay valve fed from the main reservoir: fills faster, cannot exhaust");
-    ui.checkbox(&mut brake.supplement_brake, "Air supplement brake")
-        .on_hover_text("fills up whatever the dynamic brake falls short of");
-    ui.checkbox(&mut brake.angleicher, "Equalising device (Angleicher)")
-        .on_hover_text("makes up brake pipe leakage in lap position; without a memory");
+    ui.checkbox(&mut brake.spring_parking, t!("brk-spring"))
+        .on_hover_text(t!("brk-spring-hint"));
+    ui.checkbox(&mut brake.pilot_controlled, t!("brk-pilot"))
+        .on_hover_text(t!("brk-pilot-hint"));
+    ui.checkbox(&mut brake.supplement_brake, t!("brk-supplement"))
+        .on_hover_text(t!("brk-supplement-hint"));
+    ui.checkbox(&mut brake.angleicher, t!("brk-angleicher"))
+        .on_hover_text(t!("brk-angleicher-hint"));
 
     ui.separator();
-    ui.label(egui::RichText::new("Air").strong());
+    ui.label(egui::RichText::new(t!("group-air")).strong());
     egui::Grid::new("air").num_columns(2).show(ui, |ui| {
-        row(ui, "Auxiliary reservoir", "l", |ui| {
+        row(ui, "air-aux", |ui| {
             drag(ui, &mut brake.aux_volume, 5.0, 10.0..=500.0);
         });
-        row(ui, "Brake pipe", "l — this vehicle's share", |ui| {
+        row(ui, "air-pipe", |ui| {
             drag(ui, &mut brake.pipe_volume, 1.0, 1.0..=200.0);
         });
-        row(ui, "Main reservoir", "l — 0 = none", |ui| {
+        row(ui, "air-main", |ui| {
             drag(ui, &mut brake.main_volume, 50.0, 0.0..=5_000.0);
         });
-        row(ui, "Compressor", "l/min of free air — 0 = none", |ui| {
+        row(ui, "air-compressor", |ui| {
             drag(ui, &mut brake.compressor_delivery, 50.0, 0.0..=6_000.0);
         });
-        row(ui, "Leakage", "l/min of free air", |ui| {
+        row(ui, "air-leakage", |ui| {
             drag(ui, &mut brake.leakage, 0.5, 0.0..=60.0);
         });
-        row(
-            ui,
-            "Wheel slip protection",
-            "how the vehicle answers a spinning or sliding wheelset",
-            |ui| {
-                slip_combo(ui, slip);
-            },
-        );
+        row(ui, "brk-slip", |ui| {
+            slip_combo(ui, slip);
+        });
     });
 }
 
-fn valve_combo(ui: &mut egui::Ui, valve: &mut ControlValve) {
-    let options = [
-        (ControlValve::KGp, "K-GP"),
-        (ControlValve::KeGp, "KE-GP"),
-        (ControlValve::KeGpr, "KE-GPR"),
-        (ControlValve::KeTm, "KE-Tm"),
-        (ControlValve::KeL2a, "KE-L2a"),
-        (ControlValve::KeL2d, "KE-L2d"),
-    ];
-    let label = options
+/// Combo box over a fixed set of values; `label` supplies the text of each one.
+fn combo<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut T,
+    options: &[T],
+    label: impl Fn(&T) -> String,
+) {
+    let selected = options
         .iter()
-        .find(|(v, _)| v == valve)
-        .map(|(_, l)| *l)
-        .unwrap_or("KE-GP");
-    egui::ComboBox::from_id_salt("valve")
-        .selected_text(label)
+        .find(|v| *v == value)
+        .map(&label)
+        .unwrap_or_default();
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
         .show_ui(ui, |ui| {
-            for (value, text) in options {
-                ui.selectable_value(valve, value, text);
+            for option in options {
+                ui.selectable_value(value, *option, label(option));
             }
         });
+}
+
+/// Type designations of the equipment are names, not prose — they stay as they are.
+fn valve_combo(ui: &mut egui::Ui, valve: &mut ControlValve) {
+    let options = [
+        ControlValve::KGp,
+        ControlValve::KeGp,
+        ControlValve::KeGpr,
+        ControlValve::KeTm,
+        ControlValve::KeL2a,
+        ControlValve::KeL2d,
+    ];
+    combo(ui, "valve", valve, &options, |v| {
+        match v {
+            ControlValve::KGp => "K-GP",
+            ControlValve::KeGp => "KE-GP",
+            ControlValve::KeGpr => "KE-GPR",
+            ControlValve::KeTm => "KE-Tm",
+            ControlValve::KeL2a => "KE-L2a",
+            ControlValve::KeL2d => "KE-L2d",
+        }
+        .into()
+    });
 }
 
 fn position_combo(ui: &mut egui::Ui, position: &mut BrakePosition) {
     let options = [
-        (BrakePosition::G, "G"),
-        (BrakePosition::P, "P"),
-        (BrakePosition::R, "R"),
-        (BrakePosition::RMg, "R + Mg"),
+        BrakePosition::G,
+        BrakePosition::P,
+        BrakePosition::R,
+        BrakePosition::RMg,
     ];
-    let label = options
-        .iter()
-        .find(|(v, _)| v == position)
-        .map(|(_, l)| *l)
-        .unwrap_or("P");
-    egui::ComboBox::from_id_salt("position")
-        .selected_text(label)
-        .show_ui(ui, |ui| {
-            for (value, text) in options {
-                ui.selectable_value(position, value, text);
-            }
-        });
+    combo(ui, "position", position, &options, |p| {
+        match p {
+            BrakePosition::G => "G",
+            BrakePosition::P => "P",
+            BrakePosition::R => "R",
+            BrakePosition::RMg => "R + Mg",
+        }
+        .into()
+    });
+}
+
+fn friction_key(kind: &BrakeKind) -> &'static str {
+    match kind {
+        BrakeKind::Block => "friction-block",
+        BrakeKind::Disc => "friction-disc",
+        BrakeKind::CompositeK => "friction-k",
+        BrakeKind::CompositeLl => "friction-ll",
+        BrakeKind::Magnetic => "friction-magnetic",
+        BrakeKind::Custom(_) => "friction-custom",
+    }
 }
 
 fn kind_combo(ui: &mut egui::Ui, kind: &mut BrakeKind) {
-    let label = match kind {
-        BrakeKind::Block => "Cast iron block",
-        BrakeKind::Disc => "Disc",
-        BrakeKind::CompositeK => "K block",
-        BrakeKind::CompositeLl => "LL block",
-        BrakeKind::Magnetic => "Magnetic rail",
-        BrakeKind::Custom(_) => "Own characteristic",
-    };
     egui::ComboBox::from_id_salt("friction")
-        .selected_text(label)
+        .selected_text(t!(friction_key(kind)))
         .show_ui(ui, |ui| {
             for value in [
                 BrakeKind::Block,
@@ -209,20 +196,16 @@ fn kind_combo(ui: &mut egui::Ui, kind: &mut BrakeKind) {
                 BrakeKind::CompositeLl,
                 BrakeKind::Magnetic,
             ] {
-                let text = match value {
-                    BrakeKind::Block => "Cast iron block",
-                    BrakeKind::Disc => "Disc",
-                    BrakeKind::CompositeK => "K block",
-                    BrakeKind::CompositeLl => "LL block",
-                    _ => "Magnetic rail",
-                };
-                if ui.selectable_label(*kind == value, text).clicked() {
+                if ui
+                    .selectable_label(*kind == value, t!(friction_key(&value)))
+                    .clicked()
+                {
                     *kind = value;
                 }
             }
             let is_custom = matches!(kind, BrakeKind::Custom(_));
             if ui
-                .selectable_label(is_custom, "Own characteristic")
+                .selectable_label(is_custom, t!("friction-custom"))
                 .clicked()
                 && !is_custom
             {
@@ -233,23 +216,19 @@ fn kind_combo(ui: &mut egui::Ui, kind: &mut BrakeKind) {
 
 fn slip_combo(ui: &mut egui::Ui, slip: &mut SlipProtection) {
     let options = [
-        (SlipProtection::None, "none"),
-        (SlipProtection::SlipBrake, "wheel slip brake"),
-        (SlipProtection::TractionCutback, "traction cutback"),
-        (SlipProtection::CreepControl, "creep control"),
+        SlipProtection::None,
+        SlipProtection::SlipBrake,
+        SlipProtection::TractionCutback,
+        SlipProtection::CreepControl,
     ];
-    let label = options
-        .iter()
-        .find(|(v, _)| v == slip)
-        .map(|(_, l)| *l)
-        .unwrap_or("none");
-    egui::ComboBox::from_id_salt("slip")
-        .selected_text(label)
-        .show_ui(ui, |ui| {
-            for (value, text) in options {
-                ui.selectable_value(slip, value, text);
-            }
-        });
+    combo(ui, "slip", slip, &options, |s| {
+        t!(match s {
+            SlipProtection::None => "slip-none",
+            SlipProtection::SlipBrake => "slip-brake",
+            SlipProtection::TractionCutback => "slip-cutback",
+            SlipProtection::CreepControl => "slip-creep",
+        })
+    });
 }
 
 /// Points of a friction or tractive effort table, editable row by row.
@@ -267,7 +246,12 @@ fn table_editor(ui: &mut egui::Ui, id: &str, x_unit: &str, points: &mut Vec<(f64
     if let Some(i) = remove {
         points.remove(i);
     }
-    if ui.button(format!("+ point ({id})")).clicked() {
+    // Several tables can sit in one panel; the id keeps their buttons apart.
+    if ui
+        .push_id(id, |ui| ui.button(t!("action-add-point")))
+        .inner
+        .clicked()
+    {
         let last = points.last().copied().unwrap_or((0.0, 0.0));
         points.push((last.0 + 20.0, last.1));
     }
@@ -275,10 +259,10 @@ fn table_editor(ui: &mut egui::Ui, id: &str, x_unit: &str, points: &mut Vec<(f64
 
 /// Drive.
 pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
-    ui.label(egui::RichText::new("Drive").strong());
+    ui.label(egui::RichText::new(t!("group-drive")).strong());
     type_combo(ui, traction);
     let Some(spec) = traction else {
-        ui.small("Unpowered vehicle.");
+        ui.small(t!("drive-unpowered-note"));
         return;
     };
     match spec {
@@ -288,16 +272,14 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             brake,
             ramp_time,
         } => {
-            ui.small("Tractive effort straight off the diagram — no motor, no gearbox.");
+            ui.small(t!("curve-note"));
             egui::Grid::new("curve").num_columns(2).show(ui, |ui| {
-                row(ui, "v max", "km/h", |ui| drag(ui, v_max, 1.0, 0.0..=400.0));
-                row(ui, "Rise time", "s from 0 to full effort", |ui| {
-                    drag(ui, ramp_time, 0.1, 0.1..=30.0)
-                });
+                row(ui, "drv-vmax", |ui| drag(ui, v_max, 1.0, 0.0..=400.0));
+                row(ui, "drv-ramp", |ui| drag(ui, ramp_time, 0.1, 0.1..=30.0));
             });
-            ui.label("Tractive effort (km/h → N)");
+            ui.label(t!("table-tractive-effort"));
             table_editor(ui, "traction", " km/h", force);
-            ui.label("Dynamic brake (km/h → N)");
+            ui.label(t!("table-dynamic-brake"));
             table_editor(ui, "brake", " km/h", brake);
         }
         TractionSpec::TapChanger {
@@ -310,30 +292,30 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             dynamic_brake,
         } => {
             egui::Grid::new("tap").num_columns(2).show(ui, |ui| {
-                row(ui, "Notches", "of the tap changer", |ui| {
+                row(ui, "tap-steps", |ui| {
                     ui.add(egui::DragValue::new(steps).range(1..=64));
                 });
-                row(ui, "Time per notch", "s", |ui| {
+                row(ui, "tap-step-time", |ui| {
                     drag(ui, step_time, 0.05, 0.05..=5.0)
                 });
-                row(ui, "Starting effort", "N", |ui| {
+                row(ui, "drv-start-force", |ui| {
                     drag(ui, max_force, 1000.0, 0.0..=800_000.0)
                 });
-                row(ui, "Power", "W at the wheel", |ui| {
+                row(ui, "drv-power", |ui| {
                     drag(ui, max_power, 10_000.0, 0.0..=12_000_000.0)
                 });
-                row(ui, "v max", "km/h", |ui| drag(ui, v_max, 1.0, 0.0..=400.0));
+                row(ui, "drv-vmax", |ui| drag(ui, v_max, 1.0, 0.0..=400.0));
             });
             optional(
                 ui,
-                "Series-wound motor data",
+                "section-series-motor",
                 motor,
                 series_motor_defaults,
                 series_motor_editor,
             );
             optional(
                 ui,
-                "Rheostatic brake",
+                "section-rheostatic-brake",
                 dynamic_brake,
                 || DynamicBrake {
                     max_force: 100_000.0,
@@ -357,34 +339,29 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             brake_fade_kmh,
         } => {
             egui::Grid::new("conv").num_columns(2).show(ui, |ui| {
-                row(ui, "Starting effort", "N", |ui| {
+                row(ui, "drv-start-force", |ui| {
                     drag(ui, max_force, 1000.0, 0.0..=800_000.0)
                 });
-                row(ui, "Power", "W at the wheel", |ui| {
+                row(ui, "drv-power", |ui| {
                     drag(ui, max_power, 10_000.0, 0.0..=12_000_000.0)
                 });
-                row(ui, "v max", "km/h", |ui| drag(ui, v_max, 1.0, 0.0..=400.0));
-                row(
-                    ui,
-                    "Pull-out speed",
-                    "km/h — above it the effort falls with 1/v²; 0 = no limit",
-                    |ui| drag(ui, v_pullout, 1.0, 0.0..=400.0),
-                );
-                row(ui, "Rise time", "s", |ui| {
-                    drag(ui, ramp_time, 0.1, 0.1..=30.0)
+                row(ui, "drv-vmax", |ui| drag(ui, v_max, 1.0, 0.0..=400.0));
+                row(ui, "drv-pullout", |ui| {
+                    drag(ui, v_pullout, 1.0, 0.0..=400.0)
                 });
-                row(ui, "Brake force", "N", |ui| {
+                row(ui, "drv-ramp", |ui| drag(ui, ramp_time, 0.1, 0.1..=30.0));
+                row(ui, "drv-brake-force", |ui| {
                     drag(ui, brake_force, 1000.0, 0.0..=800_000.0)
                 });
-                row(ui, "Brake power", "W", |ui| {
+                row(ui, "drv-brake-power", |ui| {
                     drag(ui, brake_power, 10_000.0, 0.0..=12_000_000.0)
                 });
-                row(ui, "Brake fade-out", "km/h", |ui| {
+                row(ui, "drv-brake-fade", |ui| {
                     drag(ui, brake_fade_kmh, 1.0, 0.0..=60.0)
                 });
             });
-            ui.checkbox(regenerative, "Regenerative")
-                .on_hover_text("feeds back into the contact line — dead without line voltage");
+            ui.checkbox(regenerative, t!("drv-regenerative"))
+                .on_hover_text(t!("drv-regenerative-hint"));
         }
         TractionSpec::Diesel {
             max_force,
@@ -397,33 +374,35 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             hydrodynamic_brake,
         } => {
             egui::Grid::new("diesel").num_columns(2).show(ui, |ui| {
-                row(ui, "Starting effort", "N — without an engine map", |ui| {
+                row(ui, "drv-start-force-diesel", |ui| {
                     drag(ui, max_force, 1000.0, 0.0..=800_000.0)
                 });
-                row(ui, "Power", "W at the wheel", |ui| {
+                row(ui, "drv-power", |ui| {
                     drag(ui, max_power, 10_000.0, 0.0..=6_000_000.0)
                 });
-                row(ui, "v max", "km/h", |ui| drag(ui, v_max, 1.0, 0.0..=250.0));
-                row(ui, "Rise time", "s", |ui| {
-                    drag(ui, ramp_time, 0.1, 0.1..=30.0)
-                });
-                row(ui, "Cranking time", "s", |ui| {
+                row(ui, "drv-vmax", |ui| drag(ui, v_max, 1.0, 0.0..=250.0));
+                row(ui, "drv-ramp", |ui| drag(ui, ramp_time, 0.1, 0.1..=30.0));
+                row(ui, "drv-crank-time", |ui| {
                     drag(ui, start_time, 0.5, 0.5..=60.0)
                 });
             });
-            optional(ui, "Engine map", engine, engine_defaults, |ui, e| {
-                engine_editor(ui, e)
-            });
             optional(
                 ui,
-                "Hydraulic transmission",
+                "section-engine-map",
+                engine,
+                engine_defaults,
+                engine_editor,
+            );
+            optional(
+                ui,
+                "section-transmission",
                 transmission,
                 transmission_defaults,
                 transmission_editor,
             );
             optional(
                 ui,
-                "Hydrodynamic brake",
+                "section-retarder",
                 hydrodynamic_brake,
                 || HydrodynamicBrake {
                     absorption: 0.05,
@@ -443,14 +422,14 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
 /// A section that can be switched on; switching it on creates the defaults.
 fn optional<T>(
     ui: &mut egui::Ui,
-    label: &str,
+    key: &str,
     value: &mut Option<T>,
     defaults: impl FnOnce() -> T,
     body: impl FnOnce(&mut egui::Ui, &mut T),
 ) {
     ui.separator();
     let mut on = value.is_some();
-    if ui.checkbox(&mut on, label).changed() {
+    if ui.checkbox(&mut on, t!(key)).changed() {
         *value = on.then(defaults);
     }
     if let Some(inner) = value {
@@ -458,20 +437,23 @@ fn optional<T>(
     }
 }
 
+fn traction_key(traction: &Option<TractionSpec>) -> &'static str {
+    match traction {
+        None => "traction-none",
+        Some(TractionSpec::Curve { .. }) => "traction-curve",
+        Some(TractionSpec::TapChanger { .. }) => "traction-tap",
+        Some(TractionSpec::Converter { .. }) => "traction-converter",
+        Some(TractionSpec::Diesel { .. }) => "traction-diesel",
+    }
+}
+
 fn type_combo(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
-    let label = match traction {
-        None => "unpowered",
-        Some(TractionSpec::Curve { .. }) => "tractive effort curve",
-        Some(TractionSpec::TapChanger { .. }) => "tap changer (series-wound)",
-        Some(TractionSpec::Converter { .. }) => "converter (three-phase)",
-        Some(TractionSpec::Diesel { .. }) => "diesel",
-    };
     egui::ComboBox::from_id_salt("traction")
-        .selected_text(label)
+        .selected_text(t!(traction_key(traction)))
         .width(220.0)
         .show_ui(ui, |ui| {
             if ui
-                .selectable_label(traction.is_none(), "unpowered")
+                .selectable_label(traction.is_none(), t!("traction-none"))
                 .clicked()
             {
                 *traction = None;
@@ -479,7 +461,7 @@ fn type_combo(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             if ui
                 .selectable_label(
                     matches!(traction, Some(TractionSpec::Curve { .. })),
-                    "tractive effort curve",
+                    t!("traction-curve"),
                 )
                 .clicked()
             {
@@ -493,7 +475,7 @@ fn type_combo(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             if ui
                 .selectable_label(
                     matches!(traction, Some(TractionSpec::TapChanger { .. })),
-                    "tap changer (series-wound)",
+                    t!("traction-tap"),
                 )
                 .clicked()
             {
@@ -510,7 +492,7 @@ fn type_combo(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             if ui
                 .selectable_label(
                     matches!(traction, Some(TractionSpec::Converter { .. })),
-                    "converter (three-phase)",
+                    t!("traction-converter"),
                 )
                 .clicked()
             {
@@ -529,7 +511,7 @@ fn type_combo(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
             if ui
                 .selectable_label(
                     matches!(traction, Some(TractionSpec::Diesel { .. })),
-                    "diesel",
+                    t!("traction-diesel"),
                 )
                 .clicked()
             {
@@ -564,41 +546,35 @@ fn series_motor_defaults() -> SeriesMotor {
 
 fn series_motor_editor(ui: &mut egui::Ui, m: &mut SeriesMotor) {
     egui::Grid::new("motor").num_columns(2).show(ui, |ui| {
-        row(ui, "Motors", "number in the vehicle", |ui| {
+        row(ui, "mot-count", |ui| {
             ui.add(egui::DragValue::new(&mut m.count).range(1..=12));
         });
-        row(
-            ui,
-            "Resistance",
-            "Ω — armature and field together",
-            |ui| drag(ui, &mut m.resistance, 0.005, 0.001..=2.0),
-        );
-        row(
-            ui,
-            "Machine constant",
-            "V·s/A — flux linkage per ampere, unsaturated",
-            |ui| drag(ui, &mut m.flux_constant, 0.001, 0.0001..=1.0),
-        );
-        row(ui, "Saturation current", "A", |ui| {
+        row(ui, "mot-resistance", |ui| {
+            drag(ui, &mut m.resistance, 0.005, 0.001..=2.0)
+        });
+        row(ui, "mot-machine-constant", |ui| {
+            drag(ui, &mut m.flux_constant, 0.001, 0.0001..=1.0)
+        });
+        row(ui, "mot-saturation", |ui| {
             drag(ui, &mut m.saturation_current, 10.0, 10.0..=5_000.0)
         });
-        row(ui, "Max current", "A — the current limit relay", |ui| {
+        row(ui, "mot-max-current", |ui| {
             drag(ui, &mut m.max_current, 10.0, 10.0..=5_000.0)
         });
-        row(ui, "Max voltage", "V at the top notch", |ui| {
+        row(ui, "mot-max-voltage", |ui| {
             drag(ui, &mut m.max_voltage, 10.0, 50.0..=4_000.0)
         });
-        row(ui, "Gear ratio", "motor : wheelset", |ui| {
+        row(ui, "mot-gear-ratio", |ui| {
             drag(ui, &mut m.gear_ratio, 0.01, 0.5..=10.0)
         });
-        row(ui, "Wheel diameter", "m", |ui| {
+        row(ui, "drv-wheel-diameter", |ui| {
             drag(ui, &mut m.wheel_diameter, 0.01, 0.3..=2.0)
         });
-        row(ui, "Efficiency", "motor and gearing", |ui| {
+        row(ui, "mot-efficiency", |ui| {
             drag(ui, &mut m.efficiency, 0.01, 0.3..=1.0)
         });
     });
-    ui.label("Field weakening stages (1 = full field)");
+    ui.label(t!("mot-field-steps"));
     let mut remove = None;
     for (i, field) in m.field_steps.iter_mut().enumerate() {
         ui.horizontal(|ui| {
@@ -611,7 +587,7 @@ fn series_motor_editor(ui: &mut egui::Ui, m: &mut SeriesMotor) {
     if let Some(i) = remove {
         m.field_steps.remove(i);
     }
-    if ui.button("+ stage").clicked() {
+    if ui.button(t!("action-add-stage")).clicked() {
         let last = m.field_steps.last().copied().unwrap_or(1.0);
         m.field_steps.push((last - 0.15).max(0.2));
     }
@@ -619,20 +595,20 @@ fn series_motor_editor(ui: &mut egui::Ui, m: &mut SeriesMotor) {
 
 fn dynamic_brake_editor(ui: &mut egui::Ui, b: &mut DynamicBrake) {
     egui::Grid::new("dynbrake").num_columns(2).show(ui, |ui| {
-        row(ui, "Brake force", "N", |ui| {
+        row(ui, "drv-brake-force", |ui| {
             drag(ui, &mut b.max_force, 1000.0, 0.0..=800_000.0)
         });
-        row(ui, "Brake power", "W", |ui| {
+        row(ui, "drv-brake-power", |ui| {
             drag(ui, &mut b.max_power, 10_000.0, 0.0..=12_000_000.0)
         });
-        row(ui, "Fade-out", "km/h", |ui| {
+        row(ui, "drv-fade", |ui| {
             drag(ui, &mut b.fade_out_kmh, 1.0, 0.0..=60.0)
         });
-        row(ui, "Rise time", "s", |ui| {
+        row(ui, "drv-ramp", |ui| {
             drag(ui, &mut b.ramp_time, 0.1, 0.1..=30.0)
         });
     });
-    ui.checkbox(&mut b.regenerative, "Regenerative");
+    ui.checkbox(&mut b.regenerative, t!("drv-regenerative"));
 }
 
 fn engine_defaults() -> DieselEngine {
@@ -649,19 +625,19 @@ fn engine_defaults() -> DieselEngine {
 
 fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
     egui::Grid::new("engine").num_columns(2).show(ui, |ui| {
-        row(ui, "Idle", "1/min", |ui| {
+        row(ui, "eng-idle", |ui| {
             drag(ui, &mut e.idle_rpm, 10.0, 100.0..=1_500.0)
         });
-        row(ui, "Rated speed", "1/min", |ui| {
+        row(ui, "eng-rated", |ui| {
             drag(ui, &mut e.rated_rpm, 10.0, 200.0..=4_000.0)
         });
-        row(ui, "Overspeed", "1/min", |ui| {
+        row(ui, "eng-overspeed", |ui| {
             drag(ui, &mut e.max_rpm, 10.0, 200.0..=4_500.0)
         });
-        row(ui, "Inertia", "kg·m² incl. flywheel", |ui| {
+        row(ui, "eng-inertia", |ui| {
             drag(ui, &mut e.inertia, 1.0, 0.5..=500.0)
         });
-        row(ui, "Rack travel time", "s from idle to full load", |ui| {
+        row(ui, "eng-rack-time", |ui| {
             drag(ui, &mut e.response_time, 0.05, 0.05..=10.0)
         });
     });
@@ -669,15 +645,15 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
     let speed_governed = matches!(e.governor, Governor::Speed { .. });
     ui.horizontal(|ui| {
         if ui
-            .selectable_label(speed_governed, "speed-governed")
-            .on_hover_text("the power controller sets the engine speed, the governor holds it")
+            .selectable_label(speed_governed, t!("gov-speed"))
+            .on_hover_text(t!("gov-speed-hint"))
             .clicked()
         {
             e.governor = Governor::Speed { steps: 0 };
         }
         if ui
-            .selectable_label(!speed_governed, "fill-governed")
-            .on_hover_text("the power controller is the fuel rack, the speed follows the load")
+            .selectable_label(!speed_governed, t!("gov-fill"))
+            .on_hover_text(t!("gov-fill-hint"))
             .clicked()
         {
             e.governor = Governor::Fill;
@@ -685,11 +661,12 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
     });
     if let Governor::Speed { steps } = &mut e.governor {
         ui.horizontal(|ui| {
-            ui.label("Notches").on_hover_text("0 = continuous");
+            ui.label(t!("gov-notches"))
+                .on_hover_text(t!("gov-notches-hint"));
             ui.add(egui::DragValue::new(steps).range(0..=32));
         });
     }
-    ui.label("Full load torque (1/min → N·m)");
+    ui.label(t!("table-torque"));
     table_editor(ui, "torque", " rpm", &mut e.torque_curve);
 }
 
@@ -715,47 +692,45 @@ fn transmission_defaults() -> Transmission {
 
 fn transmission_editor(ui: &mut egui::Ui, t: &mut Transmission) {
     egui::Grid::new("gearbox").num_columns(2).show(ui, |ui| {
-        row(
-            ui,
-            "Filling steps",
-            "0 = continuous, 1 = fill/empty only, higher = partial filling to the original",
-            |ui| {
-                ui.add(egui::DragValue::new(&mut t.fill_steps).range(0..=32));
-            },
-        );
-        row(ui, "Filling time", "s to fill or empty a circuit", |ui| {
+        row(ui, "trm-fill-steps", |ui| {
+            ui.add(egui::DragValue::new(&mut t.fill_steps).range(0..=32));
+        });
+        row(ui, "trm-fill-time", |ui| {
             drag(ui, &mut t.fill_time, 0.05, 0.05..=10.0)
         });
-        row(
-            ui,
-            "Change hysteresis",
-            "km/h below the change-up point at which it changes back",
-            |ui| drag(ui, &mut t.hysteresis_kmh, 0.5, 0.0..=40.0),
-        );
-        row(ui, "Final drive", "output : wheelset", |ui| {
+        row(ui, "trm-hysteresis", |ui| {
+            drag(ui, &mut t.hysteresis_kmh, 0.5, 0.0..=40.0)
+        });
+        row(ui, "trm-final-ratio", |ui| {
             drag(ui, &mut t.final_ratio, 0.01, 0.1..=10.0)
         });
-        row(ui, "Wheel diameter", "m", |ui| {
+        row(ui, "drv-wheel-diameter", |ui| {
             drag(ui, &mut t.wheel_diameter, 0.01, 0.3..=2.0)
         });
-        row(ui, "Transmissions", "number in the vehicle", |ui| {
+        row(ui, "trm-count", |ui| {
             ui.add(egui::DragValue::new(&mut t.count).range(1..=4));
         });
-        row(ui, "Efficiency", "gearing behind the circuit", |ui| {
+        row(ui, "trm-efficiency", |ui| {
             drag(ui, &mut t.efficiency, 0.01, 0.3..=1.0)
         });
     });
 
-    ui.label(egui::RichText::new("Circuits").strong());
+    ui.label(egui::RichText::new(t!("group-circuits")).strong());
     let mut remove = None;
     for (i, circuit) in t.circuits.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             let converter = circuit.kind == CircuitKind::Converter;
             ui.label(format!("{}.", i + 1));
-            if ui.selectable_label(converter, "converter").clicked() {
+            if ui
+                .selectable_label(converter, t!("circuit-converter"))
+                .clicked()
+            {
                 circuit.kind = CircuitKind::Converter;
             }
-            if ui.selectable_label(!converter, "coupling").clicked() {
+            if ui
+                .selectable_label(!converter, t!("circuit-coupling"))
+                .clicked()
+            {
                 circuit.kind = CircuitKind::Coupling;
                 circuit.stall_ratio = 1.0;
             }
@@ -766,27 +741,21 @@ fn transmission_editor(ui: &mut egui::Ui, t: &mut Transmission) {
         egui::Grid::new(("circuit", i))
             .num_columns(2)
             .show(ui, |ui| {
-                row(ui, "Ratio", "turbine : output", |ui| {
+                row(ui, "cir-ratio", |ui| {
                     drag(ui, &mut circuit.ratio, 0.01, 0.1..=10.0)
                 });
-                row(ui, "Stall torque ratio", "µ at ν = 0", |ui| {
+                row(ui, "cir-stall", |ui| {
                     drag(ui, &mut circuit.stall_ratio, 0.05, 1.0..=6.0)
                 });
-                row(ui, "Coupling point", "ν at which µ has reached 1", |ui| {
+                row(ui, "cir-coupling-point", |ui| {
                     drag(ui, &mut circuit.coupling_nu, 0.01, 0.1..=1.0)
                 });
-                row(
-                    ui,
-                    "Absorption λ",
-                    "N·m/(rad/s)² — the pump's rated torque at rated speed",
-                    |ui| drag(ui, &mut circuit.absorption, 0.005, 0.0001..=10.0),
-                );
-                row(
-                    ui,
-                    "Change-up point",
-                    "km/h — the last circuit ignores it",
-                    |ui| drag(ui, &mut circuit.shift_up_kmh, 1.0, 0.0..=250.0),
-                );
+                row(ui, "cir-absorption", |ui| {
+                    drag(ui, &mut circuit.absorption, 0.005, 0.0001..=10.0)
+                });
+                row(ui, "cir-shift-up", |ui| {
+                    drag(ui, &mut circuit.shift_up_kmh, 1.0, 0.0..=250.0)
+                });
             });
     }
     if let Some(i) = remove
@@ -794,7 +763,7 @@ fn transmission_editor(ui: &mut egui::Ui, t: &mut Transmission) {
     {
         t.circuits.remove(i);
     }
-    if t.circuits.len() < MAX_CIRCUITS && ui.button("+ circuit").clicked() {
+    if t.circuits.len() < MAX_CIRCUITS && ui.button(t!("action-add-circuit")).clicked() {
         let last = *t.circuits.last().unwrap();
         t.circuits.push(Circuit {
             ratio: last.ratio / 2.0,
@@ -806,28 +775,25 @@ fn transmission_editor(ui: &mut egui::Ui, t: &mut Transmission) {
 
 fn retarder_editor(ui: &mut egui::Ui, b: &mut HydrodynamicBrake) {
     egui::Grid::new("retarder").num_columns(2).show(ui, |ui| {
-        row(ui, "Absorption λ", "N·m/(rad/s)² at full filling", |ui| {
+        row(ui, "ret-absorption", |ui| {
             drag(ui, &mut b.absorption, 0.005, 0.0001..=10.0)
         });
-        row(ui, "Ratio", "rotor : wheelset", |ui| {
+        row(ui, "ret-ratio", |ui| {
             drag(ui, &mut b.ratio, 0.05, 0.1..=12.0)
         });
-        row(ui, "Wheel diameter", "m", |ui| {
+        row(ui, "drv-wheel-diameter", |ui| {
             drag(ui, &mut b.wheel_diameter, 0.01, 0.3..=2.0)
         });
-        row(ui, "Brake force", "N — mechanical limit", |ui| {
+        row(ui, "ret-brake-force", |ui| {
             drag(ui, &mut b.max_force, 1000.0, 0.0..=400_000.0)
         });
-        row(
-            ui,
-            "Brake power",
-            "W — what the cooler can carry off",
-            |ui| drag(ui, &mut b.max_power, 10_000.0, 0.0..=6_000_000.0),
-        );
-        row(ui, "Filling time", "s", |ui| {
+        row(ui, "ret-brake-power", |ui| {
+            drag(ui, &mut b.max_power, 10_000.0, 0.0..=6_000_000.0)
+        });
+        row(ui, "ret-fill-time", |ui| {
             drag(ui, &mut b.fill_time, 0.05, 0.05..=10.0)
         });
-        row(ui, "Fade-out", "km/h", |ui| {
+        row(ui, "drv-fade", |ui| {
             drag(ui, &mut b.fade_out_kmh, 1.0, 0.0..=60.0)
         });
     });

@@ -166,7 +166,11 @@ impl ScoreKeeper {
             let off = (stop.position_error.abs() - r.stop_tolerance).max(0.0);
             if off > 0.0 {
                 items.push(ScoreItem {
-                    reason: format!("Stopping point {} missed by {:.0} m", stop.name, off),
+                    reason: i18n::t!(
+                        "score-stop-missed",
+                        stop = stop.name,
+                        metres = format!("{off:.0}")
+                    ),
                     points: -(off * r.per_meter_off) as i32,
                 });
             }
@@ -174,35 +178,40 @@ impl ScoreKeeper {
             if minutes.abs() > 0.5 {
                 let factor = if minutes > 0.0 { 1.0 } else { 0.5 };
                 items.push(ScoreItem {
-                    reason: format!("{} {:+.1} min against the timetable", stop.name, minutes),
+                    reason: i18n::t!(
+                        "score-timetable",
+                        stop = stop.name,
+                        minutes = format!("{minutes:+.1}")
+                    ),
                     points: -(minutes.abs() * r.per_minute_late * factor) as i32,
                 });
             }
         }
         if self.forced_brakes > 0 {
             items.push(ScoreItem {
-                reason: format!("{} forced brake application(s)", self.forced_brakes),
+                reason: i18n::t!("score-forced-brakes", count = self.forced_brakes),
                 points: -((self.forced_brakes as f64 * r.per_forced_brake) as i32),
             });
         }
         if self.overspeed_seconds > 0.0 {
             items.push(ScoreItem {
-                reason: format!(
-                    "{:.0} s too fast (max. {:+.0} km/h)",
-                    self.overspeed_seconds, self.max_overspeed
+                reason: i18n::t!(
+                    "score-overspeed",
+                    seconds = format!("{:.0}", self.overspeed_seconds),
+                    excess = format!("{:+.0}", self.max_overspeed)
                 ),
                 points: -((self.overspeed_seconds * r.per_overspeed_second) as i32),
             });
         }
         if self.energy_kwh > 0.0 {
             items.push(ScoreItem {
-                reason: format!("{:.0} kWh traction energy", self.energy_kwh),
+                reason: i18n::t!("score-energy", energy = format!("{:.0}", self.energy_kwh)),
                 points: -((self.energy_kwh * r.per_kwh) as i32),
             });
         }
         if bonus != 0 {
             items.push(ScoreItem {
-                reason: "Scenario score".into(),
+                reason: i18n::t!("score-scenario"),
                 points: bonus,
             });
         }
@@ -232,7 +241,11 @@ pub struct ScoreReport {
 impl ScoreReport {
     /// Multi-line summary for HUD and log.
     pub fn summary(&self) -> String {
-        let mut lines = vec![format!("Score: {} of {}", self.total, self.base)];
+        let mut lines = vec![i18n::t!(
+            "score-summary",
+            total = self.total,
+            base = self.base
+        )];
         for item in &self.items {
             lines.push(format!("  {:+5}  {}", item.points, item.reason));
         }

@@ -11,5 +11,6 @@ serde = { workspace = true }
 ron = { workspace = true }
 
 [dev-dependencies]
+i18n = { workspace = true }
 content = { workspace = true }
 world-coords = { workspace = true }

@@ -6,6 +6,7 @@
 use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::prelude::*;
+use i18n::t;
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::safety::{LampState, SafetySystems, SelfTestPhase};
 
@@ -274,57 +275,61 @@ pub fn update_hud(
     let cab = &sim.controls[player.0];
 
     let mut lines = Vec::new();
-    lines.push(format!(
-        "v = {:6.1} km/h   zul. {:5.0} km/h   Weg {:8.0} m   t = {:6.0} s",
-        train.speed_kmh(),
-        loco.pos.speed_limit(&sim.net),
-        runtime.odometer,
-        sim.time
+    lines.push(t!(
+        "hud-speed",
+        speed = format!("{:6.1}", train.speed_kmh()),
+        limit = format!("{:5.0}", loco.pos.speed_limit(&sim.net)),
+        distance = format!("{:8.0}", runtime.odometer),
+        time = format!("{:6.0}", sim.time),
     ));
-    lines.push(format!(
-        "HL {:4.2} bar   C {:4.2} bar   R {:4.2} bar   HB {:5.2} bar   Zusatz {:4.2} bar   Luft {:6.0} Nl",
-        loco.brake.pipe,
-        loco.brake.cylinder,
-        loco.brake.aux_reservoir,
-        loco.brake.main_reservoir,
-        loco.brake.direct_cylinder,
-        loco.brake.air_consumed
+    lines.push(t!(
+        "hud-brakes",
+        pipe = format!("{:4.2}", loco.brake.pipe),
+        cylinder = format!("{:4.2}", loco.brake.cylinder),
+        auxiliary = format!("{:4.2}", loco.brake.aux_reservoir),
+        main = format!("{:5.2}", loco.brake.main_reservoir),
+        direct = format!("{:4.2}", loco.brake.direct_cylinder),
+        air = format!("{:6.0}", loco.brake.air_consumed),
     ));
-    lines.push(format!(
-        "Fahrschalter {:+.2}   Zugkraft {:6.0} kN   Bremskraft {:6.0} kN   Bremse {:?}",
-        cab.throttle,
-        loco.tractive_effort / 1000.0,
-        train.vehicles.iter().map(|v| v.brake_effort).sum::<f64>() / 1000.0,
-        cab.brake_valve
+    lines.push(t!(
+        "hud-traction",
+        throttle = format!("{:+.2}", cab.throttle),
+        tractive = format!("{:6.0}", loco.tractive_effort / 1000.0),
+        braking = format!(
+            "{:6.0}",
+            train.vehicles.iter().map(|v| v.brake_effort).sum::<f64>() / 1000.0
+        ),
+        valve = format!("{:?}", cab.brake_valve),
     ));
-    lines.push(format!(
-        "Batterie {}   Bügel {:.0}%   Hauptschalter {}   Fahrdraht {:5.0} V   Federspeicher {}",
-        onoff(loco.traction.battery),
-        loco.traction.pantograph * 100.0,
-        onoff(loco.traction.main_switch),
-        loco.traction.line_voltage,
-        onoff(loco.brake.parking_applied)
+    lines.push(t!(
+        "hud-electrics",
+        battery = onoff(loco.traction.battery),
+        pantograph = format!("{:.0}", loco.traction.pantograph * 100.0),
+        switch = onoff(loco.traction.main_switch),
+        voltage = format!("{:5.0}", loco.traction.line_voltage),
+        parking = onoff(loco.brake.parking_applied),
     ));
     // Whatever the drive of this vehicle has to say about itself.
     match &loco.spec.traction {
-        Some(sim_core::drive::TractionSpec::TapChanger { steps, .. }) => lines.push(format!(
-            "Fahrstufe {:4.1}/{steps}   Motorstrom {:5.0} A   Feld {:3.0} %   E-Bremse {:5.0} kN",
-            loco.traction.step,
-            loco.traction.motor_current,
-            loco.traction.field * 100.0,
-            loco.traction.dynamic_force / 1000.0
+        Some(sim_core::drive::TractionSpec::TapChanger { steps, .. }) => lines.push(t!(
+            "hud-tap",
+            step = format!("{:4.1}", loco.traction.step),
+            steps = steps,
+            current = format!("{:5.0}", loco.traction.motor_current),
+            field = format!("{:3.0}", loco.traction.field * 100.0),
+            force = format!("{:5.0}", loco.traction.dynamic_force / 1000.0),
         )),
-        Some(sim_core::drive::TractionSpec::Diesel { .. }) => lines.push(format!(
-            "Motor {:5.0} 1/min   Füllung {:3.0} %   Wandler {}   ν {:4.2}   Retarder {:3.0} %",
-            loco.traction.engine_rpm,
-            loco.traction.engine_fill * 100.0,
-            loco.traction.circuit + 1,
-            loco.traction.circuit_nu,
-            loco.traction.retarder_fill * 100.0
+        Some(sim_core::drive::TractionSpec::Diesel { .. }) => lines.push(t!(
+            "hud-diesel",
+            rpm = format!("{:5.0}", loco.traction.engine_rpm),
+            fill = format!("{:3.0}", loco.traction.engine_fill * 100.0),
+            circuit = loco.traction.circuit + 1,
+            nu = format!("{:4.2}", loco.traction.circuit_nu),
+            retarder = format!("{:3.0}", loco.traction.retarder_fill * 100.0),
         )),
-        Some(_) => lines.push(format!(
-            "E-Bremse {:5.0} kN",
-            loco.traction.dynamic_force / 1000.0
+        Some(_) => lines.push(t!(
+            "hud-dynamic",
+            force = format!("{:5.0}", loco.traction.dynamic_force / 1000.0)
         )),
         None => {}
     }
@@ -340,48 +345,48 @@ pub fn update_hud(
             _ => i.name.to_string(),
         })
         .collect();
-    lines.push(format!(
-        "Zugsicherung: {:?}   Überwachung {}   LM: {}",
-        runtime.protection.action,
-        runtime
+    lines.push(t!(
+        "hud-protection",
+        action = format!("{:?}", runtime.protection.action),
+        limit = runtime
             .protection
             .speed_limit
             .map(|v| format!("{v:.0} km/h"))
-            .unwrap_or_else(|| "—".into()),
-        if lamps.is_empty() {
-            "—".to_string()
+            .unwrap_or_else(|| t!("common-none")),
+        lamps = if lamps.is_empty() {
+            t!("common-none")
         } else {
             lamps.join(" ")
-        }
+        },
     ));
     if let SafetySystems::De(de) = &loco.safety {
         if let Some(pzb) = de.pzb {
-            lines.push(format!(
-                "{}   Zugart {:?}{}",
-                pzb.variant.name(),
-                pzb.train_type,
-                match pzb.self_test().phase() {
-                    SelfTestPhase::Passed if pzb.is_restrictive() => "   restriktiv".into(),
+            lines.push(t!(
+                "hud-pzb",
+                variant = pzb.variant.name(),
+                category = format!("{:?}", pzb.train_type),
+                note = match pzb.self_test().phase() {
+                    SelfTestPhase::Passed if pzb.is_restrictive() => t!("hud-pzb-restrictive"),
                     SelfTestPhase::Passed => String::new(),
-                    p => format!("   Funktionsprüfung: {p:?}"),
-                }
+                    p => t!("hud-pzb-selftest", phase = format!("{p:?}")),
+                },
             ));
         }
         if let Some(lzb) = de.lzb {
             if !lzb.self_test().is_passed() {
-                lines.push(format!(
-                    "LZB Funktionsprüfung: {:?} (B = quittieren)",
-                    lzb.self_test().phase()
+                lines.push(t!(
+                    "hud-lzb-selftest",
+                    phase = format!("{:?}", lzb.self_test().phase())
                 ));
             } else if lzb.is_guiding() {
-                lines.push(format!(
-                    "LZB {:?} {:?}{}: v-Soll {:5.0}   v-Ziel {:5.0}   Zielentfernung {:6.0} m",
-                    lzb.mode,
-                    lzb.block_mode(),
-                    if lzb.is_cir_elke() { " CIR-ELKE" } else { "" },
-                    lzb.permitted_speed().unwrap_or(0.0),
-                    lzb.target_speed().unwrap_or(0.0),
-                    lzb.target_distance().unwrap_or(0.0)
+                lines.push(t!(
+                    "hud-lzb",
+                    mode = format!("{:?}", lzb.mode),
+                    block = format!("{:?}", lzb.block_mode()),
+                    cirelke = if lzb.is_cir_elke() { " CIR-ELKE" } else { "" },
+                    permitted = format!("{:5.0}", lzb.permitted_speed().unwrap_or(0.0)),
+                    target = format!("{:5.0}", lzb.target_speed().unwrap_or(0.0)),
+                    distance = format!("{:6.0}", lzb.target_distance().unwrap_or(0.0)),
                 ));
             }
         }
@@ -403,60 +408,57 @@ pub fn update_hud(
             )
         })
         .collect();
-    lines.push(format!("Signale: {}", aspects.join("  ")));
-    lines.push(format!(
-        "Gelände: {} Kacheln geladen (+{} in Arbeit), {} Dreiecke, {:.1} MB, Sichtweite {:.0} m",
-        terrain.0.tiles,
-        streamer.pending_tiles(),
-        terrain.0.triangles,
-        terrain.0.memory() as f64 / 1e6,
-        view.0
+    lines.push(t!("hud-signals", aspects = aspects.join("  ")));
+    lines.push(t!(
+        "hud-terrain",
+        tiles = terrain.0.tiles,
+        pending = streamer.pending_tiles(),
+        triangles = terrain.0.triangles,
+        megabytes = format!("{:.1}", terrain.0.memory() as f64 / 1e6),
+        view = format!("{:.0}", view.0),
     ));
 
     // Scenario: timetable, recent messages, scoring.
     if !sim.scenario.scenario.name.is_empty() {
         lines.push(String::new());
-        lines.push(format!(
-            "{} — {}",
-            sim.score.timetable.number, sim.scenario.scenario.name
+        lines.push(t!(
+            "hud-scenario",
+            number = sim.score.timetable.number,
+            name = sim.scenario.scenario.name
         ));
         for m in sim.scenario.recent_messages(3) {
             let marker = if m.announcement { "»" } else { "•" };
             lines.push(format!("{marker} [{:.0} s] {}", m.time, m.text));
         }
         if let Some(outcome) = &sim.scenario.outcome {
-            lines.push(format!(
-                "{}: {}",
-                if outcome.success {
-                    "Szenario bestanden"
+            lines.push(t!(
+                "hud-outcome",
+                result = if outcome.success {
+                    t!("hud-scenario-passed")
                 } else {
-                    "Szenario gescheitert"
+                    t!("hud-scenario-failed")
                 },
-                outcome.reason
+                reason = outcome.reason,
             ));
             lines.push(sim.score.report(sim.scenario.bonus).summary());
         } else {
             let report = sim.score.report(sim.scenario.bonus);
-            lines.push(format!(
-                "Wertung {} | Zwangsbremsungen {} | {:.0} kWh",
-                report.total, sim.score.forced_brakes, sim.score.energy_kwh
+            lines.push(t!(
+                "hud-score",
+                total = report.total,
+                forced = sim.score.forced_brakes,
+                energy = format!("{:.0}", sim.score.energy_kwh),
             ));
         }
         lines.push(String::new());
     }
 
-    lines.push(
-        "W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse"
-            .into(),
-    );
-    lines.push(
-        "Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  1–4 Aufrüsten  F1–F3 Kamera"
-            .into(),
-    );
+    lines.push(t!("hud-keys-drive"));
+    lines.push(t!("hud-keys-safety"));
 
     **text = lines.join("\n");
 }
 
-fn onoff(b: bool) -> &'static str {
-    if b { "ein" } else { "aus" }
+fn onoff(b: bool) -> String {
+    if b { t!("common-on") } else { t!("common-off") }
 }

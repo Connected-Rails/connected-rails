@@ -166,6 +166,7 @@ alignment from the OSM points.
 
 | Crate | Contents |
 |---|---|
+| `i18n` | Translations of everything the user reads (Fluent `.ftl`, English and German) |
 | `world-coords` | ECEF f64 world coordinates, floating origin, geodesy (plan ch. 4) |
 | `track-model` | Track geometry (straight/curve/clothoid), topology, switches, lineside equipment (ch. 5) |
 | `sim-core` | Driving dynamics, air brake, electrics, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |
@@ -243,6 +244,18 @@ other: a route is geodata, a vehicle is a model with a data sheet.
 
 Both are desktop applications, not game screens: menu bar, docked panels, the operating
 system's own file dialogs. `--frames N` and `--screenshot file.png` work in both.
+
+## Language
+
+Simulator and editors speak **English and German**. The language comes from the operating
+system; `TRAINSIM_LANG=en` (or `de`) overrides it, and both editors switch it at runtime
+under View → Language.
+
+The strings live in `crates/i18n/locales/<lang>/main.ftl` ([Fluent][fluent]) and are
+translated on Crowdin (`crowdin.yml`). A new language is a new directory next to `en`
+plus one line in `i18n::LANGUAGES` — the source language is English.
+
+[fluent]: https://projectfluent.org/
 
 ### Vehicle editor
 

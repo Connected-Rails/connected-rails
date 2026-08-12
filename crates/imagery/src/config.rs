@@ -258,17 +258,24 @@ impl ImageryConfig {
                 Ok(config) => (config, None),
                 Err(e) => (
                     Self::default(),
-                    Some(format!(
-                        "{} not readable ({e}) — default active",
-                        path.display()
+                    Some(i18n::t!(
+                        "status-config-unreadable",
+                        file = path.display(),
+                        error = e
                     )),
                 ),
             },
             Err(_) => {
                 let config = Self::default();
                 let message = match config.save(&path) {
-                    Ok(()) => format!("{} created", path.display()),
-                    Err(e) => format!("{} not writable: {e}", path.display()),
+                    Ok(()) => i18n::t!("status-config-created", file = path.display()),
+                    Err(e) => {
+                        i18n::t!(
+                            "status-config-not-writable",
+                            file = path.display(),
+                            error = e
+                        )
+                    }
                 };
                 (config, Some(message))
             }
@@ -566,7 +573,7 @@ mod tests {
         let path = dir.join("imagery.ron");
 
         let (config, message) = ImageryConfig::load_or_create(&path);
-        assert!(message.unwrap().contains("created"));
+        assert!(message.unwrap().contains("imagery.ron"));
         assert!(path.exists());
 
         // The second time it is read, not overwritten.

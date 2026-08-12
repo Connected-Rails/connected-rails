@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+i18n = { workspace = true }
 track-model = { workspace = true }
 world-coords = { workspace = true }
 glam = { workspace = true }

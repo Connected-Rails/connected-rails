@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/i18n",
     "crates/world-coords",
     "crates/track-model",
     "crates/sim-core",
@@ -30,6 +31,7 @@ bevy = "0.19"
 bevy_egui = "0.41"
 rfd = "0.17"
 
+i18n = { path = "crates/i18n" }
 world-coords = { path = "crates/world-coords" }
 track-model = { path = "crates/track-model" }
 sim-core = { path = "crates/sim-core" }

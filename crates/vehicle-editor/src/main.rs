@@ -21,6 +21,7 @@ use bevy::gltf::{Gltf, GltfNode};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
+use i18n::t;
 use sim_core::train::{VehicleModel, VehicleSpec};
 use std::path::PathBuf;
 
@@ -63,7 +64,7 @@ impl Default for Editor {
             spec: VehicleSpec::default(),
             path: None,
             dirty: false,
-            status: "New vehicle".into(),
+            status: t!("status-new-vehicle"),
             gltf: None,
             loaded_file: String::new(),
             nodes: Vec::new(),
@@ -83,7 +84,7 @@ impl Editor {
                     .map_err(|e: ron::error::SpannedError| e.to_string())
             }) {
             Ok(spec) => {
-                self.status = format!("{} loaded", path.display());
+                self.status = t!("status-loaded", file = path.display());
                 self.spec = spec;
                 self.path = Some(path);
                 self.dirty = false;
@@ -91,7 +92,7 @@ impl Editor {
                 self.gltf = None;
                 self.loaded_file.clear();
             }
-            Err(e) => self.status = format!("{}: {e}", path.display()),
+            Err(e) => self.status = t!("status-error", file = path.display(), error = e),
         }
     }
 
@@ -101,11 +102,11 @@ impl Editor {
             .expect("vehicle is serializable");
         match std::fs::write(&path, text) {
             Ok(()) => {
-                self.status = format!("{} written", path.display());
+                self.status = t!("status-written", file = path.display());
                 self.path = Some(path);
                 self.dirty = false;
             }
-            Err(e) => self.status = format!("{}: {e}", path.display()),
+            Err(e) => self.status = t!("status-error", file = path.display(), error = e),
         }
     }
 
@@ -185,7 +186,7 @@ fn main() {
     app.register_asset_source(MOD_SOURCE, mod_asset_source());
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
-            title: "TrainSim-DE — Vehicle editor".into(),
+            title: t!("window-vehicle-editor"),
             ..default()
         }),
         ..default()
@@ -307,7 +308,7 @@ fn poll_model(
         return;
     };
     editor.nodes = model::inspect(gltf, &nodes);
-    editor.status = format!("{} nodes read", editor.nodes.len());
+    editor.status = t!("status-nodes-read", count = editor.nodes.len());
 
     for entity in instances.iter() {
         commands.entity(entity).despawn();

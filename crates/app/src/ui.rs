@@ -3,6 +3,7 @@
 //! Full operability via the keyboard (MaSzyna principle); the clickable
 //! 3D controls are added in M6.
 
+use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::prelude::*;
 use sim_core::brakes::DriverBrakeValve;
@@ -238,6 +239,7 @@ pub fn update_hud(
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
     terrain: Res<TerrainInfo>,
+    streamer: Res<TerrainStreamer>,
     view: Res<ViewDistance>,
     mut query: Query<&mut Text, With<HudText>>,
 ) {
@@ -333,8 +335,9 @@ pub fn update_hud(
         .collect();
     lines.push(format!("Signale: {}", aspects.join("  ")));
     lines.push(format!(
-        "Gelände: {} Kacheln, {} Dreiecke, {:.1} MB, Sichtweite {:.0} m",
+        "Gelände: {} Kacheln geladen (+{} in Arbeit), {} Dreiecke, {:.1} MB, Sichtweite {:.0} m",
         terrain.0.tiles,
+        streamer.pending_tiles(),
         terrain.0.triangles,
         terrain.0.memory() as f64 / 1e6,
         view.0

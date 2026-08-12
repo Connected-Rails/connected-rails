@@ -5,6 +5,7 @@
 
 mod models;
 mod render;
+mod streaming;
 mod ui;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable};
@@ -13,7 +14,7 @@ use bevy::asset::io::file::FileAssetReader;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
-use content::terrain::{TerrainOptions, TerrainStats};
+use content::terrain::{TerrainBuilder, TerrainOptions, TerrainStats};
 use content::vehicles::{br101, de_pzb, de_pzb_lzb, passenger_coach, vehicle};
 use content::{musterbahn, re_4711, to_musterstadt};
 use mod_runtime::ModRuntime;
@@ -44,6 +45,10 @@ pub struct Mods(pub ModRuntime);
 /// Terrain view distance [m] — tiles beyond it are hidden.
 #[derive(Resource)]
 pub struct ViewDistance(pub f32);
+
+/// Streaming load radius [m] — nothing further away is built, so nothing further away
+/// can be drawn either.
+const LOAD_RADIUS: f64 = 4_000.0;
 
 /// Key figures of the generated terrain (for the HUD).
 #[derive(Resource, Default)]
@@ -98,6 +103,7 @@ fn main() {
             rebase_origin,
             sync_vehicles,
             ui::camera_control,
+            streaming::stream_terrain,
             terrain_visibility,
             ui::update_hud,
         )
@@ -253,7 +259,9 @@ fn setup(
     );
 
     // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
-    let mut source = std::env::args()
+    // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
+    // terrain than fits in memory at once.
+    let source = std::env::args()
         .skip_while(|a| a != "--dgm")
         .nth(1)
         .and_then(|dir| match TerrainSource::from_dir(&dir, dgm_zone()) {
@@ -271,14 +279,11 @@ fn setup(
         fallback_height: 100.0,
         ..default()
     };
-    let (tiles, stats) = content::terrain::build(&sim.net, source.as_mut(), &terrain_options);
-    info!(
-        "Terrain: {} tiles, {} triangles, {:.1} MB",
-        stats.tiles,
-        stats.triangles,
-        stats.memory() as f64 / 1e6
+    let streamer = streaming::TerrainStreamer::new(
+        TerrainBuilder::new(&sim.net, source, terrain_options),
+        render::terrain_materials(&mut materials),
+        LOAD_RADIUS,
     );
-    render::spawn_terrain(&mut commands, &mut meshes, &mut materials, &tiles, &origin);
 
     // Vehicles as simple bodies — the 3D cab comes in M6.
     let body = materials.add(StandardMaterial {
@@ -354,8 +359,9 @@ fn setup(
         });
     }
 
-    commands.insert_resource(TerrainInfo(stats));
-    commands.insert_resource(ViewDistance(6_000.0));
+    commands.insert_resource(TerrainInfo::default());
+    commands.insert_resource(streamer);
+    commands.insert_resource(ViewDistance(LOAD_RADIUS as f32));
     commands.insert_resource(Origin(origin));
     commands.insert_resource(PlayerTrain(player));
     commands.insert_resource(AiDrivers(drivers));

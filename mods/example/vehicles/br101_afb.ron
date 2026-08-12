@@ -73,6 +73,8 @@
         parts: [
             (node: "pant_front", function: "pantograph",
              motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 45.0)),
+            (node: "pant_rear", function: "pantograph",
+             motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 45.0)),
         ],
     )),
 )

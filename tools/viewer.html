@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!-- Dev-only preview for mods/example/assets/br101.gltf.
+     Serve the repo root (python -m http.server) and open /tools/viewer.html. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>body { margin: 0; } #ok { position: fixed; top: 4px; left: 8px; font: 14px monospace; }</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="ok">loading…</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xbfd4e6);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x667788, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+sun.position.set(10, 18, 8);
+scene.add(sun);
+scene.add(new THREE.GridHelper(40, 40, 0x888888, 0xaabbcc));
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 200);
+const target = new THREE.Vector3(0, 2, 0);
+window.setView = (azimuthDeg, elevationDeg, dist = 26) => {
+    const az = azimuthDeg * Math.PI / 180, el = elevationDeg * Math.PI / 180;
+    camera.position.set(dist * Math.cos(el) * Math.sin(az), 2 + dist * Math.sin(el),
+                        dist * Math.cos(el) * Math.cos(az));
+    camera.lookAt(target);
+    renderer.render(scene, camera);
+};
+
+new GLTFLoader().load('/mods/example/assets/br101.gltf', (gltf) => {
+    scene.add(gltf.scene);
+    window.setView(35, 12);
+    document.getElementById('ok').textContent =
+        'loaded: ' + gltf.scene.children.map(c => c.name).join(', ');
+}, undefined, (err) => {
+    document.getElementById('ok').textContent = 'ERROR: ' + err;
+});
+</script>
+</body>
+</html>

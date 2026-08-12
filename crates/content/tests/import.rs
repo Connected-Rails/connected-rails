@@ -2,10 +2,10 @@
 
 use content::import::dgm::{HeightTile, TerrainSource};
 use content::import::{ImportOptions, import_line};
-use content::vehicles::{br101, passenger_coach, vehicle};
+use content::vehicles::{br101, passenger_coach};
 use sim_core::Sim;
-use sim_core::safety::SafetySystems;
-use sim_core::train::Train;
+use sim_core::safety::SafetyEquipment;
+use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
 use world_coords::geo;
 
@@ -156,9 +156,16 @@ fn import_produces_a_drivable_line() {
     let compiled = line.compile().expect("compiles");
     let mut sim = Sim::new(compiled.net, compiled.interlock, 1);
     let head = TrackPosition::new(EdgeId(0), 50.0, 1);
-    let mut vehicles = vec![vehicle(br101(), head, SafetySystems::None)];
+    // The imported line has no train protection equipment — so the loco runs without it.
+    let mut vehicles = vec![Vehicle::new(
+        VehicleSpec {
+            safety: SafetyEquipment::None,
+            ..br101()
+        },
+        head,
+    )];
     for _ in 0..3 {
-        vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), head));
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     let t = sim.add_train(train);

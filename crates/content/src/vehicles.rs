@@ -1,14 +1,14 @@
 //! Vehicle database (plan ch. 15): RON files + built-in reference vehicles.
 
 use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec, ControlValve, SlipProtection};
+use sim_core::doors::DoorSystem;
 use sim_core::drive::{
     Circuit, CircuitKind, DieselEngine, Governor, HydrodynamicBrake, SeriesMotor, TractionSpec,
     Transmission,
 };
-use sim_core::safety::SafetySystems;
-use sim_core::safety::de::{DeSafety, PzbVariant, TrainType};
-use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, Vehicle, VehicleSpec};
-use track_model::TrackPosition;
+use sim_core::safety::SafetyEquipment;
+use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
+use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, VehicleSpec};
 
 /// Loads a vehicle definition from RON.
 pub fn load_vehicle(ron_text: &str) -> Result<VehicleSpec, ron::error::SpannedError> {
@@ -64,6 +64,15 @@ pub fn br101() -> VehicleSpec {
         max_payload: 0.0,
         tilt_angle_deg: 0.0,
         passenger_doors: false,
+        // PZB 90 V2.0 plus LZB 80 — the equipment of a high-speed capable main line loco.
+        safety: SafetyEquipment::De {
+            pzb: Some(PzbVariant::Pzb90V20),
+            lzb: true,
+            sifa: Some(SifaKind::TimeTime),
+            train_type: TrainType::O,
+        },
+        // Door blocking of the hauled IC coaches, operated from the loco.
+        doors: DoorSystem::Tb0,
         hunting: 0.0,
         script: None,
         model: None,
@@ -122,6 +131,14 @@ pub fn br110() -> VehicleSpec {
         max_payload: 0.0,
         tilt_angle_deg: 0.0,
         passenger_doors: false,
+        // Indusi I 60R — the retrofitted interim build, no LZB on board.
+        safety: SafetyEquipment::De {
+            pzb: Some(PzbVariant::I60R),
+            lzb: false,
+            sifa: Some(SifaKind::TimeTime),
+            train_type: TrainType::O,
+        },
+        doors: DoorSystem::Tb0,
         hunting: 0.0,
         script: None,
         model: None,
@@ -210,6 +227,13 @@ pub fn br218() -> VehicleSpec {
         max_payload: 0.0,
         tilt_angle_deg: 0.0,
         passenger_doors: false,
+        safety: SafetyEquipment::De {
+            pzb: Some(PzbVariant::Pzb90V20),
+            lzb: false,
+            sifa: Some(SifaKind::TimeTime),
+            train_type: TrainType::M,
+        },
+        doors: DoorSystem::Tb0,
         hunting: 0.0,
         script: None,
         model: None,
@@ -246,6 +270,9 @@ pub fn passenger_coach() -> VehicleSpec {
         max_payload: 5_000.0,
         tilt_angle_deg: 0.0,
         passenger_doors: true,
+        // A hauled coach carries no train protection and no door control of its own.
+        safety: SafetyEquipment::None,
+        doors: DoorSystem::None,
         hunting: 0.0,
         script: None,
         model: None,
@@ -281,6 +308,8 @@ pub fn freight_wagon() -> VehicleSpec {
         max_payload: 57_000.0,
         tilt_angle_deg: 0.0,
         passenger_doors: false,
+        safety: SafetyEquipment::None,
+        doors: DoorSystem::None,
         hunting: 0.0,
         script: None,
         model: None,
@@ -388,37 +417,18 @@ pub fn railcar() -> VehicleSpec {
         max_payload: 9_000.0,
         tilt_angle_deg: 0.0,
         passenger_doors: true,
+        // Modern railcar: PZB 90, time-distance Sifa, automatic door closing.
+        safety: SafetyEquipment::De {
+            pzb: Some(PzbVariant::Pzb90V20),
+            lzb: false,
+            sifa: Some(SifaKind::TimeDistance),
+            train_type: TrainType::M,
+        },
+        doors: DoorSystem::Tav,
         hunting: 0.0,
         script: None,
         model: None,
     }
-}
-
-/// Builds a vehicle at a track position, optionally with German train protection.
-pub fn vehicle(spec: VehicleSpec, pos: TrackPosition, safety: SafetySystems) -> Vehicle {
-    let mut v = Vehicle::new(spec, pos);
-    v.safety = safety;
-    v
-}
-
-/// Equipment: Sifa + PZB 90 V2.0.
-pub fn de_pzb(train_type: TrainType) -> SafetySystems {
-    SafetySystems::De(DeSafety::pzb(train_type))
-}
-
-/// Equipment: Sifa + a specific Indusi/PZB build.
-pub fn de_indusi(variant: PzbVariant, train_type: TrainType) -> SafetySystems {
-    SafetySystems::De(DeSafety::indusi(variant, train_type))
-}
-
-/// Equipment: Sifa + PZB + LZB.
-pub fn de_pzb_lzb(train_type: TrainType) -> SafetySystems {
-    SafetySystems::De(DeSafety::pzb_lzb(train_type))
-}
-
-/// Equipment: Sifa + LZB, without PZB.
-pub fn de_lzb_only() -> SafetySystems {
-    SafetySystems::De(DeSafety::lzb_only())
 }
 
 #[cfg(test)]

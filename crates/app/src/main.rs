@@ -15,15 +15,12 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
 use content::terrain::{TerrainBuilder, TerrainOptions, TerrainStats};
-use content::vehicles::{br101, passenger_coach, vehicle};
+use content::vehicles::{br101, passenger_coach};
 use content::{musterbahn, re_4711, to_musterstadt};
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
-use sim_core::doors::{DoorControl, DoorSystem};
-use sim_core::safety::SafetySystems;
-use sim_core::safety::de::{DeSafety, Lzb80, PzbVariant, SifaKind, TrainType};
-use sim_core::train::{Train, VehicleSpec};
+use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
 use world_coords::RenderOrigin;
 
@@ -206,13 +203,7 @@ fn setup(
         })
         .unwrap_or_else(br101);
 
-    let player = spawn_train(
-        &mut sim,
-        TrackPosition::new(EdgeId(0), 200.0, 1),
-        5,
-        true,
-        loco,
-    );
+    let player = spawn_train(&mut sim, TrackPosition::new(EdgeId(0), 200.0, 1), 5, loco);
 
     // Second train, timetable and scenario belong to the example line — a modded line
     // brings its own scenario or none at all.
@@ -222,7 +213,6 @@ fn setup(
             &mut sim,
             TrackPosition::new(EdgeId(1), 400.0, 1),
             3,
-            false,
             br101(),
         );
         drivers.push((
@@ -426,62 +416,16 @@ fn mod_asset_source() -> AssetSourceBuilder {
     AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone())))
 }
 
-/// Train protection build from `--pzb <variant>` and `--sifa <kind>` (plan 9.2/9.3).
-///
-/// `--pzb` takes `i54`, `i60`, `i60m`, `i60r`, `pzb60`, `pzb90-1.5` or `pzb90-2.0`,
-/// `--sifa` takes `zeit-zeit`, `zeit-weg` or `rzm`. `--pzb none` equips the vehicle with
-/// LZB only.
-fn safety_from_args(with_lzb: bool) -> SafetySystems {
-    let variant = match arg("--pzb").as_deref() {
-        None | Some("pzb90-2.0") => Some(PzbVariant::Pzb90V20),
-        Some("i54") => Some(PzbVariant::I54),
-        Some("i60") => Some(PzbVariant::I60),
-        Some("i60m") => Some(PzbVariant::I60M),
-        Some("i60r") => Some(PzbVariant::I60R),
-        Some("pzb60") => Some(PzbVariant::Pzb60),
-        Some("pzb90-1.5") => Some(PzbVariant::Pzb90V15),
-        Some("none") => None,
-        Some(other) => {
-            warn!("unknown PZB build {other} — using the PZB 90 V2.0");
-            Some(PzbVariant::Pzb90V20)
-        }
-    };
-    let sifa = match arg("--sifa").as_deref() {
-        Some("zeit-weg") => SifaKind::TimeDistance,
-        Some("rzm") => SifaKind::Rzm,
-        _ => SifaKind::TimeTime,
-    };
-    let mut de = match variant {
-        Some(v) => DeSafety::indusi(v, TrainType::O),
-        None => DeSafety::lzb_only(),
-    };
-    if with_lzb || variant.is_none() {
-        de.lzb = Some(Lzb80::new());
-    }
-    SafetySystems::De(de.with_sifa(sifa))
-}
-
 /// Places a train of one loco + coaches at the given position.
-fn spawn_train(
-    sim: &mut Sim,
-    head: TrackPosition,
-    coaches: usize,
-    with_lzb: bool,
-    loco: VehicleSpec,
-) -> usize {
-    let safety = safety_from_args(with_lzb);
-    let mut vehicles = vec![vehicle(loco, head, safety)];
+///
+/// Train protection and door control come from the vehicles themselves (`VehicleSpec`),
+/// not from command line options.
+fn spawn_train(sim: &mut Sim, head: TrackPosition, coaches: usize, loco: VehicleSpec) -> usize {
+    let mut vehicles = vec![Vehicle::new(loco, head)];
     for _ in 0..coaches {
-        vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), head));
     }
-    let mut train = Train::assemble(vehicles, head, &sim.net);
-    train.doors = DoorControl::new(match arg("--doors").as_deref() {
-        Some("tb0") => DoorSystem::Tb0,
-        Some("tav") => DoorSystem::Tav,
-        Some("wtb") => DoorSystem::UicWtb,
-        _ => DoorSystem::None,
-    });
-    let index = sim.add_train(train);
+    let index = sim.add_train(Train::assemble(vehicles, head, &sim.net));
     // Vehicles start prepared — the "cold locomotive" is a scenario of its own (M6).
     for v in &mut sim.trains[index].vehicles {
         if v.is_powered() {

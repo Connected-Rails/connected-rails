@@ -1,20 +1,27 @@
 //! Acceptance tests of the driving dynamics and the brake (plan ch. 6, 7, 18) — headless.
 
 use content::musterbahn;
-use content::vehicles::{br101, de_pzb_lzb, freight_wagon, passenger_coach, vehicle};
+use content::vehicles::{br101, freight_wagon, passenger_coach};
 use sim_core::Sim;
 use sim_core::brakes::DriverBrakeValve;
-use sim_core::safety::SafetySystems;
-use sim_core::safety::de::TrainType;
-use sim_core::train::{Train, Vehicle};
+use sim_core::safety::SafetyEquipment;
+use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
+
+/// BR 101 without train protection — driving dynamics tests should not fight the PZB.
+fn br101_unfitted() -> VehicleSpec {
+    VehicleSpec {
+        safety: SafetyEquipment::None,
+        ..br101()
+    }
+}
 
 /// Builds a train of BR 101 + n passenger coaches at the start of the line.
 fn passenger_train(sim: &mut Sim, coaches: usize) -> usize {
     let head = TrackPosition::new(EdgeId(0), 100.0, 1);
-    let mut vehicles = vec![vehicle(br101(), head, de_pzb_lzb(TrainType::O))];
+    let mut vehicles = vec![Vehicle::new(br101(), head)];
     for _ in 0..coaches {
-        vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), head));
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     sim.add_train(train)
@@ -124,9 +131,9 @@ fn emergency_braking_from_100_kmh_matches_the_brake_table() {
 fn freight_train_brakes_later_at_the_rear() {
     let mut sim = new_sim();
     let head = TrackPosition::new(EdgeId(0), 100.0, 1);
-    let mut vehicles: Vec<Vehicle> = vec![vehicle(br101(), head, SafetySystems::None)];
+    let mut vehicles: Vec<Vehicle> = vec![Vehicle::new(br101_unfitted(), head)];
     for _ in 0..25 {
-        vehicles.push(vehicle(freight_wagon(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(freight_wagon(), head));
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     let t = sim.add_train(train);
@@ -159,9 +166,9 @@ fn starting_on_the_gradient_and_adhesion_limit() {
     let mut sim = new_sim();
     // Place it on the 8 ‰ climb in the third section.
     let head = TrackPosition::new(EdgeId(2), 1000.0, 1);
-    let mut vehicles = vec![vehicle(br101(), head, SafetySystems::None)];
+    let mut vehicles = vec![Vehicle::new(br101_unfitted(), head)];
     for _ in 0..8 {
-        vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), head));
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     let t = sim.add_train(train);

@@ -60,6 +60,16 @@
     max_payload: 0.0,
     tilt_angle_deg: 0.0,
     hunting: 0.0,
+    // Train protection on board: Sifa, PZB 90 V2.0 and LZB 80. Whether the LZB guides also
+    // depends on the line (conductor cable).
+    safety: De(
+        pzb: Some(Pzb90V20),
+        lzb: true,
+        sifa: Some(TimeTime),
+        train_type: O,
+    ),
+    // Door blocking of the hauled coaches, operated from this cab.
+    doors: Tb0,
     // Behaviour script: <mod>:<file stem> below scripts/.
     script: Some("example:afb"),
     // Model, relative to the mods directory. `_LOD0`/`_LOD1` come from the node names,

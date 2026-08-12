@@ -298,6 +298,49 @@ pub enum SafetySystems {
     De(de::DeSafety),
 }
 
+/// Train protection **fitted** to a vehicle — the declarative part that belongs in the
+/// vehicle database. [`SafetySystems`] is the running state built from it, so which systems
+/// a train carries follows from its vehicles, not from a run-time option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SafetyEquipment {
+    /// Vehicle without train protection (coach, freight wagon).
+    #[default]
+    None,
+    /// German package. `pzb: None` with `lzb: true` is a vehicle that may only run under
+    /// LZB guidance; whether the LZB actually works also depends on the line (conductor
+    /// cable).
+    De {
+        #[serde(default)]
+        pzb: Option<de::PzbVariant>,
+        #[serde(default)]
+        lzb: bool,
+        #[serde(default)]
+        sifa: Option<de::SifaKind>,
+        /// Train category the PZB starts in (the driver sets it from the brake sheet).
+        #[serde(default)]
+        train_type: de::TrainType,
+    },
+}
+
+impl SafetyEquipment {
+    /// Builds the running systems from the fitment.
+    pub fn build(self) -> SafetySystems {
+        match self {
+            SafetyEquipment::None => SafetySystems::None,
+            SafetyEquipment::De {
+                pzb,
+                lzb,
+                sifa,
+                train_type,
+            } => SafetySystems::De(de::DeSafety {
+                sifa: sifa.map(de::Sifa::with_kind),
+                pzb: pzb.map(|v| de::Pzb::with_variant(v, train_type)),
+                lzb: lzb.then(de::Lzb80::new),
+            }),
+        }
+    }
+}
+
 impl SafetySystems {
     pub fn update(
         &mut self,

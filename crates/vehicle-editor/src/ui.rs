@@ -3,6 +3,9 @@
 use crate::{Editor, PointerOverUi, model, powertrain};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
+use sim_core::doors::DoorSystem;
+use sim_core::safety::SafetyEquipment;
+use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
 use sim_core::train::{Motion, Part, VehicleSpec};
 
 /// One frame of UI.
@@ -314,6 +317,9 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                 powertrain::drive_panel(ui, &mut spec.traction);
 
                 ui.separator();
+                equipment_panel(ui, spec);
+
+                ui.separator();
                 ui.label(egui::RichText::new("Behaviour").strong());
                 let mut script = spec.script.clone().unwrap_or_default();
                 if ui
@@ -328,6 +334,129 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
             });
             if editor.spec.name != before.name || !dataless_eq(&editor.spec, &before) {
                 editor.dirty = true;
+            }
+        });
+}
+
+/// Equipment of the vehicle: train protection and door control (plan 9.1, 9.5a).
+///
+/// What the equipment achieves also depends on the line — the LZB needs a conductor cable,
+/// the PZB needs track magnets.
+fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
+    ui.label(egui::RichText::new("Equipment").strong());
+
+    let mut fitted = matches!(spec.safety, SafetyEquipment::De { .. });
+    if ui
+        .checkbox(&mut fitted, "German train protection")
+        .on_hover_text("Sifa, Indusi/PZB and LZB as fitted to the vehicle")
+        .changed()
+    {
+        spec.safety = if fitted {
+            SafetyEquipment::De {
+                pzb: Some(PzbVariant::Pzb90V20),
+                lzb: false,
+                sifa: Some(SifaKind::TimeTime),
+                train_type: TrainType::O,
+            }
+        } else {
+            SafetyEquipment::None
+        };
+    }
+    if let SafetyEquipment::De {
+        pzb,
+        lzb,
+        sifa,
+        train_type,
+    } = &mut spec.safety
+    {
+        egui::Grid::new("safety").num_columns(2).show(ui, |ui| {
+            ui.label("Indusi/PZB")
+                .on_hover_text("build on board — without it the vehicle runs on the LZB alone");
+            combo(
+                ui,
+                "pzb",
+                pzb,
+                &[
+                    (None, "not fitted"),
+                    (Some(PzbVariant::I54), "Indusi I 54"),
+                    (Some(PzbVariant::I60), "Indusi I 60"),
+                    (Some(PzbVariant::I60M), "Indusi I 60M"),
+                    (Some(PzbVariant::I60R), "Indusi I 60R"),
+                    (Some(PzbVariant::Pzb60), "ÖBB PZB 60"),
+                    (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5"),
+                    (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0"),
+                ],
+            );
+            ui.end_row();
+
+            ui.label("Train category")
+                .on_hover_text("Zugart from the brake sheet the vehicle starts in");
+            combo(
+                ui,
+                "train_type",
+                train_type,
+                &[
+                    (TrainType::O, "O — upper"),
+                    (TrainType::M, "M — middle"),
+                    (TrainType::U, "U — lower"),
+                ],
+            );
+            ui.end_row();
+
+            ui.label("Sifa").on_hover_text("driver's safety device");
+            combo(
+                ui,
+                "sifa",
+                sifa,
+                &[
+                    (None, "not fitted"),
+                    (Some(SifaKind::TimeTime), "time-time"),
+                    (Some(SifaKind::TimeDistance), "time-distance"),
+                    (Some(SifaKind::Rzm), "RZM"),
+                ],
+            );
+            ui.end_row();
+
+            ui.label("LZB 80/I 80");
+            ui.checkbox(lzb, "on board")
+                .on_hover_text("guides only on lines with a conductor cable");
+            ui.end_row();
+        });
+    }
+
+    ui.checkbox(&mut spec.passenger_doors, "Passenger doors")
+        .on_hover_text("these doors follow the door control of the train");
+    ui.horizontal(|ui| {
+        ui.label("Door control")
+            .on_hover_text("what this cab commands — the leading vehicle decides for the train");
+        combo(
+            ui,
+            "doors",
+            &mut spec.doors,
+            &[
+                (DoorSystem::None, "not fitted"),
+                (DoorSystem::Tb0, "TB0"),
+                (DoorSystem::Tav, "TAV"),
+                (DoorSystem::UicWtb, "UIC-WTB"),
+            ],
+        );
+    });
+}
+
+/// Combo box over a fixed set of values.
+fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) {
+    let selected = options
+        .iter()
+        .find(|(v, _)| v == value)
+        .map(|(_, label)| *label)
+        .unwrap_or("—");
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (v, label) in options {
+                if ui.selectable_label(value == v, *label).clicked() {
+                    *value = *v;
+                }
             }
         });
 }
@@ -350,6 +479,9 @@ fn dataless_eq(a: &VehicleSpec, b: &VehicleSpec) -> bool {
         && a.brake == b.brake
         && a.traction == b.traction
         && a.slip_protection == b.slip_protection
+        && a.safety == b.safety
+        && a.doors == b.doors
+        && a.passenger_doors == b.passenger_doors
         && a.script == b.script
 }
 

@@ -16,17 +16,14 @@ cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and ex
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
-
-cargo run -p app -- --pzb i60 --sifa zeit-weg   # older train protection build
-cargo run -p app -- --pzb none                  # LZB-only vehicle, without PZB
-cargo run -p app -- --doors tav                 # train with a door control
 ```
 
-`--pzb` picks the Indusi/PZB build: `i54`, `i60`, `i60m`, `i60r`, `pzb60` (ÖBB),
-`pzb90-1.5`, `pzb90-2.0` (default) or `none`. `--sifa` picks the Sifa build: `zeit-zeit`
-(default), `zeit-weg` or `rzm`. `--doors` picks the door control: `tb0`, `tav`, `wtb`
-(UIC 556 train bus) or nothing at all. Switching the battery off and on again (`1`)
-restarts the function test of every system on board.
+Train protection and door control are **vehicle equipment**, not command line options: the
+`safety` and `doors` fields of a `VehicleSpec` state which Indusi/PZB build, which Sifa and
+which door control a vehicle carries (see [Mods](#vehicles)). Whether the equipment can do
+anything also depends on the line — the LZB needs a conductor cable, the PZB needs magnets.
+Switching the battery off and on again (`1`) restarts the function test of every system on
+board.
 
 `--screenshot` is available in both editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).

@@ -2,20 +2,18 @@
 
 use ai_driver::{AiDriver, DriverState, ScheduledStop, Timetable};
 use content::musterbahn;
-use content::vehicles::{br101, de_pzb, passenger_coach, vehicle};
+use content::vehicles::{br101, passenger_coach};
 use sim_core::Sim;
-use sim_core::safety::SafetySystems;
-use sim_core::safety::de::TrainType;
-use sim_core::train::Train;
+use sim_core::train::{Train, Vehicle};
 use track_model::{EdgeId, TrackPosition};
 
 fn sim_with_train(start_s: f64) -> (Sim, usize) {
     let line = musterbahn().compile().unwrap();
     let mut sim = Sim::new(line.net, line.interlock, 7);
     let head = TrackPosition::new(EdgeId(0), start_s, 1);
-    let mut vehicles = vec![vehicle(br101(), head, de_pzb(TrainType::O))];
+    let mut vehicles = vec![Vehicle::new(br101(), head)];
     for _ in 0..4 {
-        vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), head));
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     let t = sim.add_train(train);
@@ -87,11 +85,7 @@ fn ai_stops_in_front_of_signal_at_stop() {
     // Place a second train in the following section → block signal at km 2.0 shows stop.
     let blocker_head = TrackPosition::new(EdgeId(1), 200.0, 1);
     let blocker = Train::assemble(
-        vec![vehicle(
-            passenger_coach(),
-            blocker_head,
-            SafetySystems::None,
-        )],
+        vec![Vehicle::new(passenger_coach(), blocker_head)],
         blocker_head,
         &sim.net,
     );
@@ -130,9 +124,9 @@ fn ai_stops_at_platform_and_departs_on_time() {
     let line = musterbahn().compile().unwrap();
     let mut sim = Sim::new(line.net, line.interlock, 7);
     let head = TrackPosition::new(EdgeId(2), 1200.0, 1);
-    let mut vehicles = vec![vehicle(br101(), head, de_pzb(TrainType::O))];
+    let mut vehicles = vec![Vehicle::new(br101(), head)];
     for _ in 0..4 {
-        vehicles.push(vehicle(passenger_coach(), head, SafetySystems::None));
+        vehicles.push(Vehicle::new(passenger_coach(), head));
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     let t = sim.add_train(train);

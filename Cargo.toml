@@ -16,7 +16,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "EUPL-1.2"
 
 [workspace.dependencies]
 glam = { version = "0.32", features = ["serde"] }

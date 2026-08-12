@@ -1,5 +1,7 @@
 # TrainSim-DE
 
+[![CI](https://github.com/vanlueckn/open-train-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/vanlueckn/open-train-simulator/actions/workflows/ci.yml)
+
 A **mod-first** German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
 Current state and open points: [STATUS.md](STATUS.md).
 
@@ -414,3 +416,23 @@ cargo test --workspace
   For anything sizeable, open an issue first so the direction is agreed before the work.
 
 Licensed under MIT — contributions are accepted under the same licence.
+
+## Releases
+
+`main` is the only long-lived branch. Work happens on short-lived `feat/…` or `fix/…`
+branches (or forks) and lands via pull request; [CI](.github/workflows/ci.yml) runs
+fmt, clippy and the test suite on Linux, Windows and macOS.
+
+A release is a tag. Bump `workspace.package.version` in [Cargo.toml](Cargo.toml), then:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0        # release
+git tag v0.2.0-rc.1 && git push origin v0.2.0-rc.1   # prerelease
+```
+
+Any tag containing a `-` is published as a prerelease — the version part must still
+match `Cargo.toml`, otherwise the workflow stops before anything is published.
+[The release workflow](.github/workflows/release.yml) builds the simulator and both
+editors for Linux, Windows and macOS (Intel and Apple Silicon), packs each together with
+`mods/` and the licence, and attaches the archives to a GitHub release whose notes are
+generated from the merged pull requests.

@@ -1,7 +1,7 @@
-//! KI-Triebfahrzeugführer und Fahrplan (Plan Kap. 11).
+//! AI train driver and timetable (plan ch. 11).
 //!
-//! Die KI fährt dieselbe Fahrzeugsimulation wie der Spieler — kein Cheat: sie stellt
-//! nur [`CabInputs`], sonst nichts.
+//! The AI drives the same vehicle simulation as the player — no cheating: it only
+//! sets [`CabInputs`], nothing else.
 
 pub mod lookahead;
 pub mod timetable;
@@ -13,19 +13,19 @@ use sim_core::brakes::DriverBrakeValve;
 use sim_core::cab::CabInputs;
 pub use timetable::{ScheduledStop, Timetable};
 
-/// Fahrverhalten des KI-Fahrers.
+/// Driving behaviour of the AI driver.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DrivingStyle {
-    /// Geplante Bremsverzögerung [m/s²].
+    /// Planned braking deceleration [m/s²].
     pub decel: f64,
-    /// Sicherheitsabstand vor Zielpunkten [m].
+    /// Safety distance ahead of target points [m].
     pub margin: f64,
-    /// Zielgeschwindigkeit unterhalb der zulässigen [km/h].
+    /// Target speed below the permitted one [km/h].
     pub speed_reserve: f64,
-    /// Vorausschauweite [m].
+    /// Look-ahead range [m].
     pub lookahead: f64,
-    /// Ansprechzeit der Bremse plus Reaktionszeit [s] — der Weg, den der Zug noch
-    /// ungebremst zurücklegt, bevor die Verzögerung wirkt.
+    /// Brake response time plus reaction time [s] — the distance the train still
+    /// covers unbraked before the deceleration takes effect.
     pub reaction_time: f64,
 }
 
@@ -41,34 +41,34 @@ impl Default for DrivingStyle {
     }
 }
 
-/// Was der Fahrer gerade tut.
+/// What the driver is currently doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DriverState {
-    /// Fährt nach Fahrplan.
+    /// Running to the timetable.
     #[default]
     Driving,
-    /// Hält am Bahnsteig und wartet auf die Abfahrtszeit.
+    /// Stopped at the platform, waiting for the departure time.
     Dwelling,
-    /// Steht vor Halt zeigendem Signal.
+    /// Standing in front of a signal at stop.
     WaitingAtSignal,
-    /// Fahrt beendet (Endbahnhof erreicht).
+    /// Run finished (terminus reached).
     Finished,
 }
 
-/// Ein KI-Triebfahrzeugführer.
+/// An AI train driver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiDriver {
     pub timetable: Timetable,
     pub style: DrivingStyle,
     pub state: DriverState,
-    /// Index des nächsten Halts im Fahrplan.
+    /// Index of the next stop in the timetable.
     pub next_stop: usize,
-    /// Sifa-Pedal-Rhythmus [s].
+    /// Sifa pedal rhythm [s].
     sifa_timer: f64,
     sifa_pressed: bool,
-    /// Restzeit der PZB-Wachsamkeitsbedienung [s].
-    wachsam_timer: f64,
-    /// Zeitpunkt, ab dem wieder abgefahren werden darf [s].
+    /// Remaining time of the PZB acknowledge operation [s].
+    acknowledge_timer: f64,
+    /// Time from which departure is allowed again [s].
     depart_at: f64,
 }
 
@@ -81,12 +81,12 @@ impl AiDriver {
             next_stop: 0,
             sifa_timer: 0.0,
             sifa_pressed: false,
-            wachsam_timer: 0.0,
+            acknowledge_timer: 0.0,
             depart_at: 0.0,
         }
     }
 
-    /// Ein Fahrerschritt: liest die Simulation und schreibt die Führerstandseingaben.
+    /// One driver step: reads the simulation and writes the cab inputs.
     pub fn drive(&mut self, sim: &mut Sim, train: usize, dt: f64) {
         let head = sim.trains[train].vehicles[0].pos;
         let v_kmh = sim.trains[train].speed_kmh();
@@ -94,7 +94,7 @@ impl AiDriver {
 
         let mut target = self.target_speed(sim, &view, head, v_kmh);
 
-        // Zugsicherung: Überwachungsgeschwindigkeit nie überschreiten.
+        // Train protection: never exceed the supervised speed.
         if let Some(limit) = sim.runtime[train].protection.speed_limit {
             target = target.min(limit - 1.0);
         }
@@ -104,7 +104,7 @@ impl AiDriver {
         cab.reverser = 1;
         Self::apply_speed_control(cab, v_kmh, target);
 
-        // Sifa im 20-s-Rhythmus bedienen (kurzer Pedaldruck).
+        // Operate the Sifa every 20 s (short pedal press).
         self.sifa_timer += dt;
         if self.sifa_timer > 20.0 {
             self.sifa_pressed = true;
@@ -115,23 +115,23 @@ impl AiDriver {
         }
         cab.sifa = self.sifa_pressed;
 
-        // PZB-Wachsamkeit quittieren, sobald die Zugsicherung sie verlangt.
+        // Acknowledge the PZB as soon as the train protection demands it.
         if sim.runtime[train].protection.alert {
-            self.wachsam_timer = 0.6;
+            self.acknowledge_timer = 0.6;
         }
-        if self.wachsam_timer > 0.0 {
-            self.wachsam_timer -= dt;
-            cab.pzb_wachsam = self.wachsam_timer > 0.3;
+        if self.acknowledge_timer > 0.0 {
+            self.acknowledge_timer -= dt;
+            cab.pzb_acknowledge = self.acknowledge_timer > 0.3;
         } else {
-            cab.pzb_wachsam = false;
+            cab.pzb_acknowledge = false;
         }
 
-        // LZB-Übernahme immer bestätigen.
-        cab.lzb_uebernahme = sim.runtime[train].protection.target_distance.is_some();
+        // Always confirm the LZB takeover.
+        cab.lzb_takeover = sim.runtime[train].protection.target_distance.is_some();
         self.update_state(sim, train, v_kmh, &view);
     }
 
-    /// Sollgeschwindigkeit aus Streckenprofil, Signalen und Fahrplanhalt.
+    /// Target speed from the line profile, signals and the timetable stop.
     fn target_speed(
         &self,
         sim: &Sim,
@@ -139,11 +139,12 @@ impl AiDriver {
         head: track_model::TrackPosition,
         v_kmh: f64,
     ) -> f64 {
-        // Vorhalteweg: fester Abstand + der Weg während Reaktions- und Ansprechzeit.
+        // Lead distance: fixed margin + the distance covered during reaction and
+        // response time.
         let margin = self.style.margin + v_kmh / 3.6 * self.style.reaction_time;
         let mut target = view.permitted(self.style.decel, margin) - self.style.speed_reserve;
 
-        // Fahrplanhalt: Bremskurve auf den Haltepunkt.
+        // Timetable stop: braking curve onto the stopping point.
         if let Some(stop) = self.timetable.stops.get(self.next_stop)
             && let Some(d) = stop.distance_from(&sim.net, head, self.style.lookahead)
         {
@@ -156,7 +157,7 @@ impl AiDriver {
         target
     }
 
-    /// Einfacher Geschwindigkeitsregler auf Fahrschalter und Führerbremsventil.
+    /// Simple speed controller acting on throttle and driver's brake valve.
     fn apply_speed_control(cab: &mut CabInputs, v_kmh: f64, target: f64) {
         let err = target - v_kmh;
         if err > 2.0 {
@@ -164,7 +165,7 @@ impl AiDriver {
             cab.brake_valve = DriverBrakeValve::Release;
         } else if err < -1.0 {
             cab.throttle = 0.0;
-            // Je größer die Überschreitung, desto stärker die Betriebsbremsung.
+            // The larger the overspeed, the stronger the service braking.
             let drop = (-err / 20.0).clamp(0.4, 1.5);
             cab.brake_valve = DriverBrakeValve::Service(drop);
         } else {

@@ -1,24 +1,24 @@
-//! Position eines Fahrzeugs/Radsatzes auf dem Gleisgraph und deren Fortschreibung.
+//! Position of a vehicle/wheelset on the track graph and how it is advanced.
 
 use crate::device::DeviceId;
 use crate::network::{Blocked, EdgeEnd, EdgeId, EdgeSide, NodeId, TrackNetwork, TrackPose};
 use serde::{Deserialize, Serialize};
 
-/// Punkt auf dem Gleisnetz mit Fahrtrichtung.
+/// Point on the track network with a direction of travel.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TrackPosition {
     pub edge: EdgeId,
-    /// Bogenlänge auf der Kante [m].
+    /// Arc length along the edge [m].
     pub s: f64,
-    /// `+1`: Fahrtrichtung = wachsendes `s`, `-1`: fallendes `s`.
+    /// `+1`: direction of travel = increasing `s`, `-1`: decreasing `s`.
     pub dir: i8,
 }
 
-/// Ein während der Bewegung überfahrenes Gerät.
+/// A device passed during the movement.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PassedDevice {
     pub device: DeviceId,
-    /// Wie weit hinter der neuen Position es liegt [m] (0 = gerade jetzt).
+    /// How far behind the new position it lies [m] (0 = right now).
     pub distance_behind: f64,
 }
 
@@ -44,16 +44,16 @@ impl TrackPosition {
         p
     }
 
-    /// Zulässige Geschwindigkeit an dieser Stelle [km/h].
+    /// Permitted speed at this location [km/h].
     pub fn speed_limit(&self, net: &TrackNetwork) -> f64 {
         net.edge(self.edge).speed.at(self.s)
     }
 
-    /// Bewegt die Position um `distance` [m] in Fahrtrichtung (negativ = rückwärts).
+    /// Moves the position by `distance` [m] in the direction of travel (negative = backwards).
     ///
-    /// Sammelt dabei alle überfahrenen Geräte in `passed`. Bricht an Knoten ab, die
-    /// nicht befahrbar sind (Prellbock, umlaufende/aufgefahrene Weiche, Auffahren);
-    /// die Position bleibt dann exakt am Knoten stehen.
+    /// Collects all passed devices in `passed`. Aborts at nodes that cannot be passed
+    /// (buffer stop, moving/trailed switch, trailing move against the position); the
+    /// position then stops exactly at the node.
     pub fn advance(
         &mut self,
         net: &TrackNetwork,
@@ -61,11 +61,11 @@ impl TrackPosition {
         passed: &mut Vec<PassedDevice>,
     ) -> Result<(), AdvanceError> {
         let mut remaining = distance;
-        // Ein Sicherheitslimit gegen Endlosschleifen bei Null-Länge-Kanten.
+        // A safety limit against infinite loops with zero-length edges.
         for _ in 0..1024 {
             let edge = net.edge(self.edge);
             let len = edge.length();
-            // Bewegung in Kantenrichtung (Vorzeichen von s).
+            // Movement along the edge direction (sign of s).
             let step = remaining * self.dir as f64;
             let target = self.s + step;
 
@@ -75,7 +75,7 @@ impl TrackPosition {
                 return Ok(());
             }
 
-            // Kante verlassen: bis zum Ende laufen, Rest über den Knoten tragen.
+            // Leaving the edge: run to the end, carry the remainder across the node.
             let (boundary, side) = if target > len {
                 (len, EdgeSide::End)
             } else {
@@ -97,7 +97,7 @@ impl TrackPosition {
                 .map_err(|reason| AdvanceError { node, reason })?;
 
             let next_edge = net.edge(next.edge);
-            // Richtung beim Eintritt: an welchem Ende betreten wir die nächste Kante?
+            // Direction on entry: at which end do we enter the next edge?
             let forward = remaining > 0.0;
             match next.side {
                 EdgeSide::Start => {
@@ -118,7 +118,7 @@ impl TrackPosition {
         Ok(())
     }
 
-    /// Geräte zwischen `from` und `to` (in Kantenkoordinaten) einsammeln.
+    /// Collect devices between `from` and `to` (in edge coordinates).
     fn collect(
         &self,
         net: &TrackNetwork,
@@ -144,8 +144,8 @@ impl TrackPosition {
         passed.sort_by(|a, b| b.distance_behind.total_cmp(&a.distance_behind));
     }
 
-    /// Position `distance` Meter vor dieser (ohne sie zu verändern), z. B. für
-    /// Fahrzeugenden oder die Vorausschau der KI. `None`, wenn der Weg blockiert ist.
+    /// Position `distance` metres ahead of this one (without modifying it), e.g. for
+    /// vehicle ends or the AI look-ahead. `None` if the path is blocked.
     pub fn offset_by(&self, net: &TrackNetwork, distance: f64) -> Option<TrackPosition> {
         let mut p = *self;
         let mut scratch = Vec::new();
@@ -162,11 +162,11 @@ mod tests {
     use crate::network::{NodeKind, Switch, SwitchPosition, TrackEdge};
     use world_coords::geo::to_ecef_deg;
 
-    /// Kleines Netz: A --e0--> B(Weiche) --e1--> C  und  B --e2--> D
+    /// Small network: A --e0--> B(switch) --e1--> C  and  B --e2--> D
     fn switch_net() -> (TrackNetwork, EdgeId, EdgeId, EdgeId, NodeId) {
         let mut net = TrackNetwork::new();
         let a = net.add_node(NodeKind::Buffer);
-        let b = net.add_node(NodeKind::Joint); // wird gleich zur Weiche
+        let b = net.add_node(NodeKind::Joint); // turned into a switch below
         let c = net.add_node(NodeKind::Buffer);
         let d = net.add_node(NodeKind::Buffer);
         let anchor = to_ecef_deg(52.0, 10.0, 100.0);
@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(pos.edge, e1);
         assert!((pos.s - 100.0).abs() < 1e-9);
 
-        // Umstellen und erneut fahren.
+        // Throw the switch and run again.
         let sw = net.switch_mut(b).unwrap();
         sw.command(SwitchPosition::Diverging).unwrap();
         net.update_switches(10.0);
@@ -236,9 +236,9 @@ mod tests {
         let mut passed = Vec::new();
         let err = pos.advance(&net, 600.0, &mut passed).unwrap_err();
         assert_eq!(err.reason, Blocked::SwitchMoving);
-        assert!((pos.s - 500.0).abs() < 1e-9, "hält am Knoten");
+        assert!((pos.s - 500.0).abs() < 1e-9, "stops at the node");
 
-        // Rückwärts gegen den Prellbock.
+        // Backwards against the buffer stop.
         let mut pos = TrackPosition::new(e0, 10.0, 1);
         let err = pos.advance(&net, -50.0, &mut passed).unwrap_err();
         assert_eq!(err.reason, Blocked::BufferStop);
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn trailing_a_switch_is_reported() {
         let (net, _e0, _e1, e2, _b) = switch_net();
-        // Auf dem Zweiggleis rückwärts zur Wurzel, Weiche liegt aber auf Stamm.
+        // On the branch track backwards to the root, but the switch is set to straight.
         let mut pos = TrackPosition::new(e2, 50.0, 1);
         let mut passed = Vec::new();
         let err = pos.advance(&net, -60.0, &mut passed).unwrap_err();
@@ -260,7 +260,7 @@ mod tests {
         let (mut net, e0, _e1, _e2, _b) = switch_net();
         net.add_device(TracksideDevice::new(DeviceKind::Magnet, e0, 100.0));
         net.add_device(TracksideDevice::new(DeviceKind::Signal, e0, 300.0));
-        // Rückwärtsgerichtetes Gerät darf bei Vorwärtsfahrt nicht auslösen.
+        // A backward-facing device must not trigger when travelling forwards.
         net.add_device(
             TracksideDevice::new(DeviceKind::Magnet, e0, 200.0)
                 .with_facing(crate::device::Facing::Backward),
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn oval_loop_closes() {
-        // Zwei Halbkreise + zwei Geraden: Rundkurs, der auf sich selbst zurückführt.
+        // Two semicircles + two straights: a loop that leads back onto itself.
         let mut net = TrackNetwork::new();
         let n: Vec<NodeId> = (0..4).map(|_| net.add_node(NodeKind::Joint)).collect();
         let r = 400.0;
@@ -316,11 +316,11 @@ mod tests {
         let mut passed = Vec::new();
         pos.advance(&net, total, &mut passed).unwrap();
         assert_eq!(pos.edge, edges[0]);
-        // Die Kante 3 endet geometrisch am Anfang von Kante 0 — Rundkurs geschlossen.
+        // Edge 3 geometrically ends at the start of edge 0 — the loop is closed.
         let end_pose = TrackPosition::new(edges[3], net.edge(edges[3]).length(), 1).pose(&net);
         assert!(
             end_pose.pos.distance(start_pose.pos) < 0.5,
-            "Rundkurs offen: {} m",
+            "loop open: {} m",
             end_pose.pos.distance(start_pose.pos)
         );
     }

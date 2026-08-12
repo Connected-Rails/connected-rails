@@ -1,34 +1,34 @@
-//! Eingabe, Kameras und HUD (Plan Kap. 12).
+//! Input, cameras and HUD (plan ch. 12).
 //!
-//! Vollständige Bedienbarkeit über die Tastatur (MaSzyna-Prinzip); die klickbaren
-//! 3D-Bedienelemente kommen in M6 dazu.
+//! Full operability via the keyboard (MaSzyna principle); the clickable
+//! 3D controls are added in M6.
 
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::prelude::*;
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::safety::{LampState, SafetySystems};
 
-/// Kamera des Spielers.
+/// Camera of the player.
 #[derive(Component)]
 pub struct CabCamera;
 
-/// Textknoten des HUD.
+/// Text node of the HUD.
 #[derive(Component)]
 pub struct HudText;
 
-/// Kameraperspektiven (Plan 12.4).
+/// Camera perspectives (plan 12.4).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CameraMode {
-    /// Blick aus dem Führerstand.
+    /// View from the cab.
     #[default]
     Cab,
-    /// Außenkamera, umkreist den Zug.
+    /// External camera, orbits the train.
     Outside,
-    /// Streckenkamera: fest an der Stelle, an der sie aktiviert wurde.
+    /// Lineside camera: fixed at the spot where it was activated.
     Wayside,
 }
 
-/// Blickrichtung im Führerstand und Umkreisung außen.
+/// View direction in the cab and orbit outside.
 #[derive(Resource, Default)]
 pub struct CameraState {
     pub mode: CameraMode,
@@ -38,7 +38,7 @@ pub struct CameraState {
     pub wayside: Option<Vec3>,
 }
 
-/// Tastenbelegung → Führerstandseingaben.
+/// Key bindings → cab inputs.
 pub fn player_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut sim: ResMut<SimResource>,
@@ -49,7 +49,7 @@ pub fn player_input(
     let index = player.0;
     let cab = &mut sim.0.controls[index];
 
-    // Fahrschalter (W/S), inkl. elektrischer Bremse im negativen Bereich.
+    // Power controller (W/S), including electric brake in the negative range.
     if keys.pressed(KeyCode::KeyW) {
         cab.throttle = (cab.throttle + dt * 0.5).min(1.0);
     }
@@ -60,7 +60,7 @@ pub fn player_input(
         cab.throttle = 0.0;
     }
 
-    // Richtungswender.
+    // Reverser.
     if keys.just_pressed(KeyCode::KeyR) {
         cab.reverser = 1;
     }
@@ -71,7 +71,7 @@ pub fn player_input(
         cab.reverser = 0;
     }
 
-    // Führerbremsventil (A = lösen, D = bremsen, E = Schnellbremsung, Q = Abschluss).
+    // Driver's brake valve (A = release, D = brake, E = emergency brake, Q = lap).
     let drop = match cab.brake_valve {
         DriverBrakeValve::Service(d) => d,
         DriverBrakeValve::Emergency => 1.5,
@@ -98,7 +98,7 @@ pub fn player_input(
         cab.brake_valve = DriverBrakeValve::Fill;
     }
 
-    // Zusatzbremse (Y/C), Sanden (G).
+    // Direct brake (Y/C), sanding (G).
     if keys.pressed(KeyCode::KeyC) {
         cab.direct_brake = (cab.direct_brake + dt).min(1.0);
     }
@@ -107,16 +107,16 @@ pub fn player_input(
     }
     cab.sanding = keys.pressed(KeyCode::KeyG);
 
-    // Sifa und Zugsicherung.
+    // Sifa and train protection.
     cab.sifa = keys.pressed(KeyCode::Space);
-    cab.pzb_wachsam = keys.pressed(KeyCode::PageDown);
-    cab.pzb_frei = keys.pressed(KeyCode::End);
-    cab.pzb_befehl = keys.pressed(KeyCode::Delete);
-    cab.lzb_uebernahme = keys.pressed(KeyCode::KeyN);
-    cab.lzb_ende = keys.pressed(KeyCode::KeyM);
+    cab.pzb_acknowledge = keys.pressed(KeyCode::PageDown);
+    cab.pzb_exempt = keys.pressed(KeyCode::End);
+    cab.pzb_override = keys.pressed(KeyCode::Delete);
+    cab.lzb_takeover = keys.pressed(KeyCode::KeyN);
+    cab.lzb_end = keys.pressed(KeyCode::KeyM);
     cab.horn = keys.pressed(KeyCode::KeyH);
 
-    // Aufrüsten: Batterie, Stromabnehmer, Hauptschalter, Kompressor.
+    // Preparation: battery, pantograph, main switch, compressor.
     let train = &mut sim.0.trains[index];
     for v in &mut train.vehicles {
         if v.spec.traction.is_none() {
@@ -137,7 +137,7 @@ pub fn player_input(
     }
 }
 
-/// Kamerasteuerung: F1/F2/F3 wechseln die Perspektive, Pfeiltasten schwenken.
+/// Camera control: F1/F2/F3 switch the perspective, arrow keys pan.
 pub fn camera_control(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -193,7 +193,7 @@ pub fn camera_control(
 
     match state.mode {
         CameraMode::Cab => {
-            // Führerstandsfenster: 8 m vor Fahrzeugmitte, 2,8 m über Schienenoberkante.
+            // Cab window: 8 m ahead of the vehicle centre, 2.8 m above the rail head.
             let eye = pos + forward * 8.0 + up * 2.8 - right * 0.6;
             let look =
                 Quat::from_axis_angle(up, state.yaw) * Quat::from_axis_angle(right, state.pitch);
@@ -214,7 +214,7 @@ pub fn camera_control(
     }
 }
 
-/// HUD-Text anlegen.
+/// Create the HUD text.
 pub fn spawn_hud(commands: &mut Commands) {
     commands.spawn((
         Text::new(""),
@@ -233,7 +233,7 @@ pub fn spawn_hud(commands: &mut Commands) {
     ));
 }
 
-/// HUD mit Tacho, Bremsdrücken und Zugsicherungsanzeigen füllen (Plan 16.3).
+/// Fill the HUD with speedometer, brake pressures and train protection displays (plan 16.3).
 pub fn update_hud(
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
@@ -277,7 +277,7 @@ pub fn update_hud(
         loco.traction.line_voltage
     ));
 
-    // Zugsicherung.
+    // Train protection.
     let lamps: Vec<String> = loco
         .safety
         .indicators()
@@ -315,7 +315,7 @@ pub fn update_hud(
         ));
     }
 
-    // Signale voraus.
+    // Signals ahead.
     let aspects: Vec<String> = sim
         .interlock
         .signals
@@ -340,7 +340,7 @@ pub fn update_hud(
         view.0
     ));
 
-    // Szenario: Fahrplan, letzte Meldungen, Wertung.
+    // Scenario: timetable, recent messages, scoring.
     if !sim.scenario.scenario.name.is_empty() {
         lines.push(String::new());
         lines.push(format!(

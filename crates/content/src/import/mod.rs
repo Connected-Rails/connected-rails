@@ -1,8 +1,8 @@
-//! Streckenimport aus OSM und DGM (Plan Kap. 15).
+//! Line import from OSM and DGM (plan ch. 15).
 //!
-//! Ablauf: Overpass-JSON → Wegkette → lokales ENU → Abtastung → Trassierung →
-//! [`LineSource`]. Die CRS-Umrechnung passiert genau hier; zur Laufzeit gibt es kein UTM
-//! (Plan 4.2).
+//! Flow: Overpass JSON → way chain → local ENU → sampling → alignment →
+//! [`LineSource`]. The CRS conversion happens exactly here; at runtime there is no UTM
+//! (plan 4.2).
 
 pub mod alignment;
 pub mod dgm;
@@ -17,29 +17,29 @@ use glam::{DVec2, DVec3};
 use osm::OsmError;
 use world_coords::{EnuFrame, geo};
 
-/// Einstellungen des Imports.
+/// Import settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportOptions {
-    /// Name der entstehenden Strecke.
+    /// Name of the resulting line.
     pub name: String,
-    /// Trassierungsparameter.
+    /// Alignment parameters.
     pub alignment: AlignmentOptions,
-    /// Maximale Kantenlänge [m] — längere Strecken werden aufgeteilt.
+    /// Maximum edge length [m] — longer lines are split up.
     pub max_edge_length: f64,
-    /// Geoid-Undulation für die Höhenumrechnung [m].
+    /// Geoid undulation for the height conversion [m].
     pub geoid_offset: f64,
-    /// Zulässige Geschwindigkeit, wenn OSM keine angibt [km/h].
+    /// Permitted speed when OSM does not give one [km/h].
     pub default_speed: f64,
-    /// Höhe, wenn kein DGM vorliegt [m].
+    /// Height used when no DGM is available [m].
     pub default_height: f64,
-    /// Optional: Weg-ID, bei der die Kette beginnen soll.
+    /// Optional: way ID at which the chain should start.
     pub start_way: Option<i64>,
 }
 
 impl Default for ImportOptions {
     fn default() -> Self {
         Self {
-            name: "Importierte Strecke".into(),
+            name: "Imported line".into(),
             alignment: AlignmentOptions::default(),
             max_edge_length: 2_000.0,
             geoid_offset: 46.0,
@@ -50,26 +50,26 @@ impl Default for ImportOptions {
     }
 }
 
-/// Was der Import gefunden hat.
+/// What the import found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportReport {
     pub length: f64,
     pub edges: usize,
     pub points: usize,
-    /// Größte Abweichung der Trassierung von den OSM-Punkten [m].
+    /// Largest deviation of the alignment from the OSM points [m].
     ///
-    /// Achtung: gemessen wird gegen die **OSM-Linie**, nicht gegen die echte Trasse.
-    /// OSM selbst liegt aus Luftbildern nur auf wenige Meter genau.
+    /// Note: this is measured against the **OSM line**, not against the real track.
+    /// OSM itself, taken from aerial imagery, is only accurate to a few metres.
     pub max_deviation: f64,
-    /// Rekonstruierte Entwurfselemente (Geraden, Übergangsbögen, Kreisbögen).
+    /// Reconstructed design elements (straights, transition curves, circular arcs).
     pub elements: usize,
-    /// Davon Kreisbögen.
+    /// Of those, circular arcs.
     pub arcs: usize,
-    /// Größte eingebaute Überhöhung [mm].
+    /// Largest applied cant [mm].
     pub max_cant: f64,
-    /// Kleinster rekonstruierter Radius [m].
+    /// Smallest reconstructed radius [m].
     pub min_radius: Option<f64>,
-    /// Anteil der Stützpunkte mit DGM-Höhe.
+    /// Share of support points with a DGM height.
     pub height_coverage: f64,
     pub warnings: Vec<String>,
 }
@@ -77,7 +77,7 @@ pub struct ImportReport {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportError {
     Osm(OsmError),
-    /// Strecke zu kurz für die gewählte Abtastung.
+    /// Line too short for the chosen sampling.
     TooShort,
 }
 
@@ -85,12 +85,12 @@ impl std::fmt::Display for ImportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ImportError::Osm(e) => write!(f, "{e}"),
-            ImportError::TooShort => write!(f, "Strecke zu kurz für die gewählte Abtastung"),
+            ImportError::TooShort => write!(f, "line too short for the chosen sampling"),
         }
     }
 }
 
-/// Importiert eine Strecke aus Overpass-JSON und optionalem Höhenraster.
+/// Imports a line from Overpass JSON and an optional height grid.
 pub fn import_line(
     osm_json: &str,
     heights: Option<&mut TerrainSource>,
@@ -99,7 +99,7 @@ pub fn import_line(
     let railway = osm::parse(osm_json).map_err(ImportError::Osm)?;
     let route = railway.chain(options.start_way).map_err(ImportError::Osm)?;
 
-    // Lokales ENU-Frame am Streckenanfang — die Trassierung rechnet eben.
+    // Local ENU frame at the start of the line — the alignment is computed in the plane.
     let first = geo::to_ecef_deg(route[0].lat, route[0].lon, 0.0);
     let frame = EnuFrame::at(first);
     let plan: Vec<DVec2> = route
@@ -115,7 +115,7 @@ pub fn import_line(
         return Err(ImportError::TooShort);
     }
 
-    // Höhe und zulässige Geschwindigkeit je Stützpunkt.
+    // Height and permitted speed per support point.
     let mut with_height = 0usize;
     let mut heights = heights;
     let mut samples: Vec<SamplePoint> = Vec::with_capacity(resampled.len());
@@ -139,8 +139,8 @@ pub fn import_line(
     let fitted = alignment::fit(&samples, &options.alignment);
     let total_length = fitted.length();
 
-    // In Kanten aufteilen: kurze Kanten halten den Fehler der ebenen Trassierung klein.
-    // Geschnitten wird an Elementgrenzen, damit kein Bogen zerrissen wird.
+    // Split into edges: short edges keep the error of the planar alignment small.
+    // Cuts are made at element boundaries so that no curve is torn apart.
     let chunks = split_into_edges(&fitted, options.max_edge_length);
 
     let mut nodes = vec![NodeSource::Buffer];
@@ -149,7 +149,7 @@ pub fn import_line(
     }
     nodes.push(NodeSource::Buffer);
 
-    // Kompassrichtung des Streckenanfangs (0° = Nord, im Uhrzeigersinn).
+    // Compass heading at the start of the line (0° = north, clockwise).
     let start_dir = fitted.start_heading;
     let heading_deg = (90.0 - start_dir.to_degrees()).rem_euclid(360.0);
 
@@ -182,9 +182,7 @@ pub fn import_line(
 
     let line = LineSource {
         name: if options.name.is_empty() {
-            railway
-                .name()
-                .unwrap_or_else(|| "Importierte Strecke".into())
+            railway.name().unwrap_or_else(|| "Imported line".into())
         } else {
             options.name.clone()
         },
@@ -199,25 +197,25 @@ pub fn import_line(
 
     let mut warnings = Vec::new();
     if heights.is_none() {
-        warnings.push("kein DGM angegeben — Strecke liegt eben".into());
+        warnings.push("no DGM given — line is flat".into());
     }
-    // Bis etwa 15 m ist die Abweichung Auflösungsgrenze, nicht Fehler: Bogenanfang und
-    // -ende lassen sich aus einer Punktfolge nicht genauer bestimmen, und OSM selbst liegt
-    // nur auf wenige Meter genau. Darüber stimmt etwas nicht — meist ein Abschnitt, der
-    // aus mehreren Bögen besteht.
+    // Up to about 15 m the deviation is a resolution limit, not an error: the start and
+    // end of a curve cannot be determined more precisely from a point sequence, and OSM
+    // itself is only accurate to a few metres. Beyond that something is wrong — usually
+    // a section that consists of several curves.
     if fitted.max_deviation > 15.0 {
         warnings.push(format!(
-            "Trassierung weicht bis {:.1} m von den OSM-Punkten ab — Abschnitt prüfen",
+            "alignment deviates by up to {:.1} m from the OSM points — check section",
             fitted.max_deviation
         ));
     }
-    // Beim Verketten teilen sich benachbarte Wege je einen Knoten. Bleibt die Kette
-    // deutlich darunter, hing ein Weg nicht an der Strecke (Abzweig, Betriebsgleis).
+    // When chaining, neighbouring ways share one node each. If the chain stays clearly
+    // below that, a way was not attached to the line (junction, service track).
     let expected: usize = railway.ways.iter().map(|w| w.nodes.len()).sum::<usize>()
         - (railway.ways.len().saturating_sub(1));
     if route.len() + 1 < expected {
         warnings.push(format!(
-            "nur {} von {} OSM-Knoten verkettet — Abzweige ignoriert",
+            "only {} of {} OSM nodes chained — junctions ignored",
             route.len(),
             expected
         ));
@@ -242,7 +240,7 @@ pub fn import_line(
     Ok((line, report))
 }
 
-/// Teilt die Segmentkette in Kanten, ohne Elemente zu zerschneiden.
+/// Splits the segment chain into edges without cutting elements apart.
 fn split_into_edges(
     alignment: &alignment::Alignment,
     max_length: f64,
@@ -267,18 +265,18 @@ fn split_into_edges(
     chunks
 }
 
-/// Lokaler ENU-Punkt → geodätische Koordinaten (Grad).
+/// Local ENU point → geodetic coordinates (degrees).
 fn frame_to_geodetic(frame: &EnuFrame, p: DVec2) -> (f64, f64) {
     let ecef = frame.to_ecef_curved(DVec3::new(p.x, p.y, 0.0));
     let (lat, lon, _) = geo::from_ecef(ecef);
     (lat.to_degrees(), lon.to_degrees())
 }
 
-/// Schneidet ein Stufenprofil auf `[offset, offset + len)` zu und verschiebt es an den
-/// Kantenanfang.
+/// Clips a step profile to `[offset, offset + len)` and shifts it to the start of the
+/// edge.
 fn shift_profile(steps: &[(f64, f64)], offset: f64, len: f64) -> Vec<(f64, f64)> {
     let mut out = Vec::new();
-    // Wert, der am Kantenanfang gilt.
+    // Value that applies at the start of the edge.
     if let Some(active) = steps
         .iter()
         .rfind(|(s, _)| *s <= offset)

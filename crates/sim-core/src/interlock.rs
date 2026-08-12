@@ -1,7 +1,7 @@
-//! Signale, Fahrstraßen und Blocksicherung (Plan Kap. 10).
+//! Signals, routes and block protection (plan ch. 10).
 //!
-//! Länderneutral: ein Signal ist ein Zustandsautomat mit Begriffen; welche Lampenbilder
-//! ein Begriff im Ks- oder H/V-System hat, entscheidet die Darstellung im Länderpaket.
+//! Country-neutral: a signal is a state machine with aspects; which lamp images an aspect
+//! has in the Ks or H/V system is decided by the presentation in the country package.
 
 use serde::{Deserialize, Serialize};
 use track_model::{DeviceKind, EdgeId, NodeId, SwitchPosition, TrackNetwork, TracksideDevice};
@@ -24,43 +24,43 @@ id_type!(SignalId);
 id_type!(RouteId);
 id_type!(SectionId);
 
-/// Signalsystem (bestimmt nur die Darstellung, nicht die Logik).
+/// Signal system (determines only the presentation, not the logic).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SignalSystem {
-    /// Haupt-/Vorsignalsystem (H/V).
+    /// Main/distant signal system (H/V).
     HV,
-    /// Kombinationssignalsystem (Ks).
+    /// Combination signal system (Ks).
     Ks,
-    /// Hl-System (Ostnetz) — v2.
+    /// Hl system (eastern network) — v2.
     Hl,
 }
 
-/// Bauart des Signals.
+/// Type of the signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SignalKind {
-    /// Hauptsignal.
+    /// Main signal.
     Main,
-    /// Vorsignal (zeigt nur den Begriff des zugehörigen Hauptsignals an).
+    /// Distant signal (only announces the aspect of the associated main signal).
     Distant,
-    /// Kombinationssignal (Ks): Haupt- und Vorsignalfunktion in einem Schirm.
+    /// Combination signal (Ks): main and distant signal function on one screen.
     Combined,
-    /// Sperrsignal (Sh1/Ra12).
+    /// Shunting signal (Sh1/Ra12).
     Shunting,
 }
 
-/// Hauptsignalbegriff.
+/// Main signal aspect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MainAspect {
-    /// Hp0 / Ks-Halt.
+    /// Hp0 / Ks stop.
     #[default]
     Stop,
-    /// Hp1 / Ks1 — Fahrt.
+    /// Hp1 / Ks1 — proceed.
     Proceed,
-    /// Hp2 / Ks2 mit Zs3 — Langsamfahrt (Ablenkung).
+    /// Hp2 / Ks2 with Zs3 — slow speed (diverging route).
     ProceedSlow,
-    /// Zs1/Zs7 — Ersatzsignal.
+    /// Zs1/Zs7 — substitute signal.
     Substitute,
-    /// Kennlicht — Signal ungültig.
+    /// Marker light — signal invalid.
     DarkLight,
 }
 
@@ -70,31 +70,31 @@ impl MainAspect {
     }
 }
 
-/// Vorsignalbegriff.
+/// Distant signal aspect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DistantAspect {
-    /// Vr0 / Ks2 — Halt erwarten.
+    /// Vr0 / Ks2 — expect stop.
     #[default]
     ExpectStop,
-    /// Vr1 / Ks1 — Fahrt erwarten.
+    /// Vr1 / Ks1 — expect proceed.
     ExpectProceed,
-    /// Vr2 — Langsamfahrt erwarten.
+    /// Vr2 — expect slow speed.
     ExpectSlow,
 }
 
 impl DistantAspect {
-    /// Wirkt der 1000-Hz-Magnet? (Bei Vr0 und Vr2, nicht bei Vr1.)
+    /// Is the 1000 Hz magnet active? (With Vr0 and Vr2, not with Vr1.)
     pub fn is_restrictive(self) -> bool {
         !matches!(self, DistantAspect::ExpectProceed)
     }
 }
 
-/// Vollständiger Signalbegriff.
+/// Complete signal aspect.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Aspect {
     pub main: Option<MainAspect>,
     pub distant: Option<DistantAspect>,
-    /// Zs3/Zs3v-Geschwindigkeitsanzeiger [km/h].
+    /// Zs3/Zs3v speed indicator [km/h].
     pub speed: Option<f64>,
 }
 
@@ -111,42 +111,42 @@ impl Aspect {
         self.main.is_some_and(MainAspect::is_stop)
     }
 
-    /// Kündigt das Signal eine Einschränkung an? (Grundlage der 1000-Hz-Wirksamkeit.)
+    /// Does the signal announce a restriction? (Basis of the 1000 Hz activation.)
     pub fn announces_restriction(&self) -> bool {
         self.distant.is_some_and(DistantAspect::is_restrictive)
     }
 }
 
-/// Gleisfreimeldeabschnitt (Achszählerabschnitt).
+/// Track clear detection section (axle counter section).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackSection {
     pub id: SectionId,
     pub edges: Vec<EdgeId>,
     pub occupied: bool,
-    /// Durch eine Fahrstraße festgelegt.
+    /// Locked by a route.
     pub locked_by: Option<RouteId>,
 }
 
-/// Ein Signal der Strecke.
+/// A signal of the line.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Signal {
     pub id: SignalId,
     pub system: SignalSystem,
     pub kind: SignalKind,
-    /// Zugehöriges Streckengerät (Position im Gleisnetz).
+    /// Associated trackside device (position in the track network).
     pub device: track_model::DeviceId,
-    /// Folgendes Hauptsignal — für die Vorsignalisierung.
+    /// Following main signal — for the distant signalling.
     pub next: Option<SignalId>,
-    /// Abschnitte, die frei sein müssen, damit das Signal Fahrt zeigen darf.
+    /// Sections that must be clear for the signal to be allowed to show proceed.
     pub guarded: Vec<SectionId>,
-    /// Signal zeigt nur mit gestellter Fahrstraße Fahrt (Stellwerkssignal);
-    /// sonst Selbstblocksignal.
+    /// The signal shows proceed only with a set route (interlocking signal);
+    /// otherwise it is an automatic block signal.
     pub requires_route: bool,
-    /// Geschwindigkeit bei abzweigender Fahrt [km/h] (Zs3).
+    /// Speed for a diverging move [km/h] (Zs3).
     pub diverging_speed: Option<f64>,
-    /// Aktueller Begriff.
+    /// Current aspect.
     pub aspect: Aspect,
-    /// Zugelassene Fahrstraße.
+    /// Cleared route.
     pub route: Option<RouteId>,
 }
 
@@ -161,7 +161,7 @@ impl Signal {
             guarded: Vec::new(),
             requires_route: false,
             diverging_speed: None,
-            // Grundstellung: Hauptsignale zeigen Halt, Vorsignale „Halt erwarten".
+            // Default position: main signals show stop, distant signals "expect stop".
             aspect: match kind {
                 SignalKind::Distant => Aspect {
                     main: None,
@@ -175,32 +175,32 @@ impl Signal {
     }
 }
 
-/// Zustand einer Fahrstraße.
+/// State of a route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RouteState {
     #[default]
     Free,
-    /// Angefordert — Weichen laufen um.
+    /// Requested — switches are moving.
     Requested,
-    /// Festgelegt (Weichen verschlossen, Signal darf Fahrt zeigen).
+    /// Locked (switches locked, the signal may show proceed).
     Locked,
-    /// Zug in der Fahrstraße.
+    /// Train inside the route.
     Occupied,
 }
 
-/// Eine Fahrstraße von Start- zu Zielsignal.
+/// A route from the entry to the exit signal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
     pub id: RouteId,
     pub entry: SignalId,
     pub exit: SignalId,
-    /// Sollagen der Weichen im Fahrweg.
+    /// Required positions of the switches in the path.
     pub switches: Vec<(NodeId, SwitchPosition)>,
-    /// Abschnitte des Fahrwegs, in Fahrtrichtung.
+    /// Sections of the path, in the direction of travel.
     pub sections: Vec<SectionId>,
-    /// Durchrutschweg hinter dem Zielsignal.
+    /// Overlap behind the exit signal.
     pub overlap: Vec<SectionId>,
-    /// Fahrstraße führt über einen abzweigenden Weg (Langsamfahrt).
+    /// The route leads over a diverging path (slow speed).
     pub diverging: bool,
     pub state: RouteState,
 }
@@ -220,22 +220,22 @@ impl Route {
     }
 }
 
-/// Wirksamkeitsbedingung eines signalabhängigen Streckengeräts.
+/// Activation condition of a signal-dependent trackside device.
 ///
-/// Länderneutral: das Gerät sagt selbst, wann es wirkt; das Stellwerk kennt nur den
-/// Signalbegriff. So bleiben PZB-Magnete DE-Sache, die Verknüpfung aber allgemein.
+/// Country-neutral: the device itself states when it is active; the interlocking only knows
+/// the signal aspect. That keeps PZB magnets a German matter while the link stays generic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Activation {
-    /// Immer wirksam.
+    /// Always active.
     #[default]
     Always,
-    /// Wirksam, wenn das zugehörige Signal Halt zeigt (500/2000 Hz).
+    /// Active when the associated signal shows stop (500/2000 Hz).
     WhenStop,
-    /// Wirksam, wenn das zugehörige Signal eine Einschränkung ankündigt (1000 Hz).
+    /// Active when the associated signal announces a restriction (1000 Hz).
     WhenRestrictive,
 }
 
-/// Neutraler Teil eines Geräte-Payloads: Signalbezug und Wirksamkeit.
+/// Neutral part of a device payload: signal reference and activation.
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 pub struct DeviceLink {
     #[serde(default)]
@@ -244,7 +244,7 @@ pub struct DeviceLink {
     pub activation: Activation,
 }
 
-/// Das Stellwerk.
+/// The interlocking.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Interlock {
     pub signals: Vec<Signal>,
@@ -294,20 +294,20 @@ impl Interlock {
         &self.routes[id.index()]
     }
 
-    /// Gleisfreimeldung: welche Abschnitte sind von Fahrzeugen besetzt?
+    /// Track clear detection: which sections are occupied by vehicles?
     pub fn update_occupancy(&mut self, occupied_edges: &[EdgeId]) {
         for s in &mut self.sections {
             s.occupied = s.edges.iter().any(|e| occupied_edges.contains(e));
         }
     }
 
-    /// Fahrstraße anfordern (Zuglenkung oder Fdl).
+    /// Request a route (automatic route setting or dispatcher).
     pub fn request_route(&mut self, id: RouteId, net: &mut TrackNetwork) -> bool {
         let route = &self.routes[id.index()];
         if route.state != RouteState::Free {
             return route.state == RouteState::Locked;
         }
-        // Kein Abschnitt darf besetzt oder anderweitig festgelegt sein.
+        // No section may be occupied or locked by something else.
         let blocked = route.sections.iter().chain(route.overlap.iter()).any(|s| {
             let sec = &self.sections[s.index()];
             sec.occupied || sec.locked_by.is_some_and(|r| r != id)
@@ -315,7 +315,7 @@ impl Interlock {
         if blocked {
             return false;
         }
-        // Weichen umstellen.
+        // Move the switches.
         let switches = route.switches.clone();
         for (node, pos) in &switches {
             if let Some(sw) = net.switch_mut(*node) {
@@ -340,7 +340,7 @@ impl Interlock {
         true
     }
 
-    /// Fahrstraße auflösen (nach Zugfahrt oder Rücknahme).
+    /// Release a route (after the train has passed or on cancellation).
     pub fn release_route(&mut self, id: RouteId, net: &mut TrackNetwork) {
         let route = &self.routes[id.index()];
         let switches = route.switches.clone();
@@ -366,7 +366,7 @@ impl Interlock {
         self.signals[entry.index()].route = None;
     }
 
-    /// Ein Schritt der Stellwerkslogik: Fahrstraßen festlegen/auflösen, Signale stellen.
+    /// One step of the interlocking logic: lock/release routes, set signals.
     pub fn update(&mut self, net: &mut TrackNetwork) {
         self.update_routes(net);
         self.update_signals();
@@ -376,7 +376,7 @@ impl Interlock {
         for i in 0..self.routes.len() {
             match self.routes[i].state {
                 RouteState::Requested => {
-                    // Festlegen, sobald alle Weichen in Lage sind.
+                    // Lock as soon as all switches are in position.
                     let ready = self.routes[i].switches.iter().all(|(node, pos)| {
                         net.switch(*node)
                             .is_none_or(|sw| !sw.is_moving() && sw.position == *pos && !sw.trailed)
@@ -395,20 +395,20 @@ impl Interlock {
                     }
                 }
                 RouteState::Locked => {
-                    // Zug hat die Fahrstraße befahren?
+                    // Has a train entered the route?
                     if self.routes[i]
                         .sections
                         .iter()
                         .any(|s| self.sections[s.index()].occupied)
                     {
                         self.routes[i].state = RouteState::Occupied;
-                        // Signal fällt hinter dem Zug auf Halt.
+                        // The signal drops to stop behind the train.
                         let entry = self.routes[i].entry;
                         self.signals[entry.index()].route = None;
                     }
                 }
                 RouteState::Occupied => {
-                    // Auflösen, wenn der Zug den Fahrweg vollständig geräumt hat.
+                    // Release once the train has completely cleared the path.
                     let cleared = self.routes[i]
                         .sections
                         .iter()
@@ -424,7 +424,7 @@ impl Interlock {
     }
 
     fn update_signals(&mut self) {
-        // 1. Hauptsignalbegriffe.
+        // 1. Main signal aspects.
         for i in 0..self.signals.len() {
             let sig = &self.signals[i];
             if sig.kind == SignalKind::Distant {
@@ -458,7 +458,7 @@ impl Interlock {
             sig.aspect.speed = speed;
         }
 
-        // 2. Vorsignalisierung aus dem folgenden Hauptsignal.
+        // 2. Distant signalling derived from the following main signal.
         for i in 0..self.signals.len() {
             let Some(next) = self.signals[i].next else {
                 if self.signals[i].kind != SignalKind::Main {
@@ -479,15 +479,15 @@ impl Interlock {
         }
     }
 
-    /// Signal zu einem Streckengerät (falls es eins ist).
+    /// Signal belonging to a trackside device (if it is one).
     pub fn signal_at_device(&self, device: track_model::DeviceId) -> Option<&Signal> {
         self.signals.iter().find(|s| s.device == device)
     }
 
-    /// Ist ein signalabhängiges Streckengerät gerade wirksam?
+    /// Is a signal-dependent trackside device currently active?
     ///
-    /// Grundlage der PZB-Magnetwirksamkeit: 1000 Hz bei angekündigter Einschränkung,
-    /// 500/2000 Hz bei Halt zeigendem Signal.
+    /// Basis of the PZB magnet activation: 1000 Hz with an announced restriction,
+    /// 500/2000 Hz with a signal showing stop.
     pub fn device_active(&self, device: &TracksideDevice) -> bool {
         let link: DeviceLink = ron::from_str(&device.payload).unwrap_or_default();
         match link.activation {
@@ -508,7 +508,7 @@ impl Interlock {
         }
     }
 
-    /// Signalbegriff eines Signals als Geschwindigkeitsvorgabe [km/h], falls einschränkend.
+    /// Aspect of a signal as a speed requirement [km/h], if it is restrictive.
     pub fn signal_speed(&self, id: SignalId) -> Option<f64> {
         let s = self.signal(id);
         match s.aspect.main? {
@@ -520,7 +520,7 @@ impl Interlock {
     }
 }
 
-/// Hilfsfunktion für Content: Payload eines signalabhängigen Geräts prüfen.
+/// Helper for content: check the payload of a signal-dependent device.
 pub fn is_signal_device(kind: &DeviceKind) -> bool {
     matches!(
         kind,
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn selbstblock_faellt_hinter_zug_auf_halt() {
+    fn automatic_block_drops_to_stop_behind_train() {
         let mut net = TrackNetwork::new();
         let a = net.add_node(NodeKind::Buffer);
         let b = net.add_node(NodeKind::Buffer);
@@ -605,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn vorsignal_folgt_hauptsignal() {
+    fn distant_signal_follows_main_signal() {
         let mut net = TrackNetwork::new();
         let a = net.add_node(NodeKind::Buffer);
         let b = net.add_node(NodeKind::Buffer);
@@ -644,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn fahrstrasse_stellt_weiche_verschliesst_und_loest_auf() {
+    fn route_sets_switch_locks_it_and_releases() {
         let (mut net, node, e0, _e1, e2) = net_with_switch();
         let mut il = Interlock::new();
         let s_entry = il.add_section(vec![e0]);
@@ -661,7 +661,7 @@ mod tests {
         route.diverging = true;
         let rid = il.add_route(route);
 
-        // Ohne Fahrstraße: Halt.
+        // Without a route: stop.
         il.update(&mut net);
         assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::Stop));
 
@@ -670,22 +670,22 @@ mod tests {
         assert_eq!(
             il.route(rid).state,
             RouteState::Requested,
-            "Weiche läuft um"
+            "switch is moving"
         );
         net.update_switches(10.0);
         il.update(&mut net);
         assert_eq!(il.route(rid).state, RouteState::Locked);
-        assert!(net.switch(node).unwrap().locked, "Weiche verschlossen");
+        assert!(net.switch(node).unwrap().locked, "switch locked");
         assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::ProceedSlow));
         assert_eq!(il.signal(sid).aspect.speed, Some(40.0));
 
-        // Zug fährt ein → Signal auf Halt, Fahrstraße besetzt.
+        // Train enters → signal to stop, route occupied.
         il.update_occupancy(&[e2]);
         il.update(&mut net);
         assert_eq!(il.route(rid).state, RouteState::Occupied);
         assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::Stop));
 
-        // Zug räumt → Auflösung, Weiche wieder frei.
+        // Train clears → release, switch free again.
         il.update_occupancy(&[]);
         il.update(&mut net);
         assert_eq!(il.route(rid).state, RouteState::Free);
@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn belegter_fahrweg_verhindert_fahrstrasse() {
+    fn occupied_path_prevents_route() {
         let (mut net, node, _e0, _e1, e2) = net_with_switch();
         let mut il = Interlock::new();
         let s_exit = il.add_section(vec![e2]);
@@ -711,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn magnetwirksamkeit_haengt_am_signalbegriff() {
+    fn magnet_activation_depends_on_signal_aspect() {
         let mut net = TrackNetwork::new();
         let a = net.add_node(NodeKind::Buffer);
         let b = net.add_node(NodeKind::Buffer);
@@ -740,12 +740,12 @@ mod tests {
 
         il.update_occupancy(&[e]);
         il.update(&mut net);
-        assert!(il.device_active(&magnet_1000), "Vr0 → 1000 Hz wirksam");
-        assert!(il.device_active(&magnet_2000), "Hp0 → 2000 Hz wirksam");
+        assert!(il.device_active(&magnet_1000), "Vr0 → 1000 Hz active");
+        assert!(il.device_active(&magnet_2000), "Hp0 → 2000 Hz active");
 
         il.update_occupancy(&[]);
         il.update(&mut net);
-        assert!(!il.device_active(&magnet_1000), "Vr1 → 1000 Hz unwirksam");
-        assert!(!il.device_active(&magnet_2000), "Hp1 → 2000 Hz unwirksam");
+        assert!(!il.device_active(&magnet_1000), "Vr1 → 1000 Hz inactive");
+        assert!(!il.device_active(&magnet_2000), "Hp1 → 2000 Hz inactive");
     }
 }

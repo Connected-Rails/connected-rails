@@ -1,53 +1,53 @@
-//! Elektrik, Antrieb und Aufrüstprozedur (Plan Kap. 8).
+//! Electrics, drive and start-up procedure (plan ch. 8).
 //!
-//! Kein SPICE: ein gerichteter Zustandsgraph aus Schaltern und Verbrauchern. Was zählt,
-//! ist die Reihenfolge (Batterie → Stromabnehmer → Hauptschalter → Hilfsbetriebe) und die
-//! Kennlinie des Traktionsstrangs.
+//! No SPICE: a directed state graph of switches and loads. What matters is the order
+//! (battery → pantograph → main switch → auxiliaries) and the characteristic curve of
+//! the traction chain.
 
 use crate::brakes::approach;
 use serde::{Deserialize, Serialize};
 
-/// Nennspannung des deutschen Bahnstromnetzes [V].
+/// Nominal voltage of the German railway power network [V].
 pub const NOMINAL_LINE_VOLTAGE: f64 = 15_000.0;
-/// Ab dieser Fahrdrahtspannung darf der Hauptschalter einschalten [V].
+/// From this contact wire voltage upwards the main switch may close [V].
 pub const MIN_LINE_VOLTAGE: f64 = 10_000.0;
 
-/// Traktionsstrang eines Triebfahrzeugs.
+/// Traction chain of a powered vehicle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TractionSpec {
-    /// Trafo mit Schaltwerk (Altbau-E-Lok, z. B. BR 110/140).
+    /// Transformer with tap changer (older electric loco, e.g. BR 110/140).
     TapChanger {
-        /// Anzahl Fahrstufen.
+        /// Number of notches.
         steps: u32,
-        /// Anfahrzugkraft [N].
+        /// Starting tractive effort [N].
         max_force: f64,
-        /// Dauerleistung am Rad [W].
+        /// Continuous power at the wheel [W].
         max_power: f64,
-        /// Höchstgeschwindigkeit [km/h].
+        /// Maximum speed [km/h].
         v_max: f64,
-        /// Zeit je Schaltstufe [s].
+        /// Time per notch [s].
         step_time: f64,
     },
-    /// Drehstromantrieb mit Umrichter (BR 101/185/423, ICE).
+    /// Three-phase drive with converter (BR 101/185/423, ICE).
     Converter {
         max_force: f64,
         max_power: f64,
         v_max: f64,
-        /// Höchste elektrische Bremskraft [N].
+        /// Highest dynamic brake force [N].
         brake_force: f64,
-        /// Leistung der elektrischen Bremse [W].
+        /// Power of the dynamic brake [W].
         brake_power: f64,
-        /// Anstiegszeit von 0 auf volle Kraft [s].
+        /// Rise time from 0 to full force [s].
         ramp_time: f64,
     },
-    /// Dieselantrieb (BR 218 hydraulisch, BR 648).
+    /// Diesel drive (BR 218 hydraulic, BR 648).
     Diesel {
         max_force: f64,
         max_power: f64,
         v_max: f64,
-        /// Zeit vom Leerlauf auf Volllast [s].
+        /// Time from idle to full load [s].
         ramp_time: f64,
-        /// Anlasszeit des Motors [s].
+        /// Cranking time of the engine [s].
         start_time: f64,
     },
 }
@@ -61,7 +61,7 @@ impl TractionSpec {
         }
     }
 
-    /// Verfügbare Zugkraft bei Geschwindigkeit `v` [m/s] — Zugkraft-Hyperbel.
+    /// Available tractive effort at speed `v` [m/s] — tractive effort hyperbola.
     pub fn available_force(&self, v: f64) -> f64 {
         let (max_force, max_power, v_max) = match self {
             TractionSpec::TapChanger {
@@ -87,11 +87,11 @@ impl TractionSpec {
         if av > v_max / 3.6 {
             return 0.0;
         }
-        // Unterhalb der Übergangsgeschwindigkeit konstante Kraft, darüber konstante Leistung.
+        // Below the transition speed constant force, above it constant power.
         max_force.min(max_power / av.max(0.5))
     }
 
-    /// Verfügbare elektrische Bremskraft bei `v` [m/s].
+    /// Available dynamic brake force at `v` [m/s].
     pub fn available_brake_force(&self, v: f64) -> f64 {
         match self {
             TractionSpec::Converter {
@@ -99,39 +99,39 @@ impl TractionSpec {
                 brake_power,
                 ..
             } => brake_force.min(brake_power / v.abs().max(0.5)),
-            // Schaltwerkloks der Baureihe 110 haben keine E-Bremse, Diesel v1 auch nicht.
+            // Tap changer locos of class 110 have no dynamic brake, nor does diesel v1.
             _ => 0.0,
         }
     }
 }
 
-/// Zustand von Bordnetz und Antrieb eines Fahrzeugs.
+/// State of the on-board electrical system and drive of a vehicle.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TractionState {
     pub battery: bool,
-    /// Befehl „Stromabnehmer heben".
+    /// Command "raise pantograph".
     pub pantograph_command: bool,
-    /// Hubzustand des Stromabnehmers 0…1 (Laufzeit ~ 5 s).
+    /// Raise state of the pantograph 0…1 (travel time ~ 5 s).
     pub pantograph: f64,
-    /// Befehl „Hauptschalter ein".
+    /// Command "main switch on".
     pub main_switch_command: bool,
     pub main_switch: bool,
-    /// Fahrdrahtspannung am Stromabnehmer [V] — von der Strecke gesetzt
-    /// (0 in Schutzstrecken oder ohne Oberleitung).
+    /// Contact wire voltage at the pantograph [V] — set by the line
+    /// (0 in neutral sections or without catenary).
     pub line_voltage: f64,
-    /// Fahrschalter: −1 … +1 (negativ = elektrische Bremse).
+    /// Power controller: −1 … +1 (negative = dynamic brake).
     pub notch: f64,
-    /// Aktuelle Schaltwerkstufe (nur `TapChanger`).
+    /// Current tap changer notch (only `TapChanger`).
     pub step: f64,
-    /// Dieselmotor läuft.
+    /// Diesel engine running.
     pub engine_running: bool,
-    /// Anlasser-Restzeit [s].
+    /// Remaining cranking time [s].
     pub start_timer: f64,
-    /// Luftpresser eingeschaltet.
+    /// Air compressor switched on.
     pub compressor: bool,
-    /// Zugsammelschiene (Heizung) eingeschaltet.
+    /// Train line (heating) switched on.
     pub train_line: bool,
-    /// Aktuelle Zugkraft [N], positiv = Traktion, negativ = elektrische Bremse.
+    /// Current tractive effort [N], positive = traction, negative = dynamic brake.
     pub force: f64,
 }
 
@@ -156,13 +156,13 @@ impl Default for TractionState {
 }
 
 impl TractionState {
-    /// Aufgerüstet und fahrbereit?
+    /// Started up and ready to run?
     pub fn ready(&self) -> bool {
         self.battery && (self.main_switch || self.engine_running)
     }
 }
 
-/// Ein Simulationsschritt für Bordnetz und Antrieb eines Fahrzeugs.
+/// One simulation step for the on-board electrical system and drive of a vehicle.
 pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
     update_power(state, spec, dt);
 
@@ -173,7 +173,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
     };
 
     if !powered {
-        // Kraft fällt ab, Schaltwerk läuft in die Nullstellung zurück.
+        // Force decays, the tap changer runs back to the zero notch.
         approach(&mut state.force, 0.0, 1.0e6, dt);
         approach(&mut state.step, 0.0, 5.0, dt);
         return;
@@ -184,7 +184,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
         TractionSpec::TapChanger {
             steps, step_time, ..
         } => {
-            // Das Schaltwerk läuft Stufe für Stufe — der Fahrschalter gibt nur das Ziel vor.
+            // The tap changer runs notch by notch — the power controller only sets the target.
             let target = notch.max(0.0) * *steps as f64;
             approach(&mut state.step, target, 1.0 / step_time.max(0.01), dt);
             state.force = state.step / *steps as f64 * spec.available_force(v);
@@ -206,7 +206,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
     }
 }
 
-/// Aufrüstkette: Batterie → Stromabnehmer → Hauptschalter (Plan 8, Aufrüstprozedur).
+/// Start-up chain: battery → pantograph → main switch (plan 8, start-up procedure).
 fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
     if !state.battery {
         state.pantograph_command = false;
@@ -214,7 +214,7 @@ fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
         state.compressor = false;
     }
 
-    // Stromabnehmer braucht ~ 5 s zum Heben und ~ 3 s zum Senken.
+    // The pantograph needs ~ 5 s to rise and ~ 3 s to lower.
     let target = if state.pantograph_command && state.battery {
         1.0
     } else {
@@ -227,8 +227,8 @@ fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
     };
     approach(&mut state.pantograph, target, rate, dt);
 
-    // Hauptschalter: nur mit anliegender Fahrdrahtspannung, fällt bei Spannungsverlust ab
-    // (Schutzstrecke!).
+    // Main switch: only with contact wire voltage present, drops out on loss of voltage
+    // (neutral section!).
     let contact = state.pantograph > 0.98;
     let voltage_ok = contact && state.line_voltage >= MIN_LINE_VOLTAGE;
     state.main_switch = state.main_switch_command && state.battery && voltage_ok;
@@ -245,7 +245,7 @@ fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
     }
 }
 
-/// Dieselmotor anlassen (braucht Batterie).
+/// Crank the diesel engine (needs the battery).
 pub fn start_engine(state: &mut TractionState, spec: &TractionSpec) {
     if let TractionSpec::Diesel { start_time, .. } = spec
         && state.battery

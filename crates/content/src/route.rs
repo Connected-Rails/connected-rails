@@ -1,4 +1,4 @@
-//! Streckenquellformat (RON) und Compiler in Gleisnetz + Stellwerk (Plan Kap. 15).
+//! Line source format (RON) and compiler into track network + interlocking (plan ch. 15).
 
 use serde::{Deserialize, Serialize};
 use sim_core::interlock::{
@@ -11,21 +11,21 @@ use track_model::{
 use track_model::{EdgeEnd, EdgeSide};
 use world_coords::geo::to_ecef_deg;
 
-/// Georeferenzierter Streckenanfang.
+/// Georeferenced start of the line.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct GeoPoint {
     pub lat: f64,
     pub lon: f64,
-    /// Normalhöhe [m] (DHHN2016).
+    /// Normal height [m] (DHHN2016).
     pub height: f64,
 }
 
-/// Knoten der Quelldatei.
+/// Node of the source file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeSource {
     Buffer,
     Joint,
-    /// Weiche: Wurzel/Stamm/Zweig werden über die Kantenindizes aufgelöst.
+    /// Switch: root/straight/diverging are resolved through the edge indices.
     Switch {
         root: (u32, bool),
         straight: (u32, bool),
@@ -39,12 +39,12 @@ fn default_throw_time() -> f64 {
     6.0
 }
 
-/// Wo eine Kante beginnt.
+/// Where an edge begins.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum EdgeStart {
-    /// Georeferenziert mit Richtung (0° = Nord, im Uhrzeigersinn).
+    /// Georeferenced with heading (0° = north, clockwise).
     Geo { point: GeoPoint, heading_deg: f64 },
-    /// Schließt am Ende einer früheren Kante an.
+    /// Joins the end of an earlier edge.
     Continue { edge: u32 },
 }
 
@@ -54,13 +54,13 @@ pub struct EdgeSource {
     pub to: u32,
     pub start: EdgeStart,
     pub segments: Vec<Segment>,
-    /// Neigung [‰] als Stufen `(s, wert)`.
+    /// Gradient [‰] as steps `(s, value)`.
     #[serde(default)]
     pub grade: Vec<(f64, f64)>,
-    /// Überhöhung [mm].
+    /// Cant [mm].
     #[serde(default)]
     pub cant: Vec<(f64, f64)>,
-    /// Zulässige Geschwindigkeit [km/h].
+    /// Permitted speed [km/h].
     #[serde(default)]
     pub speed: Vec<(f64, f64)>,
 }
@@ -74,7 +74,7 @@ pub struct DeviceSource {
     pub facing: Facing,
     #[serde(default)]
     pub lateral_offset: f64,
-    /// Länderspezifisches Payload als RON-Text.
+    /// Country-specific payload as RON text.
     #[serde(default)]
     pub payload: String,
 }
@@ -89,7 +89,7 @@ pub struct SignalSource {
     pub kind: SignalKind,
     #[serde(default = "default_system")]
     pub system: SignalSystem,
-    /// Index in `devices`.
+    /// Index into `devices`.
     pub device: u32,
     #[serde(default)]
     pub next: Option<u32>,
@@ -119,11 +119,11 @@ pub struct RouteSource {
     pub diverging: bool,
 }
 
-/// Eine komplette Strecke in Quellform.
+/// A complete line in source form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LineSource {
     pub name: String,
-    /// Geoid-Undulation für die Höhenumrechnung [m] (Plan 4.2).
+    /// Geoid undulation for the height conversion [m] (plan 4.2).
     #[serde(default = "default_geoid")]
     pub geoid_offset: f64,
     pub nodes: Vec<NodeSource>,
@@ -142,7 +142,7 @@ fn default_geoid() -> f64 {
     46.0
 }
 
-/// Ergebnis der Übersetzung.
+/// Result of the compilation.
 pub struct CompiledLine {
     pub net: TrackNetwork,
     pub interlock: Interlock,
@@ -153,7 +153,7 @@ pub enum CompileError {
     UnknownEdge(u32),
     UnknownNode(u32),
     UnknownDevice(u32),
-    /// Eine Kante verweist auf eine noch nicht übersetzte Kante.
+    /// An edge refers to an edge that has not been compiled yet.
     ForwardReference(u32),
 }
 
@@ -163,14 +163,14 @@ impl LineSource {
     }
 
     pub fn to_ron(&self) -> String {
-        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serialisierbar")
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serializable")
     }
 
-    /// Übersetzt die Quelldatei in Gleisnetz und Stellwerk.
+    /// Compiles the source file into track network and interlocking.
     pub fn compile(&self) -> Result<CompiledLine, CompileError> {
         let mut net = TrackNetwork::new();
 
-        // Knoten zuerst (Weichen bekommen ihre Kantenenden später).
+        // Nodes first (switches get their edge ends later).
         let node_ids: Vec<NodeId> = self
             .nodes
             .iter()
@@ -182,7 +182,7 @@ impl LineSource {
             })
             .collect();
 
-        // Kanten in Quellreihenfolge; `Continue` darf nur zurück verweisen.
+        // Edges in source order; `Continue` may only refer backwards.
         let mut edge_ids: Vec<EdgeId> = Vec::new();
         for (i, e) in self.edges.iter().enumerate() {
             let (anchor, heading) = match e.start {
@@ -192,8 +192,8 @@ impl LineSource {
                         point.lon,
                         world_coords::geo::ellipsoidal_height(point.height, self.geoid_offset),
                     ),
-                    // Quelldaten geben die Richtung als Kompasskurs an, intern ist
-                    // 0 = Ost und mathematisch positiv.
+                    // Source data gives the heading as a compass bearing, internally
+                    // 0 = east and mathematically positive.
                     (90.0 - heading_deg).to_radians(),
                 ),
                 EdgeStart::Continue { edge } => {
@@ -211,9 +211,9 @@ impl LineSource {
                             .iter()
                             .map(|s| s.heading_delta(s.len))
                             .sum::<f64>();
-                    // Der Anschlusspunkt bekommt sein eigenes ENU-Frame; die Richtung ist
-                    // im neuen Frame dieselbe, weil ENU-Frames nur über große Distanzen
-                    // gegeneinander verdreht sind (Meridiankonvergenz, hier vernachlässigbar).
+                    // The joint gets its own ENU frame; the heading is the same in the
+                    // new frame, because ENU frames are only rotated against each other
+                    // over long distances (meridian convergence, negligible here).
                     (end.pos, heading)
                 }
             };
@@ -237,7 +237,7 @@ impl LineSource {
             edge_ids.push(net.add_edge(edge));
         }
 
-        // Weichen verdrahten.
+        // Wire up the switches.
         for (i, n) in self.nodes.iter().enumerate() {
             if let NodeSource::Switch {
                 root,
@@ -266,7 +266,7 @@ impl LineSource {
             }
         }
 
-        // Streckengeräte.
+        // Trackside devices.
         let mut device_ids = Vec::new();
         for d in &self.devices {
             let edge = *edge_ids
@@ -281,7 +281,7 @@ impl LineSource {
             device_ids.push(net.add_device(device));
         }
 
-        // Stellwerk.
+        // Interlocking.
         let mut interlock = Interlock::new();
         for s in &self.sections {
             let edges = s

@@ -1,20 +1,20 @@
-//! Geodätische Umrechnungen auf dem GRS80-Ellipsoid (ETRS89 nutzt GRS80).
+//! Geodetic conversions on the GRS80 ellipsoid (ETRS89 uses GRS80).
 
 use crate::EcefPos;
 use glam::DVec3;
 
-/// Große Halbachse GRS80 [m].
+/// Semi-major axis GRS80 [m].
 pub const A: f64 = 6_378_137.0;
-/// Abplattung GRS80.
+/// Flattening GRS80.
 pub const F: f64 = 1.0 / 298.257_222_101;
-/// Kleine Halbachse [m].
+/// Semi-minor axis [m].
 pub const B: f64 = A * (1.0 - F);
-/// Erste numerische Exzentrizität im Quadrat.
+/// First numerical eccentricity squared.
 pub const E2: f64 = 2.0 * F - F * F;
-/// Zweite numerische Exzentrizität im Quadrat.
+/// Second numerical eccentricity squared.
 pub const EP2: f64 = E2 / (1.0 - E2);
 
-/// Geodätisch (Breite/Länge im Bogenmaß, ellipsoidische Höhe in m) → ECEF.
+/// Geodetic (latitude/longitude in radians, ellipsoidal height in m) → ECEF.
 pub fn to_ecef(lat: f64, lon: f64, h: f64) -> EcefPos {
     let (sla, cla) = lat.sin_cos();
     let (slo, clo) = lon.sin_cos();
@@ -26,13 +26,13 @@ pub fn to_ecef(lat: f64, lon: f64, h: f64) -> EcefPos {
     ))
 }
 
-/// ECEF → geodätisch (Breite, Länge, ellipsoidische Höhe). Bowring-Verfahren,
-/// eine Iteration reicht für Zentimetergenauigkeit; wir nehmen zwei.
+/// ECEF → geodetic (latitude, longitude, ellipsoidal height). Bowring's method,
+/// one iteration is enough for centimetre accuracy; we use two.
 pub fn from_ecef(p: EcefPos) -> (f64, f64, f64) {
     let DVec3 { x, y, z } = p.0;
     let r = (x * x + y * y).sqrt();
     if r < 1e-9 {
-        // Pol: Länge undefiniert, wir liefern 0.
+        // Pole: longitude undefined, we return 0.
         let lat = z.signum() * std::f64::consts::FRAC_PI_2;
         return (lat, 0.0, z.abs() - B);
     }
@@ -56,52 +56,52 @@ pub fn from_ecef(p: EcefPos) -> (f64, f64, f64) {
     (lat, lon, h)
 }
 
-/// Bequemer Einstieg mit Grad.
+/// Convenience entry point using degrees.
 pub fn to_ecef_deg(lat_deg: f64, lon_deg: f64, h: f64) -> EcefPos {
     to_ecef(lat_deg.to_radians(), lon_deg.to_radians(), h)
 }
 
-/// Höhenbezug: DHHN2016-Normalhöhen (Quelldaten) → ellipsoidische Höhe.
+/// Height reference: DHHN2016 normal heights (source data) → ellipsoidal height.
 ///
-/// ponytail: konstanter Geoid-Offset pro Strecke (Plan 4.2). In Deutschland liegt die
-/// Quasigeoidundulation zwischen ~ 39 m (Nordwesten) und ~ 50 m (Süden); der Fehler eines
-/// konstanten Werts über 100 km Strecke liegt im Dezimeterbereich. Echtes GCG-Raster
-/// nachrüsten, sobald DGM-Import über mehrere Bundesländer geht.
+/// ponytail: constant geoid offset per line (plan 4.2). In Germany the quasigeoid
+/// undulation lies between ~ 39 m (north-west) and ~ 50 m (south); the error of a
+/// constant value over a 100 km line is in the decimetre range. Add a real GCG grid
+/// once DGM import spans several federal states.
 pub fn ellipsoidal_height(normal_height: f64, geoid_offset: f64) -> f64 {
     normal_height + geoid_offset
 }
 
 // ---------------------------------------------------------------------------
-// UTM (ETRS89 / EPSG:25832 und 25833) — nur für den Streckenimport (Plan 4.2).
+// UTM (ETRS89 / EPSG:25832 and 25833) — only for the line import (plan 4.2).
 //
-// Bewusst ohne CRS-Bibliothek (`proj4rs`, `geodesy`): gebraucht werden für Deutschland
-// genau zwei Projektionen — UTM-Zone 32N und 33N auf GRS80. Das ist die Snyder-Reihe
-// unten, millimetergenau innerhalb einer Zone und ohne Abhängigkeit. Sobald Quelldaten
-// in anderen Systemen dazukommen (Gauß-Krüger/DHDN, Nachbarländer), tritt hinter
-// derselben Signatur `proj4rs` an die Stelle dieser Funktionen.
+// Deliberately without a CRS library (`proj4rs`, `geodesy`): for Germany exactly two
+// projections are needed — UTM zone 32N and 33N on GRS80. That is the Snyder series
+// below, millimetre-accurate within a zone and without a dependency. As soon as source
+// data in other systems appears (Gauss-Krüger/DHDN, neighbouring countries), `proj4rs`
+// takes the place of these functions behind the same signature.
 // ---------------------------------------------------------------------------
 
-/// Maßstabsfaktor am Mittelmeridian einer UTM-Zone.
+/// Scale factor at the central meridian of a UTM zone.
 pub const UTM_K0: f64 = 0.9996;
-/// Falscher Ostwert einer UTM-Zone [m].
+/// False easting of a UTM zone [m].
 pub const UTM_FALSE_EASTING: f64 = 500_000.0;
 
-/// UTM-Zone aus einem EPSG-Code der ETRS89-/UTM-Familie (25831…25835).
+/// UTM zone from an EPSG code of the ETRS89/UTM family (25831…25835).
 pub fn utm_zone_from_epsg(epsg: u32) -> Option<u8> {
     match epsg {
         25831..=25835 => Some((epsg - 25800) as u8),
-        // WGS84 / UTM Nordhalbkugel.
+        // WGS84 / UTM northern hemisphere.
         32601..=32660 => Some((epsg - 32600) as u8),
         _ => None,
     }
 }
 
-/// Mittelmeridian einer UTM-Zone [rad].
+/// Central meridian of a UTM zone [rad].
 fn central_meridian(zone: u8) -> f64 {
     ((zone as f64) * 6.0 - 183.0).to_radians()
 }
 
-/// Geodätisch → UTM. Liefert `(easting, northing)` [m].
+/// Geodetic → UTM. Returns `(easting, northing)` [m].
 pub fn to_utm(lat: f64, lon: f64, zone: u8) -> (f64, f64) {
     let lon0 = central_meridian(zone);
     let (s, c) = lat.sin_cos();
@@ -133,7 +133,7 @@ pub fn to_utm(lat: f64, lon: f64, zone: u8) -> (f64, f64) {
     (easting, northing)
 }
 
-/// UTM → geodätisch. Liefert `(lat, lon)` [rad] (Nordhalbkugel).
+/// UTM → geodetic. Returns `(lat, lon)` [rad] (northern hemisphere).
 pub fn from_utm(easting: f64, northing: f64, zone: u8) -> (f64, f64) {
     let lon0 = central_meridian(zone);
     let x = easting - UTM_FALSE_EASTING;
@@ -171,7 +171,7 @@ pub fn from_utm(easting: f64, northing: f64, zone: u8) -> (f64, f64) {
     (lat, lon)
 }
 
-/// UTM-Punkt (mit Normalhöhe) direkt nach ECEF — der Weg, den der Streckenimport nimmt.
+/// UTM point (with normal height) directly to ECEF — the path the line import takes.
 pub fn utm_to_ecef(
     easting: f64,
     northing: f64,
@@ -197,7 +197,7 @@ mod tests {
         ] {
             let (e, n) = to_utm(lat.to_radians(), lon.to_radians(), zone);
             let (lat2, lon2) = from_utm(e, n, zone);
-            // In Metern gemessen: die Snyder-Reihe ist auf Millimeter genau.
+            // Measured in metres: the Snyder series is accurate to the millimetre.
             let d = to_ecef(lat2, lon2, 0.0).distance(to_ecef_deg(lat, lon, 0.0));
             assert!(d < 0.001, "{lat}/{lon}: {d} m");
         }
@@ -205,19 +205,19 @@ mod tests {
 
     #[test]
     fn central_meridian_has_false_easting() {
-        // Zone 32 hat den Mittelmeridian bei 9° Ost.
+        // Zone 32 has its central meridian at 9° east.
         let (e, n) = to_utm(0.0, 9.0f64.to_radians(), 32);
         assert!((e - UTM_FALSE_EASTING).abs() < 1e-6, "{e}");
         assert!(n.abs() < 1e-6, "{n}");
 
-        // Östlich davon wächst der Ostwert.
+        // East of it the easting grows.
         let (e2, _) = to_utm(52.0f64.to_radians(), 10.0f64.to_radians(), 32);
         assert!(e2 > UTM_FALSE_EASTING);
     }
 
     #[test]
     fn northing_matches_meridian_arc() {
-        // Meridianbogen bis 52° N: rund 5 763 km; UTM staucht ihn um k0.
+        // Meridian arc up to 52° N: around 5,763 km; UTM compresses it by k0.
         let (_, n) = to_utm(52.0f64.to_radians(), 9.0f64.to_radians(), 32);
         let arc = n / UTM_K0;
         assert!((arc - 5_763_000.0).abs() < 5_000.0, "{arc}");
@@ -239,7 +239,7 @@ mod tests {
         assert!(a.distance(b) < 0.01, "{} m", a.distance(b));
     }
 
-    /// Zonengrenze: derselbe Punkt in Zone 32 und 33 liefert dieselbe Weltposition.
+    /// Zone boundary: the same point in zone 32 and 33 yields the same world position.
     #[test]
     fn zone_boundary_is_seamless_in_ecef() {
         let (lat, lon) = (52.3f64.to_radians(), 12.0f64.to_radians());
@@ -247,10 +247,10 @@ mod tests {
         let p33 = to_utm(lat, lon, 33);
         assert!(
             (p32.0 - p33.0).abs() > 100_000.0,
-            "andere Zone, andere Zahlen"
+            "different zone, different numbers"
         );
         let a = utm_to_ecef(p32.0, p32.1, 32, 0.0, 0.0);
         let b = utm_to_ecef(p33.0, p33.1, 33, 0.0, 0.0);
-        assert!(a.distance(b) < 0.01, "Naht: {} m", a.distance(b));
+        assert!(a.distance(b) < 0.01, "seam: {} m", a.distance(b));
     }
 }

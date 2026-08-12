@@ -1,11 +1,11 @@
-//! Beispielszenarien auf der Musterbahn (Plan Kap. 11.4).
+//! Example scenarios on the Musterbahn (plan ch. 11.4).
 
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
 use sim_core::timetable::{ScheduledStop, Timetable};
 use sim_core::train::RailCondition;
 use track_model::EdgeId;
 
-/// Fahrplan des Szenarios „Regionalbahn nach Musterstadt".
+/// Timetable of the scenario "Regionalbahn nach Musterstadt".
 pub fn re_4711() -> Timetable {
     Timetable {
         number: "RE 4711".into(),
@@ -21,9 +21,9 @@ pub fn re_4711() -> Timetable {
     }
 }
 
-/// Szenario: Abfahrt, Blocksignal steht zunächst auf Halt, Regen setzt ein,
-/// Ziel ist der pünktliche Halt am Bahnsteig in Musterstadt.
-pub fn nach_musterstadt() -> Scenario {
+/// Scenario: departure, the block signal shows stop at first, rain sets in,
+/// the goal is the punctual stop at the platform in Musterstadt.
+pub fn to_musterstadt() -> Scenario {
     Scenario {
         name: "Regionalbahn nach Musterstadt".into(),
         description: "RE 4711 von Musterbach nach Musterstadt, 7 km. \
@@ -126,24 +126,24 @@ mod tests {
     use sim_core::interlock::SignalId;
 
     #[test]
-    fn szenario_ron_roundtrip() {
-        let scenario = nach_musterstadt();
+    fn scenario_ron_roundtrip() {
+        let scenario = to_musterstadt();
         let text = scenario.to_ron();
-        let back = Scenario::from_ron(&text).expect("RON lesbar");
+        let back = Scenario::from_ron(&text).expect("RON readable");
         assert_eq!(back, scenario);
         assert_eq!(back.events.len(), 7);
     }
 
     #[test]
-    fn fahrplan_ron_roundtrip() {
+    fn timetable_ron_roundtrip() {
         let tt = re_4711();
-        let back = Timetable::from_ron(&tt.to_ron()).expect("RON lesbar");
+        let back = Timetable::from_ron(&tt.to_ron()).expect("RON readable");
         assert_eq!(back, tt);
     }
 
     #[test]
-    fn signal_trigger_ist_ausdrueckbar() {
-        // Der Auslöser existiert und ist serialisierbar — genutzt von eigenen Szenarien.
+    fn signal_trigger_is_expressible() {
+        // The trigger exists and is serializable — used by custom scenarios.
         let t = Trigger::SignalStop {
             signal: SignalId(1),
             stop: true,

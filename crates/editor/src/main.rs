@@ -1,11 +1,11 @@
-//! TrainSim-DE Editor — Draufsicht auf eine Strecke mit Luftbild-Overlay.
+//! TrainSim-DE editor — top-down view of a line with aerial imagery overlay.
 //!
 //! ```text
-//! train-sim-editor [strecke.ron] [--imagery <konfig.ron>] [--frames N]
+//! train-sim-editor [line.ron] [--imagery <config.ron>] [--frames N]
 //! ```
 //!
-//! Ohne Streckendatei wird die Beispielstrecke geladen. Die Overlay-Konfiguration wird
-//! beim ersten Start angelegt und lässt sich im Betrieb neu laden (F5).
+//! Without a line file the example line is loaded. The overlay configuration is created
+//! on first start and can be reloaded at runtime (F5).
 
 mod overlay;
 
@@ -20,26 +20,26 @@ use overlay::{Overlay, OverlayTile};
 use track_model::TrackNetwork;
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
-/// Geografische Lage eines Weltpunkts in **Grad** — `geo::from_ecef` liefert Bogenmaß,
-/// und Kachelraster wie Anzeige rechnen in Grad.
+/// Geographic position of a world point in **degrees** — `geo::from_ecef` returns radians,
+/// while both the tile grid and the display work in degrees.
 pub fn focus_degrees(position: EcefPos) -> (f64, f64) {
     let (lat, lon, _) = geo::from_ecef(position);
     (lat.to_degrees(), lon.to_degrees())
 }
 
-/// Renderursprung (Floating Origin).
+/// Render origin (floating origin).
 #[derive(Resource)]
 pub struct Origin(pub RenderOrigin);
 
-/// Blickpunkt des Editors in Weltkoordinaten.
+/// View point of the editor in world coordinates.
 #[derive(Resource)]
 pub struct Focus {
     pub position: EcefPos,
-    /// Kamerahöhe über dem Blickpunkt [m].
+    /// Camera height above the view point [m].
     pub height: f64,
 }
 
-/// Das geladene Gleisnetz.
+/// The loaded track network.
 #[derive(Resource)]
 pub struct Line {
     pub net: TrackNetwork,
@@ -47,20 +47,20 @@ pub struct Line {
     pub path: Option<String>,
 }
 
-/// Weltverankerte Objekte (Gleis) — beim Rebase nachzuführen.
+/// World-anchored objects (track) — to be followed up on a rebase.
 #[derive(Component)]
 struct WorldAnchored {
     anchor: EcefPos,
 }
 
-/// Pfad der Overlay-Konfiguration.
+/// Path of the overlay configuration.
 #[derive(Resource)]
 struct ConfigPath(String);
 
 #[derive(Resource)]
 struct FrameLimit(u32);
 
-/// Zieldatei aus `--screenshot <datei.png>`.
+/// Target file from `--screenshot <file.png>`.
 #[derive(Resource)]
 struct ShotPath(String);
 
@@ -81,7 +81,7 @@ fn main() {
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
     }
-    // Ohne `--frames` reicht für ein Bild etwa eine Sekunde Anlauf.
+    // Without `--frames`, about a second of run-up is enough for an image.
     let frame_limit = flag("--frames")
         .and_then(|n| n.parse::<u32>().ok())
         .or_else(|| shot.as_ref().map(|_| 60));
@@ -129,7 +129,7 @@ fn setup(
     config_path: Res<ConfigPath>,
     line_path: Res<LinePath>,
 ) {
-    // Strecke laden.
+    // Load the line.
     let (source, name, path) = match &line_path.0 {
         Some(path) => match std::fs::read_to_string(path).map(|t| LineSource::from_ron(&t)) {
             Ok(Ok(source)) => {
@@ -137,16 +137,16 @@ fn setup(
                 (source, name, Some(path.clone()))
             }
             _ => {
-                warn!("{path} nicht lesbar — Beispielstrecke geladen");
+                warn!("{path} not readable — example line loaded");
                 (content::musterbahn(), "Musterbahn".into(), None)
             }
         },
         None => (content::musterbahn(), "Musterbahn".into(), None),
     };
-    let compiled = source.compile().expect("Strecke übersetzbar");
+    let compiled = source.compile().expect("line compiles");
     let net = compiled.net;
 
-    // Blickpunkt in die Streckenmitte.
+    // View point at the middle of the line.
     let first = net.edges()[0].eval(0.0).pos;
     let middle = &net.edges()[net.edges().len() / 2];
     let focus_position = middle.eval(middle.length() / 2.0).pos;
@@ -156,13 +156,13 @@ fn setup(
 
     spawn_track(&mut commands, &mut meshes, &mut materials, &net, &origin);
 
-    // Overlay-Konfiguration laden (oder anlegen).
+    // Load (or create) the overlay configuration.
     let (config, message) = ImageryConfig::load_or_create(&config_path.0);
     if let Some(message) = &message {
         info!("{message}");
     }
     info!(
-        "Luftbild: {} ({} Anbieter)",
+        "Aerial imagery: {} ({} providers)",
         config
             .provider()
             .map(|p| p.name.clone())
@@ -221,7 +221,7 @@ fn setup(
     commands.insert_resource(Line { net, name, path });
 }
 
-/// Gleisband als dunkle Fläche — Bezug für die Lage im Luftbild.
+/// Track ribbon as a dark quad — reference for the position in the aerial imagery.
 fn spawn_track(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -279,7 +279,7 @@ fn spawn_track(
     }
 }
 
-/// Blickpunkt verschieben und Höhe ändern.
+/// Move the view point and change the height.
 fn camera_control(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -288,7 +288,7 @@ fn camera_control(
     mut camera: Query<&mut Transform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs_f64();
-    // Bewegung skaliert mit der Höhe: weit oben wird großzügig geschoben.
+    // Movement scales with the height: far up, panning is generous.
     let speed = focus.height * 0.8 * dt;
     let frame = EnuFrame::at(focus.position);
     let mut shift = DVec3::ZERO;
@@ -325,7 +325,7 @@ fn camera_control(
     transform.look_at(center, north);
 }
 
-/// Alle Overlay-Einstellungen über Tasten.
+/// All overlay settings via keys.
 fn overlay_control(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -356,7 +356,7 @@ fn overlay_control(
         changed = true;
         rebuild = true;
     }
-    // Zoomstufe: aus der aktuellen Stufe eine feste machen und verschieben.
+    // Zoom level: turn the current level into a fixed one and shift it.
     let (lat, _) = focus_degrees(focus.position);
     if keys.just_pressed(KeyCode::Comma) {
         config.zoom = ZoomMode::Fixed(config.zoom_for(lat).saturating_sub(1));
@@ -370,7 +370,7 @@ fn overlay_control(
         config.zoom = ZoomMode::Resolution(0.5);
         changed = true;
     }
-    // Bildversatz gegen die Karte (Luftbilder liegen oft um Meter daneben).
+    // Image offset against the map (aerial imagery is often off by metres).
     let step = if keys.pressed(KeyCode::ShiftLeft) {
         5.0
     } else {
@@ -402,22 +402,22 @@ fn overlay_control(
     if keys.just_pressed(KeyCode::KeyC) {
         overlay.source.clear_cache();
         overlay.clear(&mut commands);
-        overlay.status = "Cache geleert".into();
+        overlay.status = "Cache cleared".into();
     }
     if keys.just_pressed(KeyCode::KeyR) {
         overlay.source.retry_failed();
-        overlay.status = "Fehlversuche zurückgesetzt".into();
+        overlay.status = "Failed attempts reset".into();
     }
     if keys.just_pressed(KeyCode::F5) {
         let (loaded, message) = ImageryConfig::load_or_create(&config_path.0);
-        overlay.status = message.unwrap_or_else(|| format!("{} geladen", config_path.0));
+        overlay.status = message.unwrap_or_else(|| format!("{} loaded", config_path.0));
         overlay.apply(&mut commands, loaded);
         return;
     }
     if keys.just_pressed(KeyCode::F2) {
         overlay.status = match config.save(&config_path.0) {
-            Ok(()) => format!("{} gespeichert", config_path.0),
-            Err(e) => format!("Speichern fehlgeschlagen: {e}"),
+            Ok(()) => format!("{} saved", config_path.0),
+            Err(e) => format!("Saving failed: {e}"),
         };
     }
 
@@ -430,7 +430,7 @@ fn overlay_control(
     }
 }
 
-/// Origin nachführen und weltverankerte Objekte neu ausrichten.
+/// Follow up the origin and re-align world-anchored objects.
 fn rebase_origin(
     focus: Res<Focus>,
     mut origin: ResMut<Origin>,
@@ -465,7 +465,7 @@ fn update_hud(
 
     let mut lines = vec![
         format!(
-            "Strecke: {} ({} Kanten{})",
+            "Line: {} ({} edges{})",
             line.name,
             line.net.edges().len(),
             line.path
@@ -474,22 +474,22 @@ fn update_hud(
                 .unwrap_or_default()
         ),
         format!(
-            "Blickpunkt {lat:.5}°, {lon:.5}°   Höhe {:.0} m",
+            "View point {lat:.5}°, {lon:.5}°   Height {:.0} m",
             focus.height
         ),
         format!(
-            "Luftbild: {}   {}   Deckkraft {:.0} %   Zoom {} ({})",
+            "Aerial imagery: {}   {}   Opacity {:.0} %   Zoom {} ({})",
             provider.map(|p| p.name.as_str()).unwrap_or("—"),
-            if config.enabled { "ein" } else { "aus" },
+            if config.enabled { "on" } else { "off" },
             config.opacity * 100.0,
             overlay.zoom,
             match config.zoom {
-                ZoomMode::Fixed(_) => "fest".to_string(),
-                ZoomMode::Resolution(m) => format!("{m:.2} m/Px"),
+                ZoomMode::Fixed(_) => "fixed".to_string(),
+                ZoomMode::Resolution(m) => format!("{m:.2} m/px"),
             }
         ),
         format!(
-            "Kacheln: {} sichtbar, {} unterwegs   Versatz {:+.1}/{:+.1} m{}",
+            "Tiles: {} shown, {} in flight   Offset {:+.1}/{:+.1} m{}",
             overlay.tiles_shown(),
             overlay.source.pending(),
             config.offset.0,
@@ -501,7 +501,7 @@ fn update_hud(
             }
         ),
         format!(
-            "Cache: {} Treffer ({} Platte), {} geladen, {} verworfen, {:.1} MB in {}",
+            "Cache: {} hits ({} disk), {} stored, {} evicted, {:.1} MB in {}",
             stats.hits_memory + stats.hits_disk,
             stats.hits_disk,
             stats.stored,
@@ -519,24 +519,18 @@ fn update_hud(
         lines.push(overlay.status.clone());
     }
     for error in overlay.source.errors.iter().rev().take(2) {
-        lines.push(format!("Fehler: {error}"));
+        lines.push(format!("Error: {error}"));
     }
     lines.push(String::new());
-    lines.push(
-        "WASD/Pfeile verschieben   Bild↑/↓ Höhe   O Overlay   P Anbieter   [ ] Deckkraft".into(),
-    );
-    lines.push(
-        ", . Zoomstufe   Z automatisch   Ziffernblock 4/6/8/2 Versatz, 5 zurücksetzen".into(),
-    );
-    lines.push(
-        "L Offlinebetrieb   C Cache leeren   R Fehler zurücksetzen   F5 laden   F2 sichern".into(),
-    );
+    lines.push("WASD/arrows pan   PgUp/PgDn height   O overlay   P provider   [ ] opacity".into());
+    lines.push(", . zoom level   Z automatic   Numpad 4/6/8/2 offset, 5 reset".into());
+    lines.push("L offline mode   C clear cache   R reset errors   F5 load   F2 save".into());
 
     **text = lines.join("\n");
 }
 
-/// Beendet den Editor nach der vorgegebenen Framezahl — mit `--screenshot` wird davor
-/// das Fenster aufgenommen.
+/// Exits the editor after the given number of frames — with `--screenshot` the window is
+/// captured beforehand.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
@@ -556,7 +550,7 @@ fn exit_after_frames(
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(shot.0.clone()));
     }
-    // Die Aufnahme läuft über den Render-Thread: erst ein paar Frames später liegt sie auf der Platte.
+    // The capture goes through the render thread: it only lands on disk a few frames later.
     if *count >= limit.0 + 10 {
         exit.write(AppExit::Success);
     }
@@ -566,11 +560,11 @@ fn exit_after_frames(
 mod tests {
     use super::*;
 
-    /// Die Einheit an dieser Nahtstelle war schon einmal falsch: `geo::from_ecef` liefert
-    /// Bogenmaß, das Kachelraster erwartet Grad — die Kacheln landeten damit tausende
-    /// Kilometer daneben, mitten im Atlantik.
+    /// The unit at this seam was already wrong once: `geo::from_ecef` returns radians,
+    /// the tile grid expects degrees — the tiles thus ended up thousands of kilometres
+    /// off, in the middle of the Atlantic.
     #[test]
-    fn blickpunkt_kommt_in_grad() {
+    fn view_point_comes_in_degrees() {
         let position = geo::to_ecef_deg(52.0006, 10.0509, 146.0);
         let (lat, lon) = focus_degrees(position);
         assert!((lat - 52.0006).abs() < 1e-6, "{lat}");
@@ -583,8 +577,8 @@ mod tests {
     }
 
     #[test]
-    fn beispielstrecke_liegt_im_blickfeld() {
-        let compiled = content::musterbahn().compile().expect("übersetzbar");
+    fn example_line_is_in_view() {
+        let compiled = content::musterbahn().compile().expect("compiles");
         assert!(!compiled.net.edges().is_empty());
         let middle = &compiled.net.edges()[compiled.net.edges().len() / 2];
         let (lat, lon) = focus_degrees(middle.eval(middle.length() / 2.0).pos);

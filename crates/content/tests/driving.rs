@@ -1,4 +1,4 @@
-//! Abnahmetests der Fahrdynamik und Bremse (Plan Kap. 6, 7, 18) — headless.
+//! Acceptance tests of the driving dynamics and the brake (plan ch. 6, 7, 18) — headless.
 
 use content::musterbahn;
 use content::vehicles::{br101, de_pzb_lzb, freight_wagon, passenger_coach, vehicle};
@@ -9,7 +9,7 @@ use sim_core::safety::de::TrainType;
 use sim_core::train::{Train, Vehicle};
 use track_model::{EdgeId, TrackPosition};
 
-/// Baut einen Zug aus BR 101 + n Reisezugwagen am Streckenanfang.
+/// Builds a train of BR 101 + n passenger coaches at the start of the line.
 fn passenger_train(sim: &mut Sim, coaches: usize) -> usize {
     let head = TrackPosition::new(EdgeId(0), 100.0, 1);
     let mut vehicles = vec![vehicle(br101(), head, de_pzb_lzb(TrainType::O))];
@@ -21,11 +21,11 @@ fn passenger_train(sim: &mut Sim, coaches: usize) -> usize {
 }
 
 fn new_sim() -> Sim {
-    let line = musterbahn().compile().expect("Strecke übersetzbar");
+    let line = musterbahn().compile().expect("line compiles");
     Sim::new(line.net, line.interlock, 1234)
 }
 
-/// Fahrzeuge betriebsbereit machen (Batterie, Bügel, Hauptschalter).
+/// Make the vehicles ready for service (battery, pantograph, main switch).
 fn power_up(sim: &mut Sim, train: usize) {
     for v in &mut sim.trains[train].vehicles {
         if v.spec.traction.is_some() {
@@ -34,7 +34,7 @@ fn power_up(sim: &mut Sim, train: usize) {
             v.traction.main_switch_command = true;
         }
     }
-    // Stromabnehmer braucht ~5 s.
+    // The pantograph needs ~5 s.
     for _ in 0..1600 {
         sim.step(Sim::DT);
     }
@@ -46,31 +46,31 @@ fn set_speed(sim: &mut Sim, train: usize, kmh: f64) {
     }
 }
 
-/// Sifa still halten (sonst greift sie nach 35 s ein).
+/// Keep the Sifa quiet (otherwise it intervenes after 35 s).
 fn hold_sifa(sim: &mut Sim, train: usize, pressed: bool) {
     sim.controls[train].sifa = pressed;
 }
 
 #[test]
-fn auslaufversuch_folgt_davis_kurve() {
+fn coasting_test_follows_the_davis_curve() {
     let mut sim = new_sim();
     let t = passenger_train(&mut sim, 5);
     power_up(&mut sim, t);
     set_speed(&mut sim, t, 120.0);
     sim.controls[t].brake_valve = DriverBrakeValve::Release;
 
-    // 60 s auslaufen lassen; Sifa wechselweise bedienen.
+    // Coast for 60 s; operate the Sifa alternately.
     let mut v_last = sim.trains[t].speed_kmh();
     for i in 0..12_000 {
         hold_sifa(&mut sim, t, (i / 200) % 2 == 0);
         sim.step(Sim::DT);
     }
     let v_end = sim.trains[t].speed_kmh();
-    assert!(v_end < v_last, "Zug muss auslaufen");
+    assert!(v_end < v_last, "train must coast down");
 
-    // Sollverzögerung aus Davis: a = R(v)/m_träge, auf gerader Strecke.
+    // Target deceleration from Davis: a = R(v)/m_inertial, on a straight line.
     let train = &sim.trains[t];
-    // Sollwert bei mittlerer Geschwindigkeit des Auslaufs.
+    // Target value at the mean speed of the coasting run.
     let v_mean = (120.0 + v_end) / 2.0 / 3.6;
     let r: f64 = train
         .vehicles
@@ -78,18 +78,18 @@ fn auslaufversuch_folgt_davis_kurve() {
         .map(|v| v.spec.davis.resistance(v_mean))
         .sum();
     let m: f64 = train.vehicles.iter().map(|v| v.inertial_mass()).sum();
-    let a_soll = r / m;
-    let a_ist = (120.0 - v_end) / 3.6 / 60.0;
+    let a_target = r / m;
+    let a_actual = (120.0 - v_end) / 3.6 / 60.0;
     assert!(
-        (a_ist - a_soll).abs() / a_soll < 0.15,
-        "Auslaufverzögerung {a_ist:.4} vs Davis {a_soll:.4} m/s²"
+        (a_actual - a_target).abs() / a_target < 0.15,
+        "coasting deceleration {a_actual:.4} vs Davis {a_target:.4} m/s²"
     );
     v_last = v_end;
-    assert!(v_last > 90.0, "Auslauf viel zu stark: {v_last} km/h");
+    assert!(v_last > 90.0, "coast-down far too strong: {v_last} km/h");
 }
 
 #[test]
-fn schnellbremsung_aus_100_kmh_trifft_bremstafel() {
+fn emergency_braking_from_100_kmh_matches_the_brake_table() {
     let mut sim = new_sim();
     let t = passenger_train(&mut sim, 5);
     power_up(&mut sim, t);
@@ -98,7 +98,7 @@ fn schnellbremsung_aus_100_kmh_trifft_bremstafel() {
     let brh = sim.trains[t].brake_percentage();
     assert!(
         (100.0..=160.0).contains(&brh),
-        "Bremshundertstel unplausibel: {brh}"
+        "brake percentage implausible: {brh}"
     );
 
     let start = sim.runtime[t].odometer;
@@ -111,17 +111,17 @@ fn schnellbremsung_aus_100_kmh_trifft_bremstafel() {
         }
     }
     let distance = sim.runtime[t].odometer - start;
-    assert!(sim.trains[t].speed_kmh() < 1.0, "Zug muss stehen");
-    // Bremstafel: bei ~130 Bremshundertsteln liegt der Schnellbremsweg aus 100 km/h
-    // in der Größenordnung 400–500 m. Toleranz großzügig, aber nicht beliebig.
+    assert!(sim.trains[t].speed_kmh() < 1.0, "train must be at a stand");
+    // Brake table: at ~130 brake percent the emergency braking distance from 100 km/h
+    // is in the order of 400–500 m. Generous tolerance, but not arbitrary.
     assert!(
         (300.0..=650.0).contains(&distance),
-        "Schnellbremsweg {distance:.0} m außerhalb des Erwartungsbereichs"
+        "emergency braking distance {distance:.0} m outside the expected range"
     );
 }
 
 #[test]
-fn gueterzug_bremst_hinten_spaeter() {
+fn freight_train_brakes_later_at_the_rear() {
     let mut sim = new_sim();
     let head = TrackPosition::new(EdgeId(0), 100.0, 1);
     let mut vehicles: Vec<Vehicle> = vec![vehicle(br101(), head, SafetySystems::None)];
@@ -133,7 +133,7 @@ fn gueterzug_bremst_hinten_spaeter() {
     set_speed(&mut sim, t, 60.0);
 
     sim.controls[t].brake_valve = DriverBrakeValve::Emergency;
-    // Eine halbe Sekunde bremsen und die Druckwelle beobachten.
+    // Brake for half a second and watch the pressure wave.
     for _ in 0..100 {
         sim.step(Sim::DT);
     }
@@ -141,23 +141,23 @@ fn gueterzug_bremst_hinten_spaeter() {
     let back = sim.trains[t].vehicles.last().unwrap().brake.pipe;
     assert!(
         back > front + 0.2,
-        "Druck hinten ({back:.2} bar) muss dem vorderen ({front:.2} bar) nachlaufen"
+        "rear pressure ({back:.2} bar) must lag behind the front one ({front:.2} bar)"
     );
-    // Und am Ende bremst der ganze Zug — Bremsstellung G braucht dafür ~ 22 s.
+    // And in the end the whole train brakes — brake position G needs ~ 22 s for that.
     for _ in 0..12_000 {
         sim.step(Sim::DT);
     }
     let back_cyl = sim.trains[t].vehicles.last().unwrap().brake.cylinder;
     assert!(
         back_cyl > 3.0,
-        "letzter Wagen muss angelegt haben: {back_cyl}"
+        "the last coach must have applied: {back_cyl}"
     );
 }
 
 #[test]
-fn anfahren_am_berg_und_kraftschlussgrenze() {
+fn starting_on_the_gradient_and_adhesion_limit() {
     let mut sim = new_sim();
-    // Auf die 8-‰-Steigung im dritten Abschnitt setzen.
+    // Place it on the 8 ‰ climb in the third section.
     let head = TrackPosition::new(EdgeId(2), 1000.0, 1);
     let mut vehicles = vec![vehicle(br101(), head, SafetySystems::None)];
     for _ in 0..8 {
@@ -167,18 +167,18 @@ fn anfahren_am_berg_und_kraftschlussgrenze() {
     let t = sim.add_train(train);
     power_up(&mut sim, t);
 
-    // Ohne Zugkraft rollt der Zug rückwärts.
+    // Without tractive effort the train rolls backwards.
     sim.controls[t].brake_valve = DriverBrakeValve::Release;
     for _ in 0..2000 {
         sim.step(Sim::DT);
     }
     assert!(
         sim.trains[t].speed() < -0.05,
-        "am Berg ohne Zugkraft muss der Zug zurückrollen: {} m/s",
+        "on the gradient without tractive effort the train must roll back: {} m/s",
         sim.trains[t].speed()
     );
 
-    // Mit voller Zugkraft fährt er an.
+    // With full tractive effort it starts.
     sim.controls[t].reverser = 1;
     sim.controls[t].throttle = 1.0;
     for _ in 0..6000 {
@@ -186,24 +186,24 @@ fn anfahren_am_berg_und_kraftschlussgrenze() {
     }
     assert!(
         sim.trains[t].speed_kmh() > 5.0,
-        "Anfahren am Berg gescheitert: {} km/h",
+        "starting on the gradient failed: {} km/h",
         sim.trains[t].speed_kmh()
     );
 
-    // Kraftschluss: die Lok überträgt nie mehr als µ·m·g.
-    let lok = &sim.trains[t].vehicles[0];
-    let mu = sim_core::physics::adhesion_coefficient(lok.v * 3.6, sim.trains[t].rail, false);
-    let limit = mu * lok.adhesive_mass() * sim_core::G;
+    // Adhesion: the loco never transmits more than µ·m·g.
+    let loco = &sim.trains[t].vehicles[0];
+    let mu = sim_core::physics::adhesion_coefficient(loco.v * 3.6, sim.trains[t].rail, false);
+    let limit = mu * loco.adhesive_mass() * sim_core::G;
     assert!(
-        lok.tractive_effort <= limit * 1.05,
-        "übertragene Zugkraft {} N über der Kraftschlussgrenze {} N",
-        lok.tractive_effort,
+        loco.tractive_effort <= limit * 1.05,
+        "transmitted tractive effort {} N above the adhesion limit {} N",
+        loco.tractive_effort,
         limit
     );
 }
 
 #[test]
-fn zug_streckt_sich_beim_anfahren() {
+fn train_stretches_when_starting() {
     let mut sim = new_sim();
     let t = passenger_train(&mut sim, 5);
     power_up(&mut sim, t);
@@ -214,22 +214,22 @@ fn zug_streckt_sich_beim_anfahren() {
         sim.step(Sim::DT);
         max_tension = max_tension.max(sim.trains[t].couplers[0].force);
     }
-    assert!(max_tension > 0.0, "erste Kupplung muss auf Zug gehen");
-    // Kupplungsspiel: die hinteren Fahrzeuge setzen sich später in Bewegung.
+    assert!(max_tension > 0.0, "the first coupler must go into tension");
+    // Coupler slack: the rear vehicles start moving later.
     assert!(
         sim.trains[t].vehicles[0].x > sim.trains[t].vehicles[5].x,
-        "Zug muss gestreckt sein"
+        "train must be stretched"
     );
     assert!(
         sim.trains[t].couplers[0].extension > 0.0,
-        "Kupplung gedehnt"
+        "coupler extended"
     );
-    // Keine Kupplung darf beim normalen Anfahren reißen.
+    // No coupler may break during a normal start.
     assert!(sim.trains[t].couplers.iter().all(|c| !c.broken));
 }
 
 #[test]
-fn determinismus_zwei_laeufe_gleicher_hash() {
+fn determinism_two_runs_same_hash() {
     let run = || {
         let mut sim = new_sim();
         let t = passenger_train(&mut sim, 5);
@@ -247,15 +247,11 @@ fn determinismus_zwei_laeufe_gleicher_hash() {
         }
         sim.state_hash()
     };
-    assert_eq!(
-        run(),
-        run(),
-        "gleicher Seed muss identischen Zustand liefern"
-    );
+    assert_eq!(run(), run(), "the same seed must yield an identical state");
 }
 
 #[test]
-fn save_load_roundtrip_erhaelt_zustand() {
+fn save_load_roundtrip_preserves_state() {
     let mut sim = new_sim();
     let t = passenger_train(&mut sim, 3);
     power_up(&mut sim, t);
@@ -266,11 +262,11 @@ fn save_load_roundtrip_erhaelt_zustand() {
     }
     let hash = sim.state_hash();
     let text = ron::ser::to_string_pretty(&sim, ron::ser::PrettyConfig::default()).unwrap();
-    let mut restored: Sim = ron::from_str(&text).expect("Sim lesbar");
+    let mut restored: Sim = ron::from_str(&text).expect("Sim readable");
     restored.net.finish();
     assert_eq!(restored.state_hash(), hash);
 
-    // Und weiterrechnen liefert dasselbe wie im Original.
+    // And continuing to simulate yields the same as the original.
     for _ in 0..500 {
         sim.step(Sim::DT);
         restored.step(Sim::DT);

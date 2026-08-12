@@ -1,8 +1,8 @@
-//! LZB 80/CE — Linienzugbeeinflussung, Fahrzeugseite (Plan 9.4).
+//! LZB 80/CE — continuous train protection, on-board side (plan 9.4).
 //!
-//! Die Streckenseite (LZB-Zentrale im Stellwerk) liefert über die Linienleiterabschnitte
-//! Fahrterlaubnisse als [`LzbTelegram`]. Das Fahrzeug führt daraus v-Soll, v-Ziel und
-//! Zielentfernung und überwacht die Bremskurve.
+//! The trackside (LZB centre in the interlocking) supplies movement authorities as
+//! [`LzbTelegram`] over the loop cable sections. From these the vehicle derives v-Soll,
+//! v-Ziel and the distance to target and supervises the braking curve.
 
 use crate::cab::{CabInputs, Edge};
 use crate::safety::{
@@ -12,21 +12,21 @@ use crate::safety::{
 use serde::{Deserialize, Serialize};
 use track_model::DeviceKind;
 
-/// Telegramm der LZB-Zentrale (Payload eines Linienleiterabschnitts).
+/// Telegram of the LZB centre (payload of a loop cable section).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct LzbTelegram {
-    /// Zulässige Geschwindigkeit im Abschnitt [km/h].
+    /// Permitted speed in the section [km/h].
     pub permitted_speed: f64,
-    /// Zielgeschwindigkeit [km/h] (0 = Halt).
+    /// Target speed [km/h] (0 = stop).
     pub target_speed: f64,
-    /// Entfernung zum Ziel ab dem Telegrammort [m].
+    /// Distance to the target from the telegram location [m].
     pub target_distance: f64,
-    /// Dieses Telegramm kündigt das LZB-Ende an.
+    /// This telegram announces the end of the LZB.
     #[serde(default)]
     pub end_of_authority: bool,
-    /// Länge des Linienleiterabschnitts, über die dieses Telegramm gesendet wird [m].
-    /// Der Linienleiter sendet fortlaufend — die Simulation wiederholt das Telegramm,
-    /// solange der Zug im Abschnitt ist.
+    /// Length of the loop cable section over which this telegram is transmitted [m].
+    /// The loop cable transmits continuously — the simulation repeats the telegram
+    /// as long as the train is inside the section.
     #[serde(default = "default_conductor_length")]
     pub length: f64,
 }
@@ -35,30 +35,30 @@ fn default_conductor_length() -> f64 {
     1000.0
 }
 
-/// Verzögerung der LZB-Bremskurve [m/s²].
+/// Deceleration of the LZB braking curve [m/s²].
 ///
-/// ponytail: eine feste Bremskurve statt zugspezifischer Bremsbewertung. Reicht für
-/// LZB-Führung und das Ende-Verfahren; ersetzen, sobald Bremshundertstel je Zug in die
-/// Zentrale gemeldet werden.
+/// ponytail: a fixed braking curve instead of a train-specific brake assessment. Enough
+/// for LZB guidance and the end procedure; replace it once the braked weight percentage
+/// per train is reported to the centre.
 pub const LZB_DECELERATION: f64 = 0.6;
-/// Ohne Telegramm über diesen Weg gilt die LZB als ausgefallen [m].
+/// Without a telegram over this distance the LZB counts as failed [m].
 pub const D_LOSS: f64 = 300.0;
-/// Überwachungsgeschwindigkeit im Ausfall-/Ende-Verfahren („V40") [km/h].
+/// Supervision speed in the failure/end procedure ("V40") [km/h].
 pub const V_END: f64 = 40.0;
 
-/// Betriebszustand der LZB.
+/// Operating state of the LZB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LzbMode {
-    /// Kein Linienleiter — PZB führt.
+    /// No loop cable — the PZB is in charge.
     #[default]
     Off,
-    /// Aufnahme läuft, Übernahme durch den Tf noch offen („Ü" blinkt).
+    /// Pick-up running, takeover by the driver still pending ("Ü" blinking).
     Acceptance,
-    /// LZB-Führung aktiv.
+    /// LZB guidance active.
     Guiding,
-    /// LZB-Ende angekündigt („ENDE" blinkt).
+    /// End of the LZB announced ("ENDE" blinking).
     Ending,
-    /// LZB ausgefallen — Ausfallverfahren.
+    /// LZB failed — failure procedure.
     Failure,
 }
 
@@ -66,18 +66,18 @@ pub enum LzbMode {
 pub struct Lzb80 {
     pub mode: LzbMode,
     isolated: bool,
-    /// Letztes empfangenes Telegramm.
+    /// Last received telegram.
     telegram: Option<LzbTelegram>,
-    /// Odometerstand, auf den sich die Zielentfernung des Telegramms bezieht [m].
+    /// Odometer reading the telegram's distance to target refers to [m].
     telegram_odo: f64,
-    /// Odometerstand des letzten Empfangs — für die Ausfallerkennung [m].
+    /// Odometer reading of the last reception — for the failure detection [m].
     last_contact_odo: f64,
-    /// Zielentfernung, aktuell [m].
+    /// Distance to target, current [m].
     target_distance: f64,
-    /// Zwangsbremsung aktiv.
+    /// Forced braking active.
     tripped: bool,
-    uebernahme: Edge,
-    ende: Edge,
+    takeover: Edge,
+    end: Edge,
 }
 
 impl Lzb80 {
@@ -89,13 +89,13 @@ impl Lzb80 {
         matches!(self.mode, LzbMode::Guiding | LzbMode::Ending)
     }
 
-    /// v-Soll [km/h] — Sollgeschwindigkeit der Führung (auch AFB-Eingang).
+    /// v-Soll [km/h] — the guidance's target speed (also the AFB input).
     pub fn permitted_speed(&self) -> Option<f64> {
         if !self.is_guiding() {
             return None;
         }
         let t = self.telegram?;
-        // Bremskurve zum Ziel: v² = v_ziel² + 2·a·s
+        // Braking curve to the target: v² = v_target² + 2·a·s
         let v_target = t.target_speed / 3.6;
         let curve = (v_target * v_target + 2.0 * LZB_DECELERATION * self.target_distance.max(0.0))
             .sqrt()
@@ -110,7 +110,7 @@ impl Lzb80 {
             .filter(|_| self.is_guiding())
     }
 
-    /// Zielentfernung [m].
+    /// Distance to target [m].
     pub fn target_distance(&self) -> Option<f64> {
         self.is_guiding().then_some(self.target_distance.max(0.0))
     }
@@ -133,10 +133,10 @@ impl TrainProtectionSystem for Lzb80 {
             return ProtectionOutput::default();
         }
 
-        let uebernahme = self.uebernahme.rising(cab.lzb_uebernahme);
-        let ende = self.ende.rising(cab.lzb_ende);
+        let takeover = self.takeover.rising(cab.lzb_takeover);
+        let end = self.end.rising(cab.lzb_end);
 
-        // Telegramme aus dem Linienleiter aufnehmen.
+        // Pick up telegrams from the loop cable.
         for e in events {
             if e.device != DeviceKind::LineConductor || !e.active {
                 continue;
@@ -144,8 +144,8 @@ impl TrainProtectionSystem for Lzb80 {
             let Ok(t) = ron::from_str::<LzbTelegram>(&e.payload) else {
                 continue;
             };
-            // Der Linienleiter sendet fortlaufend. Ein unverändertes Telegramm ist nur
-            // ein Lebenszeichen und darf die Zielentfernung nicht zurücksetzen.
+            // The loop cable transmits continuously. An unchanged telegram is only a sign
+            // of life and must not reset the distance to target.
             self.last_contact_odo = train.odometer;
             if self.telegram == Some(t) {
                 continue;
@@ -162,34 +162,34 @@ impl TrainProtectionSystem for Lzb80 {
             }
         }
 
-        // Zielentfernung mit dem Weg abbauen.
+        // Reduce the distance to target with the distance travelled.
         if let Some(t) = self.telegram {
             self.target_distance = t.target_distance - (train.odometer - self.telegram_odo);
         }
 
-        // Übernahme durch den Triebfahrzeugführer.
-        if self.mode == LzbMode::Acceptance && uebernahme {
+        // Takeover by the driver.
+        if self.mode == LzbMode::Acceptance && takeover {
             self.mode = LzbMode::Guiding;
         }
 
-        // Telegrammverlust → Ausfallverfahren.
+        // Loss of telegram → failure procedure.
         if matches!(self.mode, LzbMode::Guiding | LzbMode::Acceptance)
             && train.odometer - self.last_contact_odo > D_LOSS
         {
             self.mode = LzbMode::Failure;
         }
 
-        // Ende-Verfahren quittieren → zurück an die PZB.
-        if self.mode == LzbMode::Ending && ende {
+        // Acknowledge the end procedure → back to the PZB.
+        if self.mode == LzbMode::Ending && end {
             self.mode = LzbMode::Off;
             self.telegram = None;
         }
-        if self.mode == LzbMode::Failure && ende {
+        if self.mode == LzbMode::Failure && end {
             self.mode = LzbMode::Off;
             self.telegram = None;
         }
 
-        // Überwachung.
+        // Supervision.
         let limit = match self.mode {
             LzbMode::Guiding | LzbMode::Ending => self.permitted_speed(),
             LzbMode::Failure => Some(V_END),
@@ -207,7 +207,7 @@ impl TrainProtectionSystem for Lzb80 {
 
         ProtectionOutput {
             action: if self.tripped {
-                // LZB bremst zuerst betrieblich, nicht mit Schnellbremsung.
+                // The LZB brakes with a service application first, not an emergency one.
                 ProtectionAction::ForcedServiceBrake
             } else {
                 ProtectionAction::None
@@ -283,7 +283,7 @@ mod tests {
         state: SafetyTrainState,
         cab: CabInputs,
         out: ProtectionOutput,
-        /// Was der Linienleiter gerade sendet (None = kein Leiter/Ausfall).
+        /// What the loop cable is currently transmitting (None = no cable/failure).
         telegram: Option<LzbTelegram>,
     }
 
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn aufnahme_erst_nach_uebernahme() {
+    fn acceptance_only_after_takeover() {
         let mut r = Rig::new(120.0);
         r.send(LzbTelegram {
             permitted_speed: 160.0,
@@ -345,13 +345,13 @@ mod tests {
         });
         assert_eq!(r.lzb.mode, LzbMode::Acceptance);
         assert!(!r.lzb.is_guiding());
-        r.press(|c| c.lzb_uebernahme = true);
+        r.press(|c| c.lzb_takeover = true);
         assert_eq!(r.lzb.mode, LzbMode::Guiding);
         assert!(r.lzb.permitted_speed().is_some());
     }
 
     #[test]
-    fn bremskurve_zum_halt_senkt_v_soll() {
+    fn braking_curve_to_stop_lowers_permitted_speed() {
         let mut r = Rig::new(160.0);
         r.send(LzbTelegram {
             permitted_speed: 160.0,
@@ -360,27 +360,27 @@ mod tests {
             end_of_authority: false,
             length: 1000.0,
         });
-        r.press(|c| c.lzb_uebernahme = true);
+        r.press(|c| c.lzb_takeover = true);
         assert!(
             r.lzb.permitted_speed().unwrap() >= 160.0,
-            "weit weg: volle v-Soll"
+            "far away: full permitted speed"
         );
         r.drive(5000.0);
         let v = r.lzb.permitted_speed().unwrap();
-        // Rest 1000 m bis Halt: sqrt(2·0,6·1000) = 34,6 m/s = 124 km/h.
-        assert!(v > 110.0 && v < 135.0, "v-Soll = {v}");
+        // 1000 m left until the stop: sqrt(2·0.6·1000) = 34.6 m/s = 124 km/h.
+        assert!(v > 110.0 && v < 135.0, "permitted speed = {v}");
         assert!(r.lzb.target_distance().unwrap() < 1100.0);
         r.drive(900.0);
         assert!(r.lzb.permitted_speed().unwrap() < 45.0);
         assert_eq!(
             r.out.action,
             ProtectionAction::ForcedServiceBrake,
-            "160 km/h ist zu schnell"
+            "160 km/h is too fast"
         );
     }
 
     #[test]
-    fn ende_verfahren_uebergibt_an_pzb() {
+    fn end_procedure_hands_over_to_pzb() {
         let mut r = Rig::new(100.0);
         r.send(LzbTelegram {
             permitted_speed: 160.0,
@@ -389,7 +389,7 @@ mod tests {
             end_of_authority: false,
             length: 1000.0,
         });
-        r.press(|c| c.lzb_uebernahme = true);
+        r.press(|c| c.lzb_takeover = true);
         r.send(LzbTelegram {
             permitted_speed: 100.0,
             target_speed: 100.0,
@@ -398,14 +398,14 @@ mod tests {
             length: 1000.0,
         });
         assert_eq!(r.lzb.mode, LzbMode::Ending);
-        r.telegram = None; // Linienleiter endet
-        r.press(|c| c.lzb_ende = true);
+        r.telegram = None; // loop cable ends
+        r.press(|c| c.lzb_end = true);
         assert_eq!(r.lzb.mode, LzbMode::Off);
-        assert!(!r.lzb.is_guiding(), "PZB übernimmt wieder");
+        assert!(!r.lzb.is_guiding(), "PZB takes over again");
     }
 
     #[test]
-    fn telegrammverlust_fuehrt_ins_ausfallverfahren() {
+    fn telegram_loss_leads_to_failure_procedure() {
         let mut r = Rig::new(100.0);
         r.send(LzbTelegram {
             permitted_speed: 160.0,
@@ -414,8 +414,8 @@ mod tests {
             end_of_authority: false,
             length: 1000.0,
         });
-        r.press(|c| c.lzb_uebernahme = true);
-        r.telegram = None; // Linienleiter endet unangekündigt
+        r.press(|c| c.lzb_takeover = true);
+        r.telegram = None; // loop cable ends without warning
         r.drive(400.0);
         assert_eq!(r.lzb.mode, LzbMode::Failure);
         assert_eq!(r.out.speed_limit, Some(V_END));

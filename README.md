@@ -1,23 +1,23 @@
 # TrainSim-DE
 
-Deutscher Zugsimulator auf Bevy — Umsetzung von [PLAN.md](PLAN.md).
-Aktueller Stand und offene Punkte: [STATUS.md](STATUS.md).
+German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
+Current state and open points: [STATUS.md](STATUS.md).
 
-## Bauen und starten
+## Build and run
 
 ```bash
-cargo test --workspace     # alle Abnahmetests (headless, ohne GPU)
-cargo run -p app           # Simulator starten
-cargo run -p app -- --frames 120   # Rendering-Smoke-Test (CI)
-cargo run -p app -- --screenshot screenshots/hud.png   # Bild aufnehmen und beenden
+cargo test --workspace     # all acceptance tests (headless, no GPU)
+cargo run -p app           # start the simulator
+cargo run -p app -- --frames 120   # rendering smoke test (CI)
+cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
 ```
 
-`--screenshot` gibt es auch im Editor; `--frames N` legt fest, nach wie vielen Frames
-aufgenommen wird (60 Frames ≈ 1 s Simulationszeit).
+`--screenshot` is available in the editor as well; `--frames N` sets after how many frames
+the capture happens (60 frames ≈ 1 s of simulation time).
 
-## Strecke importieren
+## Importing a line
 
-Gleisdaten bei [Overpass Turbo](https://overpass-turbo.eu) als JSON exportieren:
+Export track data from [Overpass Turbo](https://overpass-turbo.eu) as JSON:
 
 ```overpassql
 [out:json];
@@ -26,122 +26,118 @@ way["railway"="rail"](50.90,10.00,51.00,10.30);
 out body;
 ```
 
-**Aus OSM übernommen werden** die Geometrie der `railway=rail`-Wege, `maxspeed` und
-`name`. Weichen, Signale, Bahnsteige und Bahnübergänge kommen (noch) nicht mit — die
-Strecke entsteht als ein Strang und wird anschließend in der RON-Datei ausgerüstet.
+**Taken from OSM** are the geometry of the `railway=rail` ways, `maxspeed` and `name`.
+Switches, signals, platforms and level crossings are not carried over (yet) — the line is
+created as a single strand and is then equipped in the RON file.
 
-Aus der Punktfolge wird keine geglättete Kurve, sondern eine **Trassierung**: gerade
-Abschnitte und Bögen werden getrennt, der Radius über den ganzen Bogen ausgeglichen (das
-Punktrauschen mittelt sich mit √n heraus) und auf den nächsten Regelradius gerundet, wenn
-er nah genug liegt. Übergangsbögen und **Überhöhung** lassen sich aus OSM nicht messen und
-kommen deshalb aus dem Regelwerk: `ü = 11,8 · v²/R` abzüglich des zugelassenen
-Fehlbetrags, gedeckelt bei 160 mm, Rampenlänge 1:10·v. Ergebnis ist eine Kette aus
-Gerade – Klothoide – Kreisbogen – Klothoide – Gerade.
+The point sequence does not become a smoothed curve but an **alignment**: straight sections
+and curves are separated, the radius is averaged over the whole curve (point noise cancels
+out with √n) and rounded to the nearest standard radius if it is close enough. Transition
+curves and **cant** cannot be measured from OSM and therefore come from the rulebook:
+`c = 11.8 · v²/R` minus the permitted cant deficiency, capped at 160 mm, ramp length 1:10·v.
+The result is a chain of straight – clothoid – circular arc – clothoid – straight.
 
-Grenzen, die man kennen sollte: OSM liegt aus Luftbildern auf ±2…5 m genau, und Anfang
-und Ende eines Bogens sind aus einer Punktfolge nur auf etwa zehn Meter bestimmbar. Radius,
-Drehwinkel und Überhöhung werden dagegen genau getroffen — also genau die Größen, die man
-beim Fahren spürt. Der Importbericht nennt Radien, Überhöhung und die Abweichung zur
-OSM-Linie.
+Limits worth knowing: OSM is accurate to ±2…5 m from aerial imagery, and the start and end
+of a curve can only be determined to about ten metres from a point sequence. Radius, turn
+angle and cant, on the other hand, are hit precisely — exactly the quantities you feel while
+driving. The import report lists radii, cant and the deviation from the OSM line.
 
-**Höhen** kommen aus dem DGM der Länder. `--dgm` nimmt eine Datei *oder ein ganzes
-Verzeichnis* mit Kachelblättern (auch mit Unterordnern):
+**Elevations** come from the state DGM data. `--dgm` takes a file *or an entire directory*
+of tile sheets (subdirectories included):
 
 ```bash
-cargo run -p content --bin import-line -- strecke.json --dgm ./dgm1_niedersachsen --epsg 25832 --name "Musterbahn" --out strecke.ron
+cargo run -p content --bin import-line -- line.json --dgm ./dgm1_niedersachsen --epsg 25832 --name "Musterbahn" --out line.ron
 ```
 
-Unterstützt werden XYZ (`x y z`, UTM) und ESRI ASCII Grid (`.asc`). Die Blattgrenzen
-werden aus dem Dateinamen gelesen (`dgm1_32_389_5711_1_ni.xyz`), sodass beim Start nichts
-geladen wird; jede Kachel kommt erst in den Speicher, wenn eine Abfrage hineinfällt, und
-höchstens acht bleiben gleichzeitig geladen. Damit ist auch ein DGM1 eines ganzen
-Bundeslandes (mehrere tausend Kacheln) verwendbar.
+Supported are XYZ (`x y z`, UTM) and ESRI ASCII Grid (`.asc`). Sheet boundaries are read from
+the file name (`dgm1_32_389_5711_1_ni.xyz`), so nothing is loaded at startup; each tile only
+enters memory once a query falls into it, and at most eight stay loaded at a time. This makes
+even a DGM1 of an entire federal state (several thousand tiles) usable.
 
-Das Werkzeug meldet Länge, Kantenzahl, Höhenabdeckung und die größte Abweichung der
-Trassierung von den OSM-Punkten.
+The tool reports length, edge count, elevation coverage and the largest deviation of the
+alignment from the OSM points.
 
 ## Workspace
 
-| Crate | Inhalt |
+| Crate | Contents |
 |---|---|
-| `world-coords` | ECEF-f64-Weltkoordinaten, Floating Origin, Geodäsie (Plan Kap. 4) |
-| `track-model` | Gleisgeometrie (Gerade/Bogen/Klothoide), Topologie, Weichen, Streckenausrüstung (Kap. 5) |
-| `sim-core` | Fahrdynamik, Druckluftbremse, Elektrik, Zugsicherung, Stellwerk, Fahrplan, Szenario und Bewertung — **ohne Bevy**, deterministisch (Kap. 6–11) |
-| `content` | Fahrzeugdatenbank, Streckenquellformat (RON) + Compiler, Szenarien, OSM-/DGM-Importer (Kap. 15) |
-| `ai-driver` | KI-Triebfahrzeugführer, Vorausschau (Kap. 11) |
-| `imagery` | Luftbild-Kacheln: Anbieter, Web-Mercator-Rechnung, Cache, Abruf (Kap. 15) |
-| `app` | Bevy-App: Rendering, Kameras, Eingabe, HUD (Kap. 12) |
-| `editor` | Streckeneditor: Draufsicht mit Luftbild-Overlay (Kap. 15) |
+| `world-coords` | ECEF f64 world coordinates, floating origin, geodesy (plan ch. 4) |
+| `track-model` | Track geometry (straight/curve/clothoid), topology, switches, lineside equipment (ch. 5) |
+| `sim-core` | Driving dynamics, air brake, electrics, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |
+| `content` | Vehicle database, line source format (RON) + compiler, scenarios, OSM/DGM importer (ch. 15) |
+| `ai-driver` | AI train driver, look-ahead (ch. 11) |
+| `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
+| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12) |
+| `editor` | Line editor: top-down view with aerial imagery overlay (ch. 15) |
 
-`sim-core` ist eine reine Rust-Bibliothek mit festem Zeitschritt (200 Hz). Die Bevy-App
-tickt sie und spiegelt den Zustand in ECS-Komponenten — Simulationslogik gehört dort nicht hinein.
+`sim-core` is a pure Rust library with a fixed time step (200 Hz). The Bevy app ticks it and
+mirrors the state into ECS components — simulation logic does not belong there.
 
-## Tastenbelegung
+## Key bindings
 
-| Taste | Funktion |
+| Key | Function |
 |---|---|
-| `W` / `S` | Fahrschalter auf/ab (negativ = elektrische Bremse), `X` = Null |
-| `R` / `F` / `T` | Richtungswender vorwärts / rückwärts / neutral |
-| `A` / `D` | Führerbremsventil lösen / bremsen |
-| `Q` / `E` / `Z` | Abschluss / Schnellbremsung / Füllen |
-| `C` / `V` | Zusatzbremse anlegen / lösen |
-| `G` | Sanden |
-| `Leertaste` | Sifa |
-| `Bild ↓` / `Ende` / `Entf` | PZB Wachsam / Frei / Befehl |
-| `N` / `M` | LZB Übernahme / Ende |
-| `H` | Signalhorn |
-| `1`–`4` | Batterie / Stromabnehmer / Hauptschalter / Luftpresser |
-| `F1`–`F3` | Kamera: Führerstand / Außen / Streckenkamera |
-| Pfeiltasten | Blickrichtung, `Num +/-` Kameraabstand |
+| `W` / `S` | Power controller up/down (negative = electric brake), `X` = zero |
+| `R` / `F` / `T` | Reverser forward / reverse / neutral |
+| `A` / `D` | Driver's brake valve release / brake |
+| `Q` / `E` / `Z` | Lap / emergency brake / fill |
+| `C` / `V` | Direct brake apply / release |
+| `G` | Sanding |
+| `Space` | Sifa (driver's safety device) |
+| `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
+| `N` / `M` | LZB takeover / end |
+| `H` | Horn |
+| `1`–`4` | Battery / pantograph / main switch / air compressor |
+| `F1`–`F3` | Camera: cab / external / lineside |
+| Arrow keys | View direction, `Numpad +/-` camera distance |
 
-## Beispielstrecke
+## Example line
 
-`content::musterbahn()` — 7 km: 3 km Gerade (160 km/h), 1 km Bogen R = 1200 m mit
-Überhöhungsrampe (130 km/h), 3 km mit 8-‰-Steigung. Blocksignal bei km 2,0 mit Vorsignal,
-1000/500/2000-Hz-Magneten und LZB-Linienleiter im letzten Abschnitt.
+`content::musterbahn()` — 7 km: 3 km straight (160 km/h), 1 km curve R = 1200 m with cant
+ramp (130 km/h), 3 km at 8 ‰ gradient. Block signal at km 2.0 with distant signal,
+1000/500/2000 Hz magnets and LZB loop cable in the final section.
 
-## Gelände
+## Terrain
 
-Aus demselben DGM baut `content::terrain` die Geländemeshes — nur im Korridor um die
-Strecke und mit abgestufter Auflösung:
+From the same DGM, `content::terrain` builds the terrain meshes — only within the corridor
+around the line and at graded resolution:
 
-| Abstand zum Gleis | Rasterweite | Dreiecke je km² |
+| Distance from track | Grid spacing | Triangles per km² |
 |---|---|---|
-| bis 96 m | 4 m | 125 000 |
-| bis 384 m | 8 m | 31 000 |
-| bis 768 m | 16 m | 8 000 |
-| darüber | 32 m | 2 000 |
+| up to 96 m | 4 m | 125,000 |
+| up to 384 m | 8 m | 31,000 |
+| up to 768 m | 16 m | 8,000 |
+| beyond | 32 m | 2,000 |
 
-Zum Vergleich: DGM1 unverändert wären 2 000 000 Dreiecke je km². Dazu kommen 512-m-Kacheln
-(eigene Entität je Kachel → Frustum-Culling, zusätzlich Sichtweitenbegrenzung je LOD-Stufe),
-Schürzen an den Kachelrändern gegen Risse zwischen den Stufen und ein Einschnitt/Damm-Profil,
-das das Gelände nahe am Gleis auf die Schienenhöhe zieht.
+For comparison: unmodified DGM1 would be 2,000,000 triangles per km². On top of that come
+512 m tiles (one entity per tile → frustum culling, plus a view distance limit per LOD level),
+skirts at the tile edges against cracks between levels, and a cutting/embankment profile that
+pulls the terrain near the track up to rail level.
 
-Die App zeigt das Gelände automatisch (ohne DGM eben):
+The app shows the terrain automatically (flat without DGM):
 
 ```bash
 cargo run -p app -- --dgm ./dgm1_niedersachsen --epsg 25832
 ```
 
-## Editor mit Luftbild-Overlay
+## Editor with aerial imagery overlay
 
 ```bash
-cargo run -p editor                              # Beispielstrecke
-cargo run -p editor -- strecke.ron --imagery meine_karten.ron
+cargo run -p editor                              # example line
+cargo run -p editor -- line.ron --imagery my_imagery.ron
 ```
 
-Die Overlay-Konfiguration (`imagery.ron`) wird beim ersten Start angelegt und ist
-vollständig editierbar: Anbieter, Deckkraft, Zoomstufe oder Wunschauflösung, Laderadius,
-Kachelobergrenze, Bildversatz gegen die Gleislage, Höhe des Overlays, Cache (Ort, Budget,
-Speicherkacheln, Offlinebetrieb, Höchstalter) und Abrufverhalten (User-Agent, Timeout,
-Parallelität, Wiederholungen). Änderungen lassen sich im Betrieb mit F5 neu laden und mit
-F2 zurückschreiben.
+The overlay configuration (`imagery.ron`) is created on first start and is fully editable:
+provider, opacity, zoom level or target resolution, load radius, tile limit, image offset
+against the track position, overlay height, cache (location, budget, memory tiles, offline
+mode, maximum age) and fetch behaviour (user agent, timeout, concurrency, retries). Changes
+can be reloaded at runtime with F5 and written back with F2.
 
-**Anbieter** sind Daten, keine fest verdrahtete Liste. Mitgeliefert sind Esri World
-Imagery, BKG TopPlusOpen, OpenStreetMap und eine WMS-Vorlage für die Orthophotos der
-Landesvermessungsämter. Eigene Dienste kommen als Eintrag dazu — entweder als
-Kachelvorlage mit den Platzhaltern `{z}` `{x}` `{y}` `{-y}` `{s}` `{key}` oder als WMS,
-dessen `BBOX` aus der Kachel in EPSG:3857 gebildet wird:
+**Providers** are data, not a hard-wired list. Shipped are Esri World Imagery, BKG
+TopPlusOpen, OpenStreetMap and a WMS template for the orthophotos of the state surveying
+offices. Your own services are added as an entry — either as a tile template with the
+placeholders `{z}` `{x}` `{y}` `{-y}` `{s}` `{key}` or as WMS, whose `BBOX` is formed from
+the tile in EPSG:3857:
 
 ```ron
 (
@@ -161,29 +157,29 @@ dessen `BBOX` aus der Kachel in EPSG:3857 gebildet wird:
 )
 ```
 
-Verfügbarkeit und Nutzungsbedingungen jedes Dienstes sind vor dem Einsatz zu prüfen; für
-Massenabrufe gehören eigene Zugänge in die Konfiguration.
+Availability and terms of use of each service must be checked before use; for bulk fetching,
+put your own access keys into the configuration.
 
-**Cache:** Kacheln landen unter `<cache>/<anbieter>/<z>/<x>/<y>.<ext>`, davor liegt ein
-Arbeitsspeicher-Cache. Einmal geladen, ist die Strecke offline bearbeitbar (`L` schaltet
-den Offlinebetrieb um). Der Plattenplatz ist gedeckelt; ist das Budget voll, fliegen die
-ältesten Kacheln zuerst. Das HUD zeigt Treffer, Ladevorgänge, Verworfenes und Belegung.
+**Cache:** tiles end up under `<cache>/<provider>/<z>/<x>/<y>.<ext>`, with an in-memory cache
+in front of it. Once loaded, the line can be edited offline (`L` toggles offline mode). Disk
+space is capped; when the budget is full, the oldest tiles go first. The HUD shows hits,
+loads, evictions and usage.
 
-| Taste | Funktion |
+| Key | Function |
 |---|---|
-| `WASD` / Pfeile | Blickpunkt verschieben, `Bild ↑/↓` Höhe |
-| `O` | Overlay ein/aus |
-| `P` | Anbieter wechseln |
-| `[` `]` | Deckkraft |
-| `,` `.` | Zoomstufe, `Z` zurück auf Wunschauflösung |
-| Ziffernblock `4/6/8/2` | Bildversatz (mit Umschalt in 5-m-Schritten), `5` zurücksetzen |
-| `L` | Offlinebetrieb | 
-| `C` / `R` | Cache leeren / Fehlversuche zurücksetzen |
-| `F5` / `F2` | Konfiguration laden / speichern |
+| `WASD` / arrows | Move the view point, `Page Up/Down` height |
+| `O` | Overlay on/off |
+| `P` | Switch provider |
+| `[` `]` | Opacity |
+| `,` `.` | Zoom level, `Z` back to target resolution |
+| Numpad `4/6/8/2` | Image offset (with Shift in 5 m steps), `5` to reset |
+| `L` | Offline mode |
+| `C` / `R` | Clear cache / reset failed attempts |
+| `F5` / `F2` | Load / save configuration |
 
-## Szenarien
+## Scenarios
 
-Ein Szenario ist eine RON-Datei aus Ereignissen — Auslöser plus Aktionen:
+A scenario is a RON file of events — triggers plus actions:
 
 ```ron
 (
@@ -200,5 +196,26 @@ Ein Szenario ist eine RON-Datei aus Ereignissen — Auslöser plus Aktionen:
 )
 ```
 
-Bewertet werden Fahrplantreue, Halteplatz-Genauigkeit, Zwangsbremsungen,
-Geschwindigkeitsüberschreitungen und Fahrenergie; das HUD zeigt Meldungen und Punktestand.
+Scored are timetable adherence, stopping accuracy, emergency brake applications, speed
+limit violations and traction energy; the HUD shows messages and the score.
+
+## Contributing
+
+Rust stable, edition 2024. Before opening a pull request:
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+- **Everything in English** — code, comments, documentation, commit messages (see [CLAUDE.md](CLAUDE.md)).
+- **`sim-core` stays free of Bevy** and deterministic: fixed time step, seeded RNG, no wall clock.
+  Simulation logic belongs there, not in the app.
+- New behaviour comes with a headless test in the owning crate. Rulebook logic (PZB/LZB, brake) is
+  table-driven — add a case, not a new test harness.
+- Deliberate simplifications get a `ponytail:` comment naming the ceiling and the upgrade path.
+- Pick up open points from [STATUS.md](STATUS.md); larger topics are outlined in [PLAN.md](PLAN.md).
+  For anything sizeable, open an issue first so the direction is agreed before the work.
+
+Licensed under MIT — contributions are accepted under the same licence.

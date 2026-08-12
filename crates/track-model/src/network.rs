@@ -1,4 +1,4 @@
-//! Topologie und Geometrie des Gleisnetzes.
+//! Topology and geometry of the track network.
 
 use crate::device::{DeviceId, TracksideDevice};
 use crate::geometry::{Segment, eval_chain};
@@ -25,14 +25,14 @@ macro_rules! id_type {
 id_type!(NodeId);
 id_type!(EdgeId);
 
-/// Welches Ende einer Kante an einem Knoten hängt.
+/// Which end of an edge is attached to a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeSide {
     Start,
     End,
 }
 
-/// Ein Kantenende (Kante + Seite).
+/// An edge end (edge + side).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EdgeEnd {
     pub edge: EdgeId,
@@ -45,31 +45,31 @@ impl EdgeEnd {
     }
 }
 
-/// Weichenlage.
+/// Switch position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SwitchPosition {
-    /// Stammgleis / Geradeausfahrt.
+    /// Main track / straight move.
     Straight,
-    /// Zweiggleis / Ablenkung.
+    /// Branch track / diverging move.
     Diverging,
 }
 
-/// Weiche: Wurzel + zwei Zweige, mit Umlaufzeit und Verschluss.
+/// Switch: root + two branches, with throw time and locking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Switch {
     pub root: EdgeEnd,
-    /// `[Stammgleis, Zweiggleis]`.
+    /// `[main track, branch track]`.
     pub branches: [EdgeEnd; 2],
     pub position: SwitchPosition,
-    /// Angesteuerte Lage; weicht sie von `position` ab, läuft die Weiche um.
+    /// Commanded position; if it differs from `position`, the switch is moving.
     pub commanded: SwitchPosition,
-    /// Umlaufzeit [s].
+    /// Throw time [s].
     pub throw_time: f64,
-    /// Restlaufzeit [s].
+    /// Remaining throw time [s].
     pub remaining: f64,
-    /// Durch Fahrstraße festgelegt (Verschluss).
+    /// Locked by a route.
     pub locked: bool,
-    /// Aufgefahren — bis zur Wiederherstellung nicht befahrbar.
+    /// Trailed — not passable until restored.
     pub trailed: bool,
 }
 
@@ -91,7 +91,7 @@ impl Switch {
         self.remaining > 0.0
     }
 
-    /// Aktuell verbundenes Kantenende (während des Umlaufs: keins).
+    /// Currently connected edge end (none while the switch is moving).
     pub fn connected(&self) -> Option<EdgeEnd> {
         if self.is_moving() || self.trailed {
             return None;
@@ -102,7 +102,7 @@ impl Switch {
         })
     }
 
-    /// Umstellauftrag. Schlägt fehl, wenn die Weiche verschlossen oder aufgefahren ist.
+    /// Throw command. Fails if the switch is locked or has been trailed.
     pub fn command(&mut self, to: SwitchPosition) -> Result<(), SwitchError> {
         if self.trailed {
             return Err(SwitchError::Trailed);
@@ -138,9 +138,9 @@ pub enum SwitchError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeKind {
-    /// Stumpfgleisende / Prellbock.
+    /// End of a stub track / buffer stop.
     Buffer,
-    /// Durchgehende Verbindung zweier Kantenenden.
+    /// Continuous connection of two edge ends.
     Joint,
     Switch(Switch),
 }
@@ -149,45 +149,45 @@ pub enum NodeKind {
 pub struct TrackNode {
     pub id: NodeId,
     pub kind: NodeKind,
-    /// Alle hier zusammenlaufenden Kantenenden.
+    /// All edge ends meeting here.
     pub ends: Vec<EdgeEnd>,
 }
 
-/// Pose auf dem Gleis, in Weltkoordinaten.
+/// Pose on the track, in world coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrackPose {
     pub pos: EcefPos,
-    /// Einheitsvektor in Richtung wachsender Bogenlänge (ECEF).
+    /// Unit vector in the direction of increasing arc length (ECEF).
     pub tangent: DVec3,
-    /// „Oben" des Gleises inkl. Überhöhung (ECEF).
+    /// "Up" of the track including cant (ECEF).
     pub up: DVec3,
-    /// Krümmung [1/m], positiv = Linksbogen.
+    /// Curvature [1/m], positive = left-hand curve.
     pub curvature: f64,
-    /// Längsneigung [‰], positiv = Steigung in Richtung wachsender Bogenlänge.
+    /// Longitudinal gradient [‰], positive = uphill in the direction of increasing arc length.
     pub grade: f64,
-    /// Überhöhung [mm].
+    /// Cant [mm].
     pub cant: f64,
 }
 
-/// Radaufstandsbreite für die Umrechnung Überhöhung [mm] → Rollwinkel.
+/// Wheel contact width used to convert cant [mm] → roll angle.
 pub const TRACK_GAUGE_ROLL: f64 = 1500.0;
 
-/// Eine Gleiskante: Geometrie im lokalen ENU-Frame ihres Anfangspunkts.
+/// A track edge: geometry in the local ENU frame of its start point.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackEdge {
     pub id: EdgeId,
     pub from: NodeId,
     pub to: NodeId,
-    /// Weltposition bei `s = 0`.
+    /// World position at `s = 0`.
     pub anchor: EcefPos,
-    /// Anfangsrichtung im lokalen ENU-Frame [rad], 0 = Ost, mathematisch positiv.
+    /// Initial heading in the local ENU frame [rad], 0 = east, counter-clockwise positive.
     pub heading0: f64,
     pub segments: Vec<Segment>,
-    /// Längsneigung [‰] über `s`.
+    /// Longitudinal gradient [‰] over `s`.
     pub grade: StepProfile<f64>,
-    /// Überhöhung [mm] über `s`.
+    /// Cant [mm] over `s`.
     pub cant: StepProfile<f64>,
-    /// Zulässige Geschwindigkeit [km/h] über `s`.
+    /// Permitted speed [km/h] over `s`.
     pub speed: StepProfile<f64>,
     #[serde(skip)]
     frame: Option<EnuFrame>,
@@ -236,7 +236,7 @@ impl TrackEdge {
         self
     }
 
-    /// Abgeleitete Daten (Frame, Länge) neu berechnen — nach dem Laden aufrufen.
+    /// Recompute derived data (frame, length) — call after loading.
     pub fn finish(&mut self) {
         self.frame = Some(EnuFrame::at(self.anchor));
         self.length = self.segments.iter().map(|s| s.len).sum();
@@ -247,12 +247,10 @@ impl TrackEdge {
     }
 
     fn frame(&self) -> &EnuFrame {
-        self.frame
-            .as_ref()
-            .expect("TrackEdge::finish() nicht aufgerufen")
+        self.frame.as_ref().expect("TrackEdge::finish() not called")
     }
 
-    /// Pose bei Bogenlänge `s` (0 = Anfang der Kante).
+    /// Pose at arc length `s` (0 = start of the edge).
     pub fn eval(&self, s: f64) -> TrackPose {
         let plan = eval_chain(&self.segments, self.heading0, s);
         let grade = self.grade.at(s);
@@ -265,10 +263,10 @@ impl TrackEdge {
         let tangent_local = DVec3::new(ch, sh, grade / 1000.0).normalize();
         let tangent = frame.dir_to_ecef(tangent_local).normalize();
 
-        // Überhöhung: Rollwinkel um die Tangente, Kurvenaußenseite hebt sich.
+        // Cant: roll angle about the tangent, the outside of the curve rises.
         let roll = (cant / TRACK_GAUGE_ROLL).asin();
         let up_plain = frame.dir_to_ecef(DVec3::Z);
-        let left = tangent.cross(up_plain).normalize() * -1.0; // links der Fahrtrichtung
+        let left = tangent.cross(up_plain).normalize() * -1.0; // left of the direction of travel
         let up = (up_plain * roll.cos() + left * roll.sin()).normalize();
 
         TrackPose {
@@ -281,19 +279,19 @@ impl TrackEdge {
         }
     }
 
-    /// Pose am Kantenende.
+    /// Pose at the edge end.
     pub fn end_pose(&self) -> TrackPose {
         self.eval(self.length)
     }
 }
 
-/// Das gesamte Gleisnetz.
+/// The complete track network.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrackNetwork {
     edges: Vec<TrackEdge>,
     nodes: Vec<TrackNode>,
     devices: Vec<TracksideDevice>,
-    /// Je Kante die Geräte-IDs, nach `s` sortiert.
+    /// Per edge, the device IDs sorted by `s`.
     #[serde(skip)]
     devices_by_edge: Vec<Vec<DeviceId>>,
 }
@@ -313,7 +311,7 @@ impl TrackNetwork {
         id
     }
 
-    /// Fügt eine Kante hinzu und trägt sie an ihren Knoten ein.
+    /// Adds an edge and registers it at its nodes.
     pub fn add_edge(&mut self, mut edge: TrackEdge) -> EdgeId {
         let id = EdgeId(self.edges.len() as u32);
         edge.id = id;
@@ -372,14 +370,14 @@ impl TrackNetwork {
         &self.devices
     }
 
-    /// Geräte auf einer Kante, nach `s` aufsteigend.
+    /// Devices on an edge, in ascending order of `s`.
     pub fn devices_on(&self, edge: EdgeId) -> impl Iterator<Item = &TracksideDevice> + '_ {
         self.devices_by_edge[edge.index()]
             .iter()
             .map(|id| &self.devices[id.index()])
     }
 
-    /// Nach dem Deserialisieren: abgeleitete Daten neu aufbauen.
+    /// After deserialisation: rebuild the derived data.
     pub fn finish(&mut self) {
         for e in &mut self.edges {
             e.finish();
@@ -419,10 +417,10 @@ impl TrackNetwork {
         }
     }
 
-    /// Fortsetzung hinter einem Knoten: Wo geht es weiter, wenn man über `incoming`
-    /// (das Kantenende, mit dem man am Knoten ankommt) einfährt?
+    /// Continuation beyond a node: where does the path continue when entering via
+    /// `incoming` (the edge end by which the node is reached)?
     ///
-    /// `Err(Blocked)` bei stumpfem Ende, umlaufender/aufgefahrener Weiche oder falscher Lage.
+    /// `Err(Blocked)` at a dead end, a moving/trailed switch or a wrong switch position.
     pub fn continuation(&self, node: NodeId, incoming: EdgeEnd) -> Result<EdgeEnd, Blocked> {
         let node = self.node(node);
         match &node.kind {
@@ -442,13 +440,13 @@ impl TrackNetwork {
                 }
                 let connected = sw.connected().ok_or(Blocked::SwitchMoving)?;
                 if incoming == sw.root {
-                    // Spitzbefahrung: die eingestellte Lage entscheidet.
+                    // Facing move: the set position decides.
                     Ok(connected)
                 } else if incoming == connected {
-                    // Stumpfbefahrung in richtiger Lage.
+                    // Trailing move with the switch in the matching position.
                     Ok(sw.root)
                 } else if sw.branches.contains(&incoming) {
-                    // Stumpfbefahrung gegen die Lage → Auffahren.
+                    // Trailing move against the position → the switch would be trailed.
                     Err(Blocked::WouldTrail)
                 } else {
                     Err(Blocked::BufferStop)
@@ -458,13 +456,13 @@ impl TrackNetwork {
     }
 }
 
-/// Warum es hinter einem Knoten nicht weitergeht.
+/// Why the path does not continue beyond a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Blocked {
     BufferStop,
     SwitchMoving,
     Trailed,
-    /// Weiche würde aufgefahren (stumpf gegen die Lage).
+    /// The switch would be trailed (trailing move against its position).
     WouldTrail,
 }
 
@@ -495,11 +493,11 @@ mod tests {
         let p0 = edge.eval(0.0);
         let p1 = edge.eval(1000.0);
         assert!((p0.pos.distance(p1.pos) - 1000.0).abs() < 1e-3);
-        // Ohne Neigung: beide Punkte gleich hoch über dem Ellipsoid.
+        // Without gradient: both points at the same height above the ellipsoid.
         let h0 = world_coords::geo::from_ecef(p0.pos).2;
         let h1 = world_coords::geo::from_ecef(p1.pos).2;
         assert!((h0 - h1).abs() < 0.01, "{h0} vs {h1}");
-        // Tangente steht senkrecht auf „oben".
+        // The tangent is perpendicular to "up".
         assert!(p0.tangent.dot(p0.up).abs() < 1e-9);
     }
 
@@ -536,7 +534,7 @@ mod tests {
         );
         assert_eq!(sw.connected(), Some(sw.branches[0]));
         sw.command(SwitchPosition::Diverging).unwrap();
-        assert_eq!(sw.connected(), None, "während Umlauf keine Verbindung");
+        assert_eq!(sw.connected(), None, "no connection while moving");
         sw.update(3.0);
         assert!(sw.is_moving());
         sw.update(3.0);

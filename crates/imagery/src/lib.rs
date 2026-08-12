@@ -1,6 +1,6 @@
-//! Luftbild-Overlay: Kachelrechnung, Anbieter, Cache und Beschaffung.
+//! Aerial imagery overlay: tile math, providers, cache and fetching.
 //!
-//! Ohne Bevy — der Editor bindet das hier nur an sein Rendering an.
+//! No Bevy — the editor merely hooks this up to its rendering.
 
 pub mod cache;
 pub mod config;

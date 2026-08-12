@@ -1,7 +1,7 @@
-//! Gleisgeometrie, Topologie und Streckenausrüstung (Plan Kap. 5).
+//! Track geometry, topology and trackside equipment (plan ch. 5).
 //!
-//! Alles fährt auf Bogenlänge `s` entlang von Kanten; die Geometrie wird erst beim
-//! Auswerten nach ECEF aufgelöst.
+//! Everything runs on arc length `s` along edges; the geometry is only resolved to
+//! ECEF when evaluated.
 
 pub mod device;
 pub mod geometry;

@@ -1,62 +1,63 @@
-//! Digitale Geländemodelle der Landesvermessung (Plan Kap. 14/15).
+//! Digital terrain models from the state survey offices (plan ch. 14/15).
 //!
-//! Unterstützt werden die beiden Formate, in denen die Bundesländer ihr DGM1 ausliefern:
+//! Supported are the two formats in which the federal states deliver their DGM1:
 //!
-//! * **XYZ**: eine Zeile je Rasterpunkt, `Rechtswert Hochwert Höhe` in UTM
-//!   (EPSG:25832 bzw. 25833).
-//! * **ESRI ASCII Grid** (`.asc`): Kopf mit `ncols`/`nrows`/`xllcorner`/`yllcorner`/
-//!   `cellsize`/`NODATA_value`, danach die Höhen zeilenweise von Nord nach Süd.
+//! * **XYZ**: one line per grid point, `easting northing height` in UTM
+//!   (EPSG:25832 or 25833).
+//! * **ESRI ASCII Grid** (`.asc`): header with `ncols`/`nrows`/`xllcorner`/`yllcorner`/
+//!   `cellsize`/`NODATA_value`, then the heights row by row from north to south.
 //!
-//! Ein DGM1-Kachelblatt (1 km², 1 m Raster) hat eine Million Punkte. Deshalb:
-//! Höhen liegen **dicht als `f32`** (4 MB je Kachel statt ~48 MB als Hashmap), und
-//! [`TerrainSource`] lädt Kacheln erst bei Bedarf und hält nur die zuletzt benutzten.
+//! A DGM1 tile sheet (1 km², 1 m grid) has one million points. Therefore:
+//! heights are stored **densely as `f32`** (4 MB per tile instead of ~48 MB as a hashmap),
+//! and [`TerrainSource`] loads tiles only on demand and keeps only the most recently used
+//! ones.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use world_coords::geo;
 
-/// Eine Höhenkachel: dichtes Raster in UTM-Koordinaten.
+/// A height tile: dense grid in UTM coordinates.
 #[derive(Debug, Clone)]
 pub struct HeightTile {
-    /// UTM-Zone der Quelldaten.
+    /// UTM zone of the source data.
     pub zone: u8,
-    /// Rasterweite [m].
+    /// Grid spacing [m].
     pub cell: f64,
-    /// Südwestecke des Rasters (Rechts-/Hochwert des Punktes `(0, 0)`).
+    /// South-west corner of the grid (easting/northing of point `(0, 0)`).
     pub origin: (f64, f64),
     pub cols: usize,
     pub rows: usize,
-    /// Höhen zeilenweise von Süd nach Nord; `NaN` = kein Wert (NODATA).
+    /// Heights row by row from south to north; `NaN` = no value (NODATA).
     data: Vec<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DgmError {
     Empty,
-    /// Rasterweite ließ sich nicht bestimmen.
+    /// Grid spacing could not be determined.
     IrregularGrid,
-    /// Kopf eines ASCII-Grids unvollständig.
+    /// Header of an ASCII grid is incomplete.
     BadHeader,
-    /// Kachel wäre unsinnig groß (Schutz vor kaputten Dateien).
+    /// Tile would be absurdly large (protection against broken files).
     TooLarge,
 }
 
 impl std::fmt::Display for DgmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DgmError::Empty => write!(f, "DGM-Datei enthält keine Punkte"),
-            DgmError::IrregularGrid => write!(f, "DGM-Punkte bilden kein regelmäßiges Raster"),
-            DgmError::BadHeader => write!(f, "ASCII-Grid-Kopf unvollständig"),
-            DgmError::TooLarge => write!(f, "Raster unplausibel groß"),
+            DgmError::Empty => write!(f, "DGM file contains no points"),
+            DgmError::IrregularGrid => write!(f, "DGM points do not form a regular grid"),
+            DgmError::BadHeader => write!(f, "ASCII grid header incomplete"),
+            DgmError::TooLarge => write!(f, "grid implausibly large"),
         }
     }
 }
 
-/// Obergrenze je Kachel (entspricht 4096², also 16 M Punkte = 64 MB).
+/// Upper limit per tile (corresponds to 4096², i.e. 16 M points = 64 MB).
 const MAX_CELLS: usize = 4096 * 4096;
 
 impl HeightTile {
-    /// Liest eine Datei; das Format wird an der Endung bzw. am Inhalt erkannt.
+    /// Reads a file; the format is detected from the extension or the content.
     pub fn parse(text: &str, zone: u8) -> Result<Self, DgmError> {
         if text.trim_start().to_ascii_lowercase().starts_with("ncols") {
             Self::parse_asc(text, zone)
@@ -65,7 +66,7 @@ impl HeightTile {
         }
     }
 
-    /// Liest ein XYZ-Raster.
+    /// Reads an XYZ grid.
     pub fn parse_xyz(text: &str, zone: u8) -> Result<Self, DgmError> {
         let mut points: Vec<(f64, f64, f32)> = Vec::new();
         for line in text.lines() {
@@ -77,7 +78,7 @@ impl HeightTile {
             return Err(DgmError::Empty);
         }
 
-        // Rasterweite aus dem kleinsten Abstand zweier verschiedener Rechtswerte.
+        // Grid spacing from the smallest distance between two different eastings.
         let mut xs: Vec<f64> = points.iter().map(|p| p.0).collect();
         xs.sort_by(f64::total_cmp);
         xs.dedup();
@@ -118,7 +119,7 @@ impl HeightTile {
         })
     }
 
-    /// Liest ein ESRI ASCII Grid.
+    /// Reads an ESRI ASCII grid.
     pub fn parse_asc(text: &str, zone: u8) -> Result<Self, DgmError> {
         let mut cols = 0usize;
         let mut rows = 0usize;
@@ -144,7 +145,7 @@ impl HeightTile {
                 ("nodata_value", Some(v)) => nodata = v,
                 _ => break,
             }
-            // Der Rumpf beginnt hinter der letzten Kopfzeile.
+            // The body starts after the last header line.
             let offset = line.as_ptr() as usize - text.as_ptr() as usize + line.len();
             body = &text[offset.min(text.len())..];
         }
@@ -158,7 +159,7 @@ impl HeightTile {
 
         let mut data = vec![f32::NAN; cols * rows];
         let mut values = body.split_whitespace();
-        // ASCII-Grids laufen von Nord nach Süd, unser Raster von Süd nach Nord.
+        // ASCII grids run from north to south, our grid from south to north.
         for row in 0..rows {
             let target = rows - 1 - row;
             for col in 0..cols {
@@ -182,7 +183,7 @@ impl HeightTile {
         })
     }
 
-    /// Ausdehnung `(min_x, min_y, max_x, max_y)` [m].
+    /// Extent `(min_x, min_y, max_x, max_y)` [m].
     pub fn bounds(&self) -> (f64, f64, f64, f64) {
         (
             self.origin.0,
@@ -205,8 +206,8 @@ impl HeightTile {
         (!v.is_nan()).then_some(v as f64)
     }
 
-    /// Höhe an einem UTM-Punkt [m], bilinear interpoliert.
-    /// Fehlt eine Ecke (NODATA/Rand), wird der nächste vorhandene Rasterpunkt genommen.
+    /// Height at a UTM point [m], bilinearly interpolated.
+    /// If a corner is missing (NODATA/border), the nearest available grid point is used.
     pub fn height_at_utm(&self, easting: f64, northing: f64) -> Option<f64> {
         let fx = (easting - self.origin.0) / self.cell;
         let fy = (northing - self.origin.1) / self.cell;
@@ -227,7 +228,7 @@ impl HeightTile {
         corners.into_iter().flatten().next()
     }
 
-    /// Anzahl belegter Rasterpunkte.
+    /// Number of occupied grid points.
     pub fn len(&self) -> usize {
         self.data.iter().filter(|v| !v.is_nan()).count()
     }
@@ -236,7 +237,7 @@ impl HeightTile {
         self.data.iter().all(|v| v.is_nan())
     }
 
-    /// Speicherbedarf der Kachel [Byte].
+    /// Memory footprint of the tile [bytes].
     pub fn memory(&self) -> usize {
         self.data.len() * std::mem::size_of::<f32>()
     }
@@ -254,37 +255,37 @@ fn parse_xyz_line(line: &str) -> Option<(f64, f64, f32)> {
     Some((x, y, z))
 }
 
-/// Eine bekannte, noch nicht geladene Kachel.
+/// A known tile that has not been loaded yet.
 #[derive(Debug, Clone)]
 struct TileEntry {
     path: PathBuf,
     /// `(min_x, min_y, max_x, max_y)` [m].
     bounds: (f64, f64, f64, f64),
-    /// Ausdehnung nur aus dem Dateinamen geraten (nicht aus dem Inhalt gelesen).
+    /// Extent only guessed from the file name (not read from the content).
     guessed: bool,
 }
 
-/// Höhenquelle aus einem Verzeichnis voller DGM-Kacheln.
+/// Height source from a directory full of DGM tiles.
 ///
-/// Kacheln werden **verzögert** geladen: beim Anlegen wird nur ein Verzeichnis der
-/// Blattschnitte aufgebaut (aus dem Dateinamen oder dem ASCII-Grid-Kopf), geladen wird
-/// erst, wenn eine Abfrage in eine Kachel fällt. Es bleiben höchstens
-/// [`TerrainSource::cache_limit`] Kacheln im Speicher (LRU).
+/// Tiles are loaded **lazily**: on creation only an index of the sheet boundaries is
+/// built (from the file name or the ASCII grid header); loading happens only when a
+/// query falls into a tile. At most [`TerrainSource::cache_limit`] tiles stay in memory
+/// (LRU).
 #[derive(Debug)]
 pub struct TerrainSource {
     pub zone: u8,
-    /// Wie viele Kacheln gleichzeitig im Speicher bleiben dürfen.
+    /// How many tiles may stay in memory at the same time.
     pub cache_limit: usize,
     tiles: Vec<TileEntry>,
-    /// Zuletzt benutzte Kacheln, vorne die jüngste.
+    /// Most recently used tiles, the newest at the front.
     cache: VecDeque<(usize, HeightTile)>,
-    /// Kacheln, die sich nicht laden ließen — nicht erneut versuchen.
+    /// Tiles that could not be loaded — do not try again.
     failed: Vec<usize>,
     loads: usize,
 }
 
 impl TerrainSource {
-    /// Quelle aus einer einzelnen, bereits geladenen Kachel (Tests, kleine Gebiete).
+    /// Source from a single, already loaded tile (tests, small areas).
     pub fn from_tile(tile: HeightTile) -> Self {
         let entry = TileEntry {
             path: PathBuf::new(),
@@ -303,10 +304,10 @@ impl TerrainSource {
         }
     }
 
-    /// Verzeichnis (rekursiv) nach `*.xyz`, `*.asc` und `*.txt` durchsuchen.
+    /// Search a directory (recursively) for `*.xyz`, `*.asc` and `*.txt`.
     ///
-    /// `zone` ist die UTM-Zone der Daten (32 für den Westen, 33 für den Osten
-    /// Deutschlands) — sie steht im EPSG-Code der Lieferung.
+    /// `zone` is the UTM zone of the data (32 for the west, 33 for the east of Germany)
+    /// — it is part of the EPSG code of the delivery.
     pub fn from_dir(dir: impl AsRef<Path>, zone: u8) -> std::io::Result<Self> {
         let mut tiles = Vec::new();
         collect_files(dir.as_ref(), &mut tiles)?;
@@ -331,17 +332,17 @@ impl TerrainSource {
         })
     }
 
-    /// Anzahl bekannter Kacheln.
+    /// Number of known tiles.
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
     }
 
-    /// Wie oft eine Kachel von der Platte gelesen wurde (Kennzahl für den Cache).
+    /// How often a tile was read from disk (a metric for the cache).
     pub fn load_count(&self) -> usize {
         self.loads
     }
 
-    /// Gesamte Ausdehnung aller Kacheln `(min_x, min_y, max_x, max_y)`.
+    /// Total extent of all tiles `(min_x, min_y, max_x, max_y)`.
     pub fn bounds(&self) -> Option<(f64, f64, f64, f64)> {
         self.tiles
             .iter()
@@ -349,10 +350,10 @@ impl TerrainSource {
             .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
     }
 
-    /// Höhe an einem UTM-Punkt [m].
+    /// Height at a UTM point [m].
     pub fn height_at_utm(&mut self, easting: f64, northing: f64) -> Option<f64> {
-        // Erst im Cache suchen (der häufige Fall: aufeinanderfolgende Abfragen
-        // liegen in derselben Kachel).
+        // Look in the cache first (the common case: consecutive queries fall into the
+        // same tile).
         for i in 0..self.cache.len() {
             if self.cache[i].1.contains(easting, northing) {
                 if i > 0 {
@@ -379,7 +380,7 @@ impl TerrainSource {
         tile.height_at_utm(easting, northing)
     }
 
-    /// Höhe an geodätischen Koordinaten (Grad).
+    /// Height at geodetic coordinates (degrees).
     pub fn height_at(&mut self, lat_deg: f64, lon_deg: f64) -> Option<f64> {
         let (e, n) = geo::to_utm(lat_deg.to_radians(), lon_deg.to_radians(), self.zone);
         self.height_at_utm(e, n)
@@ -394,7 +395,7 @@ impl TerrainSource {
             return None;
         };
         self.loads += 1;
-        // Die echte Ausdehnung ersetzt die geratene.
+        // The real extent replaces the guessed one.
         self.tiles[index].bounds = tile.bounds();
         self.tiles[index].guessed = false;
         self.cache.push_front((index, tile));
@@ -405,7 +406,7 @@ impl TerrainSource {
     }
 }
 
-/// Alle in Frage kommenden Dateien einsammeln (rekursiv).
+/// Collect all candidate files (recursively).
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
@@ -425,22 +426,23 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Blattschnitt einer Kachel bestimmen — erst über den Dateinamen, sonst über den Inhalt.
+/// Determine the sheet boundary of a tile — first from the file name, otherwise from the
+/// content.
 ///
-/// Die Länder benennen DGM1-Kacheln nach ihrer Südwestecke in Kilometern, z. B.
-/// `dgm1_32_389_5711_1_nw.xyz` oder `32389_5711.xyz`. Damit steht die Ausdehnung fest,
-/// ohne die Datei zu öffnen — bei 1000 Kacheln spart das Minuten.
+/// The states name DGM1 tiles after their south-west corner in kilometres, e.g.
+/// `dgm1_32_389_5711_1_nw.xyz` or `32389_5711.xyz`. That fixes the extent without opening
+/// the file — with 1000 tiles this saves minutes.
 fn tile_bounds(path: &Path) -> Option<((f64, f64, f64, f64), bool)> {
     if let Some(b) = bounds_from_name(path) {
         return Some((b, true));
     }
-    // ASCII-Grid: der Kopf steht in den ersten Zeilen.
+    // ASCII grid: the header is in the first lines.
     let text = std::fs::read_to_string(path).ok()?;
     let tile = HeightTile::parse(&text, 32).ok()?;
     Some((tile.bounds(), false))
 }
 
-/// Südwestecke aus dem Dateinamen lesen (Kilometerwerte).
+/// Read the south-west corner from the file name (kilometre values).
 fn bounds_from_name(path: &Path) -> Option<(f64, f64, f64, f64)> {
     let stem = path.file_stem()?.to_str()?;
     let numbers: Vec<&str> = stem
@@ -448,7 +450,7 @@ fn bounds_from_name(path: &Path) -> Option<(f64, f64, f64, f64)> {
         .filter(|s| !s.is_empty())
         .collect();
 
-    // Nordwert: 4-stellig, 5000…6100 km (Deutschland).
+    // Northing: 4 digits, 5000…6100 km (Germany).
     let north_pos = numbers.iter().position(|n| {
         n.len() == 4
             && n.parse::<f64>()
@@ -456,7 +458,8 @@ fn bounds_from_name(path: &Path) -> Option<(f64, f64, f64, f64)> {
     })?;
     let north = numbers[north_pos].parse::<f64>().ok()? * 1000.0;
 
-    // Ostwert steht direkt davor: entweder 3-stellig (389) oder mit Zonenpräfix (32389).
+    // The easting comes right before it: either 3 digits (389) or with a zone prefix
+    // (32389).
     let east_raw = numbers.get(north_pos.checked_sub(1)?)?;
     let east = match east_raw.len() {
         3 => east_raw.parse::<f64>().ok()?,
@@ -466,7 +469,7 @@ fn bounds_from_name(path: &Path) -> Option<(f64, f64, f64, f64)> {
     if !(200_000.0..=1_000_000.0).contains(&east) {
         return None;
     }
-    // DGM1-Blattschnitt: 1 km × 1 km.
+    // DGM1 sheet boundary: 1 km × 1 km.
     Some((east, north, east + 1000.0, north + 1000.0))
 }
 
@@ -474,9 +477,9 @@ fn bounds_from_name(path: &Path) -> Option<(f64, f64, f64, f64)> {
 mod tests {
     use super::*;
 
-    /// 3×3-Raster mit 25 m Weite, Höhe steigt nach Osten.
+    /// 3×3 grid with 25 m spacing, height rises towards the east.
     fn grid_text() -> String {
-        let mut s = String::from("# Testraster\n");
+        let mut s = String::from("# test grid\n");
         for iy in 0..3 {
             for ix in 0..3 {
                 let x = 600_000.0 + ix as f64 * 25.0;
@@ -489,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn rasterweite_und_ausdehnung_werden_erkannt() {
+    fn grid_spacing_and_extent_are_detected() {
         let tile = HeightTile::parse_xyz(&grid_text(), 32).unwrap();
         assert_eq!(tile.cell, 25.0);
         assert_eq!((tile.cols, tile.rows), (3, 3));
@@ -498,12 +501,12 @@ mod tests {
             tile.bounds(),
             (600_000.0, 5_760_000.0, 600_050.0, 5_760_050.0)
         );
-        // Dichte Speicherung: 4 Byte je Rasterpunkt.
+        // Dense storage: 4 bytes per grid point.
         assert_eq!(tile.memory(), 9 * 4);
     }
 
     #[test]
-    fn bilineare_interpolation_zwischen_rasterpunkten() {
+    fn bilinear_interpolation_between_grid_points() {
         let tile = HeightTile::parse_xyz(&grid_text(), 32).unwrap();
         assert_eq!(tile.height_at_utm(600_000.0, 5_760_000.0), Some(100.0));
         let mid = tile.height_at_utm(600_012.5, 5_760_012.5).unwrap();
@@ -513,24 +516,24 @@ mod tests {
     }
 
     #[test]
-    fn ascii_grid_wird_gelesen() {
-        // 3×2-Grid, Zeilen von Nord nach Süd, ein NODATA-Wert.
+    fn ascii_grid_is_read() {
+        // 3×2 grid, rows from north to south, one NODATA value.
         let text = "ncols 3\nnrows 2\nxllcorner 600000.0\nyllcorner 5760000.0\n\
                     cellsize 10.0\nNODATA_value -9999\n\
                     10 11 12\n20 21 -9999\n";
         let tile = HeightTile::parse_asc(text, 32).unwrap();
         assert_eq!((tile.cols, tile.rows), (3, 2));
-        // Südliche Zeile steht in der Datei unten.
+        // The southern row is at the bottom of the file.
         assert_eq!(tile.height_at_utm(600_000.0, 5_760_000.0), Some(20.0));
         assert_eq!(tile.height_at_utm(600_000.0, 5_760_010.0), Some(10.0));
-        // NODATA fällt auf den Nachbarn zurück, statt eine Höhe zu erfinden.
+        // NODATA falls back to the neighbour instead of inventing a height.
         let corner = tile.height_at_utm(600_020.0, 5_760_000.0).unwrap();
         assert!(corner.is_finite());
         assert_eq!(tile.len(), 5);
     }
 
     #[test]
-    fn format_wird_automatisch_erkannt() {
+    fn format_is_detected_automatically() {
         assert!(HeightTile::parse(&grid_text(), 32).is_ok());
         let asc =
             "ncols 2\nnrows 1\nxllcorner 0\nyllcorner 0\ncellsize 1\nNODATA_value -9999\n1 2\n";
@@ -539,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn blattschnitt_aus_dem_dateinamen() {
+    fn sheet_boundary_from_the_file_name() {
         let cases = [
             "dgm1_32_389_5711_1_nw.xyz",
             "dgm1_32389_5711.xyz",
@@ -553,11 +556,11 @@ mod tests {
                 "{name}"
             );
         }
-        assert_eq!(bounds_from_name(Path::new("beliebig.xyz")), None);
+        assert_eq!(bounds_from_name(Path::new("arbitrary.xyz")), None);
     }
 
     #[test]
-    fn quelle_aus_einer_kachel() {
+    fn source_from_a_single_tile() {
         let mut source = TerrainSource::from_tile(HeightTile::parse_xyz(&grid_text(), 32).unwrap());
         assert_eq!(source.tile_count(), 1);
         assert_eq!(source.height_at_utm(600_000.0, 5_760_000.0), Some(100.0));
@@ -570,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn leere_datei_wird_abgelehnt() {
+    fn empty_file_is_rejected() {
         assert_eq!(HeightTile::parse_xyz("", 32).unwrap_err(), DgmError::Empty);
         assert_eq!(
             HeightTile::parse_asc("ncols 3\n", 32).unwrap_err(),

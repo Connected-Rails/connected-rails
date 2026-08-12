@@ -1,7 +1,7 @@
-//! TrainSim-DE — Bevy-App: Rendering, Kamera, Eingabe, HUD (Plan Kap. 12).
+//! TrainSim-DE — Bevy app: rendering, camera, input, HUD (plan ch. 12).
 //!
-//! Die App tickt `sim-core` mit festem Zeitschritt und spiegelt den Zustand in ECS-Komponenten.
-//! Simulationslogik gehört hier **nicht** hinein.
+//! The app ticks `sim-core` with a fixed time step and mirrors the state into ECS components.
+//! Simulation logic does **not** belong here.
 
 mod render;
 mod ui;
@@ -12,7 +12,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
 use content::terrain::{TerrainOptions, TerrainStats};
 use content::vehicles::{br101, de_pzb, de_pzb_lzb, passenger_coach, vehicle};
-use content::{musterbahn, nach_musterstadt, re_4711};
+use content::{musterbahn, re_4711, to_musterstadt};
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
 use sim_core::safety::SafetySystems;
@@ -21,31 +21,31 @@ use sim_core::train::Train;
 use track_model::{EdgeId, TrackPosition};
 use world_coords::RenderOrigin;
 
-/// Die laufende Simulation.
+/// The running simulation.
 #[derive(Resource)]
 pub struct SimResource(pub Sim);
 
-/// Welcher Zug vom Spieler gefahren wird.
+/// Which train is driven by the player.
 #[derive(Resource)]
 pub struct PlayerTrain(pub usize);
 
-/// KI-Fahrer der übrigen Züge.
+/// AI drivers of the remaining trains.
 #[derive(Resource)]
 pub struct AiDrivers(pub Vec<(usize, AiDriver)>);
 
-/// Sichtweite des Geländes [m] — darüber hinaus werden Kacheln ausgeblendet.
+/// Terrain view distance [m] — tiles beyond it are hidden.
 #[derive(Resource)]
 pub struct ViewDistance(pub f32);
 
-/// Kennzahlen des erzeugten Geländes (für das HUD).
+/// Key figures of the generated terrain (for the HUD).
 #[derive(Resource, Default)]
 pub struct TerrainInfo(pub TerrainStats);
 
-/// Anzahl Frames aus `--frames N` (Rendering-Smoke-Test der CI, Plan Kap. 18).
+/// Number of frames from `--frames N` (CI rendering smoke test, plan ch. 18).
 #[derive(Resource)]
 struct FrameLimit(u32);
 
-/// Zieldatei aus `--screenshot <datei.png>`.
+/// Target file from `--screenshot <file.png>`.
 #[derive(Resource)]
 struct ShotPath(String);
 
@@ -61,7 +61,7 @@ fn main() {
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
     }
-    // Ohne `--frames` reicht für ein Bild etwa eine Sekunde Anlauf.
+    // Without `--frames`, about a second of run-up is enough for an image.
     let frame_limit = flag("--frames")
         .and_then(|n| n.parse::<u32>().ok())
         .or_else(|| shot.as_ref().map(|_| 60));
@@ -100,8 +100,8 @@ fn main() {
     app.run();
 }
 
-/// Beendet die App nach der vorgegebenen Framezahl — mit `--screenshot` wird davor
-/// das Fenster aufgenommen.
+/// Exits the app after the given number of frames — with `--screenshot` the window is
+/// captured beforehand.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
@@ -121,7 +121,7 @@ fn exit_after_frames(
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(shot.0.clone()));
     }
-    // Die Aufnahme läuft über den Render-Thread: erst ein paar Frames später liegt sie auf der Platte.
+    // The capture goes through the render thread: it only lands on disk a few frames later.
     if *count >= limit.0 + 10 {
         exit.write(AppExit::Success);
     }
@@ -132,8 +132,8 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Strecke und Simulation aufbauen.
-    let line = musterbahn().compile().expect("Beispielstrecke übersetzbar");
+    // Build line and simulation.
+    let line = musterbahn().compile().expect("example line compiles");
     let mut sim = Sim::new(line.net, line.interlock, 2024);
 
     let player = spawn_train(&mut sim, TrackPosition::new(EdgeId(0), 200.0, 1), 5, true);
@@ -152,12 +152,12 @@ fn setup(
         }],
     });
 
-    // Szenario mit Fahrplan und Wertung laden (Plan 11.4).
-    let mut scenario = nach_musterstadt();
+    // Load the scenario with timetable and scoring (plan 11.4).
+    let mut scenario = to_musterstadt();
     scenario.player_train = player;
     sim.set_scenario(scenario, re_4711());
 
-    // Renderursprung an die Zugspitze.
+    // Render origin at the head of the train.
     let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
     let origin = RenderOrigin::new(start);
 
@@ -169,17 +169,17 @@ fn setup(
         &origin,
     );
 
-    // Gelände: mit `--dgm <verzeichnis>` aus echten Höhendaten, sonst eben.
+    // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
     let mut source = std::env::args()
         .skip_while(|a| a != "--dgm")
         .nth(1)
         .and_then(|dir| match TerrainSource::from_dir(&dir, dgm_zone()) {
             Ok(s) => {
-                info!("DGM: {} Kacheln aus {dir}", s.tile_count());
+                info!("DGM: {} tiles from {dir}", s.tile_count());
                 Some(s)
             }
             Err(e) => {
-                warn!("DGM {dir} nicht lesbar: {e}");
+                warn!("DGM {dir} not readable: {e}");
                 None
             }
         });
@@ -190,14 +190,14 @@ fn setup(
     };
     let (tiles, stats) = content::terrain::build(&sim.net, source.as_mut(), &terrain_options);
     info!(
-        "Gelände: {} Kacheln, {} Dreiecke, {:.1} MB",
+        "Terrain: {} tiles, {} triangles, {:.1} MB",
         stats.tiles,
         stats.triangles,
         stats.memory() as f64 / 1e6
     );
     render::spawn_terrain(&mut commands, &mut meshes, &mut materials, &tiles, &origin);
 
-    // Fahrzeuge als einfache Körper — das 3D-Cab kommt in M6.
+    // Vehicles as simple bodies — the 3D cab comes in M6.
     let body = materials.add(StandardMaterial {
         base_color: Color::srgb(0.70, 0.12, 0.14),
         perceptual_roughness: 0.6,
@@ -224,7 +224,7 @@ fn setup(
         }
     }
 
-    // Sonne und Himmelslicht.
+    // Sun and sky light.
     commands.spawn((
         DirectionalLight {
             illuminance: 20_000.0,
@@ -258,7 +258,7 @@ fn setup(
     commands.insert_resource(SimResource(sim));
 }
 
-/// UTM-Zone der DGM-Daten aus `--epsg`, Vorgabe 32 (Westdeutschland).
+/// UTM zone of the DGM data from `--epsg`, default 32 (western Germany).
 fn dgm_zone() -> u8 {
     std::env::args()
         .skip_while(|a| a != "--epsg")
@@ -268,10 +268,10 @@ fn dgm_zone() -> u8 {
         .unwrap_or(32)
 }
 
-/// Blendet Geländekacheln außerhalb der Sichtweite aus.
+/// Hides terrain tiles outside the view distance.
 ///
-/// Bevy cullt bereits gegen den Sichtkegel; das hier begrenzt zusätzlich die Tiefe,
-/// damit ferne Kacheln gar nicht erst in die Zeichenliste kommen.
+/// Bevy already culls against the view frustum; this additionally limits the depth
+/// so that distant tiles never enter the draw list in the first place.
 fn terrain_visibility(
     view: Res<ViewDistance>,
     camera: Query<&GlobalTransform, With<ui::CabCamera>>,
@@ -292,7 +292,7 @@ fn terrain_visibility(
     }
 }
 
-/// Feine Kacheln werden früher ausgeblendet als grobe — sie tragen in der Ferne nichts bei.
+/// Fine tiles are hidden earlier than coarse ones — they add nothing at a distance.
 fn lod_range(lod: u8) -> f32 {
     match lod {
         0 => 0.25,
@@ -302,7 +302,7 @@ fn lod_range(lod: u8) -> f32 {
     }
 }
 
-/// Setzt einen Zug aus BR 101 + Wagen an die gegebene Position.
+/// Places a train of BR 101 + coaches at the given position.
 fn spawn_train(sim: &mut Sim, head: TrackPosition, coaches: usize, with_lzb: bool) -> usize {
     let safety = if with_lzb {
         de_pzb_lzb(TrainType::O)
@@ -315,7 +315,7 @@ fn spawn_train(sim: &mut Sim, head: TrackPosition, coaches: usize, with_lzb: boo
     }
     let train = Train::assemble(vehicles, head, &sim.net);
     let index = sim.add_train(train);
-    // Fahrzeuge starten aufgerüstet — die „kalte Lok" ist ein eigenes Szenario (M6).
+    // Vehicles start prepared — the "cold locomotive" is a scenario of its own (M6).
     for v in &mut sim.trains[index].vehicles {
         if v.is_powered() {
             v.traction.battery = true;
@@ -339,7 +339,7 @@ fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
     sim.0.advance(time.delta_secs_f64());
 }
 
-/// Origin nachführen und alle weltverankerten Objekte neu setzen.
+/// Follow up the origin and re-place all world-anchored objects.
 fn rebase_origin(
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
@@ -352,7 +352,7 @@ fn rebase_origin(
     }
 }
 
-/// Fahrzeugposen aus der Simulation in Transforms spiegeln.
+/// Mirror vehicle poses from the simulation into transforms.
 fn sync_vehicles(
     sim: Res<SimResource>,
     origin: Res<Origin>,

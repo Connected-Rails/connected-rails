@@ -1,26 +1,27 @@
-//! Gleisgeometrie: Gerade, Kreisbogen und Klothoide in **einer** Darstellung.
+//! Track geometry: straight, circular arc and clothoid in **one** representation.
 //!
-//! Ein Segment ist vollständig beschrieben durch Anfangskrümmung `k0` [1/m] und
-//! Krümmungsänderung `dk` [1/m²] über die Bogenlänge:
+//! A segment is fully described by its initial curvature `k0` [1/m] and the rate of
+//! change of curvature `dk` [1/m²] over the arc length:
 //!
-//! * `k0 = 0, dk = 0` → Gerade
-//! * `k0 ≠ 0, dk = 0` → Kreisbogen (R = 1/k0)
-//! * `dk ≠ 0`         → Klothoide (Übergangsbogen)
+//! * `k0 = 0, dk = 0` → straight
+//! * `k0 ≠ 0, dk = 0` → circular arc (R = 1/k0)
+//! * `dk ≠ 0`         → clothoid (transition curve)
 //!
-//! Richtung: `heading(s) = h0 + k0·s + dk·s²/2`, Position ist deren Integral.
-//! Für Gerade/Bogen geschlossen lösbar, für die Klothoide numerisch (Gauß-Legendre).
+//! Heading: `heading(s) = h0 + k0·s + dk·s²/2`, position is its integral.
+//! Solvable in closed form for straight/arc, numerically for the clothoid
+//! (Gauss-Legendre).
 
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
-/// Ein Geometriesegment einer Gleiskante.
+/// A geometry segment of a track edge.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Segment {
-    /// Bogenlänge [m].
+    /// Arc length [m].
     pub len: f64,
-    /// Krümmung am Segmentanfang [1/m], positiv = Linksbogen.
+    /// Curvature at the segment start [1/m], positive = left-hand curve.
     pub k0: f64,
-    /// Krümmungsänderung [1/m²].
+    /// Rate of change of curvature [1/m²].
     pub dk: f64,
 }
 
@@ -33,7 +34,7 @@ impl Segment {
         }
     }
 
-    /// Kreisbogen mit Radius `radius` [m]; positives Vorzeichen = Linksbogen.
+    /// Circular arc with radius `radius` [m]; positive sign = left-hand curve.
     pub fn arc(len: f64, radius: f64) -> Self {
         Self {
             len,
@@ -42,7 +43,7 @@ impl Segment {
         }
     }
 
-    /// Übergangsbogen von Krümmung `k_start` auf `k_end` über `len`.
+    /// Transition curve from curvature `k_start` to `k_end` over `len`.
     pub fn transition(len: f64, k_start: f64, k_end: f64) -> Self {
         Self {
             len,
@@ -51,35 +52,35 @@ impl Segment {
         }
     }
 
-    /// Krümmung an der Stelle `s` innerhalb des Segments.
+    /// Curvature at position `s` within the segment.
     pub fn curvature_at(&self, s: f64) -> f64 {
         self.k0 + self.dk * s
     }
 
-    /// Krümmung am Segmentende.
+    /// Curvature at the segment end.
     pub fn end_curvature(&self) -> f64 {
         self.curvature_at(self.len)
     }
 
-    /// Richtungsänderung von Segmentanfang bis `s` [rad].
+    /// Change of heading from the segment start up to `s` [rad].
     pub fn heading_delta(&self, s: f64) -> f64 {
         self.k0 * s + 0.5 * self.dk * s * s
     }
 
-    /// Versatz vom Segmentanfang bis `s`, im Frame des Segmentanfangs
-    /// (x = Anfangsrichtung, y = links davon).
+    /// Offset from the segment start up to `s`, in the frame of the segment start
+    /// (x = initial heading, y = to the left of it).
     pub fn offset(&self, s: f64) -> DVec2 {
         if self.dk == 0.0 {
             if self.k0.abs() < 1e-12 {
                 return DVec2::new(s, 0.0);
             }
-            // Kreisbogen: geschlossene Lösung.
+            // Circular arc: closed-form solution.
             let r = 1.0 / self.k0;
             let a = self.k0 * s;
             return DVec2::new(r * a.sin(), r * (1.0 - a.cos()));
         }
-        // Klothoide: Fresnel-Integral numerisch. Stückweise 5-Punkt-Gauß-Legendre,
-        // Stücklänge <= 25 m — Fehler dabei deutlich unter 1 mm bei Bahnradien.
+        // Clothoid: Fresnel integral numerically. Piecewise 5-point Gauss-Legendre,
+        // piece length <= 25 m — error well below 1 mm at railway radii.
         let steps = (s.abs() / 25.0).ceil().max(1.0) as usize;
         let h = s / steps as f64;
         let mut p = DVec2::ZERO;
@@ -94,9 +95,9 @@ impl Segment {
     }
 }
 
-/// 5-Punkt-Gauß-Legendre-Quadratur für vektorwertige Integranden.
+/// 5-point Gauss-Legendre quadrature for vector-valued integrands.
 fn gauss_legendre5(a: f64, b: f64, f: impl Fn(f64) -> DVec2) -> DVec2 {
-    // Knoten/Gewichte auf [-1,1].
+    // Nodes/weights on [-1,1].
     const X: [f64; 5] = [
         0.0,
         -0.538_469_310_105_683,
@@ -120,17 +121,18 @@ fn gauss_legendre5(a: f64, b: f64, f: impl Fn(f64) -> DVec2) -> DVec2 {
     sum * hl
 }
 
-/// Pose innerhalb einer Segmentkette, im lokalen 2D-Frame der Kette.
+/// Pose within a segment chain, in the local 2D frame of the chain.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlanPose {
     pub pos: DVec2,
-    /// Richtung [rad], 0 = +x.
+    /// Heading [rad], 0 = +x.
     pub heading: f64,
-    /// Krümmung [1/m].
+    /// Curvature [1/m].
     pub curvature: f64,
 }
 
-/// Wertet eine Segmentkette bei Bogenlänge `s` aus (ab Kettenanfang, Startpose = Ursprung/heading0).
+/// Evaluates a segment chain at arc length `s` (from the chain start, start pose =
+/// origin/heading0).
 pub fn eval_chain(segments: &[Segment], heading0: f64, s: f64) -> PlanPose {
     let mut pos = DVec2::ZERO;
     let mut heading = heading0;
@@ -150,7 +152,7 @@ pub fn eval_chain(segments: &[Segment], heading0: f64, s: f64) -> PlanPose {
         heading += seg.heading_delta(seg.len);
         rest -= seg.len;
     }
-    // Über das Ende hinaus: geradlinig extrapolieren (Aufrufer prüft Grenzen).
+    // Beyond the end: extrapolate in a straight line (the caller checks the bounds).
     let (sh, ch) = heading.sin_cos();
     PlanPose {
         pos: pos + DVec2::new(ch * rest, sh * rest),
@@ -181,7 +183,7 @@ mod tests {
 
     #[test]
     fn clothoid_matches_fresnel_reference() {
-        // Klothoide von 0 auf R=500 über 120 m; Vergleich mit feiner Rechteckintegration.
+        // Clothoid from 0 to R=500 over 120 m; compared against fine rectangle integration.
         let seg = Segment::transition(120.0, 0.0, 1.0 / 500.0);
         let p = seg.offset(120.0);
         let n = 2_000_000;
@@ -208,7 +210,7 @@ mod tests {
             let a = eval_chain(&segs, 0.0, s);
             let b = eval_chain(&segs, 0.0, s + 0.01);
             let d = (b.pos - a.pos).length();
-            assert!((d - 0.01).abs() < 1e-6, "Sprung bei s={s}: {d}");
+            assert!((d - 0.01).abs() < 1e-6, "jump at s={s}: {d}");
         }
     }
 }

@@ -1,6 +1,6 @@
-//! Testtrecke „Musterbahn" — kurze Strecke mit Signalen, PZB-Magneten und LZB-Abschnitt.
+//! Test line "Musterbahn" — short line with signals, PZB magnets and an LZB section.
 //!
-//! Dient Tests, dem Editor als Beispiel und der App als Startszene.
+//! Serves as a test fixture, as an example for the editor and as the app's start scene.
 
 use crate::route::{
     DeviceSource, EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource, SectionSource,
@@ -10,17 +10,17 @@ use sim_core::interlock::{SignalKind, SignalSystem};
 use sim_core::safety::de::{LzbTelegram, MagnetPayload};
 use track_model::{DeviceKind, Facing, Segment};
 
-/// Startpunkt der Musterbahn (Niedersachsen, UTM-Zone 32).
+/// Start point of the Musterbahn (Lower Saxony, UTM zone 32).
 pub const START: GeoPoint = GeoPoint {
     lat: 52.0,
     lon: 10.0,
     height: 100.0,
 };
 
-/// Baut die Beispielstrecke: 3 km Gerade, 1 km Bogen, 3 km Steigung.
+/// Builds the example line: 3 km straight, 1 km curve, 3 km climb.
 ///
-/// Signalisierung: Vorsignal bei km 1,0 und Hauptsignal bei km 2,0 (Blockende),
-/// dazu die drei PZB-Magnete. Ab dem dritten Abschnitt liegt Linienleiter (LZB).
+/// Signalling: distant signal at km 1.0 and main signal at km 2.0 (end of block),
+/// plus the three PZB magnets. From the third section on there is a line cable (LZB).
 pub fn musterbahn() -> LineSource {
     let magnet = |p: &MagnetPayload| ron::to_string(p).unwrap();
 
@@ -70,7 +70,7 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         devices: vec![
-            // 0: Vorsignal bei km 1,0
+            // 0: distant signal at km 1.0
             DeviceSource {
                 kind: DeviceKind::Signal,
                 edge: 0,
@@ -79,7 +79,7 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 3.5,
                 payload: String::new(),
             },
-            // 1: 1000-Hz-Magnet am Vorsignal
+            // 1: 1000 Hz magnet at the distant signal
             DeviceSource {
                 kind: DeviceKind::Magnet,
                 edge: 0,
@@ -88,7 +88,7 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 0.0,
                 payload: magnet(&MagnetPayload::hz1000(0)),
             },
-            // 2: Hauptsignal bei km 2,0
+            // 2: main signal at km 2.0
             DeviceSource {
                 kind: DeviceKind::Signal,
                 edge: 0,
@@ -97,7 +97,7 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 3.5,
                 payload: String::new(),
             },
-            // 3: 500-Hz-Magnet 250 m davor
+            // 3: 500 Hz magnet 250 m ahead of it
             DeviceSource {
                 kind: DeviceKind::Magnet,
                 edge: 0,
@@ -106,7 +106,7 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 0.0,
                 payload: magnet(&MagnetPayload::hz500(1)),
             },
-            // 4: 2000-Hz-Magnet am Hauptsignal
+            // 4: 2000 Hz magnet at the main signal
             DeviceSource {
                 kind: DeviceKind::Magnet,
                 edge: 0,
@@ -115,7 +115,7 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 0.0,
                 payload: magnet(&MagnetPayload::hz2000(1)),
             },
-            // 5: Beginn des Linienleiters (LZB) im dritten Abschnitt
+            // 5: start of the line cable (LZB) in the third section
             DeviceSource {
                 kind: DeviceKind::LineConductor,
                 edge: 2,
@@ -131,7 +131,7 @@ pub fn musterbahn() -> LineSource {
                 })
                 .unwrap(),
             },
-            // 6: Bahnsteig am Ende
+            // 6: platform at the end
             DeviceSource {
                 kind: DeviceKind::Platform,
                 edge: 2,
@@ -177,24 +177,24 @@ mod tests {
     #[test]
     fn musterbahn_compiles_and_is_continuous() {
         let line = musterbahn();
-        let compiled = line.compile().expect("übersetzbar");
+        let compiled = line.compile().expect("compiles");
         assert_eq!(compiled.net.edges().len(), 3);
         assert_eq!(compiled.net.devices().len(), 7);
         assert_eq!(compiled.interlock.signals.len(), 2);
 
-        // Kanten schließen geometrisch aneinander an.
+        // Edges join up geometrically.
         for i in 0..2 {
             let end = compiled.net.edges()[i].end_pose().pos;
             let start = compiled.net.edges()[i + 1].eval(0.0).pos;
             assert!(
                 end.distance(start) < 0.01,
-                "Lücke zwischen Kante {i} und {}: {} m",
+                "gap between edge {i} and {}: {} m",
                 i + 1,
                 end.distance(start)
             );
         }
 
-        // Gesamtlänge ~ 7 km.
+        // Total length ~ 7 km.
         let len: f64 = compiled.net.edges().iter().map(|e| e.length()).sum();
         assert!((len - 7000.0).abs() < 1.0, "{len}");
     }
@@ -203,9 +203,9 @@ mod tests {
     fn ron_roundtrip() {
         let line = musterbahn();
         let text = line.to_ron();
-        let back = LineSource::from_ron(&text).expect("RON lesbar");
+        let back = LineSource::from_ron(&text).expect("RON readable");
         assert_eq!(back, line);
-        // Auch nach dem Umweg über RON übersetzbar.
+        // Still compiles after the detour through RON.
         assert!(back.compile().is_ok());
     }
 
@@ -215,7 +215,7 @@ mod tests {
         let edge = &compiled.net.edges()[2];
         let h0 = world_coords::geo::from_ecef(edge.eval(0.0).pos).2;
         let h1 = world_coords::geo::from_ecef(edge.eval(3000.0).pos).2;
-        // 2000 m à 8 ‰ = 16 m.
+        // 2000 m at 8 ‰ = 16 m.
         assert!((h1 - h0 - 16.0).abs() < 0.05, "{}", h1 - h0);
     }
 }

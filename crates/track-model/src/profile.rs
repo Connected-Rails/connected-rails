@@ -1,8 +1,8 @@
-//! Stufenfunktionen über die Bogenlänge (Geschwindigkeit, Neigung, Überhöhung).
+//! Step functions over the arc length (speed, gradient, cant).
 
 use serde::{Deserialize, Serialize};
 
-/// Stufenprofil: ab `s` gilt `value`, bis zum nächsten Eintrag. Immer nach `s` sortiert.
+/// Step profile: from `s` onwards `value` applies, until the next entry. Always sorted by `s`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepProfile<T> {
     steps: Vec<(f64, T)>,
@@ -15,12 +15,9 @@ impl<T: Copy> StepProfile<T> {
         }
     }
 
-    /// Baut ein Profil; Einträge werden sortiert. Der erste Eintrag gilt auch für `s < s_0`.
+    /// Builds a profile; entries are sorted. The first entry also applies for `s < s_0`.
     pub fn new(mut steps: Vec<(f64, T)>) -> Self {
-        assert!(
-            !steps.is_empty(),
-            "StepProfile braucht mindestens eine Stufe"
-        );
+        assert!(!steps.is_empty(), "StepProfile needs at least one step");
         steps.sort_by(|a, b| a.0.total_cmp(&b.0));
         Self { steps }
     }
@@ -33,7 +30,7 @@ impl<T: Copy> StepProfile<T> {
         }
     }
 
-    /// Alle Stufen im Bereich `[from, to)` — für Vorausschau der KI und der Zugsicherung.
+    /// All steps in the range `[from, to)` — for AI and train protection look-ahead.
     pub fn steps_between(&self, from: f64, to: f64) -> impl Iterator<Item = (f64, T)> + '_ {
         self.steps
             .iter()
@@ -47,8 +44,8 @@ impl<T: Copy> StepProfile<T> {
 }
 
 impl StepProfile<f64> {
-    /// Integriert das Profil von 0 bis `s` (z. B. Neigung ‰ → Höhendifferenz in m,
-    /// wenn die Werte als ‰ vorliegen und das Ergebnis mit 1/1000 skaliert wird).
+    /// Integrates the profile from 0 to `s` (e.g. gradient ‰ → height difference in m,
+    /// if the values are given in ‰ and the result is scaled by 1/1000).
     pub fn integrate(&self, s: f64) -> f64 {
         let mut acc = 0.0;
         for (i, &(s0, v)) in self.steps.iter().enumerate() {
@@ -75,7 +72,7 @@ mod tests {
         assert_eq!(p.at(99.9), 5.0);
         assert_eq!(p.at(100.0), -10.0);
         assert_eq!(p.at(500.0), 0.0);
-        // 100 m à 5 ‰ + 50 m à -10 ‰ = 500 - 500 = 0
+        // 100 m at 5 ‰ + 50 m at -10 ‰ = 500 - 500 = 0
         assert!((p.integrate(150.0) - 0.0).abs() < 1e-9);
         assert!((p.integrate(100.0) - 500.0).abs() < 1e-9);
         assert_eq!(p.steps_between(50.0, 250.0).count(), 2);

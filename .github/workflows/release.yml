@@ -1,0 +1,99 @@
+name: Release
+
+# `v1.2.3` publishes a release, `v1.2.3-rc.1` (any tag with a `-`) a prerelease.
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+
+      # A tag that disagrees with Cargo.toml would ship binaries reporting the wrong
+      # version. One runner checks it; the release job waits for all three.
+      - name: Tag matches the workspace version
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "app") | .version')
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $version"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p app -p route-editor -p vehicle-editor
+
+      - name: Stage
+        shell: bash
+        run: |
+          name="train-sim-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          echo "PKG=$name" >> "$GITHUB_ENV"
+          mkdir -p "dist/$name"
+          cp -r mods README.md MODS.md LICENSE "dist/$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; else ext=""; fi
+          for bin in train-sim trainsim-route-editor trainsim-vehicle-editor; do
+            cp "target/${{ matrix.target }}/release/$bin$ext" "dist/$name/"
+          done
+
+      - name: Archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -czf "$PKG.tar.gz" -C dist "$PKG"
+      - name: Archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/$env:PKG" -DestinationPath "$env:PKG.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            *.tar.gz
+            *.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -12,6 +12,7 @@ mod overlay;
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::LineSource;
 use glam::DVec3;
 use imagery::{ImageryConfig, ZoomMode};
@@ -59,6 +60,10 @@ struct ConfigPath(String);
 #[derive(Resource)]
 struct FrameLimit(u32);
 
+/// Target file from `--screenshot <file.png>`.
+#[derive(Resource)]
+struct ShotPath(String);
+
 #[derive(Component)]
 struct HudText;
 
@@ -72,7 +77,14 @@ fn main() {
     };
     let line_path = args.first().filter(|a| !a.starts_with("--")).cloned();
     let config_path = flag("--imagery").unwrap_or_else(|| "imagery.ron".into());
-    let frame_limit = flag("--frames").and_then(|n| n.parse::<u32>().ok());
+    let shot = flag("--screenshot");
+    if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Without `--frames`, about a second of run-up is enough for an image.
+    let frame_limit = flag("--frames")
+        .and_then(|n| n.parse::<u32>().ok())
+        .or_else(|| shot.as_ref().map(|_| 60));
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -100,6 +112,9 @@ fn main() {
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
+    }
+    if let Some(path) = shot {
+        app.insert_resource(ShotPath(path));
     }
     app.run();
 }
@@ -514,13 +529,29 @@ fn update_hud(
     **text = lines.join("\n");
 }
 
+/// Exits the editor after the given number of frames — with `--screenshot` the window is
+/// captured beforehand.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
+    shot: Option<Res<ShotPath>>,
+    mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     *count += 1;
-    if *count >= limit.0 {
+    let Some(shot) = shot else {
+        if *count >= limit.0 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    };
+    if *count == limit.0 {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(shot.0.clone()));
+    }
+    // The capture goes through the render thread: it only lands on disk a few frames later.
+    if *count >= limit.0 + 10 {
         exit.write(AppExit::Success);
     }
 }

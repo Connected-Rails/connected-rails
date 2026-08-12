@@ -8,6 +8,7 @@ mod ui;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable};
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
 use content::terrain::{TerrainOptions, TerrainStats};
 use content::vehicles::{br101, de_pzb, de_pzb_lzb, passenger_coach, vehicle};
@@ -44,11 +45,26 @@ pub struct TerrainInfo(pub TerrainStats);
 #[derive(Resource)]
 struct FrameLimit(u32);
 
+/// Target file from `--screenshot <file.png>`.
+#[derive(Resource)]
+struct ShotPath(String);
+
 fn main() {
-    let frame_limit = std::env::args()
-        .skip_while(|a| a != "--frames")
-        .nth(1)
-        .and_then(|n| n.parse::<u32>().ok());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |name: &str| -> Option<String> {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let shot = flag("--screenshot");
+    if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Without `--frames`, about a second of run-up is enough for an image.
+    let frame_limit = flag("--frames")
+        .and_then(|n| n.parse::<u32>().ok())
+        .or_else(|| shot.as_ref().map(|_| 60));
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -78,17 +94,35 @@ fn main() {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
     }
+    if let Some(path) = shot {
+        app.insert_resource(ShotPath(path));
+    }
     app.run();
 }
 
-/// Exits the app after the given number of frames.
+/// Exits the app after the given number of frames — with `--screenshot` the window is
+/// captured beforehand.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
+    shot: Option<Res<ShotPath>>,
+    mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     *count += 1;
-    if *count >= limit.0 {
+    let Some(shot) = shot else {
+        if *count >= limit.0 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    };
+    if *count == limit.0 {
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(shot.0.clone()));
+    }
+    // The capture goes through the render thread: it only lands on disk a few frames later.
+    if *count >= limit.0 + 10 {
         exit.write(AppExit::Success);
     }
 }

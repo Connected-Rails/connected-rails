@@ -4,6 +4,9 @@
 # Kachel-Cache des Luftbild-Overlays
 /cache/
 
+# Aufnahmen aus --screenshot
+/screenshots/
+
 # Konfiguration, die beim ersten Start entsteht (enthält ggf. eigene Zugangsschlüssel)
 /imagery.ron
 

@@ -9,7 +9,11 @@ Current state and open points: [STATUS.md](STATUS.md).
 cargo test --workspace     # all acceptance tests (headless, no GPU)
 cargo run -p app           # start the simulator
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
+cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
 ```
+
+`--screenshot` is available in the editor as well; `--frames N` sets after how many frames
+the capture happens (60 frames ≈ 1 s of simulation time).
 
 ## Importing a line
 

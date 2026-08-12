@@ -1,7 +1,8 @@
 //! Vehicle and train consist model.
 
-use crate::brakes::{BrakeKind, BrakeSpec, BrakeState};
-use crate::electric::{TractionSpec, TractionState};
+use crate::brakes::{BrakeKind, BrakeSpec, BrakeState, SlipProtection};
+use crate::drive::TractionSpec;
+use crate::electric::TractionState;
 use crate::safety::SafetySystems;
 use serde::{Deserialize, Serialize};
 use track_model::TrackPosition;
@@ -95,6 +96,10 @@ fn standard_gauge() -> f64 {
     STANDARD_GAUGE
 }
 
+fn one() -> f64 {
+    1.0
+}
+
 /// Motion of a model node between function value 0 and 1.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum Motion {
@@ -165,9 +170,9 @@ pub struct VehicleSpec {
     /// Share of the vehicle mass on driven axles (loco: 1.0; coach: 0.0).
     #[serde(default)]
     pub adhesive_mass_fraction: f64,
-    /// Vehicle has wheel slip / wheel slide protection.
+    /// Wheel slip / wheel slide protection of the vehicle.
     #[serde(default)]
-    pub slip_control: bool,
+    pub slip_protection: SlipProtection,
     /// Track gauge [m] — checked against the infrastructure and used for the curve
     /// resistance.
     #[serde(default = "standard_gauge")]
@@ -188,6 +193,10 @@ pub struct VehicleSpec {
     /// `½·ρ·cw·A·v²`.
     #[serde(default)]
     pub cw_a: Option<f64>,
+    /// Factor on the curve resistance after Röckl. 1 = as calculated from the axle base
+    /// sum; raise it for a stiff running gear, lower it for radial steering bogies.
+    #[serde(default = "one")]
+    pub curve_resistance_factor: f64,
     /// Maximum payload [kg] — passenger coaches roughly 5 t, freight per the anscriptions.
     #[serde(default)]
     pub max_payload: f64,
@@ -225,12 +234,13 @@ impl Default for VehicleSpec {
             traction: None,
             coupler: CouplerSpec::screw(),
             adhesive_mass_fraction: 0.0,
-            slip_control: false,
+            slip_protection: SlipProtection::None,
             gauge: STANDARD_GAUGE,
             v_max: 160.0,
             axles: 4,
             axle_base_sum: REFERENCE_AXLE_BASE,
             cw_a: None,
+            curve_resistance_factor: 1.0,
             max_payload: 0.0,
             tilt_angle_deg: 0.0,
             hunting: 0.0,

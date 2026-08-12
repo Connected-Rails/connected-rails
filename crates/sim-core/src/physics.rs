@@ -4,6 +4,7 @@
 //! with slack. Integration: semi-implicit Euler with a fixed step size.
 
 use crate::G;
+use crate::brakes::SlipProtection;
 use crate::train::{RailCondition, Train, Vehicle};
 use track_model::{AdvanceError, PassedDevice, TrackNetwork};
 
@@ -117,7 +118,8 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         veh.brake_effort = braking;
         let resistance = veh.spec.resistance(veh.v);
         let grade = veh.mass() * G * pose.grade / 1000.0;
-        let curve = curve_resistance(veh.mass(), pose.curvature, veh.spec.axle_base_sum);
+        let curve = curve_resistance(veh.mass(), pose.curvature, veh.spec.axle_base_sum)
+            * veh.spec.curve_resistance_factor;
 
         // Resistances always act against the motion, and so does the brake.
         let dir = if veh.v.abs() < 1e-4 {
@@ -170,8 +172,10 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
     report
 }
 
-/// Tractive effort limited by adhesion; produces wheel slip and reduces it if necessary.
+/// Tractive effort limited by adhesion; produces wheel slip and answers it the way the
+/// vehicle's wheel slip protection would (plan ch. 6).
 fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
+    let protection = veh.spec.slip_protection;
     let demand = veh.traction.force.max(0.0);
     if demand <= 0.0 {
         veh.slip = (veh.slip - 3.0 * dt).max(0.0);
@@ -182,9 +186,23 @@ fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
         // Excess force accelerates the driven wheelsets → slip grows.
         veh.slip += (demand - limit) / veh.inertial_mass() * dt;
         let mut transmitted = limit * 0.9; // sliding friction < static friction
-        if veh.spec.slip_control && veh.slip > 0.3 {
-            // Wheel slip protection reduces the tractive effort until the slip is gone.
-            transmitted *= 0.6;
+        match protection {
+            SlipProtection::None => {}
+            // The wheel slip brake takes the spinning wheelset down. That costs effort, but
+            // it catches the slip in a fraction of the time.
+            SlipProtection::SlipBrake if veh.slip > 0.1 => {
+                transmitted *= 0.8;
+                veh.slip = (veh.slip - 9.0 * dt).max(0.0);
+            }
+            // Throttling: the drive cuts its own effort right back and feels its way up again.
+            SlipProtection::TractionCutback if veh.slip > 0.3 => transmitted *= 0.6,
+            // Creep control does not avoid the slip, it lives in it — and therefore stays
+            // right at the maximum of the adhesion curve.
+            SlipProtection::CreepControl => {
+                transmitted = limit * 0.98;
+                veh.slip = veh.slip.min(0.15);
+            }
+            _ => {}
         }
         transmitted
     } else {
@@ -195,12 +213,22 @@ fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
 
 /// Brake force limited by adhesion, including blending with the dynamic brake.
 fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
-    // Blending: the dynamic brake replaces the air brake on the powered vehicle, it does
-    // not add to it (otherwise the loco would be overbraked within the consist).
-    let electric = (-veh.traction.force).max(0.0);
-    let mut f = veh.brake.force.max(electric);
+    let mu = adhesion_coefficient(veh.v * 3.6, rail, veh.sanding);
+    // The dynamic brake only acts on the driven axles, so it has only their adhesion.
+    let dynamic = veh
+        .brake
+        .dynamic_force
+        .min(mu * veh.adhesive_mass() * G * veh.spec.slip_protection.adhesion_bonus());
+    // Blending: an air supplement brake adds to the dynamic brake (the pneumatic part has
+    // already been reduced by it), otherwise the dynamic brake replaces the air brake on
+    // the powered vehicle — else the loco would be overbraked within the consist.
+    let mut f = if veh.spec.brake.supplement_brake {
+        veh.brake.force + dynamic
+    } else {
+        veh.brake.force.max(dynamic)
+    };
     // The magnetic track brake acts on the rail, not through the wheel adhesion.
-    let adhesion_bound = adhesion_coefficient(veh.v * 3.6, rail, veh.sanding) * veh.mass() * G;
+    let adhesion_bound = mu * veh.mass() * G;
     let mg = if veh.brake.mg_applied {
         veh.spec.brake.mg_force
     } else {
@@ -210,7 +238,7 @@ fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
     if wheel > adhesion_bound {
         // Wheel slide: the wheel slide protection briefly releases the brake.
         veh.slip -= (wheel - adhesion_bound) / veh.inertial_mass() * dt;
-        f = if veh.spec.slip_control {
+        f = if veh.spec.slip_protection.protects() {
             adhesion_bound * 0.85 + mg
         } else {
             adhesion_bound * 0.7 + mg
@@ -222,7 +250,10 @@ fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
 }
 
 fn limit(veh: &Vehicle, rail: RailCondition) -> f64 {
-    adhesion_coefficient(veh.v * 3.6, rail, veh.sanding) * veh.adhesive_mass() * G
+    adhesion_coefficient(veh.v * 3.6, rail, veh.sanding)
+        * veh.adhesive_mass()
+        * G
+        * veh.spec.slip_protection.adhesion_bonus()
 }
 
 #[cfg(test)]

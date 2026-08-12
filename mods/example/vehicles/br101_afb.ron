@@ -11,12 +11,24 @@
     brake: (
         kind: Disc,
         position: R,
+        // Control valve: KE valve of a traction unit with two cylinder pressure stages,
+        // changed over by speed.
+        valve: KeL2a,
         // Braked weight [t] and the force that follows from it [N].
         brake_weight: 90.0,
         max_force: 127976.8,
         max_cylinder: 3.8,
         cylinder_to_reservoir: 0.35,
         has_direct: true,
+        // Spring-applied parking brake, pre-controlled cylinder, air supplement brake
+        // behind the regenerative brake, equalising device in the lap position.
+        parking_force: 90000.0,
+        spring_parking: true,
+        pilot_controlled: true,
+        supplement_brake: true,
+        angleicher: true,
+        main_volume: 1000.0,
+        compressor_delivery: 2400.0,
     ),
     traction: Some(Converter(
         max_force: 300000.0,
@@ -25,6 +37,10 @@
         brake_force: 150000.0,
         brake_power: 2600000.0,
         ramp_time: 2.5,
+        // From here the pull-out torque of the induction motors limits the effort.
+        v_pullout: 150.0,
+        regenerative: true,
+        brake_fade_kmh: 10.0,
     )),
     coupler: (
         slack: 0.08,
@@ -34,7 +50,8 @@
         breaking_force: 1000000.0,
     ),
     adhesive_mass_fraction: 1.0,
-    slip_control: true,
+    // Wheel slip protection: electronic creep control.
+    slip_protection: CreepControl,
     gauge: 1.435,
     v_max: 220.0,
     axles: 4,

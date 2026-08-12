@@ -1,6 +1,6 @@
 //! Desktop UI of the vehicle editor: menu bar, data panel, model panel, status bar.
 
-use crate::{Editor, PointerOverUi, model};
+use crate::{Editor, PointerOverUi, model, powertrain};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use sim_core::train::{Motion, Part, VehicleSpec};
@@ -294,10 +294,24 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                     });
                     ui.end_row();
                 });
+                ui.horizontal(|ui| {
+                    ui.label("Curve resistance")
+                        .on_hover_text("factor on Röckl — 1 = as the axle base sum gives it");
+                    ui.add(
+                        egui::DragValue::new(&mut spec.curve_resistance_factor)
+                            .speed(0.05)
+                            .range(0.0..=3.0),
+                    );
+                });
                 ui.small(format!(
                     "Resistance at 100 km/h: {:.0} N",
                     spec.resistance(100.0 / 3.6)
                 ));
+
+                ui.separator();
+                powertrain::brake_panel(ui, &mut spec.brake, &mut spec.slip_protection);
+                ui.separator();
+                powertrain::drive_panel(ui, &mut spec.traction);
 
                 ui.separator();
                 ui.label(egui::RichText::new("Behaviour").strong());
@@ -332,6 +346,10 @@ fn dataless_eq(a: &VehicleSpec, b: &VehicleSpec) -> bool {
         && a.hunting == b.hunting
         && a.davis == b.davis
         && a.cw_a == b.cw_a
+        && a.curve_resistance_factor == b.curve_resistance_factor
+        && a.brake == b.brake
+        && a.traction == b.traction
+        && a.slip_protection == b.slip_protection
         && a.script == b.script
 }
 

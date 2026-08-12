@@ -38,8 +38,22 @@ pub struct CabInputs {
     /// Power controller −1 … +1 (negative = dynamic brake).
     pub throttle: f64,
     pub brake_valve: DriverBrakeValve,
-    /// Direct brake 0 … 1.
+    /// Direct (additional) brake 0 … 1.
     pub direct_brake: f64,
+    /// Release button of the loco brake — releases the traction unit's own brake while the
+    /// train brake stays applied.
+    #[serde(default)]
+    pub brake_release: bool,
+    /// Parking brake set (spring-applied brake or hand brake).
+    #[serde(default)]
+    pub parking_brake: bool,
+    /// Electrically transmitted, pre-controlled air brake switched on: the whole train
+    /// applies at once instead of waiting for the pressure wave.
+    #[serde(default)]
+    pub ep_brake: bool,
+    /// Starter button of the diesel engine.
+    #[serde(default)]
+    pub engine_start: bool,
     pub sanding: bool,
     /// Sifa pedal/button.
     pub sifa: bool,
@@ -62,6 +76,10 @@ impl Default for CabInputs {
             throttle: 0.0,
             brake_valve: DriverBrakeValve::Release,
             direct_brake: 0.0,
+            brake_release: false,
+            parking_brake: false,
+            ep_brake: false,
+            engine_start: false,
             sanding: false,
             sifa: false,
             pzb_acknowledge: false,

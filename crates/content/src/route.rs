@@ -140,6 +140,9 @@ pub struct LineSource {
     pub signals: Vec<SignalSource>,
     #[serde(default)]
     pub routes: Vec<RouteSource>,
+    /// Optional Lua script hook (plan 19.7), named `"<mod>:<file stem>"`.
+    #[serde(default)]
+    pub script: Option<String>,
 }
 
 fn default_geoid() -> f64 {

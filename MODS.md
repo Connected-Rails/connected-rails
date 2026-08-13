@@ -45,6 +45,11 @@ becomes `example:br101_afb`. Two mods may therefore use the same file names.
 Only `id` and `name` are mandatory. `depends` lists mod ids that have to be loaded first;
 `enabled: false` skips the mod without deleting it.
 
+**F9 in the simulator opens the mod manager**: every installed mod with its version, whether
+it is switched on, which of its dependencies are missing, and the loading warnings. ↑/↓ pick
+a mod, Enter switches it on or off — that writes `enabled` back into its `mod.ron` (only that
+field; comments in the file survive) and takes effect on the next start.
+
 **Nothing is fatal.** A broken file produces a warning, everything else still loads. A script
 that raises an error is switched off after the first error and the run continues. A signal type
 without a matching rule shows stop.
@@ -387,7 +392,43 @@ speed rises that take effect at the head of the train instead of at its rear. Bo
 may be left out — the defaults are `Full` and `false`.
 
 `scenarios/*.ron` is a `Scenario` — triggers and actions, see the README section on scenarios.
-Line and scenario hooks (`on_load`, `on_frame`) do not exist yet.
+Start one with `--scenario example:probefahrt`. A modded scenario brings no timetable of its
+own, so the scoring counts its own points only.
+
+### Line and scenario hooks `on_load(ctx)` / `on_frame(ctx)`
+
+Both a `LineSource` and a `Scenario` may name a `script`. `on_load` runs once when the run
+starts, `on_frame` once per frame. The rule stays the same as everywhere else: **the script
+decides *when*, the RON says *what*.** An event with `trigger: Never` waits for the script:
+
+```ron
+(name: "stalled", trigger: Never, actions: [Announcement("Report your position."), Score(points: -5, reason: "Unscheduled stop")]),
+```
+
+```lua
+function M.on_frame(ctx)
+  if ctx.v_kmh < 1.0 and ctx.time - standing_since >= 60.0 and ctx.fired["stalled"] == nil then
+    return { fire = { "stalled" } }         -- the event's actions run
+  end
+end
+```
+
+`ctx`: `dt`, `time`, `trains`, `player`, `v_kmh`, `edge`, `s`, `finished`, `bonus`, and
+`fired` — a table of event name → firing time, so a hook does not have to remember which
+events have gone off.
+
+The answer may contain:
+
+| field | effect |
+|---|---|
+| `fire = { "name", … }` | fires those scenario events; unknown names are logged once |
+| `message = "…"`, `announcement = true` | a message to the player |
+| `switch = { node = 3, position = "straight" \| "diverging" }` | throws a switch |
+
+`fire` is the interesting one — through it a script reaches every action the scenario format
+has (switch, route, weather, score, finish) without any of them being written in Lua. The
+other two are there for a line that carries behaviour without a scenario.
+`mods/example/scenarios/probefahrt.ron` plus `scripts/probefahrt.lua` is the worked example.
 
 ## Sandbox
 
@@ -404,6 +445,7 @@ anyway — no long loops, cache what you can.
 ```bash
 cargo test -p mod-runtime                     # loads mods/, parses everything, runs the hooks
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb --frames 120
+cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p vehicle-editor -- mods/example/vehicles/br101_afb.ron
 cargo run -p route-editor -- mods/example/lines/beispielstrecke.ron
 ```

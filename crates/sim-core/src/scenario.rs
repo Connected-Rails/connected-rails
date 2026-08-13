@@ -38,6 +38,8 @@ pub enum Trigger {
     All(Vec<Trigger>),
     /// At least one sub-condition fulfilled.
     Any(Vec<Trigger>),
+    /// Never on its own — the event waits for a script to [`fire`] it (plan 19.7).
+    Never,
 }
 
 /// What an event triggers.
@@ -94,6 +96,9 @@ pub struct Scenario {
     pub player_train: usize,
     #[serde(default)]
     pub events: Vec<Event>,
+    /// Optional Lua script hook (plan 19.7), named `"<mod>:<file stem>"`.
+    #[serde(default)]
+    pub script: Option<String>,
 }
 
 impl Scenario {
@@ -161,6 +166,20 @@ impl ScenarioRuntime {
         let index = self.scenario.events.iter().position(|e| e.name == name)?;
         self.fired_at.get(index).copied().flatten()
     }
+
+    /// Is there an event of that name?
+    pub fn has_event(&self, name: &str) -> bool {
+        self.scenario.events.iter().any(|e| e.name == name)
+    }
+
+    /// Adds a message (script hooks and the dispatcher use this).
+    pub fn message(&mut self, time: f64, text: String, announcement: bool) {
+        self.messages.push(Message {
+            time,
+            text,
+            announcement,
+        });
+    }
 }
 
 /// One evaluation step: checks all triggers and executes the due actions.
@@ -190,6 +209,32 @@ pub fn step(sim: &mut Sim) {
             return;
         }
     }
+}
+
+/// Fires the event `name` no matter what its trigger says — this is how a scenario or line
+/// script decides the moment itself (plan 19.7). The actions stay declarative; only the
+/// *when* comes from the script.
+///
+/// `false` if there is no such event or it has already fired and is `once`.
+pub fn fire(sim: &mut Sim, name: &str) -> bool {
+    let Some(i) = sim
+        .scenario
+        .scenario
+        .events
+        .iter()
+        .position(|e| e.name == name)
+    else {
+        return false;
+    };
+    let event = sim.scenario.scenario.events[i].clone();
+    if event.once && sim.scenario.fired_at[i].is_some() {
+        return false;
+    }
+    sim.scenario.fired_at[i] = Some(sim.time);
+    for action in &event.actions {
+        apply(action, sim);
+    }
+    true
 }
 
 /// Checks a trigger against the current simulation state.
@@ -233,6 +278,7 @@ fn evaluate(trigger: &Trigger, sim: &Sim) -> bool {
             .is_some_and(|t| sim.time >= t + *delay),
         Trigger::All(list) => list.iter().all(|t| evaluate(t, sim)),
         Trigger::Any(list) => list.iter().any(|t| evaluate(t, sim)),
+        Trigger::Never => false,
     }
 }
 

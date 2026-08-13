@@ -1,0 +1,36 @@
+// A scenario is declaration: events with a trigger and actions. What a trigger cannot
+// express gets a script — the hook fires an event by name, the actions stay here in RON.
+//
+// Run it with:
+//   cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
+(
+    name: "Probefahrt",
+    description: "Short test run on the example line: pull away, then obey the main signal.",
+    player_train: 0,
+    events: [
+        (
+            name: "welcome",
+            trigger: Time(2.0),
+            actions: [Message("Test run: proceed to the main signal at km 2.0.")],
+        ),
+        // Fired by the script, never by itself — the condition (standing still for a while
+        // after having moved) needs memory, which a trigger table does not have.
+        (
+            name: "stalled",
+            trigger: Never,
+            actions: [
+                Announcement("Dispatcher: are you having trouble? Report your position."),
+                Score(points: -5, reason: "Unscheduled stop"),
+            ],
+        ),
+        (
+            name: "arrived",
+            trigger: TrainStopped(train: 0, edge: EdgeId(0), s: 1980.0, radius: 60.0),
+            actions: [
+                Score(points: 20, reason: "Stopped at the signal"),
+                Finish(success: true, reason: "Test run complete"),
+            ],
+        ),
+    ],
+    script: Some("example:probefahrt"),
+)

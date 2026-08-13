@@ -604,14 +604,31 @@ return M
 
 ### 19.7 Integration points
 
-- **`mod-runtime` crate:** discovery, manifests, registry, Lua state, both hooks.
+- **`mod-runtime` crate:** discovery, manifests, registry, Lua state, all four hooks.
 - **`sim-core`:** knows the signal type as *data* (`interlock::SignalType`, `Situation`) and the
   script name on `VehicleSpec` — but no Lua. That keeps the core deterministic and serialisable.
-- **`app`:** loads `mods/` at startup, `--line <mod>:<name>` and `--loco <mod>:<name>` select
-  content from a mod, and one system per frame runs the hooks after `Sim::advance`.
-- Still open: mod manager UI (enable/disable, dependency check), assets from mod directories
-  through a Bevy `AssetSource`, scenario and line hooks (`on_load`, `on_frame`),
-  `.trainsim` = zip with an installer.
+- **`app`:** loads `mods/` at startup, `--line`/`--loco`/`--scenario <mod>:<name>` select
+  content from a mod, one system per frame runs the hooks after `Sim::advance`, and F9 opens
+  the mod manager (enable/disable, dependency check, loading warnings).
+- Still open: `.trainsim` = zip with an installer.
+
+### 19.7a Line and scenario hooks
+
+A `LineSource` and a `Scenario` may name a `script` with `on_load(ctx)` and `on_frame(ctx)`.
+The division of labour is the same as everywhere else — the script decides *when*, the RON
+says *what*. An event with `trigger: Never` waits for the script to fire it by name:
+
+```lua
+function M.on_frame(ctx)   -- ctx: dt, time, trains, player, v_kmh, edge, s, finished,
+  if ctx.time - standing_since >= 60.0 then   --   bonus, fired (event name → time)
+    return { fire = { "stalled" } }           -- the event's actions run, straight out of RON
+  end
+end
+```
+
+Besides `fire` the answer may carry `message`/`announcement` and
+`switch = { node, position }` — those are for a line that carries behaviour without a
+scenario to fire events in.
 
 ### 19.8 Distribution
 

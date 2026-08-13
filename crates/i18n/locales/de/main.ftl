@@ -398,7 +398,17 @@ hud-scenario-failed = Szenario gescheitert
 hud-outcome = { $result }: { $reason }
 hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
 hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse
-hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera
+hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera  F9 Mods
+
+## Mod-Verwaltung
+
+mods-title = Mods
+mods-none = Keine Mods installiert — ein Mod-Verzeichnis nach mods/ legen.
+mods-missing-depends = benötigt: { $depends } (fehlt oder ist abgeschaltet)
+mods-content = Inhalte: { $vehicles } Fahrzeuge, { $lines } Strecken, { $scenarios } Szenarien, { $signals } Signaltypen, { $scripts } Skripte
+mods-log = Warnungen:
+mods-restart = Änderung wirkt nach einem Neustart.
+mods-keys = ↑/↓ auswählen   Enter ein/aus   F9 schließen
 
 ## Wertung
 

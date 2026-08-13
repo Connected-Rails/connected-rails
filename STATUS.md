@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-12 · `cargo test --workspace`: **223 tests green** · clippy and fmt clean.
+As of 2026-08-13 · `cargo test --workspace`: **240 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -16,7 +16,7 @@ As of 2026-08-12 · `cargo test --workspace`: **223 tests green** · clippy and 
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — start-up chain simulated and operable via keyboard, weather changes through scenario actions, terrain from the DGM; no 3D cab, no audio, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
-| **M8** | Mod runtime: declarative content plus Lua behaviour | **usable** — loader with dependency order, vehicles/lines/scenarios/signal types as RON, signal state machine as data, two Lua hooks (vehicle, signal aspect) with a sandbox; reference mod under `mods/example` incl. a glTF model. **Missing:** mod manager UI, line/scenario hooks |
+| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/scenarios/signal types as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
 ## What is in place
 
@@ -146,7 +146,12 @@ As of 2026-08-12 · `cargo test --workspace`: **223 tests green** · clippy and 
   lamp image) with an optional script hook for what a table cannot express. Lua runs sandboxed
   (`table`/`string`/`math` only) via `mlua`; a failing script is switched off, not fatal.
   `mods/` is an asset source, so models, textures and sounds of a mod are addressed as
-  `mods://<mod>/assets/…`. The app takes `--line <mod>:<name>` and `--loco <mod>:<name>`.
+  `mods://<mod>/assets/…`. The app takes `--line`, `--loco` and `--scenario <mod>:<name>`.
+  Lines and scenarios have their own hooks (`on_load`, `on_frame`): the script decides *when*
+  an event fires, the actions of that event stay declarative RON — an event with
+  `trigger: Never` waits for the script. **F9 opens the mod manager**: installed mods with
+  version, on/off state, missing dependencies and the loading warnings; switching writes
+  `enabled` back into `mod.ron` (that one field only) and takes effect on the next start.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
 
@@ -205,6 +210,12 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **Mod hooks run once per frame**, not once per simulation step — a Lua call every 5 ms per
   train for behaviour that reacts in tenths of a second would be pure overhead. A hook that
   genuinely has to see every step moves into `Sim::step`.
+- **The mod manager is a keyboard-driven text panel** on the existing Bevy UI, not `egui` in
+  the simulator for one screen. Switching a mod needs a restart — reloading mid-run would
+  mean rebuilding line, trains and interlocking. It becomes a real screen once the game gets
+  a main menu to hang it off.
+- **A modded scenario brings no timetable**, so its scoring counts scenario points only.
+  `timetable/*.ron` in a mod is the place for it when a mod wants stop scoring.
 - **A modded signal announces one step late** if the signal ahead of it is modded as well: the
   rule table sees the following signal's built-in aspect from the same update. At 200 Hz the
   difference is 5 ms; evaluating the rules in signalling order would remove it.

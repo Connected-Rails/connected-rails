@@ -117,6 +117,7 @@ pub fn to_musterstadt() -> Scenario {
                 once: true,
             },
         ],
+        script: None,
     }
 }
 

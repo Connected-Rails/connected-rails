@@ -4,6 +4,7 @@
 //! Simulation logic does **not** belong here.
 
 mod models;
+mod mods_ui;
 mod render;
 mod streaming;
 mod ui;
@@ -90,6 +91,7 @@ fn main() {
     }))
     .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
     .init_resource::<ui::CameraState>()
+    .init_resource::<mods_ui::ModManager>()
     .add_systems(Startup, setup)
     .add_systems(
         Update,
@@ -104,6 +106,7 @@ fn main() {
             streaming::stream_terrain,
             terrain_visibility,
             ui::update_hud,
+            mods_ui::mod_manager,
         )
             .chain(),
     )
@@ -161,15 +164,17 @@ fn setup(
     assets: Res<AssetServer>,
 ) {
     // Mods first — line, vehicles and signal types may come from them (plan ch. 19).
-    let mods = ModRuntime::load("mods");
+    let mut mods = ModRuntime::load("mods");
     for warning in mods.log() {
         warn!("mod: {warning}");
     }
     info!(
-        "Mods: {} loaded ({} vehicles, {} lines, {} signal types, {} scripts)",
+        "Mods: {} of {} enabled ({} vehicles, {} lines, {} scenarios, {} signal types, {} scripts)",
+        mods.mods.manifests.iter().filter(|m| m.enabled).count(),
         mods.mods.manifests.len(),
         mods.mods.vehicles.len(),
         mods.mods.lines.len(),
+        mods.mods.scenarios.len(),
         mods.mods.signal_types.len(),
         mods.mods.scripts.len()
     );
@@ -236,6 +241,30 @@ fn setup(
         scenario.player_train = player;
         sim.set_scenario(scenario, re_4711());
     }
+
+    // `--scenario <mod>:<name>` runs a scenario out of a mod. It brings no timetable of its
+    // own — ponytail: scoring then counts the scenario points only, add timetables to mods
+    // when a mod actually wants stop scoring.
+    if let Some(id) = arg("--scenario") {
+        match mods.mods.scenarios.get(&id) {
+            Some(scenario) => {
+                let mut scenario = scenario.clone();
+                scenario.player_train = player;
+                let number = scenario.name.clone();
+                sim.set_scenario(
+                    scenario,
+                    sim_core::timetable::Timetable {
+                        number,
+                        ..default()
+                    },
+                );
+            }
+            None => warn!("scenario {id} not found"),
+        }
+    }
+
+    // Line and scenario hooks: `on_load` now, `on_frame` every frame (plan 19.7).
+    mods.begin(&mut sim, &line_source);
 
     // Render origin at the head of the train.
     let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
@@ -338,6 +367,7 @@ fn setup(
     ));
 
     ui::spawn_hud(&mut commands);
+    mods_ui::spawn_panel(&mut commands);
 
     // `--camera outside` starts on the external camera — handy for screenshots of a
     // vehicle model.

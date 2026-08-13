@@ -3,6 +3,7 @@
 //! Full operability via the keyboard (MaSzyna principle); the clickable
 //! 3D controls are added in M6.
 
+use crate::mods_ui::ModManager;
 use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::prelude::*;
@@ -177,12 +178,15 @@ pub fn player_input(
 }
 
 /// Camera control: F1/F2/F3 switch the perspective, arrow keys pan.
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
+#[allow(clippy::too_many_arguments)]
 pub fn camera_control(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     sim: Res<SimResource>,
     origin: Res<Origin>,
     player: Res<PlayerTrain>,
+    manager: Res<ModManager>,
     mut state: ResMut<CameraState>,
     mut camera: Query<&mut Transform, With<CabCamera>>,
 ) {
@@ -200,7 +204,8 @@ pub fn camera_control(
         state.mode = CameraMode::Wayside;
         state.wayside = None;
     }
-    let turn = 1.2 * dt;
+    // With the mod manager open the arrow keys belong to its list, not to the camera.
+    let turn = if manager.open { 0.0 } else { 1.2 * dt };
     if keys.pressed(KeyCode::ArrowLeft) {
         state.yaw += turn;
     }

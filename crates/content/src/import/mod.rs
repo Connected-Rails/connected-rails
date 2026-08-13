@@ -193,6 +193,7 @@ pub fn import_line(
         sections: Vec::new(),
         signals: Vec::new(),
         routes: Vec::new(),
+        script: None,
     };
 
     let mut warnings = Vec::new();

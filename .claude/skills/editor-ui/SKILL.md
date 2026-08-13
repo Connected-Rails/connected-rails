@@ -68,7 +68,9 @@ Do not add weights or sizes; hierarchy comes from these plus color
 4 px base grid: `XS 4 · S 8 · M 12 · L 16 · XL 24`. Panels have 12 px padding
 (`panel_frame`), bars 8×5 (`bar_frame`), cards 8 (`card_frame`). Grid spacing
 is 12×6, `item_spacing` 8×6, widget min size 84×22, `LABEL_COL 168`.
-Use `ui.add_space(space::…)` — never a bare float.
+`space::FIELD` (150) is the one width of every control in a value column —
+numeric fields and combo boxes share it, so each column has a single clean
+right edge. Use `ui.add_space(space::…)` — never a bare float.
 
 ## Building a form panel
 
@@ -86,10 +88,19 @@ The vehicle editor's left panel is the reference implementation
   label comes from i18n key `key`, the tooltip from `key-hint`, and
   `form_label` gives every grid the same 168 px label column so fields align
   across sections.
-- Numbers: `editor_ui::drag(&mut v, speed, range, "unit")`. The unit is a
-  symbol (`"kg"`, `"km/h"`, `"N·m"`, `"l/min"`, `""` for ratios) — symbols are
-  names, not prose, so they stay literal in code. Fields stepped in whole
-  numbers (`speed >= 1`) automatically get digit grouping (`1 840 000`).
+- Numbers: `editor_ui::field(ui, &mut v, speed, range, "unit")` — a drag
+  field at the shared `space::FIELD` width. The unit is a symbol (`"kg"`,
+  `"km/h"`, `"N·m"`, `"l/min"`, `""` for ratios) — symbols are names, not
+  prose, so they stay literal in code. Fields stepped in whole numbers
+  (`speed >= 1`) automatically get digit grouping (`1 840 000`). Numbers in
+  prose notes use `editor_ui::group_digits` for the same look.
+- A row's field comes **first** in the value cell; auxiliary controls
+  (suggest button, mode checkbox like cw·A) sit to its right, so the field
+  keeps the column edge. Every choice gets a labelled row — no free-floating
+  combo boxes (see the drive type row).
+- Checkbox-toggled values ("Magnetic track brake" → force): the checkbox owns
+  its line, the value follows as a normal labelled row below it — never put
+  long checkbox labels into a grid's label column, they stretch it.
 - Editable lists (moving parts, converter circuits): one
   `editor_ui::card_frame()` per entry, header row with identifier left and a
   small `"×"` delete button right (`Layout::right_to_left`).
@@ -109,6 +120,11 @@ The vehicle editor's left panel is the reference implementation
   (`drag(…, "bar")`); the tooltip explains provenance, not the unit alone.
 - **No per-widget styling** beyond the helpers. If something needs a new
   look, extend `editor-ui` and document it here.
+- **Camera/input gating:** to keep the 3D camera from reacting under the UI,
+  read `bevy_egui::input::EguiWantsInput` (`wants_any_pointer_input()`) in the
+  camera system. Never query `ctx.egui_wants_pointer_input()` at the start of
+  `draw` — the panels of the frame are not laid out yet, so it reports `false`
+  over every panel and wheel scroll leaks through to the camera.
 
 ## Verifying changes (screenshot loop)
 

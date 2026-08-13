@@ -136,13 +136,6 @@ impl Default for View {
     }
 }
 
-/// Is the mouse over a panel? Written during the egui pass, read by the camera.
-///
-/// The egui context may only be touched inside `EguiPrimaryContextPass` — reading it from
-/// `Update` starts a second pass and the UI drawn in the first one is discarded.
-#[derive(Resource, Default)]
-pub struct PointerOverUi(pub bool);
-
 /// Marker of the spawned model instance — replaced on every import.
 #[derive(Component)]
 struct ModelInstance;
@@ -191,6 +184,9 @@ fn main() {
     app.register_asset_source(MOD_SOURCE, mod_asset_source());
     let mut window = Window {
         title: t!("window-vehicle-editor"),
+        // Two data panels plus the viewport — the Bevy default of 1280 px
+        // leaves the 3D view a sliver.
+        resolution: bevy::window::WindowResolution::new(1440, 900),
         ..default()
     };
     if let Some((w, h)) = window_size {
@@ -211,7 +207,6 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.16, 0.17, 0.19)))
     .insert_resource(editor)
     .init_resource::<View>()
-    .init_resource::<PointerOverUi>()
     .add_systems(Startup, setup)
     .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
@@ -380,10 +375,11 @@ fn orbit_camera(
     buttons: Res<ButtonInput<MouseButton>>,
     mut motion: MessageReader<bevy::input::mouse::MouseMotion>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
-    // Do not steal the mouse while it is over a panel.
-    over_ui: Res<PointerOverUi>,
+    // Do not steal the mouse while it is over a panel. `bevy_egui` updates the
+    // resource after the pass, when the panel layout of the frame is known.
+    over_ui: Res<bevy_egui::input::EguiWantsInput>,
 ) {
-    let over_ui = over_ui.0;
+    let over_ui = over_ui.wants_any_pointer_input();
 
     let drag: Vec2 = motion.read().map(|m| m.delta).sum();
     if !over_ui && buttons.pressed(MouseButton::Right) {

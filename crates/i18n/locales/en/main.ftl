@@ -100,11 +100,6 @@ eq-german-protection = German train protection
 eq-german-protection-hint = Sifa, Indusi/PZB and LZB as fitted to the vehicle
 eq-pzb = Indusi/PZB
 eq-pzb-hint = build on board — without it the vehicle runs on the LZB alone
-eq-train-type = Train category
-eq-train-type-hint = Zugart from the brake sheet the vehicle starts in
-train-type-o = O — upper
-train-type-m = M — middle
-train-type-u = U — lower
 eq-sifa = Sifa
 eq-sifa-hint = driver's safety device
 sifa-time-time = time-time
@@ -207,10 +202,12 @@ slip-creep = creep control
 
 group-drive = Drive
 drive-unpowered-note = Unpowered vehicle.
+drv-type = Drive type
+drv-type-hint = curve: effort straight off the diagram · tap changer: series-wound motors on notches · converter: three-phase drive · diesel: engine map and transmission
 traction-none = unpowered
-traction-curve = tractive effort curve
-traction-tap = tap changer (series-wound)
-traction-converter = converter (three-phase)
+traction-curve = effort curve
+traction-tap = tap changer
+traction-converter = converter
 traction-diesel = diesel
 curve-note = Tractive effort straight off the diagram — no motor, no gearbox.
 
@@ -401,7 +398,7 @@ hud-scenario-failed = Scenario failed
 hud-outcome = { $result }: { $reason }
 hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
 hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake
-hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  1–4 preparation  F1–F3 camera
+hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera
 
 ## Scoring
 

@@ -158,6 +158,22 @@ pub fn player_input(
             v.traction.compressor = !v.traction.compressor;
         }
     }
+
+    // Train type switch (Zugartschalter): U cycles O → M → U, standstill only.
+    if keys.just_pressed(KeyCode::KeyU) {
+        use sim_core::safety::de::TrainType;
+        let speed = train.speed();
+        if let Some(current) = train.vehicles.iter().find_map(|v| v.safety.train_type()) {
+            let next = match current {
+                TrainType::O => TrainType::M,
+                TrainType::M => TrainType::U,
+                TrainType::U => TrainType::O,
+            };
+            for v in &mut train.vehicles {
+                v.safety.set_train_type(next, speed);
+            }
+        }
+    }
 }
 
 /// Camera control: F1/F2/F3 switch the perspective, arrow keys pan.

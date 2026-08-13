@@ -100,11 +100,6 @@ eq-german-protection = Deutsche Zugsicherung
 eq-german-protection-hint = Sifa, Indusi/PZB und LZB, wie im Fahrzeug verbaut
 eq-pzb = Indusi/PZB
 eq-pzb-hint = Bauart an Bord — ohne sie fährt das Fahrzeug allein auf LZB
-eq-train-type = Zugart
-eq-train-type-hint = Zugart aus dem Bremszettel, mit der das Fahrzeug startet
-train-type-o = O — obere
-train-type-m = M — mittlere
-train-type-u = U — untere
 eq-sifa = Sifa
 eq-sifa-hint = Sicherheitsfahrschaltung
 sifa-time-time = Zeit-Zeit
@@ -207,10 +202,12 @@ slip-creep = Schlupfregelung
 
 group-drive = Antrieb
 drive-unpowered-note = Antriebsloses Fahrzeug.
+drv-type = Antriebsart
+drv-type-hint = Kennlinie: Zugkraft direkt aus dem Diagramm · Schaltwerk: Reihenschlussmotoren mit Fahrstufen · Umrichter: Drehstromantrieb · Diesel: Motorkennfeld und Getriebe
 traction-none = antriebslos
 traction-curve = Zugkraftkennlinie
-traction-tap = Schaltwerk (Reihenschluss)
-traction-converter = Umrichter (Drehstrom)
+traction-tap = Schaltwerk
+traction-converter = Umrichter
 traction-diesel = Diesel
 curve-note = Zugkraft direkt aus dem Diagramm — kein Motor, kein Getriebe.
 
@@ -401,7 +398,7 @@ hud-scenario-failed = Szenario gescheitert
 hud-outcome = { $result }: { $reason }
 hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
 hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse
-hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  1–4 Aufrüsten  F1–F3 Kamera
+hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera
 
 ## Wertung
 

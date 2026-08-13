@@ -92,6 +92,64 @@ fn the_equalising_device_holds_the_pressure_in_lap() {
     );
 }
 
+/// Changeover lever on the freight wagon: it moves the rigging, so the loaded wagon gets
+/// the braked weight of its anscription while the cylinder sees the same pressure.
+#[test]
+fn the_changeover_lever_gives_the_loaded_wagon_its_full_brake() {
+    let braked = |load_kg: f64| {
+        let mut sim = new_sim();
+        let t = train(&mut sim, vec![br101(), freight_wagon()]);
+        sim.trains[t].vehicles[1].load = load_kg;
+        // Charge the brake pipe, then apply. Position G takes its time.
+        run(&mut sim, 60.0);
+        sim.controls[t].brake_valve = DriverBrakeValve::Emergency;
+        run(&mut sim, 60.0);
+        let wagon = &sim.trains[t].vehicles[1];
+        (wagon.brake.force, wagon.brake.cylinder)
+    };
+
+    let (empty_force, empty_cylinder) = braked(0.0);
+    let (laden_force, laden_cylinder) = braked(57_000.0);
+    assert!(empty_force > 1_000.0, "the wagon must brake at all");
+    // 22 t braked weight empty, 55 t loaded — the anscription of an Eaos.
+    assert!(
+        (laden_force / empty_force - 55.0 / 22.0).abs() < 0.05,
+        "empty {empty_force:.0} N → loaded {laden_force:.0} N"
+    );
+    assert!(
+        (laden_cylinder - empty_cylinder).abs() < 0.01,
+        "a lever is not a valve: {empty_cylinder:.2} vs {laden_cylinder:.2} bar"
+    );
+}
+
+/// Weighing valve on the railcar: it throttles the cylinder pressure itself, and it does
+/// it so that the braked weight percentage — the figure the brake sheet is written in —
+/// stays where it belongs however full the vehicle is.
+#[test]
+fn the_weighing_valve_holds_the_brake_percentage_of_the_railcar() {
+    let braked = |load_kg: f64| {
+        let mut sim = new_sim();
+        let t = train(&mut sim, vec![railcar()]);
+        sim.trains[t].vehicles[0].load = load_kg;
+        run(&mut sim, 60.0);
+        let percentage = sim.trains[t].brake_percentage();
+        sim.controls[t].brake_valve = DriverBrakeValve::Emergency;
+        run(&mut sim, 20.0);
+        (percentage, sim.trains[t].vehicles[0].brake.cylinder)
+    };
+
+    let (empty_percentage, empty_cylinder) = braked(0.0);
+    let (full_percentage, full_cylinder) = braked(9_000.0);
+    assert!(
+        (empty_percentage - full_percentage).abs() < 0.5,
+        "brake sheet must not move: {empty_percentage:.1} vs {full_percentage:.1} %"
+    );
+    assert!(
+        full_cylinder > empty_cylinder * 1.1,
+        "the valve must throttle: {empty_cylinder:.2} → {full_cylinder:.2} bar"
+    );
+}
+
 #[test]
 fn a_k_valve_releases_in_one_go_a_ke_valve_graduates() {
     let last_cylinder = |valve: ControlValve| {

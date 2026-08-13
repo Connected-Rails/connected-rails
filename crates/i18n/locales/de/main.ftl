@@ -195,7 +195,13 @@ brk-friction-hint = wie der Reibwert über der Geschwindigkeit verläuft
 brk-friction-points = Reibwert (km/h → µ)
 brk-friction-plot = Reibwert über der Geschwindigkeit
 brk-weight = Bremsgewicht
-brk-weight-hint = t — aus der Anschrift des Fahrzeugs
+brk-weight-hint = t — aus der Anschrift des Fahrzeugs, beladenes Fahrzeug
+brk-load = Lastabbremsung
+brk-load-hint = wie viel vom Bremsgewicht bleibt, wenn das Fahrzeug leer läuft
+brk-load-empty = Bremsgewicht leer
+brk-load-empty-hint = Anteil am Bremsgewicht des beladenen Fahrzeugs in Stellung „Leer“
+brk-load-mass = Umstellmasse
+brk-load-mass-hint = t Gesamtmasse — darüber bremst der Wagen in Stellung „Beladen“
 brk-force = Bremskraft
 brk-force-hint = N bei vollem Zylinderdruck und Stillstand
 brk-force-suggest-hint = aus dem Bremsgewicht — ergäbe { $value } N
@@ -239,6 +245,10 @@ friction-k = K-Sohle
 friction-ll = LL-Sohle
 friction-magnetic = Magnetschiene
 friction-custom = Eigene Kennlinie
+
+load-none = keine
+load-weighing = Wiegeventil (stufenlos)
+load-changeover = Umstellung Leer/Beladen
 
 slip-none = keiner
 slip-brake = Schleuderbremse

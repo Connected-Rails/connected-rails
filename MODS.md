@@ -105,7 +105,8 @@ the rear of a long freight train applies seconds after the front.
 | `valve_params` | overrides the type's preset field by field: `graduated_release`, `rapid_position`, `high_stage`, `high_stage_trigger`, `loco`, `response_drop`, `full_service_drop` |
 | `kind` | friction pairing: `Block` (cast iron), `Disc`, `CompositeK`, `CompositeLl`, `Magnetic`, or `Custom([(km/h, µ), …])` for your own measurements |
 | `position` | `G` / `P` / `R` / `RMg`; an `R` on a valve without an R position falls back to `P` |
-| `brake_weight`, `max_force`, `max_cylinder`, `cylinder_to_reservoir` | braked weight [t], force at full pressure and standstill [N], cylinder pressure [bar], volume ratio (exhaustibility) |
+| `brake_weight`, `max_force`, `max_cylinder`, `cylinder_to_reservoir` | braked weight [t], force at full pressure and standstill [N], cylinder pressure [bar], volume ratio (exhaustibility) — the two forces are those of the **loaded** vehicle, see `load_braking` |
+| `load_braking` | load braking: `None`, `Weighing` (stepless weighing valve — throttles the cylinder pressure by `mass_empty`/`max_payload`, no figures of its own), or `Changeover(empty_share: 0.4, changeover_mass_t: 40.0)` for the empty/loaded lever with the anscribed braked weights |
 | `has_mg`, `mg_force` | magnetic track brake and its force [N] |
 | `has_direct`, `direct_max_cylinder` | direct (additional) brake of a traction unit |
 | `parking_force`, `spring_parking` | parking brake [N]; with `spring_parking` it is held off by air and applies by itself when the main reservoir runs empty |

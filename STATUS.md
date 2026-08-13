@@ -41,7 +41,12 @@ As of 2026-08-13 · `cargo test --workspace`: **240 tests green** · clippy and 
   KE-GPR, KE-Tm, KE-L2a and KE-L2d as presets over their observable behaviour: graduated or
   single release, R position, second cylinder pressure stage by speed or by a full application,
   release button of a loco valve. Friction pairings for cast iron, disc, K and LL blocks and
-  the magnetic track brake, plus an own characteristic as a table. Equalising device
+  the magnetic track brake, each as a family of two curves interpolated over the axle load,
+  plus an own characteristic as a table. Load braking (Lastabbremsung) in both builds: the
+  stepless weighing valve, which throttles the cylinder pressure so that the braked weight
+  percentage stays put however full the vehicle is, and the empty/loaded changeover lever,
+  which moves the rigging at the changeover mass — braked weight and brake sheet follow the
+  load. Equalising device
   (deliberately without a memory), pre-controlled cylinder through a relay valve, electrically
   transmitted (ep) brake, air supplement brake behind the dynamic brake, direct brake on every
   powered vehicle, spring-applied parking brake, magnetic track brake. Air is accounted for:
@@ -122,7 +127,8 @@ As of 2026-08-13 · `cargo test --workspace`: **240 tests green** · clippy and 
   load another one at runtime; `vehicle-editor` edits the vehicle base data (LÜP, gauge,
   v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
   hunting, payload, curve resistance factor), the complete brake equipment (control valve,
-  friction pairing, brake position, forces and pressures, additional brakes, reservoir volumes,
+  friction pairing, brake position, load braking, forces and pressures, additional brakes,
+  reservoir volumes,
   compressor, leakage, wheel slip protection) and the drive with all its detailed data (motor,
   engine map, converter circuits with change points and hysteresis, retarder), imports glTF
   models, reads their levels of detail from the node names
@@ -161,12 +167,19 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 
 - **Brake pipe model** is a node/diffusion model, not a pressure wave.
 - **Slip per vehicle**, not per wheelset.
-- **Friction coefficients as closed curves** instead of Karwatzki's full pressure-dependent
-  formula — the block force per block is in no vehicle data sheet either. Where measurements
-  exist, `BrakeKind::Custom` takes them as a table.
+- **Friction coefficients as a family of two closed curves per pairing** instead of Karwatzki's
+  full pressure-dependent formula: one curve for a light vehicle (5 t per axle) and one for a
+  loaded one (20 t), interpolated linearly over the axle load and held beyond the two. The block
+  force per block decides the shape and is in no vehicle data sheet — the axle load stands in for
+  it and is in every one. Only the shape follows the load; the level stays with the braked
+  weight, which already carries the friction level of the vehicle. Where measurements exist,
+  `BrakeKind::Custom` takes them as a table.
 - **Control valve types are presets** over the observable behaviour, not a rebuild of the
   valve's internal chambers; every one of the parameters can be overridden per vehicle.
-- **Load braking** (automatic load-proportional cylinder pressure) is not modelled.
+- **The empty/loaded lever always stands right**: its position follows the mass, whether the
+  wagon changes over by hand or by a weighing valve of its own. A lever forgotten in the
+  loaded position — the classic way to flat a wheel — needs a state of its own, and someone
+  to set it while shunting.
 - **Torque converters** with a linear µ(ν) up to the coupling point and a constant absorption
   coefficient, not a measured λ/µ characteristic field — two numbers per circuit instead of two
   curves, and the data sheets state the two numbers.

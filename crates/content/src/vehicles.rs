@@ -1,6 +1,8 @@
 //! Vehicle database (plan ch. 15): RON files + built-in reference vehicles.
 
-use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec, ControlValve, SlipProtection};
+use sim_core::brakes::{
+    BrakeKind, BrakePosition, BrakeSpec, ControlValve, LoadBraking, SlipProtection,
+};
 use sim_core::doors::DoorSystem;
 use sim_core::drive::{
     Circuit, CircuitKind, DieselEngine, Governor, HydrodynamicBrake, SeriesMotor, TractionSpec,
@@ -291,9 +293,15 @@ pub fn freight_wagon() -> VehicleSpec {
             b: 18.0,
             c: 5.5,
         },
-        brake: BrakeSpec::from_brake_weight(22.0, BrakeKind::Block)
+        // The anscription of the wagon: braked weight 22 t empty, 55 t loaded, changed
+        // over by the lever at 40 t total mass.
+        brake: BrakeSpec::from_brake_weight(55.0, BrakeKind::Block)
             .with_position(BrakePosition::G)
-            .with_valve(ControlValve::KeGp),
+            .with_valve(ControlValve::KeGp)
+            .with_load_braking(LoadBraking::Changeover {
+                empty_share: 22.0 / 55.0,
+                changeover_mass_t: 40.0,
+            }),
         traction: None,
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 0.0,
@@ -338,8 +346,11 @@ pub fn railcar() -> VehicleSpec {
             b: 40.0,
             c: 6.0,
         },
+        // Air suspension: the weighing valve reads the bellow pressure, so the brake
+        // follows how full the railcar is.
         brake: BrakeSpec::from_brake_weight(66.0, BrakeKind::Disc)
             .with_mg(60_000.0)
+            .with_load_braking(LoadBraking::Weighing)
             .as_traction_unit(ControlValve::KeGpr, 60_000.0),
         traction: Some(TractionSpec::Diesel {
             max_force: 65_000.0,
@@ -457,9 +468,21 @@ mod tests {
     fn brake_weights_are_plausible() {
         // For passenger coaches the brake weight exceeds the empty mass (brake percentage > 100).
         let coach = passenger_coach();
-        assert!(coach.brake.brake_weight * 1000.0 > coach.mass_empty);
-        // A freight wagon in G brakes more weakly than its mass.
+        assert!(coach.brake_weight_at(coach.mass_empty) * 1000.0 > coach.mass_empty);
+        // A freight wagon in G brakes more weakly than its mass — the anscribed 22 t of
+        // the empty position, not the 55 t the lever gives it when it is loaded.
         let wagon = freight_wagon();
-        assert!(wagon.brake.brake_weight * 1000.0 <= wagon.mass_empty * 1.1);
+        assert!(wagon.brake_weight_at(wagon.mass_empty) * 1000.0 <= wagon.mass_empty * 1.1);
+        assert!(
+            wagon.brake_weight_at(wagon.mass_laden()) > wagon.brake_weight_at(wagon.mass_empty)
+        );
+        // The weighing valve of the railcar keeps the brake sheet figure where it is.
+        let railcar = railcar();
+        let empty = railcar.brake_percentage();
+        let full = railcar.brake_weight_at(railcar.mass_laden()) / (railcar.mass_laden() / 1000.0);
+        assert!(
+            (empty - full * 100.0).abs() < 0.5,
+            "{empty:.1} vs {full:.3}"
+        );
     }
 }

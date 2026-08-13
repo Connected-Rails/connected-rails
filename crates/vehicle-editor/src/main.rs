@@ -518,7 +518,10 @@ fn ground_grid(editor: Res<Editor>, mut gizmos: Gizmos) {
     let cells = UVec2::new(16, (half_length * 2.0) as u32);
     gizmos
         .grid(
-            Isometry3d::new(Vec3::ZERO, Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+            Isometry3d::new(
+                Vec3::ZERO,
+                Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+            ),
             cells,
             Vec2::splat(1.0),
             Color::srgb(0.26, 0.28, 0.31),
@@ -567,7 +570,10 @@ fn orbit_camera(
 /// The title bar is the only part of the editor still readable from the task
 /// bar or the window switcher — with several vehicles open, a fixed
 /// "TrainSim-DE — Vehicle editor" on each of them tells you nothing.
-fn update_title(editor: Res<Editor>, mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>) {
+fn update_title(
+    editor: Res<Editor>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
     let Ok(mut window) = windows.single_mut() else {
         return;
     };
@@ -585,7 +591,10 @@ fn update_title(editor: Res<Editor>, mut windows: Query<&mut Window, With<bevy::
 /// Keeps the window size in the settings struct — in memory only. Writing on
 /// every frame of a resize drag would hammer the disk; the file is written
 /// when the user leaves.
-fn track_window_size(mut editor: ResMut<Editor>, windows: Query<&Window, With<bevy::window::PrimaryWindow>>) {
+fn track_window_size(
+    mut editor: ResMut<Editor>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+) {
     let Ok(window) = windows.single() else {
         return;
     };

@@ -7,9 +7,12 @@
 
 window-simulator = TrainSim-DE
 window-vehicle-editor = TrainSim-DE — Vehicle editor
+window-vehicle-editor-named = { $name } — TrainSim-DE Vehicle editor
+window-vehicle-editor-unsaved = • { $name } — TrainSim-DE Vehicle editor
 window-route-editor = TrainSim-DE — Route editor
 
 menu-file = File
+menu-edit = Edit
 menu-view = View
 menu-help = Help
 menu-overlay = Overlay
@@ -19,8 +22,12 @@ action-new = New
 action-open = Open…
 action-save = Save
 action-save-as = Save as…
+menu-recent = Recent
+recent-missing = this file is no longer there
 action-quit = Quit
 action-suggest = Suggest
+action-undo = Undo
+action-redo = Redo
 
 filter-vehicle-ron = Vehicle (RON)
 filter-line-ron = Line (RON)
@@ -37,8 +44,11 @@ common-none = —
 action-import-model = Import model…
 action-import-gltf = Import glTF…
 view-reference-body = Reference body (LÜP)
+view-grid = Ground grid (1 m)
 help-mouse = Right mouse button: rotate · Wheel: zoom
 help-model-conventions = Model conventions: see MODS.md
+action-about = About…
+about-version = Version { $version }
 
 status-new-vehicle = New vehicle
 status-loading = { $file } loading…
@@ -49,6 +59,11 @@ status-nodes-read = { $count } nodes read
 status-outside-mods = { $path } lies outside mods/ — copy the model into your mod first
 status-unsaved = • unsaved
 status-new-file = (new)
+dialog-error-title = Error
+confirm-comments-title = Comments will be lost
+confirm-comments = { $file } contains comments. The editor rewrites the file from the data — the comments will be gone. Save anyway?
+confirm-unsaved-title = Unsaved changes
+confirm-unsaved = Save changes to “{ $name }”?
 
 ## Vehicle editor — base data
 
@@ -72,6 +87,8 @@ veh-rotating-mass = Rotating mass
 veh-rotating-mass-hint = share of the mass — E loco 0.15–0.25, coach 0.06–0.09
 veh-axles = Axles
 veh-axles-hint = information for consist lists
+veh-adhesive = Adhesive mass share
+veh-adhesive-hint = share of the mass on driven axles — loco 1.0, coach 0.0. Limits tractive and braking effort through adhesion; at 0 the vehicle transmits nothing.
 veh-axle-base = Axle base sum
 veh-axle-base-hint = m — sum over all bogies, basis of the curve resistance
 veh-tilt = Tilt angle
@@ -79,17 +96,32 @@ veh-tilt-hint = ° — 0 conventional, ~8 tilting
 veh-hunting = Hunting
 veh-hunting-hint = −1 none … 0 standard … 1 strong
 
+group-coupler = Coupler
+cpl-type = Type
+cpl-screw = Screw coupler
+cpl-centre = Centre buffer coupler
+cpl-custom = own values
+cpl-slack = Slack
+cpl-slack-hint = total slack between draw gear and buffers — screw coupler 0.06–0.10 m
+cpl-draw = Draw gear
+cpl-draw-hint = stiffness of the draw gear
+cpl-buffer = Buffers
+cpl-buffer-hint = stiffness of the buffers — stiffer than the draw gear
+cpl-damping = Damping
+cpl-breaking = Breaking force
+cpl-breaking-hint = minimum breaking load — screw coupler about 1 MN
+
 group-resistance = Running resistance
 res-rolling = Rolling resistance a
-res-rolling-suggest-hint = about 2 ‰ of the weight
+res-rolling-suggest-hint = about 2 ‰ of the weight — would give { $value } N
 res-speed-term = Speed term b
-res-speed-term-hint = N/(m/s)
 res-air = Air resistance
 res-cw-a = cw·A
 res-davis-c-hint = quadratic Davis term c
 res-curve = Curve resistance
 res-curve-hint = factor on Röckl — 1 = as the axle base sum gives it
 res-at-100 = Resistance at 100 km/h: { $newtons } N
+res-plot = Resistance (km/h → N)
 
 ## Vehicle editor — equipment
 
@@ -113,7 +145,9 @@ eq-doors = Door control
 eq-doors-hint = what this cab commands — the leading vehicle decides for the train
 
 group-behaviour = Behaviour
-field-script-hint = Lua script <mod>:<name>
+veh-script = Script
+veh-script-hint = Lua script that drives the behaviour — AFB, tap changer logic, start-up procedure
+field-script-hint = <mod>:<name>
 
 ## Vehicle editor — model panel
 
@@ -126,13 +160,24 @@ model-conventions =
 
 group-lods = Levels of detail
 action-read-node-names = Read from node names
+action-read-node-names-hint = takes over { $count } levels found in the node names
+action-read-node-names-same = the levels already match the node names
 lod-show-hint = show in the viewport
+lod-distance-hint = up to this distance this level is drawn
 
 group-parts = Moving parts
 action-take-suggestions = Take over all suggestions
-part-function-hint = function
+action-take-suggestions-hint = binds { $count } nodes that are not bound yet
+action-take-suggestions-none = every suggested node is bound already
+part-function-placeholder = function
+part-function-hint = What the node represents. Known forms: door_<name> · pantograph · switch:<name> · gauge:<name> · lamp:<name> · wheel — own names are allowed, the app maps the ones it knows.
+part-amount-hint = full travel of the movement — from function value 0 to 1
 group-nodes = Nodes in the file
 node-bind-hint = bind as a moving part
+part-node-missing-hint = this node is not in the model — the binding points at nothing
+node-filter-hint = Filter nodes
+node-count = { $total } nodes
+node-count-filtered = { $shown } of { $total } nodes
 
 motion-visible = visible
 motion-rotate = rotate
@@ -147,15 +192,18 @@ brk-position = Brake position
 brk-position-hint = G freight · P passenger · R rapid · R+Mg with magnetic track brake
 brk-friction = Friction pairing
 brk-friction-hint = how the friction coefficient runs over speed
+brk-friction-points = Friction coefficient (km/h → µ)
+brk-friction-plot = Friction over speed
 brk-weight = Braked weight
 brk-weight-hint = t — from the vehicle's anscriptions
 brk-force = Brake force
 brk-force-hint = N at full cylinder pressure and standstill
-brk-force-suggest-hint = from the braked weight
+brk-force-suggest-hint = from the braked weight — would give { $value } N
 brk-cylinder = Cylinder pressure
 brk-cylinder-hint = bar at a full application
 brk-cyl-reservoir = Cylinder / reservoir
 brk-cyl-reservoir-hint = volume ratio — decides how quickly the brake exhausts itself
+brk-percentage = Braked weight percentage of the empty vehicle: { $percent } %
 
 group-additional-brakes = Additional brakes
 label-force = Force
@@ -174,7 +222,6 @@ brk-angleicher-hint = makes up brake pipe leakage in lap position; without a mem
 
 group-air = Air
 air-aux = Auxiliary reservoir
-air-aux-hint = l
 air-pipe = Brake pipe
 air-pipe-hint = l — this vehicle's share
 air-main = Main reservoir
@@ -211,30 +258,28 @@ traction-converter = converter
 traction-diesel = diesel
 curve-note = Tractive effort straight off the diagram — no motor, no gearbox.
 
-drv-vmax = v max
-drv-vmax-hint = km/h
+drv-force-plot = Tractive effort (km/h → N)
+drv-vmax = Traction v max
+drv-vmax-hint = end of the tractive effort curve — above it the drive gives nothing
 drv-ramp = Rise time
 drv-ramp-hint = s from 0 to full effort
 drv-start-force = Starting effort
-drv-start-force-hint = N
 drv-start-force-diesel = Starting effort
 drv-start-force-diesel-hint = N — without an engine map
 drv-power = Power
 drv-power-hint = W at the wheel
 drv-pullout = Pull-out speed
 drv-pullout-hint = km/h — above it the effort falls with 1/v²; 0 = no limit
-drv-brake-force = Brake force
-drv-brake-force-hint = N
-drv-brake-power = Brake power
-drv-brake-power-hint = W
+drv-brake-force = Dynamic brake force
+drv-brake-force-hint = what the electric brake contributes — the air brake adds to it separately
+drv-brake-power = Dynamic brake power
+drv-brake-power-hint = limit of regeneration or of the braking resistors
 drv-brake-fade = Brake fade-out
-drv-brake-fade-hint = km/h
+drv-brake-fade-hint = below this the electric brake fades out and the air brake takes over
 drv-fade = Fade-out
-drv-fade-hint = km/h
+drv-fade-hint = below this the electric brake fades out and the air brake takes over
 drv-crank-time = Cranking time
-drv-crank-time-hint = s
 drv-wheel-diameter = Wheel diameter
-drv-wheel-diameter-hint = m
 drv-regenerative = Regenerative
 drv-regenerative-hint = feeds back into the contact line — dead without line voltage
 
@@ -246,7 +291,6 @@ action-add-point = + point
 tap-steps = Notches
 tap-steps-hint = of the tap changer
 tap-step-time = Time per notch
-tap-step-time-hint = s
 
 section-series-motor = Series-wound motor data
 section-rheostatic-brake = Rheostatic brake
@@ -261,7 +305,6 @@ mot-resistance-hint = Ω — armature and field together
 mot-machine-constant = Machine constant
 mot-machine-constant-hint = V·s/A — flux linkage per ampere, unsaturated
 mot-saturation = Saturation current
-mot-saturation-hint = A
 mot-max-current = Max current
 mot-max-current-hint = A — the current limit relay
 mot-max-voltage = Max voltage
@@ -283,6 +326,8 @@ eng-inertia = Inertia
 eng-inertia-hint = kg·m² incl. flywheel
 eng-rack-time = Rack travel time
 eng-rack-time-hint = s from idle to full load
+eng-governor = Governor
+eng-governor-hint = speed-governed: main line diesels · fill-governed: shunters and railcars with mechanical injection pumps
 gov-speed = speed-governed
 gov-speed-hint = the power controller sets the engine speed, the governor holds it
 gov-fill = fill-governed
@@ -327,7 +372,6 @@ ret-brake-force-hint = N — mechanical limit
 ret-brake-power = Brake power
 ret-brake-power-hint = W — what the cooler can carry off
 ret-fill-time = Filling time
-ret-fill-time-hint = s
 
 ## Route editor
 

@@ -16,7 +16,12 @@ use sim_core::drive::{
 };
 
 /// Brake equipment.
-pub fn brake_panel(ui: &mut egui::Ui, brake: &mut BrakeSpec, slip: &mut SlipProtection) {
+pub fn brake_panel(
+    ui: &mut egui::Ui,
+    brake: &mut BrakeSpec,
+    slip: &mut SlipProtection,
+    v_max: f64,
+) {
     form_grid("brake").show(ui, |ui| {
         row(ui, "brk-valve", |ui| {
             valve_combo(ui, &mut brake.valve);
@@ -32,13 +37,17 @@ pub fn brake_panel(ui: &mut egui::Ui, brake: &mut BrakeSpec, slip: &mut SlipProt
         });
         row(ui, "brk-force", |ui| {
             field(ui, &mut brake.max_force, 500.0, 0.0..=1_000_000.0, "N");
+            let suggestion =
+                BrakeSpec::from_brake_weight(brake.brake_weight, brake.kind.clone()).max_force;
             if ui
                 .button(t!("action-suggest"))
-                .on_hover_text(t!("brk-force-suggest-hint"))
+                .on_hover_text(t!(
+                    "brk-force-suggest-hint",
+                    value = editor_ui::group_digits(suggestion)
+                ))
                 .clicked()
             {
-                brake.max_force =
-                    BrakeSpec::from_brake_weight(brake.brake_weight, brake.kind.clone()).max_force;
+                brake.max_force = suggestion;
             }
         });
         row(ui, "brk-cylinder", |ui| {
@@ -51,6 +60,21 @@ pub fn brake_panel(ui: &mut egui::Ui, brake: &mut BrakeSpec, slip: &mut SlipProt
             slip_combo(ui, slip);
         });
     });
+
+    // A closed curve per pairing; the combo names it but shows nothing of how
+    // it falls off. `Custom` already plots its own points just below.
+    if !matches!(brake.kind, BrakeKind::Custom(_)) {
+        subheading(ui, t!("brk-friction-plot"));
+        editor_ui::sparkline_fn(ui, v_max, "km/h", "", |kmh| brake.kind.friction_factor(kmh));
+    }
+
+    if let BrakeKind::Custom(points) = &mut brake.kind {
+        // Selectable in the combo since forever, but nothing ever drew its
+        // points — the curve was set once and then out of reach, and a
+        // hand-written one was invisible.
+        subheading(ui, t!("brk-friction-points"));
+        table_editor(ui, "friction", "km/h", "", 0.01, 0.0..=1.0, points);
+    }
 
     subheading(ui, t!("group-additional-brakes"));
     ui.checkbox(&mut brake.has_mg, t!("brk-mg"));
@@ -69,13 +93,16 @@ pub fn brake_panel(ui: &mut egui::Ui, brake: &mut BrakeSpec, slip: &mut SlipProt
             ui.end_row();
         });
     }
+    // How the parking brake is held on, then how hard — the same order as the
+    // magnetic and direct brakes above. Below the force it sat in the run of
+    // four independent checkboxes and read as one of them.
+    ui.checkbox(&mut brake.spring_parking, t!("brk-spring"))
+        .on_hover_text(t!("brk-spring-hint"));
     form_grid("parking").show(ui, |ui| {
         form_label(ui, t!("brk-parking"));
         field(ui, &mut brake.parking_force, 500.0, 0.0..=400_000.0, "N");
         ui.end_row();
     });
-    ui.checkbox(&mut brake.spring_parking, t!("brk-spring"))
-        .on_hover_text(t!("brk-spring-hint"));
     ui.checkbox(&mut brake.pilot_controlled, t!("brk-pilot"))
         .on_hover_text(t!("brk-pilot-hint"));
     ui.checkbox(&mut brake.supplement_brake, t!("brk-supplement"))
@@ -235,13 +262,17 @@ fn table_editor(
     id: &str,
     x_unit: &'static str,
     y_unit: &'static str,
+    // Forces run to a million in whole newtons, a friction coefficient to one
+    // in hundredths — the y column cannot share one step and one range.
+    y_speed: f64,
+    y_range: std::ops::RangeInclusive<f64>,
     points: &mut Vec<(f64, f64)>,
 ) {
     let mut remove = None;
     for (i, (x, y)) in points.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             field(ui, x, 1.0, 0.0..=10_000.0, x_unit);
-            field(ui, y, 100.0, 0.0..=1_000_000.0, y_unit);
+            field(ui, y, y_speed, y_range.clone(), y_unit);
             if ui.small_button("×").clicked() {
                 remove = Some(i);
             }
@@ -259,6 +290,9 @@ fn table_editor(
         let last = points.last().copied().unwrap_or((0.0, 0.0));
         points.push((last.0 + 20.0, last.1));
     }
+    // The shape of what the rows above describe. A curve is the one thing a
+    // column of numbers hides.
+    editor_ui::sparkline(ui, points, x_unit, y_unit);
 }
 
 /// Drive.
@@ -277,6 +311,10 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
         return;
     };
     ui.add_space(space::XS);
+    // The curve type stores its points and plots them itself; the other three
+    // derive theirs from a handful of limits, and nothing on screen showed the
+    // shape those limits add up to.
+    let plot_effort = !matches!(spec, TractionSpec::Curve { .. });
     match spec {
         TractionSpec::Curve {
             force,
@@ -298,9 +336,9 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
                 });
             });
             subheading(ui, t!("table-tractive-effort"));
-            table_editor(ui, "traction", "km/h", "N", force);
+            table_editor(ui, "traction", "km/h", "N", 100.0, 0.0..=1_000_000.0, force);
             subheading(ui, t!("table-dynamic-brake"));
-            table_editor(ui, "brake", "km/h", "N", brake);
+            table_editor(ui, "brake", "km/h", "N", 100.0, 0.0..=1_000_000.0, brake);
         }
         TractionSpec::TapChanger {
             steps,
@@ -446,6 +484,12 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
                 retarder_editor,
             );
         }
+    }
+
+    if plot_effort {
+        subheading(ui, t!("drv-force-plot"));
+        let top = spec.v_max();
+        editor_ui::sparkline_fn(ui, top, "km/h", "N", |kmh| spec.available_force(kmh / 3.6));
     }
 }
 
@@ -673,33 +717,40 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
             field(ui, &mut e.response_time, 0.05, 0.05..=10.0, "s");
         });
     });
-    // Governor: speed-governed vehicles set an engine speed, fill-governed ones the rack.
+    // Governor: speed-governed vehicles set an engine speed, fill-governed ones
+    // the rack. A labelled row like every other choice — as a bare pair of
+    // toggles it was the one control in the panel that named its options but
+    // not what they were options for.
     let speed_governed = matches!(e.governor, Governor::Speed { .. });
-    ui.horizontal(|ui| {
-        if ui
-            .selectable_label(speed_governed, t!("gov-speed"))
-            .on_hover_text(t!("gov-speed-hint"))
-            .clicked()
-        {
-            e.governor = Governor::Speed { steps: 0 };
-        }
-        if ui
-            .selectable_label(!speed_governed, t!("gov-fill"))
-            .on_hover_text(t!("gov-fill-hint"))
-            .clicked()
-        {
-            e.governor = Governor::Fill;
-        }
-    });
-    if let Governor::Speed { steps } = &mut e.governor {
-        form_grid("governor").show(ui, |ui| {
+    form_grid("governor").show(ui, |ui| {
+        row(ui, "eng-governor", |ui| {
+            egui::ComboBox::from_id_salt("governor")
+                .selected_text(t!(if speed_governed { "gov-speed" } else { "gov-fill" }))
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(speed_governed, t!("gov-speed"))
+                        .on_hover_text(t!("gov-speed-hint"))
+                        .clicked()
+                    {
+                        e.governor = Governor::Speed { steps: 0 };
+                    }
+                    if ui
+                        .selectable_label(!speed_governed, t!("gov-fill"))
+                        .on_hover_text(t!("gov-fill-hint"))
+                        .clicked()
+                    {
+                        e.governor = Governor::Fill;
+                    }
+                });
+        });
+        if let Governor::Speed { steps } = &mut e.governor {
             row(ui, "gov-notches", |ui| {
                 field(ui, steps, 1.0, 0.0..=32.0, "");
             });
-        });
-    }
+        }
+    });
     subheading(ui, t!("table-torque"));
-    table_editor(ui, "torque", "/min", "N·m", &mut e.torque_curve);
+    table_editor(ui, "torque", "/min", "N·m", 100.0, 0.0..=1_000_000.0, &mut e.torque_curve);
 }
 
 fn transmission_defaults() -> Transmission {

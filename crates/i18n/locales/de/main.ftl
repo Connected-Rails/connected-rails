@@ -7,9 +7,12 @@
 
 window-simulator = TrainSim-DE
 window-vehicle-editor = TrainSim-DE — Fahrzeugeditor
+window-vehicle-editor-named = { $name } — TrainSim-DE Fahrzeugeditor
+window-vehicle-editor-unsaved = • { $name } — TrainSim-DE Fahrzeugeditor
 window-route-editor = TrainSim-DE — Streckeneditor
 
 menu-file = Datei
+menu-edit = Bearbeiten
 menu-view = Ansicht
 menu-help = Hilfe
 menu-overlay = Überlagerung
@@ -19,8 +22,12 @@ action-new = Neu
 action-open = Öffnen…
 action-save = Speichern
 action-save-as = Speichern unter…
+menu-recent = Zuletzt geöffnet
+recent-missing = diese Datei gibt es nicht mehr
 action-quit = Beenden
 action-suggest = Vorschlag
+action-undo = Rückgängig
+action-redo = Wiederherstellen
 
 filter-vehicle-ron = Fahrzeug (RON)
 filter-line-ron = Strecke (RON)
@@ -37,8 +44,11 @@ common-none = —
 action-import-model = Modell importieren…
 action-import-gltf = glTF importieren…
 view-reference-body = Referenzkörper (LÜP)
+view-grid = Bodenraster (1 m)
 help-mouse = Rechte Maustaste: drehen · Rad: zoomen
 help-model-conventions = Modellkonventionen: siehe MODS.md
+action-about = Über…
+about-version = Version { $version }
 
 status-new-vehicle = Neues Fahrzeug
 status-loading = { $file } wird geladen…
@@ -49,6 +59,11 @@ status-nodes-read = { $count } Knoten gelesen
 status-outside-mods = { $path } liegt außerhalb von mods/ — kopiere das Modell zuerst in deinen Mod
 status-unsaved = • ungespeichert
 status-new-file = (neu)
+dialog-error-title = Fehler
+confirm-comments-title = Kommentare gehen verloren
+confirm-comments = { $file } enthält Kommentare. Der Editor schreibt die Datei neu aus den Daten — die Kommentare sind danach weg. Trotzdem speichern?
+confirm-unsaved-title = Ungespeicherte Änderungen
+confirm-unsaved = Änderungen an „{ $name }“ speichern?
 
 ## Fahrzeugeditor — Grunddaten
 
@@ -72,6 +87,8 @@ veh-rotating-mass = Rotierende Massen
 veh-rotating-mass-hint = Anteil an der Masse — E-Lok 0,15–0,25, Wagen 0,06–0,09
 veh-axles = Achsen
 veh-axles-hint = Angabe für Zugbildungslisten
+veh-adhesive = Anteil Reibungsmasse
+veh-adhesive-hint = Anteil der Masse auf angetriebenen Achsen — Lok 1,0, Wagen 0,0. Begrenzt Zug- und Bremskraft über den Kraftschluss; bei 0 setzt das Fahrzeug nichts um.
 veh-axle-base = Achsstandsumme
 veh-axle-base-hint = m — Summe über alle Drehgestelle, Grundlage des Bogenwiderstands
 veh-tilt = Neigewinkel
@@ -79,17 +96,32 @@ veh-tilt-hint = ° — 0 konventionell, ~8 Neigetechnik
 veh-hunting = Sinuslauf
 veh-hunting-hint = −1 keiner … 0 normal … 1 stark
 
+group-coupler = Kupplung
+cpl-type = Bauart
+cpl-screw = Schraubenkupplung
+cpl-centre = Mittelpufferkupplung
+cpl-custom = eigene Werte
+cpl-slack = Spiel
+cpl-slack-hint = Gesamtspiel zwischen Zugvorrichtung und Puffern — Schraubenkupplung 0,06–0,10 m
+cpl-draw = Zugvorrichtung
+cpl-draw-hint = Steifigkeit der Zugvorrichtung
+cpl-buffer = Puffer
+cpl-buffer-hint = Steifigkeit der Puffer — steifer als die Zugvorrichtung
+cpl-damping = Dämpfung
+cpl-breaking = Bruchkraft
+cpl-breaking-hint = Mindestbruchlast — Schraubenkupplung etwa 1 MN
+
 group-resistance = Fahrwiderstand
 res-rolling = Rollwiderstand a
-res-rolling-suggest-hint = etwa 2 ‰ des Gewichts
+res-rolling-suggest-hint = etwa 2 ‰ des Gewichts — ergäbe { $value } N
 res-speed-term = Geschwindigkeitsglied b
-res-speed-term-hint = N/(m/s)
 res-air = Luftwiderstand
 res-cw-a = cw·A
 res-davis-c-hint = quadratisches Davis-Glied c
 res-curve = Bogenwiderstand
 res-curve-hint = Faktor auf Röckl — 1 = wie ihn die Achsstandsumme ergibt
 res-at-100 = Widerstand bei 100 km/h: { $newtons } N
+res-plot = Widerstand (km/h → N)
 
 ## Fahrzeugeditor — Ausrüstung
 
@@ -113,7 +145,9 @@ eq-doors = Türsteuerung
 eq-doors-hint = was dieser Führerstand befiehlt — das führende Fahrzeug entscheidet für den Zug
 
 group-behaviour = Verhalten
-field-script-hint = Lua-Skript <mod>:<name>
+veh-script = Skript
+veh-script-hint = Lua-Skript, das das Verhalten steuert — AFB, Schaltwerkslogik, Anlassvorgang
+field-script-hint = <mod>:<name>
 
 ## Fahrzeugeditor — Modellbereich
 
@@ -126,13 +160,24 @@ model-conventions =
 
 group-lods = Detailstufen
 action-read-node-names = Aus Knotennamen lesen
+action-read-node-names-hint = übernimmt { $count } aus den Knotennamen erkannte Stufen
+action-read-node-names-same = die Stufen entsprechen bereits den Knotennamen
 lod-show-hint = im Ansichtsfenster zeigen
+lod-distance-hint = bis zu dieser Entfernung wird diese Stufe gezeichnet
 
 group-parts = Bewegte Teile
 action-take-suggestions = Alle Vorschläge übernehmen
-part-function-hint = Funktion
+action-take-suggestions-hint = bindet { $count } noch nicht gebundene Knoten
+action-take-suggestions-none = alle vorgeschlagenen Knoten sind bereits gebunden
+part-function-placeholder = Funktion
+part-function-hint = Was der Knoten darstellt. Bekannte Formen: door_<name> · pantograph · switch:<name> · gauge:<name> · lamp:<name> · wheel — eigene Namen sind erlaubt, die App bildet ab, was sie kennt.
+part-amount-hint = voller Ausschlag der Bewegung — vom Funktionswert 0 bis 1
 group-nodes = Knoten in der Datei
 node-bind-hint = als bewegtes Teil binden
+part-node-missing-hint = diesen Knoten gibt es im Modell nicht — die Bindung läuft ins Leere
+node-filter-hint = Knoten filtern
+node-count = { $total } Knoten
+node-count-filtered = { $shown } von { $total } Knoten
 
 motion-visible = sichtbar
 motion-rotate = drehen
@@ -147,15 +192,18 @@ brk-position = Bremsstellung
 brk-position-hint = G Güterzug · P Personenzug · R Schnellzug · R+Mg mit Magnetschienenbremse
 brk-friction = Reibpaarung
 brk-friction-hint = wie der Reibwert über der Geschwindigkeit verläuft
+brk-friction-points = Reibwert (km/h → µ)
+brk-friction-plot = Reibwert über der Geschwindigkeit
 brk-weight = Bremsgewicht
 brk-weight-hint = t — aus der Anschrift des Fahrzeugs
 brk-force = Bremskraft
 brk-force-hint = N bei vollem Zylinderdruck und Stillstand
-brk-force-suggest-hint = aus dem Bremsgewicht
+brk-force-suggest-hint = aus dem Bremsgewicht — ergäbe { $value } N
 brk-cylinder = Zylinderdruck
 brk-cylinder-hint = bar bei Vollbremsung
 brk-cyl-reservoir = Zylinder / Vorratsbehälter
 brk-cyl-reservoir-hint = Volumenverhältnis — bestimmt, wie schnell sich die Bremse erschöpft
+brk-percentage = Bremshundertstel des leeren Fahrzeugs: { $percent } %
 
 group-additional-brakes = Zusatzbremsen
 label-force = Kraft
@@ -174,7 +222,6 @@ brk-angleicher-hint = gleicht Undichtigkeiten der Hauptluftleitung in Abschlusss
 
 group-air = Luft
 air-aux = Vorratsluftbehälter
-air-aux-hint = l
 air-pipe = Hauptluftleitung
 air-pipe-hint = l — Anteil dieses Fahrzeugs
 air-main = Hauptluftbehälter
@@ -211,30 +258,28 @@ traction-converter = Umrichter
 traction-diesel = Diesel
 curve-note = Zugkraft direkt aus dem Diagramm — kein Motor, kein Getriebe.
 
-drv-vmax = v max
-drv-vmax-hint = km/h
+drv-force-plot = Zugkraft (km/h → N)
+drv-vmax = v max Antrieb
+drv-vmax-hint = Ende der Zugkraftkennlinie — darüber gibt der Antrieb nichts mehr ab
 drv-ramp = Anstiegszeit
 drv-ramp-hint = s von 0 bis zur vollen Zugkraft
 drv-start-force = Anfahrzugkraft
-drv-start-force-hint = N
 drv-start-force-diesel = Anfahrzugkraft
 drv-start-force-diesel-hint = N — ohne Motorkennfeld
 drv-power = Leistung
 drv-power-hint = W am Rad
 drv-pullout = Kippgeschwindigkeit
 drv-pullout-hint = km/h — darüber fällt die Zugkraft mit 1/v²; 0 = keine Grenze
-drv-brake-force = Bremskraft
-drv-brake-force-hint = N
-drv-brake-power = Bremsleistung
-drv-brake-power-hint = W
+drv-brake-force = E-Bremskraft
+drv-brake-force-hint = was die elektrische Bremse aufbringt — die Druckluftbremse kommt getrennt dazu
+drv-brake-power = E-Bremsleistung
+drv-brake-power-hint = Grenze der Rückspeisung bzw. der Bremswiderstände
 drv-brake-fade = Ausblendung
-drv-brake-fade-hint = km/h
+drv-brake-fade-hint = darunter blendet die elektrische Bremse aus; die Druckluftbremse übernimmt
 drv-fade = Ausblendung
-drv-fade-hint = km/h
+drv-fade-hint = darunter blendet die elektrische Bremse aus; die Druckluftbremse übernimmt
 drv-crank-time = Anlassdauer
-drv-crank-time-hint = s
 drv-wheel-diameter = Raddurchmesser
-drv-wheel-diameter-hint = m
 drv-regenerative = Rückspeisefähig
 drv-regenerative-hint = speist in den Fahrdraht zurück — ohne Fahrdrahtspannung wirkungslos
 
@@ -246,7 +291,6 @@ action-add-point = + Punkt
 tap-steps = Fahrstufen
 tap-steps-hint = des Schaltwerks
 tap-step-time = Zeit je Fahrstufe
-tap-step-time-hint = s
 
 section-series-motor = Daten des Reihenschlussmotors
 section-rheostatic-brake = Widerstandsbremse
@@ -261,7 +305,6 @@ mot-resistance-hint = Ω — Anker und Feld zusammen
 mot-machine-constant = Maschinenkonstante
 mot-machine-constant-hint = V·s/A — Flussverkettung je Ampere, ungesättigt
 mot-saturation = Sättigungsstrom
-mot-saturation-hint = A
 mot-max-current = Höchststrom
 mot-max-current-hint = A — das Stromgrenzrelais
 mot-max-voltage = Höchstspannung
@@ -283,6 +326,8 @@ eng-inertia = Trägheitsmoment
 eng-inertia-hint = kg·m² einschl. Schwungrad
 eng-rack-time = Reglerlaufzeit
 eng-rack-time-hint = s vom Leerlauf bis Volllast
+eng-governor = Regler
+eng-governor-hint = drehzahlgeregelt: Hauptstreckendiesel · füllungsgeregelt: Rangierloks und Triebwagen mit mechanischer Einspritzpumpe
 gov-speed = drehzahlgeregelt
 gov-speed-hint = der Fahrschalter stellt die Drehzahl, der Regler hält sie
 gov-fill = füllungsgeregelt
@@ -327,7 +372,6 @@ ret-brake-force-hint = N — mechanische Grenze
 ret-brake-power = Bremsleistung
 ret-brake-power-hint = W — was der Kühler abführen kann
 ret-fill-time = Füllzeit
-ret-fill-time-hint = s
 
 ## Streckeneditor
 

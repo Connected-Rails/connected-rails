@@ -38,5 +38,8 @@ What stays a literal: log output (`info!`, `warn!`), panic messages, test
 assertions, and type designations that are names rather than prose (`KE-GPR`,
 `PZB 90 V2.0`, `LOD0`).
 
-The language comes from `TRAINSIM_LANG`, otherwise from the operating system,
-otherwise English; both editors switch it at runtime under View → Language.
+The language comes from `TRAINSIM_LANG`, otherwise from the choice made under
+View → Language, otherwise from the operating system, otherwise English. Both
+editors switch it at runtime; only the vehicle editor remembers the choice
+(`settings.rs`) — `i18n::set_language` sets an in-memory value, so a menu that
+calls it and nothing else throws the choice away at the next start.

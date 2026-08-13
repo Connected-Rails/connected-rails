@@ -132,6 +132,16 @@ fn style() -> egui::Style {
     spacing.combo_width = space::FIELD;
     spacing.tooltip_width = 360.0;
 
+    // egui's floating scroll handle is fully transparent at rest
+    // (`dormant_handle_opacity` 0.0). In a panel two to three screens tall
+    // that leaves nothing to say there is more below, or how much — the jump
+    // bar names the sections but not the distance. Stay floating, so the bar
+    // costs no panel width, and just let the handle be seen.
+    let mut scroll = egui::style::ScrollStyle::floating();
+    scroll.dormant_handle_opacity = 0.55;
+    scroll.floating_width = space::XS;
+    spacing.scroll = scroll;
+
     style
 }
 
@@ -244,13 +254,21 @@ pub fn section_title(text: impl Into<String>) -> RichText {
 }
 
 /// A collapsible form section. All sections of a panel share this look.
+///
+/// A hairline above the title turns the panel from one long list into visible
+/// chunks — the rule plus the wider gap group each section's rows together
+/// (Gestalt: common region beats proximity alone in a dense form).
+///
+/// Returns the header's response, so a caller can scroll it into view.
 pub fn section(
     ui: &mut egui::Ui,
     id: &str,
     title: impl Into<String>,
     body: impl FnOnce(&mut egui::Ui),
-) {
-    ui.add_space(space::S);
+) -> egui::CollapsingResponse<()> {
+    ui.add_space(space::M);
+    ui.separator();
+    ui.add_space(space::XS);
     egui::CollapsingHeader::new(section_title(title))
         .id_salt(id)
         .default_open(true)
@@ -258,19 +276,24 @@ pub fn section(
             ui.add_space(2.0);
             body(ui);
             ui.add_space(space::XS);
-        });
+        })
 }
 
 /// Sub-group heading inside a section ("Additional brakes").
 ///
 /// No upper-casing — titles can carry units ("1/min → N·m") and the
 /// translations know their own capitalisation.
+/// `TEXT`, not `TEXT_SECONDARY`: at 11.5 px it is already smaller than the
+/// 13 px labels it heads, and in the same colour it would carry no more weight
+/// than the rows underneath it. Each level of the hierarchy has to outrank the
+/// next — `TEXT_STRONG` section title > `TEXT` subheading > `TEXT_SECONDARY`
+/// label.
 pub fn subheading(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.add_space(space::S);
     ui.label(
         RichText::new(text.into())
             .font(FontId::new(11.5, semibold()))
-            .color(colors::TEXT_SECONDARY),
+            .color(colors::TEXT),
     );
     ui.add_space(2.0);
 }
@@ -346,6 +369,12 @@ pub fn drag<'a, N: egui::emath::Numeric>(
 
 /// Adds a [`drag`] field at the shared [`space::FIELD`] width, so numeric
 /// fields and combo boxes in a value column share one footprint.
+///
+/// The value sits at the field's left edge, not centred: a drag value is wider
+/// than its content, and centring makes the distance from the label to the
+/// number depend on how long the number is. Left-aligned, every row of the
+/// column starts its value at the same x — and at the same x as the text of a
+/// combo box, which egui already aligns that way.
 pub fn field<N: egui::emath::Numeric>(
     ui: &mut egui::Ui,
     value: &mut N,
@@ -353,15 +382,174 @@ pub fn field<N: egui::emath::Numeric>(
     range: std::ops::RangeInclusive<f64>,
     unit: &'static str,
 ) -> egui::Response {
-    ui.scope(|ui| {
+    // `Button` (which a drag value paints itself as) takes its content
+    // alignment from the surrounding layout, whose main axis defaults to
+    // centre.
+    let layout = ui.layout().with_main_align(egui::Align::Min);
+    ui.scope_builder(egui::UiBuilder::new().layout(layout), |ui| {
         ui.spacing_mut().interact_size.x = space::FIELD;
         ui.add(drag(value, speed, range, unit))
     })
     .inner
 }
 
+/// A small plot of an `(x, y)` table.
+///
+/// Not an analysis tool — no axes, no ticks, no numbers. It answers "does this
+/// look like a tractive effort curve" at a glance, which three rows of drag
+/// fields cannot: a point typed one digit wrong reads as a kink here and as a
+/// plausible number there.
+pub fn sparkline(ui: &mut egui::Ui, points: &[(f64, f64)], x_unit: &str, y_unit: &str) {
+    plot(ui, points, x_unit, y_unit, true);
+}
+
+/// `marks` puts a dot on every point. True where the points are the data the
+/// user typed; false for a sampled curve, where a dot per sample says nothing
+/// about the vehicle and only turns the line into a dotted one.
+fn plot(ui: &mut egui::Ui, points: &[(f64, f64)], x_unit: &str, y_unit: &str, marks: bool) {
+    if points.len() < 2 {
+        return;
+    }
+    let mut sorted = points.to_vec();
+    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let width = ui.available_width().min(space::FIELD * 2.0 + space::M);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 56.0), egui::Sense::hover());
+    let painter = ui.painter();
+    // Same well as a text field, down to the border.
+    painter.rect_filled(rect, CornerRadius::same(4), colors::BG_INPUT);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(4),
+        Stroke::new(1.0, colors::BORDER_SUBTLE),
+        egui::StrokeKind::Inside,
+    );
+
+    let (x0, x1) = (sorted[0].0, sorted[sorted.len() - 1].0);
+    // The y axis starts at zero, not at the smallest value. These are physical
+    // magnitudes: normalised to their own range, a friction factor falling
+    // from 1.0 to 0.6 fills the plot exactly like one falling to nothing, and
+    // "how far does it drop" is the only question the picture is asked.
+    let y0 = sorted.iter().map(|p| p.1).fold(0.0_f64, f64::min);
+    let y1 = sorted.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    // A curve with no spread in x has no shape to show.
+    if x1 <= x0 {
+        return;
+    }
+    let plot = rect.shrink(space::S);
+    let at = |(x, y): (f64, f64)| {
+        let tx = (x - x0) / (x1 - x0);
+        // All-zero: along the bottom, where zero is, rather than divided by it.
+        let ty = if y1 > y0 { (y - y0) / (y1 - y0) } else { 0.0 };
+        egui::pos2(
+            plot.left() + tx as f32 * plot.width(),
+            plot.bottom() - ty as f32 * plot.height(),
+        )
+    };
+    let line: Vec<egui::Pos2> = sorted.iter().copied().map(at).collect();
+    painter.add(egui::Shape::line(line.clone(), Stroke::new(1.5, colors::ACCENT)));
+    if marks {
+        for point in line {
+            painter.circle_filled(point, 2.0, colors::ACCENT);
+        }
+    }
+
+    // Reading a value off 56 px of line is guesswork. Hovering says it exactly,
+    // and costs the plot no clutter when nobody asks.
+    if let Some(pointer) = response.hover_pos() {
+        let t = ((pointer.x - plot.left()) / plot.width()).clamp(0.0, 1.0) as f64;
+        let x = x0 + t * (x1 - x0);
+        let y = interpolate(&sorted, x);
+        response.on_hover_text(format!(
+            "{} → {}",
+            with_unit(x, x_unit),
+            with_unit(y, y_unit)
+        ));
+    }
+}
+
+/// Linear between the two points that bracket `x`.
+fn interpolate(sorted: &[(f64, f64)], x: f64) -> f64 {
+    match sorted.iter().position(|p| p.0 >= x) {
+        None => sorted[sorted.len() - 1].1,
+        Some(0) => sorted[0].1,
+        Some(i) => {
+            let (x0, y0) = sorted[i - 1];
+            let (x1, y1) = sorted[i];
+            if x1 > x0 {
+                y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+            } else {
+                y1
+            }
+        }
+    }
+}
+
+/// Digit grouping above 100, two decimals below — one formatter for forces in
+/// the hundreds of thousands and friction factors below one.
+fn with_unit(value: f64, unit: &str) -> String {
+    let number = if value.abs() >= 100.0 {
+        group_digits(value)
+    } else {
+        format!("{value:.2}")
+    };
+    if unit.is_empty() {
+        number
+    } else {
+        format!("{number}{NBSP}{unit}")
+    }
+}
+
+/// Samples `f` over `0..=x_max` and plots it with [`sparkline`].
+///
+/// For curves the vehicle does not store as points but computes — running
+/// resistance from three Davis coefficients, tractive effort from a handful of
+/// limits. Sample the simulator's own function, never a copy of it, or the
+/// picture and the physics drift apart.
+pub fn sparkline_fn(
+    ui: &mut egui::Ui,
+    x_max: f64,
+    x_unit: &str,
+    y_unit: &str,
+    f: impl Fn(f64) -> f64,
+) {
+    const STEPS: usize = 40;
+    if !(x_max > 0.0) {
+        return;
+    }
+    let points: Vec<(f64, f64)> = (0..=STEPS)
+        .map(|i| {
+            let x = x_max * i as f64 / STEPS as f64;
+            (x, f(x))
+        })
+        .collect();
+    plot(ui, &points, x_unit, y_unit, false);
+}
+
 #[cfg(test)]
 mod tests {
+    /// The hover readout is only as good as this: a wrong bracket reports a
+    /// plausible number for the wrong speed, and nothing looks amiss.
+    #[test]
+    fn hover_reads_between_the_points() {
+        let curve = [(0.0, 100.0), (50.0, 200.0), (150.0, 0.0)];
+        assert_eq!(super::interpolate(&curve, 0.0), 100.0);
+        assert_eq!(super::interpolate(&curve, 25.0), 150.0, "half way up");
+        assert_eq!(super::interpolate(&curve, 50.0), 200.0, "on a point");
+        assert_eq!(super::interpolate(&curve, 100.0), 100.0, "half way down");
+        assert_eq!(super::interpolate(&curve, 150.0), 0.0);
+        // Outside the curve it holds the end values rather than extrapolating.
+        assert_eq!(super::interpolate(&curve, -10.0), 100.0);
+        assert_eq!(super::interpolate(&curve, 999.0), 0.0);
+    }
+
+    #[test]
+    fn readouts_suit_both_forces_and_factors() {
+        assert_eq!(super::with_unit(185_000.0, "N"), "185\u{A0}000\u{A0}N");
+        assert_eq!(super::with_unit(0.6, ""), "0.60");
+        assert_eq!(super::with_unit(120.0, "km/h"), "120\u{A0}km/h");
+    }
+
     #[test]
     fn digit_grouping_round_trips() {
         assert_eq!(super::group_digits(3_620_000.0), "3\u{A0}620\u{A0}000");

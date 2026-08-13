@@ -80,6 +80,16 @@ pub fn lookup(key: &str) -> String {
         .unwrap_or_else(|| key.to_string())
 }
 
+/// Looks a message up, or `None` if no language has it.
+///
+/// For text a caller may leave out — a field tooltip, say. [`lookup`] would
+/// hand back the key itself, which is right for a label (it shows up as an
+/// obvious defect) but wrong for a tooltip, where it would put `veh-mass-hint`
+/// on screen instead of simply not opening one.
+pub fn maybe(key: &str) -> Option<String> {
+    LOCALES.try_lookup(&current(), key)
+}
+
 /// Arguments of a message: placeholder name → value.
 pub type Args<'a> = std::collections::HashMap<std::borrow::Cow<'static, str>, FluentValue<'a>>;
 

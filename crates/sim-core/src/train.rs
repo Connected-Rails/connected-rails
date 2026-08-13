@@ -152,7 +152,11 @@ pub struct VehicleModel {
 }
 
 /// Static vehicle description (from the vehicle database, RON).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `PartialEq` compares the fields bit for bit, floats included. That is what
+/// the editor wants: it asks "has the user changed anything since the last
+/// frame", not "are these two vehicles physically alike".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VehicleSpec {
     pub name: String,
     /// Length over buffers (LÜP) [m] — determines the spacing of the following vehicle.
@@ -228,6 +232,20 @@ pub struct VehicleSpec {
     /// Visual model. The simulation ignores it; app and editor read it (plan ch. 15).
     #[serde(default)]
     pub model: Option<VehicleModel>,
+}
+
+impl VehicleSpec {
+    /// Braked weight percentage of the empty vehicle: braked weight / mass · 100.
+    ///
+    /// The figure a German brake sheet is written in.
+    /// [`Train::brake_percentage`] is the same quantity for a whole train,
+    /// where the load counts as well.
+    pub fn brake_percentage(&self) -> f64 {
+        if self.mass_empty <= 0.0 {
+            return 0.0;
+        }
+        self.brake.brake_weight / (self.mass_empty / 1000.0) * 100.0
+    }
 }
 
 impl Default for VehicleSpec {
@@ -477,5 +495,24 @@ impl OffsetUnchecked for TrackPosition {
         let mut p = *self;
         p.s += d * p.dir as f64;
         p
+    }
+}
+
+#[cfg(test)]
+mod vehicle_spec_tests {
+    use super::*;
+
+    /// A BR 101: 84 t empty, 90 t braked weight — the brake sheet says 107.
+    #[test]
+    fn braked_weight_percentage_matches_the_brake_sheet() {
+        let mut spec = VehicleSpec {
+            mass_empty: 84_000.0,
+            ..VehicleSpec::default()
+        };
+        spec.brake.brake_weight = 90.0;
+        assert_eq!(spec.brake_percentage().round(), 107.0);
+        // A vehicle without a mass must not divide by zero.
+        spec.mass_empty = 0.0;
+        assert_eq!(spec.brake_percentage(), 0.0);
     }
 }

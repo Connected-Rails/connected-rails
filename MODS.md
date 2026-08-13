@@ -157,28 +157,41 @@ traction: Some(Diesel(
     engine: Some((
         idle_rpm: 600.0, rated_rpm: 1500.0, max_rpm: 1650.0,
         torque_curve: [(600.0, 9000.0), (1000.0, 13500.0), (1500.0, 13115.0)],
-        governor: Speed(steps: 0),   // or Fill — rack instead of engine speed
+        // or Fill — rack instead of engine speed. droop is the sag under load.
+        governor: Speed(steps: 0, droop: 0.04),
         inertia: 60.0, response_time: 1.0,
     )),
     transmission: Some((
         circuits: [
             (kind: Converter, ratio: 3.93, stall_ratio: 2.4, coupling_nu: 0.85,
-             absorption: 0.53, shift_up_kmh: 72.0),
+             absorption: 0.53, absorption_slope: 0.15,
+             shift_up_kmh: 72.0, shift_primary_kmh: 25.0),
             (kind: Converter, ratio: 1.50, stall_ratio: 1.9, coupling_nu: 0.85,
-             absorption: 0.53, shift_up_kmh: 0.0),
+             absorption: 0.53, absorption_slope: 0.15,
+             shift_up_kmh: 0.0, shift_primary_kmh: 0.0),
         ],
         fill_steps: 0,        // 0 continuous, 1 fill/empty only, n partial filling stages
-        fill_time: 1.2, hysteresis_kmh: 10.0,
+        fill_time: 1.2, drain_time: 0.7, hysteresis_kmh: 10.0,
         final_ratio: 1.0, wheel_diameter: 1.0, count: 1, efficiency: 0.95,
     )),
     hydrodynamic_brake: None,
 )),
 ```
 
-`absorption` λ is the pump wheel's torque coefficient: `M_pump = λ·ω²·fill`. Set it so the
-circuit absorbs the engine's rated torque at rated speed — `λ = M_rated / ω_rated²`.
-`shift_up_kmh` and `hysteresis_kmh` are the change points of the original; the last circuit
-ignores its change-up point.
+`absorption` λ is the pump wheel's torque coefficient at ν = 0: `M_pump = λ(ν)·ω²·fill`,
+with `λ(ν) = absorption·(1 + absorption_slope·ν)`. Set λ so the circuit absorbs the engine's
+rated torque at rated speed — `λ = M_rated / ω_rated²`; a slope of 0 nails a speed-governed
+engine to one speed parabola for the whole converter range.
+
+`shift_up_kmh` and `hysteresis_kmh` are the change points of the original, and
+`shift_primary_kmh` is the primary influence: at the zero notch the change comes that many
+km/h earlier than at full power. The last circuit ignores its change-up point.
+`fill_time` and `drain_time` are separate because they are separate in the original — the
+outgoing circuit lets go before the incoming one has taken hold, and that overlap is the
+hole in the tractive effort at the change point. `drain_time: 0.0` takes the filling time.
+
+Everything after `absorption` in a circuit, plus `drain_time` and `droop`, may be left out;
+they default to 0, which is the behaviour of a transmission without any of them.
 
 ### Model (glTF)
 

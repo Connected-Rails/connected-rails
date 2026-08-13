@@ -180,7 +180,12 @@ pub fn br218() -> VehicleSpec {
                     (1500.0, 13_115.0),
                     (1650.0, 11_500.0),
                 ],
-                governor: Governor::Speed { steps: 0 },
+                // 4 % droop, so the engine speed in the converter range follows the load
+                // instead of standing on the notch.
+                governor: Governor::Speed {
+                    steps: 0,
+                    droop: 0.04,
+                },
                 inertia: 60.0,
                 response_time: 1.0,
             }),
@@ -194,7 +199,11 @@ pub fn br218() -> VehicleSpec {
                         stall_ratio: 2.4,
                         coupling_nu: 0.85,
                         absorption: 0.53,
+                        absorption_slope: 0.15,
                         shift_up_kmh: 72.0,
+                        // Primary influence: at the zero notch the change comes 25 km/h
+                        // earlier than at full power.
+                        shift_primary_kmh: 25.0,
                     },
                     Circuit {
                         kind: CircuitKind::Converter,
@@ -202,12 +211,17 @@ pub fn br218() -> VehicleSpec {
                         stall_ratio: 1.9,
                         coupling_nu: 0.85,
                         absorption: 0.53,
+                        absorption_slope: 0.15,
                         shift_up_kmh: 0.0,
+                        shift_primary_kmh: 0.0,
                     },
                 ],
                 // Quasi-continuous filling: the converter is the power control.
                 fill_steps: 0,
                 fill_time: 1.2,
+                // Emptying is the quicker half — the outgoing converter lets go before the
+                // incoming one takes hold, and that is the hole at the change point.
+                drain_time: 0.7,
                 hysteresis_kmh: 10.0,
                 final_ratio: 1.0,
                 wheel_diameter: 1.0,
@@ -383,7 +397,9 @@ pub fn railcar() -> VehicleSpec {
                         stall_ratio: 2.8,
                         coupling_nu: 0.85,
                         absorption: 0.0296,
+                        absorption_slope: 0.15,
                         shift_up_kmh: 85.0,
+                        shift_primary_kmh: 20.0,
                     },
                     // Above the change point a fluid coupling takes over — practically a
                     // direct drive, which is why the engine speed then follows the road.
@@ -393,12 +409,15 @@ pub fn railcar() -> VehicleSpec {
                         stall_ratio: 1.0,
                         coupling_nu: 1.0,
                         absorption: 1.0,
+                        absorption_slope: 0.0,
                         shift_up_kmh: 0.0,
+                        shift_primary_kmh: 0.0,
                     },
                 ],
                 // Five filling stages instead of continuous — the notches of the original.
                 fill_steps: 5,
                 fill_time: 0.9,
+                drain_time: 0.5,
                 hysteresis_kmh: 12.0,
                 final_ratio: 1.0,
                 wheel_diameter: 0.77,

@@ -344,11 +344,16 @@ gov-fill = fill-governed
 gov-fill-hint = the power controller is the fuel rack, the speed follows the load
 gov-notches = Notches
 gov-notches-hint = 0 = continuous
+gov-droop = Droop
+gov-droop-hint = share of the rated speed the set speed sags by at full rack — 0 = isochronous, original 0.03…0.05
 
+trm-suggest-hint = a starting set out of starting effort, top speed, rated speed, rated torque and wheel diameter — the fit against the plot starts here
 trm-fill-steps = Filling steps
 trm-fill-steps-hint = 0 = continuous, 1 = fill/empty only, higher = partial filling to the original
 trm-fill-time = Filling time
-trm-fill-time-hint = s to fill or empty a circuit
+trm-fill-time-hint = s to fill a circuit
+trm-drain-time = Emptying time
+trm-drain-time-hint = s to empty a circuit; 0 = same as the filling time
 trm-hysteresis = Change hysteresis
 trm-hysteresis-hint = km/h below the change-up point at which it changes back
 trm-final-ratio = Final drive
@@ -368,9 +373,13 @@ cir-stall-hint = µ at ν = 0
 cir-coupling-point = Coupling point
 cir-coupling-point-hint = ν at which µ has reached 1
 cir-absorption = Absorption λ
-cir-absorption-hint = N·m/(rad/s)² — the pump's rated torque at rated speed
+cir-absorption-hint = N·m/(rad/s)² at ν = 0 — the pump's rated torque at rated speed
+cir-absorption-slope = λ trend
+cir-absorption-slope-hint = λ(ν) = λ·(1 + trend·ν) — 0 nails the engine to one speed parabola over the whole converter range
 cir-shift-up = Change-up point
 cir-shift-up-hint = km/h — the last circuit ignores it
+cir-shift-primary = Primary influence
+cir-shift-primary-hint = km/h the change point sits lower at the zero notch — 0 = the change depends on speed alone
 action-add-circuit = + circuit
 
 ret-absorption = Absorption λ

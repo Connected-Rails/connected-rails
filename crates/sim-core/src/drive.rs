@@ -17,6 +17,7 @@
 //! The contact line is German: 15 kV 16.7 Hz, see [`crate::electric`].
 
 use serde::{Deserialize, Serialize};
+use std::f64::consts::TAU;
 
 /// Number of hydraulic circuits a transmission may have.
 /// (Voith transmissions have at most three: starting converter, running converter, coupling.)
@@ -185,6 +186,10 @@ pub enum Governor {
     Speed {
         /// Notches of the power controller; 0 = continuous.
         steps: u32,
+        /// Droop: share of the rated speed the set speed sags by between no load and full
+        /// rack. 0 is an isochronous governor, the original is 3…5 %.
+        #[serde(default)]
+        droop: f64,
     },
     /// Fill-governed: the power controller sets the fuel rack directly, the engine speed
     /// follows from the load. Shunting locos and railcars with mechanical injection pumps.
@@ -236,11 +241,22 @@ pub struct Circuit {
     pub stall_ratio: f64,
     /// Speed ratio ν = n_turbine/n_pump at which µ has fallen to 1 (the coupling point).
     pub coupling_nu: f64,
-    /// Absorption λ of the pump wheel [N·m/(rad/s)²] at full filling: `M_pump = λ·ω²·fill`.
-    /// Set it so that the pump absorbs the engine's rated torque at rated speed.
+    /// Absorption λ of the pump wheel at ν = 0 [N·m/(rad/s)²] at full filling:
+    /// `M_pump = λ(ν)·ω²·fill`. Set it so that the pump absorbs the engine's rated torque
+    /// at rated speed.
     pub absorption: f64,
+    /// Trend of λ over the speed ratio: `λ(ν) = absorption·(1 + slope·ν)`. 0 keeps λ
+    /// constant, which nails a speed-governed engine to one speed parabola for the whole
+    /// converter range; the original wanders, and this number is how far.
+    #[serde(default)]
+    pub absorption_slope: f64,
     /// Change up to the next circuit above this speed [km/h]. The last circuit ignores it.
     pub shift_up_kmh: f64,
+    /// Primary influence: at the zero notch the change point sits this much lower [km/h],
+    /// linearly over the notch. A BR 216 changes into the coupling around 35 km/h earlier
+    /// in notch 10 than in notch 15. 0 = the change point depends on speed alone.
+    #[serde(default)]
+    pub shift_primary_kmh: f64,
 }
 
 impl Circuit {
@@ -257,9 +273,9 @@ impl Circuit {
 
     /// Torque the pump wheel takes from the engine [N·m].
     pub fn pump_torque(self, omega_engine: f64, nu: f64, fill: f64) -> f64 {
-        let base = self.absorption * omega_engine * omega_engine * fill;
+        let lambda = self.absorption * (1.0 + self.absorption_slope * nu.max(0.0)).max(0.0);
+        let base = lambda * omega_engine * omega_engine * fill;
         match self.kind {
-            // A converter's absorption barely depends on the speed ratio.
             CircuitKind::Converter => base,
             // A coupling only absorbs what it slips.
             CircuitKind::Coupling => base * (1.0 - nu).clamp(0.0, 1.0),
@@ -279,8 +295,13 @@ pub struct Transmission {
     /// Steps of the filling between empty and full: 0 = continuous, 1 = fill/empty only,
     /// larger values are the multi-stage partial filling of the original.
     pub fill_steps: u32,
-    /// Time to fill or empty a circuit [s].
+    /// Time to fill a circuit [s].
     pub fill_time: f64,
+    /// Time to empty a circuit [s]; 0 takes [`Transmission::fill_time`]. Emptying is the
+    /// faster of the two, and the difference is what the change point feels like: the
+    /// outgoing circuit lets go before the incoming one has taken hold.
+    #[serde(default)]
+    pub drain_time: f64,
     /// Hysteresis of the change points [km/h]: the change back down happens this much
     /// below the change-up point, so the transmission does not hunt on a gradient.
     pub hysteresis_kmh: f64,
@@ -310,6 +331,119 @@ impl Transmission {
             0.0
         };
         (nu, total / radius * self.efficiency)
+    }
+
+    /// Time to empty a circuit [s] — [`Transmission::fill_time`] where none is given.
+    pub fn drain_time(&self) -> f64 {
+        if self.drain_time > 0.0 {
+            self.drain_time
+        } else {
+            self.fill_time
+        }
+    }
+
+    /// Change-up speed of circuit `index` [km/h] with the power controller at `demand`.
+    ///
+    /// Two numbers, not one: the primary influence pulls the change point down at a low
+    /// notch, so the change speed is a plane over (v, notch) rather than a line over v.
+    pub fn shift_up_kmh(&self, index: usize, demand: f64) -> f64 {
+        let circuit = self.circuits[index];
+        (circuit.shift_up_kmh - (1.0 - demand.clamp(0.0, 1.0)) * circuit.shift_primary_kmh).max(0.0)
+    }
+
+    /// Circuit the change schedule asks for at `kmh`, ignoring hysteresis — for the
+    /// steady-state curve, not for the running transmission.
+    pub fn circuit_at(&self, kmh: f64, demand: f64) -> usize {
+        let count = self.circuits.len().min(MAX_CIRCUITS);
+        (0..count)
+            .take_while(|&i| i + 1 < count && kmh > self.shift_up_kmh(i, demand))
+            .count()
+    }
+
+    /// Steady-state tractive effort [N] at full filling and full notch — the tractive
+    /// effort curve of the data sheet, the one a fit is made against.
+    ///
+    /// The engine settles where its full load torque meets what the pump absorbs: the
+    /// governor holds the rated speed as long as there is torque to spare, below that the
+    /// engine lugs down onto the balance point. That balance is the whole reason a
+    /// hydraulic drive cannot be read off a curve.
+    pub fn steady_force(&self, engine: &DieselEngine, v: f64) -> f64 {
+        let count = self.circuits.len().min(MAX_CIRCUITS);
+        if count == 0 {
+            return 0.0;
+        }
+        let v = v.abs();
+        let index = self.circuit_at(v * 3.6, 1.0);
+        let circuit = self.circuits[index];
+        let transmissions = self.count.max(1) as f64;
+        let working_point = |rpm: f64| {
+            let omega = rpm * TAU / 60.0;
+            let (nu, per_torque) = self.geometry(index, v, omega);
+            let pump = circuit.pump_torque(omega, nu, 1.0) * transmissions;
+            (pump, nu, per_torque)
+        };
+        // The pump takes ω², the engine map is nearly flat — so the balance is unique and
+        // bisection finds it.
+        let (mut lo, mut hi) = (engine.idle_rpm, engine.rated_rpm.max(engine.idle_rpm));
+        if working_point(hi).0 > engine.full_load_torque(hi) {
+            for _ in 0..40 {
+                let mid = 0.5 * (lo + hi);
+                if working_point(mid).0 > engine.full_load_torque(mid) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+        } else {
+            lo = hi;
+        }
+        let (pump, nu, per_torque) = working_point(lo);
+        pump * circuit.torque_ratio(nu) * per_torque
+    }
+
+    /// A starting parameter set out of five numbers of the data sheet: starting tractive
+    /// effort, top speed, rated engine speed, rated torque and wheel diameter.
+    ///
+    /// The converter figures cannot be computed back out of a given tractive effort curve,
+    /// so fitting against the plot is the only way there is. This only puts the fit within
+    /// reach of it — kind, stall ratio and coupling point stay as they are set.
+    pub fn suggest(&self, engine: &DieselEngine, start_force: f64, v_max: f64) -> Self {
+        let mut out = self.clone();
+        let count = out.circuits.len().min(MAX_CIRCUITS);
+        if count == 0 {
+            return out;
+        }
+        let omega = engine.rated_rpm.max(1.0) * TAU / 60.0;
+        let rated_torque = engine.full_load_torque(engine.rated_rpm).max(1.0);
+        let radius = (out.wheel_diameter / 2.0).max(0.05);
+        let final_ratio = out.final_ratio.max(0.01);
+        let efficiency = out.efficiency.max(0.1);
+        // λ so that the pumps together take the engine's rated torque at rated speed.
+        let absorption = rated_torque / (omega * omega) / out.count.max(1) as f64;
+        // The first circuit has to make the starting effort at stall, the last one has to
+        // still be turning at the top speed; the ones in between are spaced geometrically.
+        let ratio_first = start_force * radius
+            / (rated_torque * out.circuits[0].stall_ratio.max(0.1) * final_ratio * efficiency);
+        let ratio_last = out.circuits[count - 1].coupling_nu.max(0.05) * omega * radius
+            / ((v_max / 3.6).max(1.0) * final_ratio);
+        let ratio_first = ratio_first.max(1e-3);
+        for (i, circuit) in out.circuits.iter_mut().enumerate().take(count) {
+            let t = if count > 1 {
+                i as f64 / (count - 1) as f64
+            } else {
+                0.0
+            };
+            circuit.absorption = absorption;
+            circuit.ratio = ratio_first * (ratio_last.max(1e-3) / ratio_first).powf(t);
+            // Change up once the circuit has reached its coupling point at rated speed —
+            // past it a converter only loses efficiency.
+            circuit.shift_up_kmh = if i + 1 < count {
+                circuit.coupling_nu.max(0.05) * omega * radius / (circuit.ratio * final_ratio) * 3.6
+            } else {
+                0.0
+            };
+        }
+        out
     }
 }
 
@@ -477,12 +611,21 @@ impl TractionSpec {
                 max_force,
                 max_power,
                 ..
-            }
-            | TractionSpec::Diesel {
+            } => max_force.min(max_power / av.max(0.5)),
+            TractionSpec::Diesel {
                 max_force,
                 max_power,
+                engine,
+                transmission,
                 ..
-            } => max_force.min(max_power / av.max(0.5)),
+            } => match (engine, transmission) {
+                // With engine and transmission the curve is not a hyperbola but what the
+                // converters make of the engine map — change points and all.
+                (Some(engine), Some(transmission)) => {
+                    transmission.steady_force(engine, av).min(*max_force)
+                }
+                _ => max_force.min(max_power / av.max(0.5)),
+            },
         }
     }
 
@@ -573,6 +716,62 @@ mod tests {
         );
     }
 
+    fn engine() -> DieselEngine {
+        DieselEngine {
+            idle_rpm: 600.0,
+            rated_rpm: 1500.0,
+            max_rpm: 1650.0,
+            torque_curve: vec![
+                (600.0, 9_000.0),
+                (1000.0, 13_500.0),
+                (1500.0, 13_115.0),
+                (1650.0, 11_500.0),
+            ],
+            governor: Governor::Speed {
+                steps: 0,
+                droop: 0.04,
+            },
+            inertia: 60.0,
+            response_time: 1.0,
+        }
+    }
+
+    /// The BR 218's transmission, as `content` has it.
+    fn transmission() -> Transmission {
+        Transmission {
+            circuits: vec![
+                Circuit {
+                    kind: CircuitKind::Converter,
+                    ratio: 3.93,
+                    stall_ratio: 2.4,
+                    coupling_nu: 0.85,
+                    absorption: 0.53,
+                    absorption_slope: 0.15,
+                    shift_up_kmh: 72.0,
+                    shift_primary_kmh: 25.0,
+                },
+                Circuit {
+                    kind: CircuitKind::Converter,
+                    ratio: 1.50,
+                    stall_ratio: 1.9,
+                    coupling_nu: 0.85,
+                    absorption: 0.53,
+                    absorption_slope: 0.15,
+                    shift_up_kmh: 0.0,
+                    shift_primary_kmh: 0.0,
+                },
+            ],
+            fill_steps: 0,
+            fill_time: 1.2,
+            drain_time: 0.7,
+            hysteresis_kmh: 10.0,
+            final_ratio: 1.0,
+            wheel_diameter: 1.0,
+            count: 1,
+            efficiency: 0.95,
+        }
+    }
+
     #[test]
     fn torque_converter_multiplies_at_stall_and_stops_at_the_coupling_point() {
         let c = Circuit {
@@ -581,7 +780,9 @@ mod tests {
             stall_ratio: 2.4,
             coupling_nu: 0.85,
             absorption: 0.53,
+            absorption_slope: 0.0,
             shift_up_kmh: 72.0,
+            shift_primary_kmh: 0.0,
         };
         assert!((c.torque_ratio(0.0) - 2.4).abs() < 1e-9);
         assert!((c.torque_ratio(0.85) - 1.0).abs() < 1e-9);
@@ -600,10 +801,78 @@ mod tests {
             stall_ratio: 1.0,
             coupling_nu: 1.0,
             absorption: 0.5,
+            absorption_slope: 0.0,
             shift_up_kmh: 0.0,
+            shift_primary_kmh: 0.0,
         };
         assert!(c.pump_torque(150.0, 0.0, 1.0) > 0.0);
         assert!(c.pump_torque(150.0, 1.0, 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn absorption_walks_with_the_speed_ratio() {
+        let mut c = transmission().circuits[0];
+        c.absorption_slope = 0.0;
+        assert!((c.pump_torque(150.0, 0.0, 1.0) - c.pump_torque(150.0, 0.8, 1.0)).abs() < 1e-9);
+        // With a trend the pump takes more towards the coupling point, which is what pulls
+        // the engine speed off its parabola.
+        let c = transmission().circuits[0];
+        assert!(c.pump_torque(150.0, 0.8, 1.0) > c.pump_torque(150.0, 0.0, 1.0) * 1.1);
+    }
+
+    #[test]
+    fn the_primary_influence_changes_up_earlier_at_a_low_notch() {
+        let t = transmission();
+        assert!((t.shift_up_kmh(0, 1.0) - 72.0).abs() < 1e-9);
+        assert!((t.shift_up_kmh(0, 0.0) - 47.0).abs() < 1e-9);
+        // 60 km/h is the running converter at part load and the starting converter at full.
+        assert_eq!(t.circuit_at(60.0, 0.2), 1);
+        assert_eq!(t.circuit_at(60.0, 1.0), 0);
+    }
+
+    #[test]
+    fn the_steady_curve_falls_and_shows_the_change_point() {
+        let (engine, t) = (engine(), transmission());
+        let force = |kmh: f64| t.steady_force(&engine, kmh / 3.6);
+        // Starting effort of a BR 218: around 235 kN.
+        assert!(
+            (200_000.0..280_000.0).contains(&force(0.0)),
+            "{:.0} N at a stand",
+            force(0.0)
+        );
+        assert!(force(0.0) > force(60.0) && force(60.0) > force(140.0));
+        // The change into the running converter costs effort — that is the hole the driver
+        // feels, and the reason the curve cannot be one hyperbola.
+        assert!(
+            force(74.0) < force(70.0),
+            "{:.0} → {:.0} N over the change point",
+            force(70.0),
+            force(74.0)
+        );
+    }
+
+    #[test]
+    fn the_suggestion_lands_on_the_data_sheet_figures() {
+        // Five numbers in, the BR 218's hand-fitted set out — near enough to fit from.
+        let engine = engine();
+        let suggested = transmission().suggest(&engine, 235_000.0, 140.0);
+        let first = suggested.circuits[0];
+        assert!(
+            (first.absorption - 0.53).abs() < 0.01,
+            "λ {}",
+            first.absorption
+        );
+        assert!((first.ratio - 3.93).abs() < 0.05, "ratio {}", first.ratio);
+        assert!(
+            (50.0..80.0).contains(&first.shift_up_kmh),
+            "change point {:.0} km/h",
+            first.shift_up_kmh
+        );
+        // The last circuit still turns at the top speed, and it is the shortest one.
+        let last = suggested.circuits[1];
+        assert!(last.ratio < first.ratio);
+        assert_eq!(last.shift_up_kmh, 0.0);
+        assert!(suggested.steady_force(&engine, 0.0) > 150_000.0);
     }
 
     #[test]

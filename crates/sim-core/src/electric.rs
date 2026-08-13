@@ -305,9 +305,12 @@ fn step_diesel(
     let idle_help = ((engine.idle_rpm - state.engine_rpm) * 0.01).clamp(0.0, 1.0);
     let commanded = match engine.governor {
         Governor::Fill => demand.max(idle_help),
-        Governor::Speed { steps } => {
-            let target_rpm =
-                engine.idle_rpm + quantise(demand, steps) * (engine.rated_rpm - engine.idle_rpm);
+        Governor::Speed { steps, droop } => {
+            // Droop lets the set speed sag with the rack, so the engine speed in the
+            // converter range follows the load instead of standing still.
+            let target_rpm = engine.idle_rpm
+                + quantise(demand, steps) * (engine.rated_rpm - engine.idle_rpm)
+                - droop * engine.rated_rpm * state.engine_fill;
             // A mechanical governor integrates the speed error onto the rack.
             let gain = 1.0 / (engine.response_time.max(0.1) * 100.0);
             (state.engine_fill + (target_rpm - state.engine_rpm) * gain * dt)
@@ -373,23 +376,33 @@ fn step_transmission(
     let kmh = v.abs() * 3.6;
 
     // Change point. Up when the engaged circuit has run out, down only after the
-    // hysteresis — otherwise the transmission hunts on every gradient.
+    // hysteresis — otherwise the transmission hunts on every gradient. Both points move
+    // with the notch, that is the primary influence.
     let mut circuit = state.circuit.min(count - 1);
-    if circuit + 1 < count && kmh > transmission.circuits[circuit].shift_up_kmh {
+    if circuit + 1 < count && kmh > transmission.shift_up_kmh(circuit, demand) {
         circuit += 1;
     } else if circuit > 0
-        && kmh < transmission.circuits[circuit - 1].shift_up_kmh - transmission.hysteresis_kmh
+        && kmh < transmission.shift_up_kmh(circuit - 1, demand) - transmission.hysteresis_kmh
     {
         circuit -= 1;
     }
     state.circuit = circuit;
 
     // Filling is the power control: quantised into as many steps as the original has.
-    // The change itself needs no clutch — the old circuit runs empty while the new one fills.
+    // The change itself needs no clutch — the old circuit runs empty while the new one
+    // fills, and it does so at its own rate, which is what tears the hole in the tractive
+    // effort at the change point.
     let target_fill = quantise(demand, transmission.fill_steps);
-    let rate = 1.0 / transmission.fill_time.max(0.05);
+    let fill_rate = 1.0 / transmission.fill_time.max(0.05);
+    let drain_rate = 1.0 / transmission.drain_time().max(0.05);
     for (i, fill) in state.circuit_fill.iter_mut().enumerate().take(count) {
-        approach(fill, if i == circuit { target_fill } else { 0.0 }, rate, dt);
+        let target = if i == circuit { target_fill } else { 0.0 };
+        let rate = if target > *fill {
+            fill_rate
+        } else {
+            drain_rate
+        };
+        approach(fill, target, rate, dt);
     }
 
     let mut pump_torque = 0.0;
@@ -511,7 +524,10 @@ mod tests {
                     (1500.0, 13_115.0),
                     (1650.0, 11_500.0),
                 ],
-                governor: Governor::Speed { steps: 0 },
+                governor: Governor::Speed {
+                    steps: 0,
+                    droop: 0.04,
+                },
                 inertia: 60.0,
                 response_time: 1.0,
             }),
@@ -523,7 +539,9 @@ mod tests {
                         stall_ratio: 2.4,
                         coupling_nu: 0.85,
                         absorption: 0.53,
+                        absorption_slope: 0.15,
                         shift_up_kmh: 72.0,
+                        shift_primary_kmh: 25.0,
                     },
                     Circuit {
                         kind: CircuitKind::Converter,
@@ -531,11 +549,14 @@ mod tests {
                         stall_ratio: 1.9,
                         coupling_nu: 0.85,
                         absorption: 0.53,
+                        absorption_slope: 0.15,
                         shift_up_kmh: 0.0,
+                        shift_primary_kmh: 0.0,
                     },
                 ],
                 fill_steps: 0,
                 fill_time: 1.2,
+                drain_time: 0.7,
                 hysteresis_kmh: 10.0,
                 final_ratio: 1.0,
                 wheel_diameter: 1.0,
@@ -671,6 +692,90 @@ mod tests {
         }
         assert!(state.force < -20_000.0, "retarder {:.0} N", state.force);
         assert!(state.dynamic_force > 20_000.0);
+    }
+
+    /// The one thing that tells a hydraulic drive from a stepped gearbox with a soft jolt:
+    /// the outgoing converter is empty before the incoming one has taken hold.
+    #[test]
+    fn the_change_point_tears_a_hole_in_the_tractive_effort() {
+        let spec = diesel_hydraulic();
+        let mut state = running(&spec);
+        state.notch = 1.0;
+        for _ in 0..1200 {
+            step(&mut state, &spec, 70.0 / 3.6, 1.0 / 200.0);
+        }
+        let before = state.force;
+        let mut lowest = f64::INFINITY;
+        for _ in 0..400 {
+            step(&mut state, &spec, 74.0 / 3.6, 1.0 / 200.0);
+            lowest = lowest.min(state.force);
+        }
+        for _ in 0..1200 {
+            step(&mut state, &spec, 74.0 / 3.6, 1.0 / 200.0);
+        }
+        let after = state.force;
+        assert!(
+            lowest < before * 0.8 && lowest < after * 0.8,
+            "{:.0} → {:.0} → {:.0} kN over the change point",
+            before / 1000.0,
+            lowest / 1000.0,
+            after / 1000.0
+        );
+    }
+
+    #[test]
+    fn an_empty_converter_does_not_drag() {
+        let spec = diesel_hydraulic();
+        let mut state = running(&spec);
+        state.notch = 1.0;
+        for _ in 0..1200 {
+            step(&mut state, &spec, 60.0 / 3.6, 1.0 / 200.0);
+        }
+        assert!(state.force > 50_000.0);
+        // Coasting: nothing in the circuits, so nothing holds the train back either.
+        state.notch = 0.0;
+        for _ in 0..1200 {
+            step(&mut state, &spec, 60.0 / 3.6, 1.0 / 200.0);
+        }
+        assert!(state.force.abs() < 1.0, "drag {:.0} N", state.force);
+        assert!(state.circuit_fill.iter().all(|fill| *fill < 0.01));
+    }
+
+    #[test]
+    fn droop_lets_the_engine_speed_sag_under_load() {
+        let with_droop = diesel_hydraulic();
+        let mut isochronous = diesel_hydraulic();
+        if let TractionSpec::Diesel {
+            engine: Some(engine),
+            ..
+        } = &mut isochronous
+        {
+            engine.governor = Governor::Speed {
+                steps: 0,
+                droop: 0.0,
+            };
+        }
+        // Half notch, so the governor has rack left over — at full notch the converter
+        // saturates it and both engines lug down the same way.
+        let (mut a, mut b) = (running(&with_droop), running(&isochronous));
+        a.notch = 0.5;
+        b.notch = 0.5;
+        for _ in 0..4000 {
+            step(&mut a, &with_droop, 0.0, 1.0 / 200.0);
+            step(&mut b, &isochronous, 0.0, 1.0 / 200.0);
+        }
+        // The isochronous governor holds its set speed of 600 + 0.5·900 exactly.
+        assert!(
+            (b.engine_rpm - 1050.0).abs() < 5.0,
+            "{:.0} 1/min",
+            b.engine_rpm
+        );
+        assert!(
+            a.engine_rpm < b.engine_rpm - 10.0,
+            "droop {:.0} vs isochronous {:.0} 1/min",
+            a.engine_rpm,
+            b.engine_rpm
+        );
     }
 
     #[test]

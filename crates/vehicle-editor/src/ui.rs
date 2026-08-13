@@ -4,10 +4,10 @@
 //! forms. Every labelled field goes through [`row`], every section through
 //! `editor_ui::section`, so labels and fields line up across the whole panel.
 
-use crate::{Editor, PointerOverUi, model, powertrain};
+use crate::{Editor, model, powertrain};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use editor_ui::{colors, drag, space};
+use editor_ui::{colors, field, space};
 use i18n::t;
 use sim_core::doors::DoorSystem;
 use sim_core::safety::SafetyEquipment;
@@ -29,7 +29,6 @@ pub fn draw(
     mut contexts: EguiContexts,
     mut editor: ResMut<Editor>,
     mut assets: ResMut<AssetServer>,
-    mut over_ui: ResMut<PointerOverUi>,
     mut themed: Local<bool>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
@@ -40,7 +39,6 @@ pub fn draw(
         *themed = true;
         return Ok(());
     }
-    over_ui.0 = ctx.egui_wants_pointer_input();
     handle_shortcuts(&ctx, &mut editor);
 
     // A vehicle that was just opened brings its model along.
@@ -212,7 +210,7 @@ fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
 /// Left panel: the vehicle's base data (plan 15.2).
 fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
     egui::Panel::left("data")
-        .default_size(400.0)
+        .default_size(450.0)
         .resizable(true)
         .frame(editor_ui::panel_frame())
         .show(root, |ui| {
@@ -233,24 +231,19 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                     editor_ui::section(ui, "base", t!("group-base-data"), |ui| {
                         editor_ui::form_grid("base").show(ui, |ui| {
                             row(ui, "veh-length", |ui| {
-                                ui.add(drag(&mut spec.length, 0.1, 1.0..=100.0, "m"));
+                                field(ui, &mut spec.length, 0.1, 1.0..=100.0, "m");
                             });
                             row(ui, "veh-gauge", |ui| {
-                                ui.add(drag(&mut spec.gauge, 0.001, 0.6..=2.0, "m"));
+                                field(ui, &mut spec.gauge, 0.001, 0.6..=2.0, "m");
                             });
                             row(ui, "veh-vmax", |ui| {
-                                ui.add(drag(&mut spec.v_max, 1.0, 0.0..=400.0, "km/h"));
+                                field(ui, &mut spec.v_max, 1.0, 0.0..=400.0, "km/h");
                             });
                             row(ui, "veh-mass", |ui| {
-                                ui.add(drag(
-                                    &mut spec.mass_empty,
-                                    100.0,
-                                    1_000.0..=200_000.0,
-                                    "kg",
-                                ));
+                                field(ui, &mut spec.mass_empty, 100.0, 1_000.0..=200_000.0, "kg");
                             });
                             row(ui, "veh-payload", |ui| {
-                                ui.add(drag(&mut spec.max_payload, 100.0, 0.0..=120_000.0, "kg"));
+                                field(ui, &mut spec.max_payload, 100.0, 0.0..=120_000.0, "kg");
                             });
                         });
                     });
@@ -258,18 +251,22 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                     editor_ui::section(ui, "gear", t!("group-running-gear"), |ui| {
                         editor_ui::form_grid("gear").show(ui, |ui| {
                             row(ui, "veh-rotating-mass", |ui| {
-                                ui.add(drag(&mut spec.rotating_mass_factor, 0.005, 0.0..=0.5, ""));
+                                field(ui, &mut spec.rotating_mass_factor, 0.005, 0.0..=0.5, "");
                             });
                             row(ui, "veh-axles", |ui| {
-                                ui.add(drag(&mut spec.axles, 1.0, 0.0..=32.0, ""));
+                                field(ui, &mut spec.axles, 1.0, 0.0..=32.0, "");
                             });
                             row(ui, "veh-axle-base", |ui| {
-                                ui.add(drag(&mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m"));
+                                field(ui, &mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m");
                             });
                             row(ui, "veh-tilt", |ui| {
-                                ui.add(drag(&mut spec.tilt_angle_deg, 0.5, 0.0..=12.0, "°"));
+                                field(ui, &mut spec.tilt_angle_deg, 0.5, 0.0..=12.0, "°");
                             });
                             row(ui, "veh-hunting", |ui| {
+                                // Slider plus its value box span exactly one
+                                // field width, keeping the column's right edge.
+                                ui.spacing_mut().slider_width = 88.0;
+                                ui.spacing_mut().interact_size.x = 54.0;
                                 ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
                             });
                         });
@@ -278,7 +275,7 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                     editor_ui::section(ui, "resistance", t!("group-resistance"), |ui| {
                         editor_ui::form_grid("resistance").show(ui, |ui| {
                             row(ui, "res-rolling", |ui| {
-                                ui.add(drag(&mut spec.davis.a, 10.0, 0.0..=20_000.0, "N"));
+                                field(ui, &mut spec.davis.a, 10.0, 0.0..=20_000.0, "N");
                                 if ui
                                     .button(t!("action-suggest"))
                                     .on_hover_text(t!("res-rolling-suggest-hint"))
@@ -289,41 +286,38 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor) {
                                 }
                             });
                             row(ui, "res-speed-term", |ui| {
-                                ui.add(drag(&mut spec.davis.b, 1.0, 0.0..=500.0, "N·s/m"));
+                                field(ui, &mut spec.davis.b, 1.0, 0.0..=500.0, "N·s/m");
                             });
 
                             let mut use_cw_a = spec.cw_a.is_some();
                             editor_ui::form_label(ui, t!("res-air"));
                             ui.horizontal(|ui| {
-                                if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
-                                    spec.cw_a = use_cw_a.then_some(6.0);
-                                }
+                                // Field first so it keeps the column edge; the
+                                // checkbox toggles between cw·A and Davis c.
                                 match &mut spec.cw_a {
                                     Some(cw_a) => {
-                                        ui.add(drag(cw_a, 0.1, 0.1..=40.0, "m²"));
+                                        field(ui, cw_a, 0.1, 0.1..=40.0, "m²");
                                     }
                                     None => {
-                                        ui.add(drag(&mut spec.davis.c, 0.1, 0.0..=100.0, ""))
+                                        field(ui, &mut spec.davis.c, 0.1, 0.0..=100.0, "")
                                             .on_hover_text(t!("res-davis-c-hint"));
                                     }
+                                }
+                                if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
+                                    spec.cw_a = use_cw_a.then_some(6.0);
                                 }
                             });
                             ui.end_row();
 
                             row(ui, "res-curve", |ui| {
-                                ui.add(drag(
-                                    &mut spec.curve_resistance_factor,
-                                    0.05,
-                                    0.0..=3.0,
-                                    "",
-                                ));
+                                field(ui, &mut spec.curve_resistance_factor, 0.05, 0.0..=3.0, "");
                             });
                         });
                         ui.add_space(space::XS);
                         ui.label(
                             egui::RichText::new(t!(
                                 "res-at-100",
-                                newtons = format!("{:.0}", spec.resistance(100.0 / 3.6))
+                                newtons = editor_ui::group_digits(spec.resistance(100.0 / 3.6))
                             ))
                             .small()
                             .color(colors::TEXT_SECONDARY),
@@ -384,13 +378,9 @@ fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
             SafetyEquipment::None
         };
     }
-    if let SafetyEquipment::De {
-        pzb,
-        lzb,
-        sifa,
-        train_type,
-    } = &mut spec.safety
-    {
+    // The train category (Zugart) is deliberately not vehicle data here: the
+    // driver sets it in the cab from the brake sheet (train type switch).
+    if let SafetyEquipment::De { pzb, lzb, sifa, .. } = &mut spec.safety {
         editor_ui::form_grid("safety").show(ui, |ui| {
             row(ui, "eq-pzb", |ui| {
                 // Type designations of the equipment are names, not prose — they stay as they are.
@@ -407,18 +397,6 @@ fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
                         (Some(PzbVariant::Pzb60), "ÖBB PZB 60".into()),
                         (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5".into()),
                         (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0".into()),
-                    ],
-                );
-            });
-            row(ui, "eq-train-type", |ui| {
-                combo(
-                    ui,
-                    "train_type",
-                    train_type,
-                    &[
-                        (TrainType::O, t!("train-type-o")),
-                        (TrainType::M, t!("train-type-m")),
-                        (TrainType::U, t!("train-type-u")),
                     ],
                 );
             });
@@ -580,7 +558,7 @@ fn lod_list(ui: &mut egui::Ui, editor: &mut Editor) {
                 {
                     preview = lod.level;
                 }
-                ui.add(drag(&mut lod.distance, 10.0, 10.0..=20_000.0, "m"));
+                field(ui, &mut lod.distance, 10.0, 10.0..=20_000.0, "m");
                 if ui.small_button("×").clicked() {
                     remove_lod = Some(i);
                 }
@@ -626,10 +604,11 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
                     });
                 });
                 ui.horizontal(|ui| {
+                    // The function field takes what the motion combo leaves.
                     changed |= ui
                         .add(
                             egui::TextEdit::singleline(&mut part.function)
-                                .desired_width(140.0)
+                                .desired_width(ui.available_width() - MOTION_COMBO_W - space::S)
                                 .hint_text(t!("part-function-hint")),
                         )
                         .changed();
@@ -687,6 +666,9 @@ fn node_list(ui: &mut egui::Ui, editor: &mut Editor) {
     }
 }
 
+/// Width of the motion combo inside a part card.
+const MOTION_COMBO_W: f32 = 110.0;
+
 /// Kind of motion of a part.
 fn motion_combo(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
     let mut changed = false;
@@ -697,7 +679,7 @@ fn motion_combo(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
     };
     egui::ComboBox::from_id_salt(("motion", id))
         .selected_text(t!(key))
-        .width(96.0)
+        .width(MOTION_COMBO_W)
         .show_ui(ui, |ui| {
             if ui
                 .selectable_label(key == "motion-visible", t!("motion-visible"))
@@ -730,13 +712,15 @@ fn motion_combo(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
     changed
 }
 
-/// Axis and amount of a rotating or translating part.
+/// Axis and amount of a rotating or translating part: four equal-width drag
+/// fields, so the row reads as one line of coordinates.
 fn motion_params(ui: &mut egui::Ui, motion: &mut Motion) -> bool {
     let mut changed = false;
     match motion {
         Motion::Visibility => {}
         Motion::Rotate { axis, degrees } => {
             ui.horizontal(|ui| {
+                ui.spacing_mut().interact_size.x = 64.0;
                 changed |= axis_editor(ui, axis);
                 changed |= ui
                     .add(egui::DragValue::new(degrees).speed(1.0).suffix("\u{A0}°"))
@@ -745,6 +729,7 @@ fn motion_params(ui: &mut egui::Ui, motion: &mut Motion) -> bool {
         }
         Motion::Translate { axis, metres } => {
             ui.horizontal(|ui| {
+                ui.spacing_mut().interact_size.x = 64.0;
                 changed |= axis_editor(ui, axis);
                 changed |= ui
                     .add(egui::DragValue::new(metres).speed(0.01).suffix("\u{A0}m"))
@@ -765,10 +750,7 @@ fn axis_editor(ui: &mut egui::Ui, axis: &mut [f32; 3]) -> bool {
                 .color(colors::TEXT_SECONDARY),
         );
         changed |= ui
-            .add_sized(
-                egui::vec2(40.0, 20.0),
-                egui::DragValue::new(value).speed(0.1).range(-1.0..=1.0),
-            )
+            .add(egui::DragValue::new(value).speed(0.1).range(-1.0..=1.0))
             .changed();
     }
     changed

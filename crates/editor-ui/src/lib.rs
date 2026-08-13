@@ -58,6 +58,9 @@ pub mod space {
     /// Width of the label column of every form grid — one value, so the
     /// fields of all sections line up.
     pub const LABEL_COL: f32 = 168.0;
+    /// Width of every control in a value column: numeric fields and combo
+    /// boxes share it, so the column has one clean right edge.
+    pub const FIELD: f32 = 150.0;
 }
 
 /// Name of the semibold font family registered by [`apply`].
@@ -126,7 +129,7 @@ fn style() -> egui::Style {
     // Minimum widget size; the x also is the resting width of a drag value.
     spacing.interact_size = vec2(84.0, 22.0);
     spacing.slider_width = 140.0;
-    spacing.combo_width = 140.0;
+    spacing.combo_width = space::FIELD;
     spacing.tooltip_width = 360.0;
 
     style
@@ -339,6 +342,22 @@ pub fn drag<'a, N: egui::emath::Numeric>(
             .custom_parser(parse_grouped);
     }
     d
+}
+
+/// Adds a [`drag`] field at the shared [`space::FIELD`] width, so numeric
+/// fields and combo boxes in a value column share one footprint.
+pub fn field<N: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    value: &mut N,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+    unit: &'static str,
+) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().interact_size.x = space::FIELD;
+        ui.add(drag(value, speed, range, unit))
+    })
+    .inner
 }
 
 #[cfg(test)]

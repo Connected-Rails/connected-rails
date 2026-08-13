@@ -316,7 +316,9 @@ pub enum SafetyEquipment {
         lzb: bool,
         #[serde(default)]
         sifa: Option<de::SifaKind>,
-        /// Train category the PZB starts in (the driver sets it from the brake sheet).
+        /// Initial position of the train type switch (Zugartschalter). The
+        /// driver changes it in the cab at standstill; it is not shown in the
+        /// vehicle editor.
         #[serde(default)]
         train_type: de::TrainType,
     },
@@ -368,5 +370,48 @@ impl SafetySystems {
             SafetySystems::None => {}
             SafetySystems::De(de) => de.power_on(),
         }
+    }
+
+    /// Position of the train type switch (Zugartschalter), if a PZB is fitted.
+    pub fn train_type(&self) -> Option<de::TrainType> {
+        match self {
+            SafetySystems::None => None,
+            SafetySystems::De(de) => de.pzb.as_ref().map(|pzb| pzb.train_type),
+        }
+    }
+
+    /// Sets the train type switch. The driver reads the category off the brake
+    /// sheet and sets the switch before departure — while the train moves the
+    /// switch is ignored, like the sealed switch on the real vehicle.
+    pub fn set_train_type(&mut self, train_type: de::TrainType, speed: f64) {
+        const STANDSTILL: f64 = 0.5; // m/s
+        if speed.abs() > STANDSTILL {
+            return;
+        }
+        if let SafetySystems::De(de) = self
+            && let Some(pzb) = &mut de.pzb
+        {
+            pzb.train_type = train_type;
+        }
+    }
+}
+
+#[cfg(test)]
+mod train_type_switch {
+    use super::*;
+
+    #[test]
+    fn switches_at_standstill_only() {
+        let mut systems = SafetyEquipment::De {
+            pzb: Some(de::PzbVariant::Pzb90V20),
+            lzb: false,
+            sifa: None,
+            train_type: de::TrainType::O,
+        }
+        .build();
+        systems.set_train_type(de::TrainType::M, 10.0);
+        assert_eq!(systems.train_type(), Some(de::TrainType::O));
+        systems.set_train_type(de::TrainType::M, 0.0);
+        assert_eq!(systems.train_type(), Some(de::TrainType::M));
     }
 }

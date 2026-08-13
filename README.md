@@ -204,6 +204,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `Space` | Sifa (driver's safety device) |
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
 | `N` / `M` / `B` | LZB takeover / end / function test |
+| `U` | Train type switch (Zugartschalter): O → M → U, at standstill |
 | `H` | Horn |
 | `1`–`4` | Battery / pantograph / main switch / air compressor |
 | `5` | Start the diesel engine |

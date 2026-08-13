@@ -398,7 +398,17 @@ hud-scenario-failed = Scenario failed
 hud-outcome = { $result }: { $reason }
 hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
 hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake
-hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera
+hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera  F9 mods
+
+## Mod manager
+
+mods-title = Mods
+mods-none = No mods installed — put a mod directory into mods/.
+mods-missing-depends = requires: { $depends } (missing or switched off)
+mods-content = Content: { $vehicles } vehicles, { $lines } lines, { $scenarios } scenarios, { $signals } signal types, { $scripts } scripts
+mods-log = Warnings:
+mods-restart = Change takes effect after a restart.
+mods-keys = ↑/↓ select   Enter on/off   F9 close
 
 ## Scoring
 

@@ -211,6 +211,7 @@ fn switch_and_route_actions_are_wired() {
                 ],
                 once: true,
             }],
+            script: None,
         },
         re_4711(),
     );

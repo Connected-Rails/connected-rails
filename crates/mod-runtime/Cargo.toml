@@ -7,9 +7,7 @@ license.workspace = true
 [dependencies]
 sim-core = { workspace = true }
 content = { workspace = true }
+track-model = { workspace = true }
 serde = { workspace = true }
 ron = { workspace = true }
 mlua = { workspace = true }
-
-[dev-dependencies]
-track-model = { workspace = true }

@@ -48,10 +48,53 @@ pub struct ModManifest {
     pub depends: Vec<String>,
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+    /// The mod's directory — not in the file, filled in while reading.
+    #[serde(skip)]
+    pub dir: PathBuf,
 }
 
 fn enabled_by_default() -> bool {
     true
+}
+
+impl ModManifest {
+    /// Writes `enabled` back into `mod.ron`. Only that one field is touched, so comments
+    /// and formatting of the file survive.
+    pub fn set_enabled(&mut self, enabled: bool) -> std::io::Result<()> {
+        let path = self.dir.join("mod.ron");
+        let text = std::fs::read_to_string(&path)?;
+        let value = if enabled { "true" } else { "false" };
+        let patched = match field_span(&text, "enabled") {
+            Some(span) => format!("{}{value}{}", &text[..span.start], &text[span.end..]),
+            // No such field yet: the manifest is a RON struct, so it opens with `(`.
+            None => match text.find('(') {
+                Some(i) => format!("{}\n    enabled: {value},{}", &text[..=i], &text[i + 1..]),
+                None => return Err(std::io::ErrorKind::InvalidData.into()),
+            },
+        };
+        std::fs::write(&path, patched)?;
+        self.enabled = enabled;
+        Ok(())
+    }
+}
+
+/// Byte range of the value of a `<name>: <value>` line in a RON file. Line-based on
+/// purpose: a `description` that mentions the field name must not be hit.
+fn field_span(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    let prefix = format!("{name}:");
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
+            let value = rest.trim_start();
+            let start =
+                offset + (line.len() - trimmed.len()) + prefix.len() + (rest.len() - value.len());
+            let end = start + value.find([',', ')', '\r', '\n']).unwrap_or(value.len());
+            return Some(start..end);
+        }
+        offset += line.len();
+    }
+    None
 }
 
 /// Everything the loaded mods contribute.
@@ -86,8 +129,16 @@ impl Mods {
                 .map_err(|e| e.to_string())
                 .and_then(|t| ron::from_str::<ModManifest>(&t).map_err(|e| e.to_string()))
             {
-                Ok(man) if man.enabled => pending.push((dir, man)),
-                Ok(_) => {}
+                Ok(mut man) => {
+                    man.dir = dir.clone();
+                    if man.enabled {
+                        pending.push((dir, man));
+                    } else {
+                        // Listed, not read — the mod manager has to be able to switch it
+                        // back on.
+                        mods.manifests.push(man);
+                    }
+                }
                 Err(e) => mods.warnings.push(format!("{}: {e}", file.display())),
             }
         }
@@ -112,7 +163,22 @@ impl Mods {
             loaded.push(man.id.clone());
             mods.manifests.push(man);
         }
+        // Stable order for the mod manager; the load order above is already done with.
+        mods.manifests.sort_by(|a, b| a.id.cmp(&b.id));
         mods
+    }
+
+    /// Dependencies of `id` that are not present as an enabled mod (plan 19.7,
+    /// dependency check of the mod manager).
+    pub fn missing_depends(&self, id: &str) -> Vec<String> {
+        let Some(man) = self.manifests.iter().find(|m| m.id == id) else {
+            return Vec::new();
+        };
+        man.depends
+            .iter()
+            .filter(|d| !self.manifests.iter().any(|m| m.enabled && m.id == ***d))
+            .cloned()
+            .collect()
     }
 
     fn read_mod(&mut self, dir: &Path, man: &ModManifest) {
@@ -333,5 +399,63 @@ mod tests {
         let mods = Mods::load("does/not/exist");
         assert!(mods.manifests.is_empty());
         assert!(mods.warnings.is_empty());
+    }
+
+    /// Writes two mods into a scratch directory: `a` is off, `b` depends on `a`.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("trainsim-mods-{name}"));
+        let _ = std::fs::remove_dir_all(&root);
+        for (id, text) in [
+            (
+                "a",
+                "(\n    id: \"a\",\n    // a comment the mod manager must not eat\n    \
+                 name: \"A\",\n    enabled: false,\n)\n",
+            ),
+            (
+                "b",
+                "(\n    id: \"b\",\n    name: \"B\",\n    depends: [\"a\"],\n)\n",
+            ),
+        ] {
+            std::fs::create_dir_all(root.join(id)).unwrap();
+            std::fs::write(root.join(id).join("mod.ron"), text).unwrap();
+        }
+        root
+    }
+
+    /// The mod manager needs to see switched-off mods, otherwise it cannot switch them on.
+    #[test]
+    fn disabled_mods_are_listed_but_not_read() {
+        let root = scratch("listed");
+        let mods = Mods::load(&root);
+        let ids: Vec<&str> = mods.manifests.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert!(!mods.manifests[0].enabled);
+        // `b` depends on the switched-off `a` — that is what the dependency check reports.
+        assert_eq!(mods.missing_depends("b"), ["a"]);
+        assert!(mods.missing_depends("a").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Switching writes back into `mod.ron` — and touches nothing else in the file.
+    #[test]
+    fn enabling_a_mod_patches_only_that_field() {
+        let root = scratch("toggle");
+        let mut mods = Mods::load(&root);
+        mods.manifests[0].set_enabled(true).unwrap();
+
+        let text = std::fs::read_to_string(root.join("a").join("mod.ron")).unwrap();
+        assert!(text.contains("enabled: true,"), "{text}");
+        assert!(
+            text.contains("a comment the mod manager must not eat"),
+            "{text}"
+        );
+
+        // `b` has no `enabled` field at all — switching it off has to add one.
+        mods.manifests[1].set_enabled(false).unwrap();
+        let reloaded = Mods::load(&root);
+        assert!(reloaded.manifests[0].enabled);
+        assert!(!reloaded.manifests[1].enabled);
+        assert!(reloaded.warnings.is_empty(), "{:?}", reloaded.warnings);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

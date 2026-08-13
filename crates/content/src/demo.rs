@@ -171,6 +171,7 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         routes: vec![],
+        script: None,
     }
 }
 

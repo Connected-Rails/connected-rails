@@ -5,19 +5,27 @@
 //! a table of overrides; it never gets a handle on the simulation itself. That keeps the
 //! trust boundary at exactly one place: the value check when the answer is applied.
 //!
-//! Two hooks exist, because only two things genuinely need behaviour:
+//! Four hooks exist, because only these things genuinely need behaviour:
 //!
 //! | file | hook | called for |
 //! |---|---|---|
 //! | `vehicles/*.ron` → `script` | `update(ctx)` | every train whose leading vehicle names a script |
 //! | `signals/*.ron` → `script` | `aspect(ctx)` | every signal of that type, after the rule table |
+//! | `lines/*.ron` → `script` | `on_load(ctx)`, `on_frame(ctx)` | the line that is being driven |
+//! | `scenarios/*.ron` → `script` | `on_load(ctx)`, `on_frame(ctx)` | the loaded scenario |
+//!
+//! Line and scenario hooks decide *when*, not *what*: they fire events of the scenario by
+//! name, and the actions of those events stay declarative RON.
 
 use crate::Mods;
+use content::route::LineSource;
 use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value};
 use sim_core::Sim;
 use sim_core::interlock::{DistantAspect, MainAspect};
+use sim_core::scenario;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use track_model::{NodeId, SwitchPosition};
 
 /// The Lua state with all mod scripts loaded.
 pub struct Scripts {
@@ -62,6 +70,14 @@ impl Scripts {
         self.lua.create_table().expect("empty table")
     }
 
+    /// Notes a script error once. Hooks run every frame, so the same complaint would
+    /// otherwise fill the log at 60 Hz.
+    pub fn error(&mut self, message: String) {
+        if !self.errors.contains(&message) {
+            self.errors.push(message);
+        }
+    }
+
     /// Calls `<script>.<hook>(ctx)`. `None` if the script is unknown, has no such hook,
     /// returned no table, or failed — in the last case it is disabled.
     pub fn call(&mut self, script: &str, hook: &str, ctx: Table) -> Option<Table> {
@@ -85,13 +101,19 @@ impl Scripts {
 pub struct ModRuntime {
     pub mods: Mods,
     pub scripts: Scripts,
+    /// Scripts of the line and the scenario in use, filled by [`ModRuntime::begin`].
+    world: Vec<String>,
 }
 
 impl ModRuntime {
     pub fn load(root: impl AsRef<Path>) -> Self {
         let mods = Mods::load(root);
         let scripts = Scripts::new(&mods.scripts);
-        Self { mods, scripts }
+        Self {
+            mods,
+            scripts,
+            world: Vec::new(),
+        }
     }
 
     /// Warnings from loading plus script errors so far.
@@ -107,8 +129,19 @@ impl ModRuntime {
     /// crossings per train per second for behaviour that reacts in tenths of a second.
     /// Move a hook into `Sim::step` if it ever needs to see every step.
     pub fn post_step(&mut self, sim: &mut Sim, dt: f64) {
+        self.world_hooks(sim, "on_frame", dt);
         self.signal_hooks(sim);
         self.vehicle_hooks(sim, dt);
+    }
+
+    /// Registers the hooks of the line and the scenario in use and calls `on_load` once
+    /// (plan 19.7). Call it after the scenario has been set, before the first frame.
+    pub fn begin(&mut self, sim: &mut Sim, line: &LineSource) {
+        self.world = [line.script.clone(), sim.scenario.scenario.script.clone()]
+            .into_iter()
+            .flatten()
+            .collect();
+        self.world_hooks(sim, "on_load", 0.0);
     }
 
     /// `aspect(ctx)` — may override what the rule table decided.
@@ -145,8 +178,7 @@ impl ModRuntime {
                     Some(main) => signal.aspect.main = Some(main),
                     None => self
                         .scripts
-                        .errors
-                        .push(format!("{script}: unknown aspect {name:?}")),
+                        .error(format!("{script}: unknown aspect {name:?}")),
                 }
             }
             if let Ok(Some(name)) = out.get::<Option<String>>("distant") {
@@ -154,8 +186,7 @@ impl ModRuntime {
                     Some(distant) => signal.aspect.distant = Some(distant),
                     None => self
                         .scripts
-                        .errors
-                        .push(format!("{script}: unknown aspect {name:?}")),
+                        .error(format!("{script}: unknown aspect {name:?}")),
                 }
             }
             if let Ok(speed) = out.get::<Option<f64>>("speed") {
@@ -218,6 +249,92 @@ impl ModRuntime {
             }
         }
     }
+
+    /// `on_load(ctx)` / `on_frame(ctx)` of the line and the scenario (plan 19.7).
+    ///
+    /// The script decides *when*, the RON says *what*: `fire` names events of the scenario
+    /// and their declarative actions run. `message` and `switch` are there for a line that
+    /// carries behaviour of its own without a scenario.
+    fn world_hooks(&mut self, sim: &mut Sim, hook: &str, dt: f64) {
+        for i in 0..self.world.len() {
+            let script = self.world[i].clone();
+            let player = sim.scenario.scenario.player_train;
+            let head = sim.trains.get(player).map(|t| t.vehicles[0].pos);
+            let ctx = self.scripts.context();
+            let _ = ctx.set("dt", dt);
+            let _ = ctx.set("time", sim.time);
+            let _ = ctx.set("trains", sim.trains.len() as u32);
+            let _ = ctx.set("player", player as u32);
+            let _ = ctx.set("finished", sim.scenario.is_finished());
+            let _ = ctx.set("bonus", sim.scenario.bonus);
+            if let Some(train) = sim.trains.get(player) {
+                let _ = ctx.set("v_kmh", train.speed_kmh());
+            }
+            if let Some(pos) = head {
+                let _ = ctx.set("edge", pos.edge.0);
+                let _ = ctx.set("s", pos.s);
+            }
+            // Which events have already fired, so a script can chain on them.
+            let fired = self.scripts.context();
+            for event in &sim.scenario.scenario.events {
+                if let Some(t) = sim.scenario.fired_at(&event.name) {
+                    let _ = fired.set(event.name.as_str(), t);
+                }
+            }
+            let _ = ctx.set("fired", fired);
+
+            let Some(out) = self.scripts.call(&script, hook, ctx) else {
+                continue;
+            };
+            if let Ok(Some(text)) = out.get::<Option<String>>("message") {
+                let announcement = out
+                    .get::<Option<bool>>("announcement")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(false);
+                sim.scenario.message(sim.time, text, announcement);
+            }
+            if let Ok(Some(names)) = out.get::<Option<Vec<String>>>("fire") {
+                for name in names {
+                    if sim.scenario.has_event(&name) {
+                        scenario::fire(sim, &name);
+                    } else {
+                        self.scripts
+                            .error(format!("{script}: unknown event {name:?}"));
+                    }
+                }
+            }
+            if let Ok(Some(table)) = out.get::<Option<Table>>("switch") {
+                self.set_switch(sim, &script, &table);
+            }
+        }
+    }
+
+    /// `switch = { node = 3, position = "diverging" }` — the one thing a line script can do
+    /// without a scenario to fire events in.
+    fn set_switch(&mut self, sim: &mut Sim, script: &str, table: &Table) {
+        let Ok(node) = table.get::<u32>("node") else {
+            return;
+        };
+        let position = match table.get::<String>("position").as_deref() {
+            Ok("straight") => SwitchPosition::Straight,
+            Ok("diverging") => SwitchPosition::Diverging,
+            Ok(other) => {
+                self.scripts
+                    .error(format!("{script}: unknown switch position {other:?}"));
+                return;
+            }
+            Err(_) => return,
+        };
+        match sim.net.switch_mut(NodeId(node)) {
+            Some(switch) => {
+                let _ = switch.command(position);
+            }
+            None => self
+                .scripts
+                .error(format!("{script}: no switch at node {node}")),
+        }
+    }
 }
 
 fn main_name(aspect: Option<MainAspect>) -> Option<&'static str> {
@@ -264,6 +381,43 @@ mod tests {
 
     fn runtime() -> ModRuntime {
         ModRuntime::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../../mods"))
+    }
+
+    /// A runtime whose only world script is the given source.
+    fn world_runtime(source: &str) -> ModRuntime {
+        ModRuntime {
+            mods: Mods::default(),
+            scripts: Scripts::new(&BTreeMap::from([(
+                "test:world".to_string(),
+                source.to_string(),
+            )])),
+            world: vec!["test:world".to_string()],
+        }
+    }
+
+    /// The example line with a scenario of one script-only event worth 7 points.
+    fn world_sim() -> Sim {
+        use sim_core::scenario::{Action, Event, Scenario, Trigger};
+
+        let compiled = content::musterbahn().compile().expect("line compiles");
+        let mut sim = Sim::new(compiled.net, compiled.interlock, 1);
+        sim.set_scenario(
+            Scenario {
+                name: "test".into(),
+                events: vec![Event {
+                    name: "boom".into(),
+                    trigger: Trigger::Never,
+                    actions: vec![Action::Score {
+                        points: 7,
+                        reason: "script".into(),
+                    }],
+                    once: true,
+                }],
+                ..Default::default()
+            },
+            sim_core::timetable::Timetable::default(),
+        );
+        sim
     }
 
     fn afb(scripts: &mut Scripts, v_kmh: f64, target: f64) -> Option<f64> {
@@ -326,6 +480,112 @@ mod tests {
         let ctx = scripts.context();
         assert!(scripts.call("test:boom", "update", ctx).is_none());
         assert_eq!(scripts.errors.len(), 1);
+    }
+
+    /// `Trigger::Never` waits for the script; the script decides the moment, the RON keeps
+    /// the actions.
+    #[test]
+    fn a_scenario_script_fires_an_event_by_name() {
+        let mut rt = world_runtime(
+            "return { on_frame = function(ctx) \
+                 if ctx.time >= 0.0 then return { fire = { 'boom' } } end \
+             end }",
+        );
+        let mut sim = world_sim();
+
+        // On its own the event never comes — that is what `Never` means.
+        sim.advance(1.0);
+        assert_eq!(sim.scenario.bonus, 0);
+
+        rt.post_step(&mut sim, 0.1);
+        assert_eq!(sim.scenario.bonus, 7);
+        assert!(sim.scenario.fired_at("boom").is_some());
+        // `once`: a second call changes nothing.
+        rt.post_step(&mut sim, 0.1);
+        assert_eq!(sim.scenario.bonus, 7);
+        assert!(rt.log().is_empty(), "log: {:?}", rt.log());
+    }
+
+    #[test]
+    fn on_load_runs_once_and_can_speak() {
+        let mut rt = world_runtime(
+            "return { on_load = function(ctx) return { message = 'ready', announcement = true } end }",
+        );
+        let mut sim = world_sim();
+        sim.scenario.scenario.script = Some("test:world".into());
+        let line = content::musterbahn();
+        rt.begin(&mut sim, &line);
+        assert_eq!(sim.scenario.messages.len(), 1);
+        assert_eq!(sim.scenario.messages[0].text, "ready");
+        assert!(sim.scenario.messages[0].announcement);
+
+        // The script has no `on_frame`, so the per-frame call is a no-op — a script may
+        // implement either hook or both.
+        rt.post_step(&mut sim, 0.1);
+        assert_eq!(sim.scenario.messages.len(), 1);
+    }
+
+    /// A typo in an event name is reported — but once, not on every frame.
+    #[test]
+    fn an_unknown_event_is_reported_a_single_time() {
+        let mut rt =
+            world_runtime("return { on_frame = function(ctx) return { fire = { 'nope' } } end }");
+        let mut sim = world_sim();
+        rt.post_step(&mut sim, 0.1);
+        rt.post_step(&mut sim, 0.1);
+        assert_eq!(rt.scripts.errors.len(), 1, "{:?}", rt.scripts.errors);
+        assert!(rt.scripts.errors[0].contains("nope"));
+    }
+
+    #[test]
+    fn a_switch_command_out_of_a_script_is_checked() {
+        let mut sim = world_sim();
+        let mut rt = world_runtime(
+            "return { on_frame = function(ctx) \
+                 return { switch = { node = 1, position = 'sideways' } } \
+             end }",
+        );
+        rt.post_step(&mut sim, 0.1);
+        assert!(
+            rt.scripts.errors[0].contains("sideways"),
+            "{:?}",
+            rt.scripts.errors
+        );
+
+        // Node 1 of the example line is a joint, not a switch.
+        let mut rt = world_runtime(
+            "return { on_frame = function(ctx) \
+                 return { switch = { node = 1, position = 'diverging' } } \
+             end }",
+        );
+        rt.post_step(&mut sim, 0.1);
+        assert!(
+            rt.scripts.errors[0].contains("no switch"),
+            "{:?}",
+            rt.scripts.errors
+        );
+    }
+
+    /// The scenario of the example mod with its hook — the whole chain from RON to Lua.
+    #[test]
+    fn the_example_scenario_hook_is_wired_up() {
+        let mut rt = runtime();
+        let line = rt.mods.lines["example:beispielstrecke"].clone();
+        let scenario = rt.mods.scenarios["example:probefahrt"].clone();
+        assert_eq!(scenario.script.as_deref(), Some("example:probefahrt"));
+
+        let compiled = line.compile().expect("line compiles");
+        let mut sim = Sim::new(compiled.net, compiled.interlock, 1);
+        sim.set_scenario(scenario, sim_core::timetable::Timetable::default());
+        rt.begin(&mut sim, &line);
+
+        assert!(
+            sim.scenario.messages[0].text.contains("Test run loaded"),
+            "{:?}",
+            sim.scenario.messages
+        );
+        rt.post_step(&mut sim, 0.1);
+        assert!(rt.log().is_empty(), "log: {:?}", rt.log());
     }
 
     #[test]

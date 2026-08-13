@@ -17,6 +17,7 @@ cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
+cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
@@ -209,6 +210,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `1`–`4` | Battery / pantograph / main switch / air compressor |
 | `5` | Start the diesel engine |
 | `F1`–`F3` | Camera: cab / external / lineside |
+| `F9` | Mod manager: switch mods on and off (↑/↓ select, `Enter` toggles) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 
 ## Example line

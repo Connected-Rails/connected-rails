@@ -9,7 +9,9 @@ use crate::ui::row;
 use bevy_egui::egui;
 use editor_ui::{colors, field, form_grid, form_label, space, subheading};
 use i18n::t;
-use sim_core::brakes::{BrakeKind, BrakePosition, BrakeSpec, ControlValve, SlipProtection};
+use sim_core::brakes::{
+    BrakeKind, BrakePosition, BrakeSpec, ControlValve, LoadBraking, SlipProtection,
+};
 use sim_core::drive::{
     Circuit, CircuitKind, DieselEngine, DynamicBrake, Governor, HydrodynamicBrake, MAX_CIRCUITS,
     SeriesMotor, TractionSpec, Transmission,
@@ -21,6 +23,7 @@ pub fn brake_panel(
     brake: &mut BrakeSpec,
     slip: &mut SlipProtection,
     v_max: f64,
+    axle_load_t: f64,
 ) {
     form_grid("brake").show(ui, |ui| {
         row(ui, "brk-valve", |ui| {
@@ -35,6 +38,23 @@ pub fn brake_panel(
         row(ui, "brk-weight", |ui| {
             field(ui, &mut brake.brake_weight, 0.5, 0.0..=200.0, "t");
         });
+        row(ui, "brk-load", |ui| {
+            load_combo(ui, &mut brake.load_braking);
+        });
+        // The weighing valve reads tare mass and payload off the data sheet; only the
+        // changeover has figures of its own, and they are on the wagon.
+        if let LoadBraking::Changeover {
+            empty_share,
+            changeover_mass_t,
+        } = &mut brake.load_braking
+        {
+            row(ui, "brk-load-empty", |ui| {
+                field(ui, empty_share, 0.01, 0.05..=1.0, "");
+            });
+            row(ui, "brk-load-mass", |ui| {
+                field(ui, changeover_mass_t, 1.0, 0.0..=200.0, "t");
+            });
+        }
         row(ui, "brk-force", |ui| {
             field(ui, &mut brake.max_force, 500.0, 0.0..=1_000_000.0, "N");
             let suggestion =
@@ -62,10 +82,13 @@ pub fn brake_panel(
     });
 
     // A closed curve per pairing; the combo names it but shows nothing of how
-    // it falls off. `Custom` already plots its own points just below.
+    // it falls off. Drawn at this vehicle's own axle load, which picks the curve
+    // out of the family. `Custom` already plots its own points just below.
     if !matches!(brake.kind, BrakeKind::Custom(_)) {
         subheading(ui, t!("brk-friction-plot"));
-        editor_ui::sparkline_fn(ui, v_max, "km/h", "", |kmh| brake.kind.friction_factor(kmh));
+        editor_ui::sparkline_fn(ui, v_max, "km/h", "", |kmh| {
+            brake.kind.friction_factor_at(kmh, axle_load_t)
+        });
     }
 
     if let BrakeKind::Custom(points) = &mut brake.kind {
@@ -235,6 +258,41 @@ fn kind_combo(ui: &mut egui::Ui, kind: &mut BrakeKind) {
                 && !is_custom
             {
                 *kind = BrakeKind::Custom(vec![(0.0, 0.35), (100.0, 0.25), (200.0, 0.18)]);
+            }
+        });
+}
+
+fn load_key(load: &LoadBraking) -> &'static str {
+    match load {
+        LoadBraking::None => "load-none",
+        LoadBraking::Weighing => "load-weighing",
+        LoadBraking::Changeover { .. } => "load-changeover",
+    }
+}
+
+fn load_combo(ui: &mut egui::Ui, load: &mut LoadBraking) {
+    egui::ComboBox::from_id_salt("load-braking")
+        .selected_text(t!(load_key(load)))
+        .show_ui(ui, |ui| {
+            for value in [LoadBraking::None, LoadBraking::Weighing] {
+                if ui
+                    .selectable_label(*load == value, t!(load_key(&value)))
+                    .clicked()
+                {
+                    *load = value;
+                }
+            }
+            let is_changeover = matches!(load, LoadBraking::Changeover { .. });
+            if ui
+                .selectable_label(is_changeover, t!("load-changeover"))
+                .clicked()
+                && !is_changeover
+            {
+                // The anscription of a standard UIC freight wagon: 22 t of 55 t, over at 40 t.
+                *load = LoadBraking::Changeover {
+                    empty_share: 0.4,
+                    changeover_mass_t: 40.0,
+                };
             }
         });
 }
@@ -725,7 +783,11 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
     form_grid("governor").show(ui, |ui| {
         row(ui, "eng-governor", |ui| {
             egui::ComboBox::from_id_salt("governor")
-                .selected_text(t!(if speed_governed { "gov-speed" } else { "gov-fill" }))
+                .selected_text(t!(if speed_governed {
+                    "gov-speed"
+                } else {
+                    "gov-fill"
+                }))
                 .show_ui(ui, |ui| {
                     if ui
                         .selectable_label(speed_governed, t!("gov-speed"))
@@ -750,7 +812,15 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
         }
     });
     subheading(ui, t!("table-torque"));
-    table_editor(ui, "torque", "/min", "N·m", 100.0, 0.0..=1_000_000.0, &mut e.torque_curve);
+    table_editor(
+        ui,
+        "torque",
+        "/min",
+        "N·m",
+        100.0,
+        0.0..=1_000_000.0,
+        &mut e.torque_curve,
+    );
 }
 
 fn transmission_defaults() -> Transmission {

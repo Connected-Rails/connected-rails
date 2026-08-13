@@ -186,8 +186,8 @@ pub struct VehicleSpec {
     /// traction characteristic. 0 = not stated.
     #[serde(default)]
     pub v_max: f64,
-    /// Number of axles — information for consist lists and brake sheets, no influence on
-    /// the simulation.
+    /// Number of axles — for consist lists and brake sheets, and the axle load behind
+    /// [`VehicleSpec::axle_load_t`].
     #[serde(default)]
     pub axles: u8,
     /// Total axle base [m]: the sum over all bogies (two bogies of 2.5 m → 5.0), not the
@@ -244,7 +244,36 @@ impl VehicleSpec {
         if self.mass_empty <= 0.0 {
             return 0.0;
         }
-        self.brake.brake_weight / (self.mass_empty / 1000.0) * 100.0
+        self.brake_weight_at(self.mass_empty) / (self.mass_empty / 1000.0) * 100.0
+    }
+
+    /// Total mass fully loaded [kg].
+    pub fn mass_laden(&self) -> f64 {
+        self.mass_empty + self.max_payload
+    }
+
+    /// Share of the fully loaded brake force the vehicle brakes with at a total mass of
+    /// `mass_kg` — see [`crate::brakes::LoadBraking`].
+    pub fn load_share(&self, mass_kg: f64) -> f64 {
+        self.brake
+            .load_braking
+            .share(mass_kg / 1000.0, self.mass_laden() / 1000.0)
+    }
+
+    /// Braked weight [t] at a total mass of `mass_kg`: the anscribed figure of the loaded
+    /// vehicle, reduced by the load braking.
+    pub fn brake_weight_at(&self, mass_kg: f64) -> f64 {
+        self.brake.brake_weight * self.load_share(mass_kg)
+    }
+
+    /// Axle load [t] at a total mass of `mass_kg` — the curve of the friction family the
+    /// vehicle runs on ([`crate::brakes::BrakeKind::friction_factor_at`]). Without an
+    /// axle count in the data sheet it stays on the reference curve.
+    pub fn axle_load_t(&self, mass_kg: f64) -> f64 {
+        if self.axles == 0 {
+            return crate::brakes::REFERENCE_AXLE_LOAD;
+        }
+        mass_kg / 1000.0 / self.axles as f64
     }
 }
 
@@ -469,11 +498,14 @@ impl Train {
     }
 
     /// Braked weight percentage of the train: sum of braked weights / sum of masses · 100.
+    ///
+    /// Load braking counts: a wagon that carries nothing brings the braked weight of the
+    /// empty position into the brake sheet, not the anscribed loaded one.
     pub fn brake_percentage(&self) -> f64 {
         let weight: f64 = self
             .vehicles
             .iter()
-            .map(|v| v.spec.brake.brake_weight)
+            .map(|v| v.spec.brake_weight_at(v.mass()))
             .sum();
         let mass: f64 = self.vehicles.iter().map(|v| v.mass() / 1000.0).sum();
         if mass <= 0.0 {

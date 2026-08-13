@@ -81,12 +81,21 @@ impl BrakePosition {
     }
 }
 
+/// Axle load [t] the light support curve of the friction pairings is stated for — an empty
+/// wagon, whose rigging presses the blocks on with correspondingly little force.
+pub const LIGHT_AXLE_LOAD: f64 = 5.0;
+
+/// Axle load [t] of the second support curve — a loaded wagon or a locomotive. The curve
+/// of a vehicle for which no axle count is stated.
+pub const REFERENCE_AXLE_LOAD: f64 = 20.0;
+
 /// Friction behaviour of the brake — how the friction coefficient runs over speed.
 ///
 /// The predefined curves carry the shape of the usual German friction pairings; the level
 /// sits in [`BrakeSpec::max_force`], so what matters here is only the drop with speed.
-/// Where a data sheet states its own measurements, [`BrakeKind::Custom`] takes them
-/// directly.
+/// Each pairing brings two of them, for a light and for a loaded vehicle — see
+/// [`BrakeKind::friction_factor_at`]. Where a data sheet states its own measurements,
+/// [`BrakeKind::Custom`] takes them directly.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum BrakeKind {
     /// Block brake with cast iron blocks (Grauguss, P10). The friction coefficient
@@ -109,28 +118,113 @@ pub enum BrakeKind {
 }
 
 impl BrakeKind {
-    /// Friction factor relative to standstill.
-    ///
-    /// ponytail: closed curves instead of Karwatzki's full pressure-dependent formula —
-    /// the block force per block is not in any vehicle data sheet either. `Custom` is the
-    /// upgrade path where measurements do exist.
+    /// Friction factor relative to standstill, at the reference axle load.
     pub fn friction_factor(&self, v_kmh: f64) -> f64 {
+        self.friction_factor_at(v_kmh, REFERENCE_AXLE_LOAD)
+    }
+
+    /// Friction factor relative to standstill for a vehicle with `axle_load_t` [t] per axle.
+    ///
+    /// Two support curves per pairing — [`LIGHT_AXLE_LOAD`] and [`REFERENCE_AXLE_LOAD`] —
+    /// interpolated linearly over the axle load and held beyond the two. What decides the
+    /// shape is the block force per block, and the axle load is the number that stands in
+    /// for it: the heavier the vehicle, the harder its rigging presses the blocks on, and
+    /// the more steeply the friction coefficient falls away with speed.
+    ///
+    /// Only the *shape* follows the load. Every curve of the family is 1 at a stand,
+    /// because the friction level of the vehicle is already in its braked weight, and that
+    /// is where [`BrakeSpec::max_force`] comes from.
+    ///
+    /// ponytail: a family of two closed curves instead of Karwatzki's full
+    /// pressure-dependent formula — the block force per block is in no vehicle data sheet,
+    /// the axle load is in every one. `Custom` stays the upgrade path where measurements
+    /// exist.
+    pub fn friction_factor_at(&self, v_kmh: f64, axle_load_t: f64) -> f64 {
         let v = v_kmh.abs();
-        match self {
-            BrakeKind::Block => (v + 100.0) / (5.0 * v + 100.0),
-            BrakeKind::Disc => 1.0 / (1.0 + 0.003 * v),
-            BrakeKind::CompositeK => 1.0 / (1.0 + 0.0045 * v),
-            BrakeKind::CompositeLl => 1.0 / (1.0 + 0.006 * v),
-            BrakeKind::Magnetic => 1.0 / (1.0 + 0.008 * v),
+        // µ(v)/µ(0) = (1 + rise·v)/(1 + fall·v) — light vehicle first, loaded second.
+        let (light, loaded) = match self {
+            // Cast iron: the classic collapse. The loaded curve is Karwatzki's speed term;
+            // with little block force the same pairing holds up noticeably better.
+            BrakeKind::Block => ((0.01, 0.038), (0.01, 0.05)),
+            // Disc pads hardly care about the pressure — the two curves nearly coincide.
+            BrakeKind::Disc => ((0.0, 0.0025), (0.0, 0.003)),
+            BrakeKind::CompositeK => ((0.0, 0.0038), (0.0, 0.0045)),
+            BrakeKind::CompositeLl => ((0.0, 0.005), (0.0, 0.006)),
+            // The magnet presses with its own force; the load of the vehicle is not in it.
+            BrakeKind::Magnetic => ((0.0, 0.008), (0.0, 0.008)),
             BrakeKind::Custom(points) => {
                 let at_rest = interpolate(points, 0.0);
-                if at_rest.abs() < 1e-9 {
+                return if at_rest.abs() < 1e-9 {
                     1.0
                 } else {
                     (interpolate(points, v) / at_rest).max(0.0)
+                };
+            }
+        };
+        let curve = |(rise, fall): (f64, f64)| (1.0 + rise * v) / (1.0 + fall * v);
+        let t = ((axle_load_t - LIGHT_AXLE_LOAD) / (REFERENCE_AXLE_LOAD - LIGHT_AXLE_LOAD))
+            .clamp(0.0, 1.0);
+        curve(light) * (1.0 - t) + curve(loaded) * t
+    }
+}
+
+/// Load-proportional braking (Lastabbremsung).
+///
+/// [`BrakeSpec::brake_weight`] and [`BrakeSpec::max_force`] are the figures of the fully
+/// loaded vehicle. What is set here is how much of them is left when it runs empty — a
+/// wagon that brakes with its loaded force while empty flattens its wheels, which is why
+/// the device exists.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum LoadBraking {
+    /// None: the same brake force empty and loaded — locomotives, and every wagon whose
+    /// data sheet states a single braked weight.
+    #[default]
+    None,
+    /// Weighing valve (Wiegeventil, ALB): the cylinder pressure follows the load
+    /// steplessly, so the braked weight percentage — and with it the deceleration — stays
+    /// where it belongs whatever the vehicle carries. It needs no figure of its own: the
+    /// tare mass and the payload of the data sheet are the whole characteristic.
+    Weighing,
+    /// Empty/loaded changeover (Umstellvorrichtung "Leer/Beladen"): two rigging ratios,
+    /// changed over at `changeover_mass_t` [t] total mass. `empty_share` is the share of
+    /// the loaded brake force left in the empty position — both braked weights and the
+    /// changeover mass are written on the wagon.
+    ///
+    /// ponytail: the position follows the mass, whether the vehicle changes over by hand
+    /// or by weighing valve. A lever left in the wrong position (the classic way to flat
+    /// a wheel) needs a state of its own — upgrade path when shunting can set it.
+    Changeover {
+        empty_share: f64,
+        changeover_mass_t: f64,
+    },
+}
+
+impl LoadBraking {
+    /// Share of the fully loaded brake force at a total mass of `mass_t`, for a vehicle
+    /// weighing `laden_t` [t] fully loaded.
+    pub fn share(self, mass_t: f64, laden_t: f64) -> f64 {
+        match self {
+            LoadBraking::None => 1.0,
+            LoadBraking::Weighing if laden_t > 0.0 => (mass_t / laden_t).clamp(0.0, 1.0),
+            LoadBraking::Weighing => 1.0,
+            LoadBraking::Changeover {
+                empty_share,
+                changeover_mass_t,
+            } => {
+                if mass_t >= changeover_mass_t {
+                    1.0
+                } else {
+                    empty_share.clamp(0.0, 1.0)
                 }
             }
         }
+    }
+
+    /// The weighing valve sits in the feed to the brake cylinder: its share *is* a
+    /// cylinder pressure, so it shows in the gauge and in the air consumption. A
+    /// changeover moves the rigging instead — full pressure, less force.
+    pub fn at_the_cylinder(self) -> bool {
+        matches!(self, LoadBraking::Weighing)
     }
 }
 
@@ -290,9 +384,14 @@ pub struct BrakeSpec {
     /// behave like the type designation suggests.
     #[serde(default)]
     pub valve_params: Option<ValveBehaviour>,
-    /// Braked weight [t] — basis of the braked weight percentage.
+    /// Braked weight [t] of the fully loaded vehicle — basis of the braked weight
+    /// percentage. What is left of it when the vehicle runs empty is decided by
+    /// `load_braking`.
     pub brake_weight: f64,
-    /// Brake force at full brake cylinder pressure and standstill [N].
+    /// Load-proportional braking (Lastabbremsung).
+    #[serde(default)]
+    pub load_braking: LoadBraking,
+    /// Brake force at full brake cylinder pressure and standstill [N], fully loaded.
     pub max_force: f64,
     /// Highest brake cylinder pressure [bar].
     pub max_cylinder: f64,
@@ -360,6 +459,7 @@ impl BrakeSpec {
             valve: ControlValve::KeGp,
             valve_params: None,
             brake_weight: brake_weight_t,
+            load_braking: LoadBraking::None,
             max_force: brake_weight_t * 1000.0 * G * 0.145,
             max_cylinder: 3.8,
             cylinder_to_reservoir: 0.35,
@@ -387,6 +487,11 @@ impl BrakeSpec {
 
     pub fn with_valve(mut self, valve: ControlValve) -> Self {
         self.valve = valve;
+        self
+    }
+
+    pub fn with_load_braking(mut self, load_braking: LoadBraking) -> Self {
+        self.load_braking = load_braking;
         self
     }
 
@@ -597,14 +702,25 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
     let v_kmh = train.speed_kmh().abs();
 
     for (i, veh) in train.vehicles.iter_mut().enumerate() {
+        // Which curve of the friction family this vehicle runs on — the load counts.
+        let axle_load = veh.spec.axle_load_t(veh.mass());
+        // Load braking: the weighing valve throttles the cylinder pressure, the changeover
+        // lever the rigging. Both end in the same force, but only the first one is in the
+        // gauge and in the air the cylinder swallows.
+        let load = veh.spec.load_share(veh.mass());
         let spec = &veh.spec.brake;
+        let (cylinder_share, rigging_share) = if spec.load_braking.at_the_cylinder() {
+            (load, 1.0)
+        } else {
+            (1.0, load)
+        };
         let behaviour = spec.behaviour();
         let state = &mut veh.brake;
         state.dynamic_force = veh.traction.dynamic_force.max(0.0);
 
         let before_aux = state.aux_reservoir;
         let before_cylinder = state.cylinder;
-        update_control_valve(state, spec, &behaviour, valve, v_kmh, dt);
+        update_control_valve(state, spec, &behaviour, valve, v_kmh, cylinder_share, dt);
 
         // Air that went into the cylinder or back into the auxiliary reservoir has to come
         // from somewhere: everything except the atmosphere is fed through the brake pipe.
@@ -617,7 +733,8 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
         // Electrically transmitted (pre-controlled) brake: no pressure wave, so the whole
         // train applies at once. Only vehicles wired for it follow.
         if cab.ep_brake && spec.pilot_controlled {
-            let target = valve.demand() * cylinder_ceiling(spec, &behaviour, valve, v_kmh);
+            let target =
+                valve.demand() * cylinder_ceiling(spec, &behaviour, valve, v_kmh, cylinder_share);
             if target > state.cylinder {
                 approach(&mut state.cylinder, target, spec.max_cylinder / 1.5, dt);
             }
@@ -631,7 +748,9 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
             } else {
                 spec.max_cylinder
             };
-            let target = cab.direct_brake.clamp(0.0, 1.0) * ceiling;
+            // The weighing valve sits in front of the cylinder, so it throttles whatever
+            // fills it — the direct brake of a railcar included.
+            let target = cab.direct_brake.clamp(0.0, 1.0) * ceiling * cylinder_share;
             let before = state.direct_cylinder;
             approach(&mut state.direct_cylinder, target, 2.0, dt);
             demand_nl += (state.direct_cylinder - before).max(0.0) * spec.cylinder_volume();
@@ -652,26 +771,27 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
             && v_kmh > 50.0
             && state.pipe < PIPE_NOMINAL - 1.0;
 
-        state.force = brake_force(spec, state, v_kmh);
+        state.force = brake_force(spec, state, v_kmh, axle_load, rigging_share);
     }
 
     update_main_reservoirs(train, demand_nl, dt);
 }
 
 /// Highest cylinder pressure the valve currently allows, including the second stage of a
-/// two-stage loco valve.
+/// two-stage loco valve and the throttling by a weighing valve (`cylinder_share`).
 fn cylinder_ceiling(
     spec: &BrakeSpec,
     behaviour: &ValveBehaviour,
     valve: DriverBrakeValve,
     v_kmh: f64,
+    cylinder_share: f64,
 ) -> f64 {
     let high = match behaviour.high_stage_trigger {
         HighStage::None => false,
         HighStage::Speed(threshold) => v_kmh > threshold,
         HighStage::Emergency => valve.is_full_application(),
     };
-    spec.max_cylinder * if high { behaviour.high_stage } else { 1.0 }
+    spec.max_cylinder * if high { behaviour.high_stage } else { 1.0 } * cylinder_share
 }
 
 /// Pressure equalisation in the brake pipe including the driver's brake valve.
@@ -741,6 +861,7 @@ fn update_control_valve(
     behaviour: &ValveBehaviour,
     valve: DriverBrakeValve,
     v_kmh: f64,
+    cylinder_share: f64,
     dt: f64,
 ) {
     // The control chamber follows the brake pipe only while releasing/charging (and never
@@ -758,7 +879,7 @@ fn update_control_valve(
         approach(&mut state.aux_reservoir, state.pipe, 0.15, dt);
     }
 
-    let ceiling = cylinder_ceiling(spec, behaviour, valve, v_kmh);
+    let ceiling = cylinder_ceiling(spec, behaviour, valve, v_kmh, cylinder_share);
     let drop = state.control_reservoir - state.pipe;
     let mut target = if drop <= behaviour.response_drop {
         0.0
@@ -876,11 +997,21 @@ fn update_main_reservoirs(train: &mut Train, demand_nl: f64, dt: f64) {
 }
 
 /// Brake force of a vehicle [N] — pneumatic brake plus magnetic and parking brake.
-fn brake_force(spec: &BrakeSpec, state: &BrakeState, v_kmh: f64) -> f64 {
+///
+/// `rigging_share` is the load braking that sits in the rigging rather than in the
+/// cylinder pressure (see [`LoadBraking::at_the_cylinder`]).
+fn brake_force(
+    spec: &BrakeSpec,
+    state: &BrakeState,
+    v_kmh: f64,
+    axle_load_t: f64,
+    rigging_share: f64,
+) -> f64 {
     let cylinder = state.applied_cylinder();
     let mut f = cylinder / spec.max_cylinder
         * spec.max_force
-        * spec.kind.friction_factor(v_kmh)
+        * rigging_share
+        * spec.kind.friction_factor_at(v_kmh, axle_load_t)
         * spec.effective_position().high_speed_factor(v_kmh);
     // Air supplement brake: the air brake only fills up what the dynamic brake falls short
     // of, and gets out of the way again as soon as the dynamic brake can do it alone.
@@ -929,6 +1060,29 @@ mod tests {
     }
 
     #[test]
+    fn a_light_vehicle_keeps_more_friction_at_speed() {
+        let light = BrakeKind::Block.friction_factor_at(100.0, LIGHT_AXLE_LOAD);
+        let loaded = BrakeKind::Block.friction_factor_at(100.0, REFERENCE_AXLE_LOAD);
+        assert!(light > loaded, "light {light:.3} vs loaded {loaded:.3}");
+        // Halfway between the two axle loads lies halfway between the two curves, and
+        // outside them the nearer curve is held.
+        let middle = (LIGHT_AXLE_LOAD + REFERENCE_AXLE_LOAD) / 2.0;
+        let mixed = BrakeKind::Block.friction_factor_at(100.0, middle);
+        assert!((mixed - (light + loaded) / 2.0).abs() < 1e-9);
+        assert!((BrakeKind::Block.friction_factor_at(100.0, 1.0) - light).abs() < 1e-9);
+        assert!((BrakeKind::Block.friction_factor_at(100.0, 40.0) - loaded).abs() < 1e-9);
+        // The level stays with the braked weight: every curve of the family is 1 at a
+        // stand, whatever the vehicle weighs.
+        for load in [1.0, 5.0, 12.5, 20.0, 40.0] {
+            assert!((BrakeKind::Block.friction_factor_at(0.0, load) - 1.0).abs() < 1e-9);
+        }
+        // The magnet presses with its own force — the load of the vehicle is not in it.
+        let empty = BrakeKind::Magnetic.friction_factor_at(100.0, LIGHT_AXLE_LOAD);
+        let full = BrakeKind::Magnetic.friction_factor_at(100.0, REFERENCE_AXLE_LOAD);
+        assert!((empty - full).abs() < 1e-9);
+    }
+
+    #[test]
     fn a_custom_characteristic_is_normalised_to_standstill() {
         let kind = BrakeKind::Custom(vec![(0.0, 0.4), (100.0, 0.2), (200.0, 0.1)]);
         assert!((kind.friction_factor(0.0) - 1.0).abs() < 1e-9);
@@ -936,6 +1090,34 @@ mod tests {
         assert!((kind.friction_factor(50.0) - 0.75).abs() < 1e-9);
         // Beyond the end the last value is held.
         assert!((kind.friction_factor(400.0) - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn load_braking_follows_the_load() {
+        // Weighing valve: the brake force keeps the ratio to the mass, so the braked
+        // weight percentage of the empty vehicle is the one of the loaded vehicle.
+        let alb = LoadBraking::Weighing;
+        assert!((alb.share(20.0, 80.0) - 0.25).abs() < 1e-9);
+        assert!((alb.share(80.0, 80.0) - 1.0).abs() < 1e-9);
+        // Overloaded is not braked harder than the design allows, and a vehicle without a
+        // payload (a locomotive) keeps its full brake.
+        assert!((alb.share(90.0, 80.0) - 1.0).abs() < 1e-9);
+        assert!((alb.share(84.0, 0.0) - 1.0).abs() < 1e-9);
+
+        // Changeover lever: two steps, nothing in between.
+        let lever = LoadBraking::Changeover {
+            empty_share: 0.4,
+            changeover_mass_t: 40.0,
+        };
+        assert!((lever.share(21.0, 78.0) - 0.4).abs() < 1e-9);
+        assert!((lever.share(39.9, 78.0) - 0.4).abs() < 1e-9);
+        assert!((lever.share(40.0, 78.0) - 1.0).abs() < 1e-9);
+        assert!((lever.share(78.0, 78.0) - 1.0).abs() < 1e-9);
+
+        assert!((LoadBraking::None.share(21.0, 78.0) - 1.0).abs() < 1e-9);
+        // Where the share acts decides whether the cylinder gauge sees it.
+        assert!(alb.at_the_cylinder());
+        assert!(!lever.at_the_cylinder());
     }
 
     #[test]
@@ -970,15 +1152,15 @@ mod tests {
         let spec =
             BrakeSpec::from_brake_weight(85.0, BrakeKind::Disc).with_valve(ControlValve::KeL2a);
         let b = spec.behaviour();
-        let slow = cylinder_ceiling(&spec, &b, DriverBrakeValve::Service(1.5), 30.0);
-        let fast = cylinder_ceiling(&spec, &b, DriverBrakeValve::Service(1.5), 120.0);
+        let slow = cylinder_ceiling(&spec, &b, DriverBrakeValve::Service(1.5), 30.0, 1.0);
+        let fast = cylinder_ceiling(&spec, &b, DriverBrakeValve::Service(1.5), 120.0, 1.0);
         assert!(fast > slow * 1.3, "{slow:.2} → {fast:.2} bar");
 
         let d = BrakeSpec::from_brake_weight(85.0, BrakeKind::Disc).with_valve(ControlValve::KeL2d);
         let b = d.behaviour();
         assert!(
-            cylinder_ceiling(&d, &b, DriverBrakeValve::Emergency, 20.0)
-                > cylinder_ceiling(&d, &b, DriverBrakeValve::Service(0.5), 200.0)
+            cylinder_ceiling(&d, &b, DriverBrakeValve::Emergency, 20.0, 1.0)
+                > cylinder_ceiling(&d, &b, DriverBrakeValve::Service(0.5), 200.0, 1.0)
         );
     }
 

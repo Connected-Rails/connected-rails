@@ -133,9 +133,9 @@ fn track_changes(editor: &mut Editor, before: VehicleSpec) {
 
 fn handle_shortcuts(ctx: &egui::Context, editor: &mut Editor) {
     // Redo first: Ctrl+Shift+Z must not be eaten by the plain Ctrl+Z.
-    if ctx.input_mut(|i| {
-        i.consume_shortcut(&SHORTCUT_REDO) || i.consume_shortcut(&SHORTCUT_REDO_ALT)
-    }) {
+    if ctx
+        .input_mut(|i| i.consume_shortcut(&SHORTCUT_REDO) || i.consume_shortcut(&SHORTCUT_REDO_ALT))
+    {
         editor.redo();
     }
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_UNDO)) {
@@ -230,7 +230,8 @@ fn confirm_comment_loss(editor: &mut Editor, path: &std::path::Path) -> bool {
         .set_title(t!("confirm-comments-title"))
         .set_description(t!("confirm-comments", file = path.display()))
         .set_buttons(rfd::MessageButtons::OkCancel)
-        .show() == rfd::MessageDialogResult::Ok;
+        .show()
+        == rfd::MessageDialogResult::Ok;
     editor.warned_about_comments |= go_ahead;
     go_ahead
 }
@@ -385,7 +386,8 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
                     }
                 });
                 ui.menu_button(t!("menu-view"), |ui| {
-                    let reference = ui.checkbox(&mut editor.show_reference, t!("view-reference-body"));
+                    let reference =
+                        ui.checkbox(&mut editor.show_reference, t!("view-reference-body"));
                     let grid = ui.checkbox(&mut editor.show_grid, t!("view-grid"));
                     if reference.changed() || grid.changed() {
                         let (reference, grid) = (editor.show_reference, editor.show_grid);
@@ -501,7 +503,11 @@ fn nav_section(
 /// from the previous frame, because the bar is drawn before the sections whose
 /// position decides it — a frame of lag no one can see.
 fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'static str>) -> f32 {
-    let width = editor.settings.panels.map(|(left, _)| left).unwrap_or(450.0);
+    let width = editor
+        .settings
+        .panels
+        .map(|(left, _)| left)
+        .unwrap_or(450.0);
     egui::Panel::left("data")
         .default_size(width)
         .resizable(true)
@@ -581,13 +587,7 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                             // zero: a locomotive built entirely in the editor
                             // could not transmit a newton.
                             row(ui, "veh-adhesive", |ui| {
-                                field(
-                                    ui,
-                                    &mut spec.adhesive_mass_fraction,
-                                    0.05,
-                                    0.0..=1.0,
-                                    "",
-                                );
+                                field(ui, &mut spec.adhesive_mass_fraction, 0.05, 0.0..=1.0, "");
                             });
                             row(ui, "veh-axle-base", |ui| {
                                 field(ui, &mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m");
@@ -652,86 +652,105 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                         });
                     });
 
-                    nav_section(ui, jump, &mut current, "resistance", "group-resistance", |ui| {
-                        editor_ui::form_grid("resistance").show(ui, |ui| {
-                            row(ui, "res-rolling", |ui| {
-                                field(ui, &mut spec.davis.a, 10.0, 0.0..=20_000.0, "N");
-                                // The tooltip names the figure the button would
-                                // write, so pressing it is not a guess.
-                                let suggestion =
-                                    VehicleSpec::suggested_rolling_resistance(spec.mass_empty);
-                                if ui
-                                    .button(t!("action-suggest"))
-                                    .on_hover_text(t!(
-                                        "res-rolling-suggest-hint",
-                                        value = editor_ui::group_digits(suggestion)
-                                    ))
-                                    .clicked()
-                                {
-                                    spec.davis.a = suggestion;
-                                }
-                            });
-                            row(ui, "res-speed-term", |ui| {
-                                field(ui, &mut spec.davis.b, 1.0, 0.0..=500.0, "N·s/m");
-                            });
-
-                            let mut use_cw_a = spec.cw_a.is_some();
-                            editor_ui::form_label(ui, t!("res-air"));
-                            ui.horizontal(|ui| {
-                                // Field first so it keeps the column edge; the
-                                // checkbox toggles between cw·A and Davis c.
-                                match &mut spec.cw_a {
-                                    Some(cw_a) => {
-                                        field(ui, cw_a, 0.1, 0.1..=40.0, "m²");
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "resistance",
+                        "group-resistance",
+                        |ui| {
+                            editor_ui::form_grid("resistance").show(ui, |ui| {
+                                row(ui, "res-rolling", |ui| {
+                                    field(ui, &mut spec.davis.a, 10.0, 0.0..=20_000.0, "N");
+                                    // The tooltip names the figure the button would
+                                    // write, so pressing it is not a guess.
+                                    let suggestion =
+                                        VehicleSpec::suggested_rolling_resistance(spec.mass_empty);
+                                    if ui
+                                        .button(t!("action-suggest"))
+                                        .on_hover_text(t!(
+                                            "res-rolling-suggest-hint",
+                                            value = editor_ui::group_digits(suggestion)
+                                        ))
+                                        .clicked()
+                                    {
+                                        spec.davis.a = suggestion;
                                     }
-                                    None => {
-                                        // Its unit is awkward, which is no
-                                        // reason to be the one field without
-                                        // one — the b term next to it has hers.
-                                        field(
-                                            ui,
-                                            &mut spec.davis.c,
-                                            0.1,
-                                            0.0..=100.0,
-                                            "N·s²/m²",
-                                        )
-                                        .on_hover_text(t!("res-davis-c-hint"));
-                                    }
-                                }
-                                if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
-                                    spec.cw_a = use_cw_a.then_some(6.0);
-                                }
-                            });
-                            ui.end_row();
+                                });
+                                row(ui, "res-speed-term", |ui| {
+                                    field(ui, &mut spec.davis.b, 1.0, 0.0..=500.0, "N·s/m");
+                                });
 
-                            row(ui, "res-curve", |ui| {
-                                field(ui, &mut spec.curve_resistance_factor, 0.05, 0.0..=3.0, "");
+                                let mut use_cw_a = spec.cw_a.is_some();
+                                editor_ui::form_label(ui, t!("res-air"));
+                                ui.horizontal(|ui| {
+                                    // Field first so it keeps the column edge; the
+                                    // checkbox toggles between cw·A and Davis c.
+                                    match &mut spec.cw_a {
+                                        Some(cw_a) => {
+                                            field(ui, cw_a, 0.1, 0.1..=40.0, "m²");
+                                        }
+                                        None => {
+                                            // Its unit is awkward, which is no
+                                            // reason to be the one field without
+                                            // one — the b term next to it has hers.
+                                            field(
+                                                ui,
+                                                &mut spec.davis.c,
+                                                0.1,
+                                                0.0..=100.0,
+                                                "N·s²/m²",
+                                            )
+                                            .on_hover_text(t!("res-davis-c-hint"));
+                                        }
+                                    }
+                                    if ui.checkbox(&mut use_cw_a, t!("res-cw-a")).changed() {
+                                        spec.cw_a = use_cw_a.then_some(6.0);
+                                    }
+                                });
+                                ui.end_row();
+
+                                row(ui, "res-curve", |ui| {
+                                    field(
+                                        ui,
+                                        &mut spec.curve_resistance_factor,
+                                        0.05,
+                                        0.0..=3.0,
+                                        "",
+                                    );
+                                });
                             });
-                        });
-                        ui.add_space(space::XS);
-                        ui.label(
-                            egui::RichText::new(t!(
-                                "res-at-100",
-                                newtons = editor_ui::group_digits(spec.resistance(100.0 / 3.6))
-                            ))
-                            .small()
-                            .color(colors::TEXT_SECONDARY),
-                        );
-                        // Three coefficients of a quadratic; nobody pictures
-                        // their sum. A vehicle with no stated v max still has
-                        // a curve worth seeing.
-                        let top = if spec.v_max > 0.0 { spec.v_max } else { 160.0 };
-                        editor_ui::subheading(ui, t!("res-plot"));
-                        editor_ui::sparkline_fn(ui, top, "km/h", "N", |kmh| spec.resistance(kmh / 3.6));
-                    });
+                            ui.add_space(space::XS);
+                            ui.label(
+                                egui::RichText::new(t!(
+                                    "res-at-100",
+                                    newtons = editor_ui::group_digits(spec.resistance(100.0 / 3.6))
+                                ))
+                                .small()
+                                .color(colors::TEXT_SECONDARY),
+                            );
+                            // Three coefficients of a quadratic; nobody pictures
+                            // their sum. A vehicle with no stated v max still has
+                            // a curve worth seeing.
+                            let top = if spec.v_max > 0.0 { spec.v_max } else { 160.0 };
+                            editor_ui::subheading(ui, t!("res-plot"));
+                            editor_ui::sparkline_fn(ui, top, "km/h", "N", |kmh| {
+                                spec.resistance(kmh / 3.6)
+                            });
+                        },
+                    );
 
                     nav_section(ui, jump, &mut current, "brake", "group-brake", |ui| {
                         let top = if spec.v_max > 0.0 { spec.v_max } else { 160.0 };
+                        // The tare vehicle — the load belongs to the consist, not
+                        // to the data sheet.
+                        let axle_load = spec.axle_load_t(spec.mass_empty);
                         powertrain::brake_panel(
                             ui,
                             &mut spec.brake,
                             &mut spec.slip_protection,
                             top,
+                            axle_load,
                         );
                         ui.add_space(space::XS);
                         // Braked weight and mass sit in different sections, and
@@ -752,30 +771,44 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                         powertrain::drive_panel(ui, &mut spec.traction);
                     });
 
-                    nav_section(ui, jump, &mut current, "equipment", "group-equipment", |ui| {
-                        equipment_panel(ui, spec);
-                    });
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "equipment",
+                        "group-equipment",
+                        |ui| {
+                            equipment_panel(ui, spec);
+                        },
+                    );
 
-                    nav_section(ui, jump, &mut current, "behaviour", "group-behaviour", |ui| {
-                        // A labelled row like every other value in the panel.
-                        // Free-floating, it was the one control the eye could
-                        // not find at the column it has learnt.
-                        editor_ui::form_grid("behaviour").show(ui, |ui| {
-                            row(ui, "veh-script", |ui| {
-                                let mut script = spec.script.clone().unwrap_or_default();
-                                if ui
-                                    .add(
-                                        egui::TextEdit::singleline(&mut script)
-                                            .hint_text(t!("field-script-hint"))
-                                            .desired_width(space::FIELD),
-                                    )
-                                    .changed()
-                                {
-                                    spec.script = (!script.is_empty()).then_some(script);
-                                }
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "behaviour",
+                        "group-behaviour",
+                        |ui| {
+                            // A labelled row like every other value in the panel.
+                            // Free-floating, it was the one control the eye could
+                            // not find at the column it has learnt.
+                            editor_ui::form_grid("behaviour").show(ui, |ui| {
+                                row(ui, "veh-script", |ui| {
+                                    let mut script = spec.script.clone().unwrap_or_default();
+                                    if ui
+                                        .add(
+                                            egui::TextEdit::singleline(&mut script)
+                                                .hint_text(t!("field-script-hint"))
+                                                .desired_width(space::FIELD),
+                                        )
+                                        .changed()
+                                    {
+                                        spec.script = (!script.is_empty()).then_some(script);
+                                    }
+                                });
                             });
-                        });
-                    });
+                        },
+                    );
                 });
             // Above the first header nothing has reported in yet.
             *active = current.or(Some(SECTIONS[0].0));
@@ -886,7 +919,10 @@ fn coupler_combo(ui: &mut egui::Ui, coupler: &mut CouplerSpec) {
     egui::ComboBox::from_id_salt("coupler")
         .selected_text(t!(key))
         .show_ui(ui, |ui| {
-            if ui.selectable_label(key == "cpl-screw", t!("cpl-screw")).clicked() {
+            if ui
+                .selectable_label(key == "cpl-screw", t!("cpl-screw"))
+                .clicked()
+            {
                 *coupler = screw;
             }
             if ui
@@ -918,7 +954,11 @@ fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, option
 
 /// Right panel: model file, levels of detail, moving parts.
 fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) -> f32 {
-    let width = editor.settings.panels.map(|(_, right)| right).unwrap_or(400.0);
+    let width = editor
+        .settings
+        .panels
+        .map(|(_, right)| right)
+        .unwrap_or(400.0);
     egui::Panel::right("model")
         .default_size(width)
         .resizable(true)
@@ -987,7 +1027,10 @@ fn lod_list(ui: &mut egui::Ui, editor: &mut Editor) {
     let current = editor.spec.model.as_ref().map(|m| m.lods.as_slice());
     let would_change = current != Some(detected.as_slice());
     if ui
-        .add_enabled(would_change, egui::Button::new(t!("action-read-node-names")))
+        .add_enabled(
+            would_change,
+            egui::Button::new(t!("action-read-node-names")),
+        )
         .on_hover_text(t!("action-read-node-names-hint", count = detected.len()))
         .on_disabled_hover_text(t!("action-read-node-names-same"))
         .clicked()
@@ -1002,26 +1045,24 @@ fn lod_list(ui: &mut egui::Ui, editor: &mut Editor) {
         // all the same width — the selected one is a filled button, and "1" is
         // a narrower glyph than "0" — which would push each row's field to its
         // own x. The grid gives the column the widest chip and lines them up.
-        editor_ui::form_grid("lods")
-            .num_columns(3)
-            .show(ui, |ui| {
-                for (i, lod) in lods.iter_mut().enumerate() {
-                    // Radio button: which level the viewport shows.
-                    if ui
-                        .selectable_label(preview == lod.level, format!("LOD{}", lod.level))
-                        .on_hover_text(t!("lod-show-hint"))
-                        .clicked()
-                    {
-                        preview = lod.level;
-                    }
-                    field(ui, &mut lod.distance, 10.0, 10.0..=20_000.0, "m")
-                        .on_hover_text(t!("lod-distance-hint"));
-                    if ui.small_button("×").clicked() {
-                        remove_lod = Some(i);
-                    }
-                    ui.end_row();
+        editor_ui::form_grid("lods").num_columns(3).show(ui, |ui| {
+            for (i, lod) in lods.iter_mut().enumerate() {
+                // Radio button: which level the viewport shows.
+                if ui
+                    .selectable_label(preview == lod.level, format!("LOD{}", lod.level))
+                    .on_hover_text(t!("lod-show-hint"))
+                    .clicked()
+                {
+                    preview = lod.level;
                 }
-            });
+                field(ui, &mut lod.distance, 10.0, 10.0..=20_000.0, "m")
+                    .on_hover_text(t!("lod-distance-hint"));
+                if ui.small_button("×").clicked() {
+                    remove_lod = Some(i);
+                }
+                ui.end_row();
+            }
+        });
     }
     editor.preview_lod = preview;
     if let Some(i) = remove_lod {
@@ -1043,7 +1084,10 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
         .filter(|p| !bound.contains(p.node.as_str()))
         .collect();
     if ui
-        .add_enabled(!fresh.is_empty(), egui::Button::new(t!("action-take-suggestions")))
+        .add_enabled(
+            !fresh.is_empty(),
+            egui::Button::new(t!("action-take-suggestions")),
+        )
         .on_hover_text(t!("action-take-suggestions-hint", count = fresh.len()))
         .on_disabled_hover_text(t!("action-take-suggestions-none"))
         .clicked()
@@ -1382,7 +1426,10 @@ mod tests {
     #[test]
     fn the_window_title_names_the_vehicle() {
         let editor = Editor::default();
-        for key in ["window-vehicle-editor-named", "window-vehicle-editor-unsaved"] {
+        for key in [
+            "window-vehicle-editor-named",
+            "window-vehicle-editor-unsaved",
+        ] {
             let title = t!(key, name = editor.spec.name);
             assert!(title.contains(&editor.spec.name), "{key}: {title}");
         }
@@ -1447,8 +1494,12 @@ mod tests {
 
         editor.warned_about_comments = true;
         let commented = std::env::temp_dir().join("trainsim-commented.ron");
-        std::fs::write(&commented, "// a note
-(name: \"x\")").expect("scratch file");
+        std::fs::write(
+            &commented,
+            "// a note
+(name: \"x\")",
+        )
+        .expect("scratch file");
         assert!(confirm_comment_loss(&mut editor, &commented));
 
         let _ = std::fs::remove_file(plain);

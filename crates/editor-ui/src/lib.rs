@@ -447,7 +447,10 @@ fn plot(ui: &mut egui::Ui, points: &[(f64, f64)], x_unit: &str, y_unit: &str, ma
         )
     };
     let line: Vec<egui::Pos2> = sorted.iter().copied().map(at).collect();
-    painter.add(egui::Shape::line(line.clone(), Stroke::new(1.5, colors::ACCENT)));
+    painter.add(egui::Shape::line(
+        line.clone(),
+        Stroke::new(1.5, colors::ACCENT),
+    ));
     if marks {
         for point in line {
             painter.circle_filled(point, 2.0, colors::ACCENT);

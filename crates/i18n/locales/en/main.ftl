@@ -195,7 +195,13 @@ brk-friction-hint = how the friction coefficient runs over speed
 brk-friction-points = Friction coefficient (km/h → µ)
 brk-friction-plot = Friction over speed
 brk-weight = Braked weight
-brk-weight-hint = t — from the vehicle's anscriptions
+brk-weight-hint = t — from the vehicle's anscriptions, loaded vehicle
+brk-load = Load braking
+brk-load-hint = how much of the braked weight is left when the vehicle runs empty
+brk-load-empty = Braked weight empty
+brk-load-empty-hint = share of the loaded braked weight in the empty position
+brk-load-mass = Changeover mass
+brk-load-mass-hint = t total mass — above it the wagon brakes in the loaded position
 brk-force = Brake force
 brk-force-hint = N at full cylinder pressure and standstill
 brk-force-suggest-hint = from the braked weight — would give { $value } N
@@ -239,6 +245,10 @@ friction-k = K block
 friction-ll = LL block
 friction-magnetic = Magnetic rail
 friction-custom = Own characteristic
+
+load-none = none
+load-weighing = weighing valve (stepless)
+load-changeover = empty/loaded changeover
 
 slip-none = none
 slip-brake = wheel slip brake

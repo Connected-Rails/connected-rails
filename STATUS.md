@@ -57,11 +57,15 @@ As of 2026-08-13 · `cargo test --workspace`: **240 tests green** · clippy and 
   detailed data of the data sheet: the simplified tractive effort curve; series-wound motors
   behind a tap changer, computed from the machine equations with saturation, current limit and
   field weakening; three-phase drive with a pull-out range and a regenerative brake that dies
-  in a neutral section; diesel-hydraulic with an engine map, a speed or fill governor and a
-  transmission of torque converters and fluid couplings that are engaged by filling them —
-  change points and hysteresis to the original, filling from on/off through partial stages to
-  quasi-continuous. Dynamic brakes come from the drive model: rheostatic, regenerative or
-  hydrodynamic (retarder).
+  in a neutral section; diesel-hydraulic with an engine map, a speed governor with droop or a
+  fill governor, and a transmission of torque converters and fluid couplings that are engaged
+  by filling them — separate filling and emptying times, so the outgoing circuit lets go
+  before the incoming one takes hold and the change point tears its hole in the tractive
+  effort; change points with hysteresis and primary influence, so the change speed depends on
+  the notch and not on speed alone; filling from on/off through partial stages to
+  quasi-continuous. Engine and pump find their working point against each other every time
+  step. Dynamic brakes come from the drive model: rheostatic, regenerative or hydrodynamic
+  (retarder).
 - **Train protection (ch. 9):** trait abstraction + country package DE with all intermittent
   builds, LZB and three Sifa builds:
   - **Indusi/PZB** as one state machine plus a parameter set per build — **I 54**, **I 60**,
@@ -130,7 +134,10 @@ As of 2026-08-13 · `cargo test --workspace`: **240 tests green** · clippy and 
   friction pairing, brake position, load braking, forces and pressures, additional brakes,
   reservoir volumes,
   compressor, leakage, wheel slip protection) and the drive with all its detailed data (motor,
-  engine map, converter circuits with change points and hysteresis, retarder), imports glTF
+  engine map, converter circuits with change points and hysteresis, retarder). A hydraulic
+  transmission is fitted rather than entered: the drive panel plots the tractive effort curve
+  the parameters actually produce, and a suggestion turns five data sheet figures into a
+  starting set to fit from. It also imports glTF
   models, reads their levels of detail from the node names
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
@@ -180,9 +187,10 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   wagon changes over by hand or by a weighing valve of its own. A lever forgotten in the
   loaded position — the classic way to flat a wheel — needs a state of its own, and someone
   to set it while shunting.
-- **Torque converters** with a linear µ(ν) up to the coupling point and a constant absorption
-  coefficient, not a measured λ/µ characteristic field — two numbers per circuit instead of two
-  curves, and the data sheets state the two numbers.
+- **Torque converters** with a linear µ(ν) up to the coupling point and a linear λ(ν), not a
+  measured characteristic field — four numbers per circuit instead of two curves. The field
+  cannot be read back out of a tractive effort curve anyway, so the numbers are fitted against
+  the plot in the vehicle editor; the data sheets state the ends of both lines.
 - **Flank protection** is only switch locking.
 - **LZB braking curve** with a fixed deceleration instead of train-specific brake assessment
   (0.6 m/s², 0.85 m/s² under CIR-ELKE).

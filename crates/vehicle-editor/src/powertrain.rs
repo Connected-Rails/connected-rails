@@ -519,12 +519,15 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
                 engine_defaults,
                 engine_editor,
             );
+            // The transmission is fitted against the plot below, and the suggestion that
+            // starts the fit needs the engine map and the two data sheet figures.
+            let (start_force, top_speed, engine_data) = (*max_force, *v_max, engine.clone());
             optional(
                 ui,
                 "section-transmission",
                 transmission,
                 transmission_defaults,
-                transmission_editor,
+                |ui, t| transmission_editor(ui, t, engine_data.as_ref(), start_force, top_speed),
             );
             optional(
                 ui,
@@ -751,7 +754,10 @@ fn engine_defaults() -> DieselEngine {
         rated_rpm: 1500.0,
         max_rpm: 1650.0,
         torque_curve: vec![(600.0, 9_000.0), (1000.0, 13_500.0), (1500.0, 13_115.0)],
-        governor: Governor::Speed { steps: 0 },
+        governor: Governor::Speed {
+            steps: 0,
+            droop: 0.04,
+        },
         inertia: 60.0,
         response_time: 1.0,
     }
@@ -794,7 +800,10 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
                         .on_hover_text(t!("gov-speed-hint"))
                         .clicked()
                     {
-                        e.governor = Governor::Speed { steps: 0 };
+                        e.governor = Governor::Speed {
+                            steps: 0,
+                            droop: 0.04,
+                        };
                     }
                     if ui
                         .selectable_label(!speed_governed, t!("gov-fill"))
@@ -805,9 +814,12 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
                     }
                 });
         });
-        if let Governor::Speed { steps } = &mut e.governor {
+        if let Governor::Speed { steps, droop } = &mut e.governor {
             row(ui, "gov-notches", |ui| {
                 field(ui, steps, 1.0, 0.0..=32.0, "");
+            });
+            row(ui, "gov-droop", |ui| {
+                field(ui, droop, 0.005, 0.0..=0.2, "");
             });
         }
     });
@@ -831,10 +843,13 @@ fn transmission_defaults() -> Transmission {
             stall_ratio: 2.4,
             coupling_nu: 0.85,
             absorption: 0.53,
+            absorption_slope: 0.15,
             shift_up_kmh: 70.0,
+            shift_primary_kmh: 20.0,
         }],
         fill_steps: 0,
         fill_time: 1.2,
+        drain_time: 0.7,
         hysteresis_kmh: 10.0,
         final_ratio: 1.0,
         wheel_diameter: 1.0,
@@ -843,13 +858,32 @@ fn transmission_defaults() -> Transmission {
     }
 }
 
-fn transmission_editor(ui: &mut egui::Ui, t: &mut Transmission) {
+fn transmission_editor(
+    ui: &mut egui::Ui,
+    t: &mut Transmission,
+    engine: Option<&DieselEngine>,
+    start_force: f64,
+    v_max: f64,
+) {
+    // The converter figures cannot be read back out of a tractive effort curve, so fitting
+    // against the plot is the only way — and this button is where the fit starts.
+    if let Some(engine) = engine
+        && ui
+            .button(t!("action-suggest"))
+            .on_hover_text(t!("trm-suggest-hint"))
+            .clicked()
+    {
+        *t = t.suggest(engine, start_force, v_max);
+    }
     form_grid("gearbox").show(ui, |ui| {
         row(ui, "trm-fill-steps", |ui| {
             field(ui, &mut t.fill_steps, 1.0, 0.0..=32.0, "");
         });
         row(ui, "trm-fill-time", |ui| {
             field(ui, &mut t.fill_time, 0.05, 0.05..=10.0, "s");
+        });
+        row(ui, "trm-drain-time", |ui| {
+            field(ui, &mut t.drain_time, 0.05, 0.0..=10.0, "s");
         });
         row(ui, "trm-hysteresis", |ui| {
             field(ui, &mut t.hysteresis_kmh, 0.5, 0.0..=40.0, "km/h");
@@ -908,8 +942,14 @@ fn transmission_editor(ui: &mut egui::Ui, t: &mut Transmission) {
                 row(ui, "cir-absorption", |ui| {
                     field(ui, &mut circuit.absorption, 0.005, 0.0001..=10.0, "");
                 });
+                row(ui, "cir-absorption-slope", |ui| {
+                    field(ui, &mut circuit.absorption_slope, 0.01, -0.5..=1.0, "");
+                });
                 row(ui, "cir-shift-up", |ui| {
                     field(ui, &mut circuit.shift_up_kmh, 1.0, 0.0..=250.0, "km/h");
+                });
+                row(ui, "cir-shift-primary", |ui| {
+                    field(ui, &mut circuit.shift_primary_kmh, 1.0, 0.0..=100.0, "km/h");
                 });
             });
         });

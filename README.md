@@ -314,11 +314,16 @@ cutback, creep control).
 | Tractive effort curve | the simplified model: a table km/h → N, optionally a second one for the dynamic brake |
 | Tap changer (series-wound) | notches, time per notch, starting effort, power — and optionally the motor data (resistance, machine constant, saturation and maximum current, voltage, field weakening stages, gear ratio, wheel diameter), plus a rheostatic brake |
 | Converter (three-phase) | starting effort, power, pull-out speed (above it the effort falls with 1/v²), brake force and power, fade-out speed, regenerative yes/no |
-| Diesel | engine map (idle/rated/overspeed, full load torque over engine speed, speed- or fill-governed, inertia, rack travel time), hydraulic transmission (circuits as converter or coupling with ratio, stall torque ratio, coupling point, absorption and change-up point; filling steps, filling time, change hysteresis, final drive, number of transmissions), hydrodynamic brake |
+| Diesel | engine map (idle/rated/overspeed, full load torque over engine speed, speed- or fill-governed with droop, inertia, rack travel time), hydraulic transmission (circuits as converter or coupling with ratio, stall torque ratio, coupling point, absorption and its trend over ν, change-up point and primary influence; filling steps, filling and emptying time, change hysteresis, final drive, number of transmissions), hydrodynamic brake |
 
 The detailed data is optional throughout: a `Diesel` without an engine map runs on the plain
 tractive effort hyperbola, and the motor or gearbox can be added later without changing the
 vehicle's type.
+
+A hydraulic transmission cannot be computed back out of a given tractive effort curve, so it
+is fitted: the plot under the drive panel draws the curve the parameters actually produce —
+change point and all — and **Suggest** puts a usable starting set there, out of the starting
+effort, the top speed, the rated speed, the rated torque and the wheel diameter.
 
 **Models are glTF**, and the glTF's own features are used. Levels of detail and moving parts
 are found in the file; the binding is stored in the vehicle RON, so **nothing has to be

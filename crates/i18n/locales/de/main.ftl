@@ -344,11 +344,16 @@ gov-fill = füllungsgeregelt
 gov-fill-hint = der Fahrschalter ist die Einspritzmenge, die Drehzahl folgt der Last
 gov-notches = Stufen
 gov-notches-hint = 0 = stufenlos
+gov-droop = Ungleichförmigkeitsgrad
+gov-droop-hint = Anteil der Nenndrehzahl, um den die Solldrehzahl bei voller Füllung absinkt — 0 = isochron, Vorbild 0,03…0,05
 
+trm-suggest-hint = Startsatz aus Anfahrzugkraft, Höchstgeschwindigkeit, Nenndrehzahl, Nennmoment und Raddurchmesser — hier beginnt das Fitten gegen den Plot
 trm-fill-steps = Füllstufen
 trm-fill-steps-hint = 0 = stufenlos, 1 = nur füllen/entleeren, höher = Teilfüllung wie im Original
 trm-fill-time = Füllzeit
-trm-fill-time-hint = s zum Füllen oder Entleeren eines Kreislaufs
+trm-fill-time-hint = s zum Füllen eines Kreislaufs
+trm-drain-time = Entleerzeit
+trm-drain-time-hint = s zum Entleeren eines Kreislaufs; 0 = wie die Füllzeit
 trm-hysteresis = Schalthysterese
 trm-hysteresis-hint = km/h unter dem Schaltpunkt, bei denen zurückgeschaltet wird
 trm-final-ratio = Achsgetriebe
@@ -368,9 +373,13 @@ cir-stall-hint = µ bei ν = 0
 cir-coupling-point = Kupplungspunkt
 cir-coupling-point-hint = ν, bei dem µ den Wert 1 erreicht hat
 cir-absorption = Leistungsaufnahme λ
-cir-absorption-hint = N·m/(rad/s)² — das Nennmoment der Pumpe bei Nenndrehzahl
+cir-absorption-hint = N·m/(rad/s)² bei ν = 0 — das Nennmoment der Pumpe bei Nenndrehzahl
+cir-absorption-slope = λ-Verlauf
+cir-absorption-slope-hint = λ(ν) = λ·(1 + Verlauf·ν) — 0 nagelt den Motor im ganzen Wandlerbereich auf eine Drehzahlparabel fest
 cir-shift-up = Schaltpunkt
 cir-shift-up-hint = km/h — der letzte Kreislauf übergeht ihn
+cir-shift-primary = Primärbeeinflussung
+cir-shift-primary-hint = km/h, um die der Schaltpunkt in der Nullstellung tiefer liegt — 0 = der Schaltpunkt hängt allein an der Geschwindigkeit
 action-add-circuit = + Kreislauf
 
 ret-absorption = Leistungsaufnahme λ

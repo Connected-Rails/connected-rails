@@ -217,7 +217,8 @@ mirrors the state into ECS components — simulation logic does not belong there
 
 `content::musterbahn()` — 7 km: 3 km straight (160 km/h), 1 km curve R = 1200 m with cant
 ramp (130 km/h), 3 km at 8 ‰ gradient. Block signal at km 2.0 with distant signal,
-1000/500/2000 Hz magnets and LZB loop cable in the final section.
+1000/500/2000 Hz magnets, and over the last 4 km an LZB loop cable with block markers of its
+own, so the LZB area runs in full block mode.
 
 ## Terrain
 

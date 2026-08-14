@@ -148,6 +148,13 @@ pub struct SafetyTrainState {
     /// Train length [m] — the LZB needs it: outside CIR-ELKE a speed rise only takes
     /// effect once the rear of the train has passed the point of change.
     pub train_length: f64,
+    /// Braked weight percentage of the train (BRH) — the figure the driver enters into the
+    /// LZB, which derives its braking curve from it. `0` = not reported: the LZB then falls
+    /// back to its reference value.
+    pub brake_percentage: f64,
+    /// Filling time of the slowest brake in the train [s] — the brake position (BRA) as far
+    /// as the braking curve is concerned. `0` = not reported.
+    pub brake_apply_time: f64,
 }
 
 impl SafetyTrainState {

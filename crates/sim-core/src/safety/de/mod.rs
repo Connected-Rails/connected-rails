@@ -10,7 +10,7 @@ use crate::safety::{
 };
 use serde::{Deserialize, Serialize};
 
-pub use lzb::{Lzb80, LzbBlockMode, LzbMode, LzbTelegram};
+pub use lzb::{Lzb80, LzbBlockMode, LzbMode, LzbSection, LzbTelegram};
 pub use pzb::{MagnetFrequency, MagnetPayload, Pzb, Pzb90, PzbTrip, PzbVariant, TrainType};
 pub use sifa::{Sifa, SifaKind};
 

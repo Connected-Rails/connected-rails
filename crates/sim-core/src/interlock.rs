@@ -336,6 +336,15 @@ pub struct DeviceLink {
     pub activation: Activation,
 }
 
+/// Payload of a `DeviceKind::BlockMarker` device — a block boundary in the line data. Which
+/// train protection makes use of it is its own business: the LZB ends a movement authority
+/// here, the AI driver brakes for it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct BlockMarkerPayload {
+    /// Track section behind the marker.
+    pub section: u32,
+}
+
 /// The interlocking.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Interlock {
@@ -654,10 +663,9 @@ impl Interlock {
 
 /// Helper for content: check the payload of a signal-dependent device.
 pub fn is_signal_device(kind: &DeviceKind) -> bool {
-    matches!(
-        kind,
-        DeviceKind::Magnet | DeviceKind::Signal | DeviceKind::LineConductor
-    )
+    // The line conductor is not one of them: its telegram comes from the LZB centre, which
+    // reads the interlocking itself.
+    matches!(kind, DeviceKind::Magnet | DeviceKind::Signal)
 }
 
 #[cfg(test)]

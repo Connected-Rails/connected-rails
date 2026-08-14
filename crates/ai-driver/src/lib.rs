@@ -3,14 +3,13 @@
 //! The AI drives the same vehicle simulation as the player — no cheating: it only
 //! sets [`CabInputs`], nothing else.
 
-pub mod lookahead;
 pub mod timetable;
 
-use lookahead::Lookahead;
 use serde::{Deserialize, Serialize};
 use sim_core::Sim;
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::cab::CabInputs;
+use sim_core::lookahead::{self, Lookahead};
 pub use timetable::{ScheduledStop, Timetable};
 
 /// Driving behaviour of the AI driver.

@@ -4,28 +4,38 @@
 //! [`LzbTelegram`] over the loop cable sections. From these the vehicle derives v-Soll,
 //! v-Ziel and the distance to target and supervises the braking curve.
 //!
-//! Two block modes are transmitted per telegram (plan 9.4):
+//! The block division is line data, not a setting: it follows from where the line carries
+//! block markers (`DeviceKind::BlockMarker`). [`authority`] — the centre — looks ahead of the
+//! train and ends the movement authority at the first block boundary that is not clear. The
+//! block mode of the telegram is what falls out of that look-ahead (plan 9.4):
 //!
-//! * [`LzbBlockMode::Full`] — full block mode: the LZB divides the line into blocks of its
-//!   own, the lineside signals are replaced by LZB block markers. The PZB magnets are
-//!   suppressed under guidance.
-//! * [`LzbBlockMode::Partial`] — partial block mode: the LZB is laid over the existing
-//!   signal block division, every movement authority ends at a main signal and the signals
-//!   stay binding.
+//! * [`LzbBlockMode::Full`] — the line has LZB block markers of its own, so they divide the
+//!   movement authority and replace the lineside signals. The PZB magnets are suppressed
+//!   under guidance.
+//! * [`LzbBlockMode::Partial`] — no LZB block markers: the only boundaries left are the main
+//!   signals, so every authority ends at one and the signals stay binding.
 //!
 //! [`LzbTelegram::cir_elke`] switches the CIR-ELKE build on: shorter blocks with a higher
 //! supervised deceleration, finer speed steps, and speed rises that take effect at the head
 //! of the train instead of at its rear.
+//!
+//! The braking curve belongs to the train, not to the line: [`Lzb80::deceleration`] derives
+//! it from the brake assessment (BRH), the brake position (BRA) and the initial braking
+//! speed, the same three inputs the driver enters at the prototype. The curve only
+//! supervises — the braking itself is the physical brake, so a train that is braked too
+//! weakly for its movement authority cannot hold the curve.
 
 use crate::cab::{CabInputs, Edge};
+use crate::interlock::Interlock;
+use crate::lookahead::{self, Restriction};
 use crate::safety::{
     Indicator, LampState, ProtectionAction, ProtectionOutput, SafetyTrainState, SelfTest,
     TracksideEvent, TrainProtectionSystem,
 };
 use serde::{Deserialize, Serialize};
-use track_model::DeviceKind;
+use track_model::{DeviceKind, TrackNetwork, TrackPosition};
 
-/// Block division the LZB works with.
+/// Block division the LZB works with — a result of the line data, see [`authority`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LzbBlockMode {
     /// LZB block markers instead of signals — the LZB alone gives the movement authority.
@@ -33,6 +43,20 @@ pub enum LzbBlockMode {
     Full,
     /// The LZB is laid over the signal block division; the signals stay binding.
     Partial,
+}
+
+/// Line data of a line conductor section: what the cable is, not what it transmits. The
+/// payload of a `DeviceKind::LineConductor` device.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct LzbSection {
+    /// Length of the section the cable transmits over [m].
+    pub length: f64,
+    /// CIR-ELKE line.
+    #[serde(default)]
+    pub cir_elke: bool,
+    /// The LZB area ends with this section — the end procedure runs here.
+    #[serde(default)]
+    pub end: bool,
 }
 
 /// Telegram of the LZB centre (payload of a loop cable section).
@@ -64,23 +88,109 @@ fn default_conductor_length() -> f64 {
     1000.0
 }
 
-/// Deceleration of the LZB braking curve [m/s²].
+/// Deceleration of the LZB braking curve at [`REFERENCE_BRAKE_PERCENTAGE`] and an initial
+/// braking speed up to [`V_FULL_DECELERATION`] [m/s²].
 ///
-/// ponytail: a fixed braking curve instead of a train-specific brake assessment. Enough
-/// for LZB guidance and the end procedure; replace it once the braked weight percentage
-/// per train is reported to the centre.
+/// ponytail: the deceleration steps of the real brake tables sit in DB Netz specifications
+/// that are not published, so the curve is a straight line through them: proportional to the
+/// braked weight percentage, falling off in the upper speed range. Replace the two factors
+/// with a table once the figures are on the desk — [`Lzb80::deceleration`] is the only place
+/// that reads them.
 pub const LZB_DECELERATION: f64 = 0.6;
-/// Deceleration of the CIR-ELKE braking curve [m/s²] — the tighter block division only
-/// works because the curve is allowed to be steeper.
+/// The same for CIR-ELKE [m/s²] — a curve model of its own, not a surcharge: the tighter
+/// block division only works because the curve is allowed to be steeper.
 pub const LZB_DECELERATION_CIRELKE: f64 = 0.85;
+/// Braked weight percentage the two decelerations are stated for [%].
+pub const REFERENCE_BRAKE_PERCENTAGE: f64 = 100.0;
+/// The brake assessment is held between these two figures [%] — a train outside the range
+/// runs on the nearest end of it rather than on an absurd curve.
+pub const BRAKE_PERCENTAGE_RANGE: (f64, f64) = (30.0, 225.0);
+/// Up to this initial braking speed the brake tables state a constant deceleration [km/h].
+pub const V_FULL_DECELERATION: f64 = 150.0;
+/// Above it the deceleration falls off linearly with the declining wheel/rail adhesion,
+/// down to [`DECELERATION_FADE`] of its value at this speed [km/h].
+pub const V_FADED_DECELERATION: f64 = 300.0;
+/// Share of the deceleration that is left at [`V_FADED_DECELERATION`].
+pub const DECELERATION_FADE: f64 = 0.6;
 /// Speed step of the LZB displays [km/h].
 pub const V_STEP: f64 = 10.0;
 /// Speed step under CIR-ELKE [km/h].
 pub const V_STEP_CIRELKE: f64 = 5.0;
 /// Without a telegram over this distance the LZB counts as failed [m].
 pub const D_LOSS: f64 = 300.0;
+/// How far ahead the centre grants a movement authority [m].
+pub const AUTHORITY_RANGE: f64 = 12_000.0;
 /// Supervision speed in the failure/end procedure ("V40") [km/h].
 pub const V_END: f64 = 40.0;
+
+/// LZB centre: the movement authority for a train whose head stands at `head`, on the line
+/// conductor section `section`.
+///
+/// The block division is not a setting of the telegram but the line's own: the authority
+/// ends at the first boundary that is not clear — a block marker whose section is occupied,
+/// or a main signal at stop. Whether the line carries block markers at all is what decides
+/// the block mode, and with it whether the signals stay binding.
+///
+/// v-target is the most restrictive point ahead, a speed restriction of the line as much as
+/// a stop: of all the points ahead the one whose braking curve cuts deepest into the
+/// permitted speed.
+pub fn authority(
+    net: &TrackNetwork,
+    interlock: &Interlock,
+    head: TrackPosition,
+    section: &LzbSection,
+) -> LzbTelegram {
+    let ahead = lookahead::scan(net, interlock, head, AUTHORITY_RANGE);
+
+    // A block boundary whose section is occupied ends the authority. A marker naming a
+    // section that does not exist counts as occupied.
+    let end_of_movement = ahead
+        .blocks
+        .iter()
+        .find(|b| {
+            interlock
+                .sections
+                .get(b.section as usize)
+                .is_none_or(|s| s.occupied)
+        })
+        .map(|b| Restriction {
+            distance: b.distance,
+            speed: 0.0,
+        });
+
+    // ponytail: the centre picks the governing target with the reference deceleration — the
+    // train-specific curve is the vehicle's business, and it only ever gets one target.
+    // Two targets whose curves cross within the authority would need the vehicle to be given
+    // both, which the display does not have room for anyway.
+    let curve = |r: &Restriction| {
+        let v = r.speed / 3.6;
+        (v * v + 2.0 * LZB_DECELERATION * r.distance.max(0.0)).sqrt() * 3.6
+    };
+    let permitted = ahead.current;
+    let target = ahead
+        .restrictions
+        .iter()
+        .copied()
+        .chain(end_of_movement)
+        // A speed rise ahead is not a target; the LZB announces the restrictive point even
+        // while its curve still lies above the permitted speed.
+        .filter(|r| r.speed < permitted)
+        .min_by(|a, b| curve(a).total_cmp(&curve(b)));
+
+    LzbTelegram {
+        permitted_speed: permitted,
+        target_speed: target.map_or(permitted, |r| r.speed),
+        target_distance: target.map_or(AUTHORITY_RANGE, |r| r.distance.max(0.0)),
+        end_of_authority: section.end,
+        length: section.length,
+        block_mode: if ahead.blocks.is_empty() {
+            LzbBlockMode::Partial
+        } else {
+            LzbBlockMode::Full
+        },
+        cir_elke: section.cir_elke,
+    }
+}
 
 /// Operating state of the LZB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -119,6 +229,11 @@ pub struct Lzb80 {
     pending_rise: Option<(f64, f64)>,
     /// Forced braking active.
     tripped: bool,
+    /// Train data the braking curve is written for: braked weight percentage (BRH) and the
+    /// filling time of the slowest brake (BRA). At the prototype the driver enters them; here
+    /// they come from the train itself, so they cannot be entered wrongly.
+    brake_percentage: f64,
+    brake_apply_time: f64,
     takeover: Edge,
     end: Edge,
     lzb_test: Edge,
@@ -165,13 +280,45 @@ impl Lzb80 {
         self.telegram.is_some_and(|t| t.cir_elke)
     }
 
-    /// Supervised deceleration [m/s²].
+    /// Supervised deceleration [m/s²] — derived from the train data, not a fixed value.
+    ///
+    /// Two things decide it, as they do at the prototype: the brake assessment of the train
+    /// (BRH), which the deceleration is proportional to, and the initial braking speed. Up to
+    /// [`V_FULL_DECELERATION`] the brake tables state constant values; above it they fall off
+    /// linearly, because the adhesion between wheel and rail does. The initial braking speed
+    /// is the permitted speed in force — that is what the train brakes from, and it is capped
+    /// by the maximum speed the LZB was given for this train.
     pub fn deceleration(&self) -> f64 {
-        if self.is_cir_elke() {
+        let base = if self.is_cir_elke() {
             LZB_DECELERATION_CIRELKE
         } else {
             LZB_DECELERATION
+        };
+        base * self.brake_assessment() * self.adhesion_fade(self.permitted)
+    }
+
+    /// Brake assessment as a factor on the reference curve — 1.0 at
+    /// [`REFERENCE_BRAKE_PERCENTAGE`]. Without reported train data the LZB stays on the
+    /// reference value.
+    fn brake_assessment(&self) -> f64 {
+        if self.brake_percentage <= 0.0 {
+            return 1.0;
         }
+        let (lo, hi) = BRAKE_PERCENTAGE_RANGE;
+        self.brake_percentage.clamp(lo, hi) / REFERENCE_BRAKE_PERCENTAGE
+    }
+
+    /// Factor the deceleration falls off by above [`V_FULL_DECELERATION`].
+    fn adhesion_fade(&self, v_kmh: f64) -> f64 {
+        let over = (v_kmh - V_FULL_DECELERATION) / (V_FADED_DECELERATION - V_FULL_DECELERATION);
+        1.0 - (1.0 - DECELERATION_FADE) * over.clamp(0.0, 1.0)
+    }
+
+    /// Time the brake needs to take hold, as far as the curve allows for it [s]: half the
+    /// filling time is the usual equivalent-time substitute for the pressure ramp. It is what
+    /// separates a freight train in G from a passenger train in P.
+    fn build_up_time(&self) -> f64 {
+        self.brake_apply_time / 2.0
     }
 
     /// Speed step of the displays [km/h].
@@ -195,12 +342,13 @@ impl Lzb80 {
             return None;
         }
         let t = self.telegram?;
-        // Braking curve to the target: v² = v_target² + 2·a·s
+        // Braking curve to the target, with the build-up time of the brake as lost distance:
+        // v² + 2·a·t_b·v = v_target² + 2·a·s, solved for v.
+        let a = self.deceleration();
+        let loss = a * self.build_up_time();
         let v_target = t.target_speed / 3.6;
-        let curve = (v_target * v_target
-            + 2.0 * self.deceleration() * self.target_distance.max(0.0))
-        .sqrt()
-            * 3.6;
+        let reach = v_target * v_target + 2.0 * a * self.target_distance.max(0.0);
+        let curve = ((loss * loss + reach).sqrt() - loss) * 3.6;
         Some(self.quantise(self.permitted.min(curve)))
     }
 
@@ -225,7 +373,11 @@ impl Lzb80 {
     fn accept(&mut self, t: LzbTelegram, train: &SafetyTrainState, s_offset: f64) {
         let at = train.odometer - s_offset;
         if t.permitted_speed > self.permitted && self.is_guiding() && !t.cir_elke {
-            self.pending_rise = Some((t.permitted_speed, at + train.train_length));
+            // The centre repeats the authority every step, so a rise that is already waiting
+            // must not be pushed ahead of the train with it.
+            if self.pending_rise.is_none_or(|(v, _)| v < t.permitted_speed) {
+                self.pending_rise = Some((t.permitted_speed, at + train.train_length));
+            }
         } else {
             self.permitted = t.permitted_speed;
             self.pending_rise = None;
@@ -243,6 +395,11 @@ impl TrainProtectionSystem for Lzb80 {
         cab: &CabInputs,
         events: &[TracksideEvent],
     ) -> ProtectionOutput {
+        // Train data of the braking curve — at the prototype an entry by the driver, here
+        // read off the train, and kept up to date because the load may change at a station.
+        self.brake_percentage = train.brake_percentage;
+        self.brake_apply_time = train.brake_apply_time;
+
         if self.isolated {
             self.mode = LzbMode::Off;
             return ProtectionOutput::default();
@@ -529,7 +686,8 @@ mod tests {
         );
         r.drive(5000.0);
         let v = r.lzb.permitted_speed().unwrap();
-        // 1000 m left until the stop: sqrt(2·0.6·1000) = 34.6 m/s = 124 km/h.
+        // 1000 m left until the stop, reference curve at 160 km/h: a = 0.58 m/s²,
+        // sqrt(2·0.58·1000) = 34.2 m/s = 123 km/h.
         assert!(v > 110.0 && v < 135.0, "permitted speed = {v}");
         assert!(r.lzb.target_distance().unwrap() < 1100.0);
         r.drive(900.0);
@@ -538,6 +696,50 @@ mod tests {
             r.out.action,
             ProtectionAction::ForcedServiceBrake,
             "160 km/h is too fast"
+        );
+    }
+
+    /// The curve is the train's, not the line's: brake assessment and brake position both
+    /// move it. An ICE at 180 BRH in R may run where a freight train at 65 BRH in G may not.
+    #[test]
+    fn the_braking_curve_follows_the_train_data() {
+        let curve = |brh: f64, apply_time: f64| {
+            let mut r = Rig::new(120.0);
+            r.state.brake_percentage = brh;
+            r.state.brake_apply_time = apply_time;
+            r.send(telegram(160.0, 0.0, 1000.0));
+            r.takeover();
+            r.lzb.permitted_speed().unwrap()
+        };
+        assert!(
+            curve(180.0, 4.0) > curve(65.0, 22.0) + 50.0,
+            "an ICE keeps a far higher speed than a freight train at the same target"
+        );
+        assert!(
+            curve(100.0, 4.0) > curve(100.0, 22.0),
+            "the G position costs braking distance and therefore speed"
+        );
+    }
+
+    /// Above 150 km/h the brake tables let the deceleration fall off — the fixed value used
+    /// to be too optimistic in exactly the range the LZB exists for.
+    #[test]
+    fn the_deceleration_falls_off_in_the_high_speed_range() {
+        let decel = |permitted: f64| {
+            let mut r = Rig::new(100.0);
+            r.state.brake_percentage = 130.0;
+            r.send(telegram(permitted, 0.0, 20_000.0));
+            r.takeover();
+            r.lzb.deceleration()
+        };
+        assert!(
+            (decel(150.0) - decel(100.0)).abs() < 1e-9,
+            "constant up to 150 km/h"
+        );
+        let faded = decel(300.0) / decel(150.0);
+        assert!(
+            (faded - DECELERATION_FADE).abs() < 1e-9,
+            "fade at 300 km/h = {faded}"
         );
     }
 
@@ -610,7 +812,7 @@ mod tests {
         });
         cir.takeover();
 
-        assert_eq!(cir.lzb.deceleration(), LZB_DECELERATION_CIRELKE);
+        assert!(cir.lzb.deceleration() > plain.lzb.deceleration());
         assert!(
             cir.lzb.permitted_speed().unwrap() > plain.lzb.permitted_speed().unwrap(),
             "the steeper curve permits more speed at the same distance"

@@ -9,6 +9,7 @@ pub mod doors;
 pub mod drive;
 pub mod electric;
 pub mod interlock;
+pub mod lookahead;
 pub mod physics;
 pub mod rng;
 pub mod safety;
@@ -23,6 +24,7 @@ pub const G: f64 = 9.806_65;
 use brakes::DriverBrakeValve;
 use cab::CabInputs;
 use interlock::Interlock;
+use safety::de::LzbSection;
 use safety::{ProtectionAction, ProtectionOutput, SafetyTrainState, TracksideEvent};
 use serde::{Deserialize, Serialize};
 use track_model::{DeviceKind, EdgeId, TrackNetwork, TrackPosition};
@@ -44,8 +46,8 @@ pub struct TrainRuntime {
     pub neutral_section_left: f64,
     /// Train is stopped because of a node that cannot be passed.
     pub blocked: bool,
-    /// Last received LZB telegram (RON) and how far it is being transmitted.
-    pub lzb_payload: Option<String>,
+    /// Line conductor section the train is running in, and how far it transmits.
+    pub lzb_section: Option<safety::de::LzbSection>,
     pub lzb_until_odo: f64,
 }
 
@@ -211,6 +213,8 @@ impl Sim {
             line_speed: self.trains[index].vehicles[0].pos.speed_limit(&self.net),
             braking: !self.trains[index].vehicles[0].brake.released(),
             train_length: self.trains[index].length(),
+            brake_percentage: self.trains[index].brake_percentage(),
+            brake_apply_time: self.trains[index].brake_apply_time(),
         };
         let mut out = ProtectionOutput::default();
         let train = &mut self.trains[index];
@@ -246,15 +250,13 @@ impl Sim {
                 self.runtime[index].neutral_section_left = n.length.max(1.0);
             }
             if device.kind == DeviceKind::LineConductor {
-                #[derive(serde::Deserialize, Default)]
-                struct Length {
-                    #[serde(default)]
-                    length: f64,
-                }
-                let l: Length = ron::from_str(&device.payload).unwrap_or_default();
-                self.runtime[index].lzb_payload = Some(device.payload.clone());
+                // The cable itself is only line data; the authority comes from the centre
+                // below, freshly for every step.
+                let section: LzbSection = ron::from_str(&device.payload).unwrap_or_default();
+                self.runtime[index].lzb_section = Some(section);
                 self.runtime[index].lzb_until_odo =
-                    self.runtime[index].odometer + l.length.max(1.0);
+                    self.runtime[index].odometer + section.length.max(1.0);
+                continue;
             }
             events.push(TracksideEvent {
                 device: device.kind.clone(),
@@ -264,15 +266,18 @@ impl Sim {
             });
         }
 
-        // The loop cable transmits continuously, not only when its start is passed.
+        // The loop cable transmits continuously: the LZB centre builds the movement authority
+        // out of the line's block division and the current state of the interlocking, so a
+        // signal going to stop ahead of the train shortens the authority at once.
         let rt = &self.runtime[index];
         if rt.odometer < rt.lzb_until_odo
-            && !events.iter().any(|e| e.device == DeviceKind::LineConductor)
-            && let Some(payload) = rt.lzb_payload.clone()
+            && let Some(section) = rt.lzb_section
         {
+            let head = self.trains[index].head_position();
+            let telegram = safety::de::lzb::authority(&self.net, &self.interlock, head, &section);
             events.push(TracksideEvent {
                 device: DeviceKind::LineConductor,
-                payload,
+                payload: ron::to_string(&telegram).unwrap_or_default(),
                 s_offset: 0.0,
                 active: true,
             });

@@ -69,18 +69,35 @@ As of 2026-08-13 · `cargo test --workspace`: **240 tests green** · clippy and 
 - **Train protection (ch. 9):** trait abstraction + country package DE with all intermittent
   builds, LZB and three Sifa builds:
   - **Indusi/PZB** as one state machine plus a parameter set per build — **I 54**, **I 60**,
-    **I 60M**, **I 60R**, **ÖBB PZB 60**, **PZB 90 V1.5** and **V2.0**. The older builds
-    supervise the check speed only once the 1000 Hz time has run and hold the 500 Hz speed
-    constant; the distance supervision (1250 m), the restrictive mode and the supervised
+    **I 60M**, **I 60R**, **ÖBB PZB 60**, **PZB 90 V1.5** and **V2.0**. **Every build carries
+    the check speeds of its own time**: the Indusi builds supervise 95/75/60 km/h after
+    20/26/34 s, the I 54 the 95/90/80 km/h it was set to by vehicle maximum speed, and only
+    the PZB 90 harmonised the figures down to 85/70/55 km/h — the same loco therefore runs
+    10 km/h faster past a 1000 Hz magnet before it was rebuilt. The older builds supervise the
+    check speed only once the 1000 Hz time has run and hold the 500 Hz speed constant; the
+    I 60R, being computer-controlled, already supervises a falling curve, but onto the I 60
+    check speed. The distance supervision (1250 m), the restrictive mode and the supervised
     override came with the I 60R and the PZB 90. V1.5 enters the restrictive mode only after
     a stop and holds 45 km/h there, V2.0 also after 15 s below 10 km/h and falls to 25 km/h.
-    Train categories O/M/U with all check speeds, acknowledgement, exemption from 700 m,
-    override 40 and the forced braking logic apply throughout.
-  - **LZB 80/I 80** with and without PZB, full and partial block mode (in partial block mode
-    the signals stay binding, so their magnets remain the fallback level), **CIR-ELKE**
-    (steeper braking curve, 5 km/h speed steps, speed rises effective at the head of the
-    train instead of at its rear), takeover, v-target/v-goal/distance to target, end and
-    failure procedures.
+    Train categories O/M/U, acknowledgement, exemption from 700 m, override 40 and the forced
+    braking logic apply throughout.
+  - **LZB 80/I 80** with and without PZB, **CIR-ELKE** (steeper braking curve, 5 km/h speed
+    steps, speed rises effective at the head of the train instead of at its rear), takeover,
+    v-target/v-goal/distance to target, end and failure procedures.
+    The **movement authority comes from an LZB centre** that builds it afresh every step out
+    of the line data and the state of the interlocking: it runs to the first block boundary
+    that is not clear — a block marker whose section is occupied, or a main signal at stop —
+    so a signal going to stop ahead of the train shortens it at once. v-target is the most
+    restrictive point in the next 12 km, a speed restriction of the line as much as a stop.
+    The **block division is a line datum**, the `BlockMarker` devices of the route; full and
+    partial block mode are what falls out of it, and with them whether the signals stay
+    binding and their magnets remain the fallback level.
+    The **braking curve is the train's own**: it follows the braked weight percentage (BRH),
+    the brake position (BRA) through the build-up time of the brake, and the initial braking
+    speed, above 150 km/h with the falling deceleration of the brake tables. An ICE at
+    180 BRH therefore runs a curve a freight train at 65 BRH in G never gets. The curve only
+    supervises — the braking itself stays physical, so a train braked too weakly for its
+    movement authority simply cannot hold it.
   - **Function test** (Funktionsprüfung) of the PZB and the LZB: lamp test → internal test →
     acknowledgement, at a standstill only; the PZB holds the forced braking until it passes.
     Switching the battery on starts it.
@@ -192,18 +209,26 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   cannot be read back out of a tractive effort curve anyway, so the numbers are fitted against
   the plot in the vehicle editor; the data sheets state the ends of both lines.
 - **Flank protection** is only switch locking.
-- **LZB braking curve** with a fixed deceleration instead of train-specific brake assessment
-  (0.6 m/s², 0.85 m/s² under CIR-ELKE).
-- **LZB block modes** are reduced to "signals binding yes/no". The block division of the
-  movement authority itself follows once the LZB centre in the interlocking generates block
-  markers of its own.
+- **The LZB braking curve** is derived from the train, but with a straight line through the
+  deceleration steps instead of the steps themselves: proportional to the braked weight
+  percentage, falling off linearly above 150 km/h. The real steps of the LZB brake tables sit
+  in DB Netz specifications that are handed out only on proven legitimate interest, so no
+  simulator carries them in an open file. `Lzb80::deceleration` is the single place a table
+  would replace. **CIR-ELKE II** — gradients up to 40 ‰ and kinked supervision with three
+  speed-dependent deceleration values — is not modelled; where those three values coincide
+  (a 140 km/h EMU on a CE-II line), the CIR-ELKE I curve covers the case.
+- **The LZB centre reports one target**, the point ahead whose braking curve cuts deepest,
+  picked with the reference deceleration rather than the train's own. Two targets whose curves
+  cross inside the authority would need the vehicle to be given both — which is as much as the
+  MFA has room for anyway.
 - **Sifa RZM** is modelled as time-distance plus a minimum interval between operations, so
   beating the pedal continuously does not satisfy the device. Where the build differs in the
   detail, `SifaParams` is the place to correct it.
-- **The parameter sets of the older Indusi builds** (I 54 … ÖBB PZB 60) carry the check
-  speeds of the train categories over from the PZB 90 rulebook, which is where they came
-  from historically; what differs per build is *which* supervision an influence starts, and
-  that is modelled in full. The tables sit in `PzbVariant::spec` as `const` values.
+- **The I 54 is modelled in its state from 1959**, whose three check speeds followed the
+  vehicle's maximum speed rather than the train category; the train type carries them here,
+  because the two axes line up closely enough. The earlier rulebook, with only 95 and 75, is
+  not modelled. **The ÖBB PZB 60** runs on the contemporary German Indusi set — no figures of
+  its own are published. The tables sit in `PzbVariant::spec` as `const` values.
 - **Geoid undulation** as a constant offset per line.
 - **Device payload** as RON *text* instead of `ron::Value` (Value loses unit enum variants).
 - **No CRS framework:** UTM 32/33 directly as a Snyder series in `world-coords::geo` instead of

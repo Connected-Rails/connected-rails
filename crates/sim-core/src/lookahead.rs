@@ -1,6 +1,8 @@
-//! Look-ahead on the track graph: speed profile and signals (plan ch. 11).
+//! Look-ahead on the track graph: speed profile, signals and block boundaries (plan ch. 11).
+//!
+//! Used by the AI driver and by the LZB centre, which builds its movement authority from it.
 
-use sim_core::interlock::Interlock;
+use crate::interlock::{BlockMarkerPayload, Interlock};
 use track_model::{DeviceKind, EdgeSide, TrackNetwork, TrackPosition};
 
 /// A speed restriction lying ahead.
@@ -12,6 +14,16 @@ pub struct Restriction {
     pub speed: f64,
 }
 
+/// A block boundary lying ahead.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockBoundary {
+    /// Distance from the current position [m].
+    pub distance: f64,
+    /// Track section behind the boundary — its clear detection decides whether a movement
+    /// authority may run past it.
+    pub section: u32,
+}
+
 /// Result of the look-ahead.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lookahead {
@@ -19,6 +31,8 @@ pub struct Lookahead {
     pub current: f64,
     /// Restrictions lying ahead, sorted by distance.
     pub restrictions: Vec<Restriction>,
+    /// Block boundaries lying ahead, sorted by distance.
+    pub blocks: Vec<BlockBoundary>,
 }
 
 impl Lookahead {
@@ -54,7 +68,7 @@ pub fn scan(
 ) -> Lookahead {
     let mut out = Lookahead {
         current: from.speed_limit(net),
-        restrictions: Vec::new(),
+        ..Default::default()
     };
 
     let mut pos = from;
@@ -85,13 +99,9 @@ pub fn scan(
             });
         }
 
-        // Signals on this edge.
+        // Signals and block boundaries on this edge.
         for device in net.devices_on(pos.edge) {
-            if device.kind != DeviceKind::Signal
-                || device.s < lo
-                || device.s > hi
-                || !device.facing.applies(pos.dir)
-            {
+            if device.s < lo || device.s > hi || !device.facing.applies(pos.dir) {
                 continue;
             }
             let d = if pos.dir > 0 {
@@ -102,14 +112,28 @@ pub fn scan(
             if d > span {
                 continue;
             }
-            let Some(signal) = interlock.signal_at_device(device.id) else {
-                continue;
-            };
-            if let Some(speed) = interlock.signal_speed(signal.id) {
-                out.restrictions.push(Restriction {
-                    distance: travelled + d,
-                    speed,
-                });
+            match &device.kind {
+                DeviceKind::Signal => {
+                    let Some(signal) = interlock.signal_at_device(device.id) else {
+                        continue;
+                    };
+                    if let Some(speed) = interlock.signal_speed(signal.id) {
+                        out.restrictions.push(Restriction {
+                            distance: travelled + d,
+                            speed,
+                        });
+                    }
+                }
+                DeviceKind::BlockMarker => {
+                    let Ok(marker) = ron::from_str::<BlockMarkerPayload>(&device.payload) else {
+                        continue;
+                    };
+                    out.blocks.push(BlockBoundary {
+                        distance: travelled + d,
+                        section: marker.section,
+                    });
+                }
+                _ => {}
             }
         }
 
@@ -146,5 +170,6 @@ pub fn scan(
 
     out.restrictions
         .sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    out.blocks.sort_by(|a, b| a.distance.total_cmp(&b.distance));
     out
 }

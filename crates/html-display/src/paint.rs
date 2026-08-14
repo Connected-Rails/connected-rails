@@ -89,24 +89,30 @@ fn walk(
             }
             let opacity = opacity * cs.opacity;
             if let Some(bg) = cs.background {
-                push(out, PaintCmd::Rect {
-                    x,
-                    y,
-                    w: layout.size.width,
-                    h: layout.size.height,
-                    color: with_alpha(bg, opacity),
-                    filled: true,
-                });
+                push(
+                    out,
+                    PaintCmd::Rect {
+                        x,
+                        y,
+                        w: layout.size.width,
+                        h: layout.size.height,
+                        color: with_alpha(bg, opacity),
+                        filled: true,
+                    },
+                );
             }
             if let Some((_, border_color)) = cs.border {
-                push(out, PaintCmd::Rect {
-                    x,
-                    y,
-                    w: layout.size.width,
-                    h: layout.size.height,
-                    color: with_alpha(border_color, opacity),
-                    filled: false,
-                });
+                push(
+                    out,
+                    PaintCmd::Rect {
+                        x,
+                        y,
+                        w: layout.size.width,
+                        h: layout.size.height,
+                        color: with_alpha(border_color, opacity),
+                        filled: false,
+                    },
+                );
             }
             for &c in &doc.nodes[idx].children {
                 walk(doc, styles, solved, c, x, y, opacity, out);
@@ -125,13 +131,16 @@ fn walk(
                     TextAlign::Center => (box_width - line_width) / 2.0,
                     TextAlign::Right => box_width - line_width,
                 };
-                push(out, PaintCmd::Text {
-                    x: tx,
-                    y: y + line_no as f32 * line_height,
-                    text: words[start..end].join(" "),
-                    size: font_size,
-                    color,
-                });
+                push(
+                    out,
+                    PaintCmd::Text {
+                        x: tx,
+                        y: y + line_no as f32 * line_height,
+                        text: words[start..end].join(" "),
+                        size: font_size,
+                        color,
+                    },
+                );
                 line_no += 1;
             });
         }

@@ -14,7 +14,13 @@ use sim_core::train::Motion;
 const INPUT_COMBO_W: f32 = 200.0;
 
 pub fn panel(ui: &mut egui::Ui, editor: &mut Editor) {
-    if editor.spec.model.as_ref().and_then(|m| m.cab.as_ref()).is_none() {
+    if editor
+        .spec
+        .model
+        .as_ref()
+        .and_then(|m| m.cab.as_ref())
+        .is_none()
+    {
         ui.label(
             egui::RichText::new(t!("cab-none"))
                 .small()

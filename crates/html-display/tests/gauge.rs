@@ -7,10 +7,7 @@ use html_display::{HtmlGauge, PaintCmd, SimFrame};
 fn frame(numbers: &[(&str, f64)]) -> SimFrame {
     SimFrame {
         time: 0.0,
-        numbers: numbers
-            .iter()
-            .map(|(n, v)| ((*n).to_owned(), *v))
-            .collect(),
+        numbers: numbers.iter().map(|(n, v)| ((*n).to_owned(), *v)).collect(),
         lamps: Vec::new(),
         buttons: [false; 8],
     }
@@ -91,7 +88,10 @@ fn flex_page_paints_background_boxes_and_centered_text() {
     assert!(approx(x, 119.0), "centered text x, got {x}");
     assert!(approx(y, 0.0), "text y, got {y}");
     assert!(approx(size, 10.0), "font size, got {size}");
-    assert!(approx_color(color, WHITE), "default text color, got {color:?}");
+    assert!(
+        approx_color(color, WHITE),
+        "default text color, got {color:?}"
+    );
 }
 
 #[test]
@@ -99,7 +99,9 @@ fn data_bind_formats_and_reports_only_real_changes() {
     let html = r#"<div data-bind="v_kmh" data-format="%.1f"></div>"#;
     let mut gauge = HtmlGauge::new(html, 100.0, 50.0).expect("gauge loads");
 
-    let cmds = gauge.tick(&frame(&[("v_kmh", 12.34)])).expect("initial paint");
+    let cmds = gauge
+        .tick(&frame(&[("v_kmh", 12.34)]))
+        .expect("initial paint");
     assert!(find_text(&cmds, "12.3").is_some(), "bound text painted");
 
     assert!(
@@ -132,7 +134,9 @@ fn on_frame_text_mutation_repaints_once_per_change() {
         "same text set again must not repaint"
     );
 
-    let cmds = gauge.tick(&frame(&[("v_kmh", 2.0)])).expect("change repaints");
+    let cmds = gauge
+        .tick(&frame(&[("v_kmh", 2.0)]))
+        .expect("change repaints");
     assert!(find_text(&cmds, "2").is_some());
 }
 
@@ -181,7 +185,9 @@ fn throwing_handler_is_disabled_and_reported_once() {
     "#;
     let mut gauge = HtmlGauge::new(html, 100.0, 50.0).expect("gauge loads");
 
-    let cmds = gauge.tick(&frame(&[("v_kmh", 5.0)])).expect("initial paint");
+    let cmds = gauge
+        .tick(&frame(&[("v_kmh", 5.0)]))
+        .expect("initial paint");
     assert!(find_text(&cmds, "5").is_some());
     let errors = gauge.take_errors();
     assert_eq!(errors.len(), 1, "error reported exactly once: {errors:?}");
@@ -247,5 +253,8 @@ fn unknown_tags_and_properties_are_ignored() {
         approx_color(color, YELLOW),
         "known declaration applied, unknown ones skipped: {color:?}"
     );
-    assert!(gauge.take_errors().is_empty(), "no errors for unknown input");
+    assert!(
+        gauge.take_errors().is_empty(),
+        "no errors for unknown input"
+    );
 }

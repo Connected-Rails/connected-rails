@@ -163,7 +163,10 @@ pub fn setup_displays(
         }
     }
     if !views.is_empty() {
-        info!("Displays: {} render targets on the player train", views.len());
+        info!(
+            "Displays: {} render targets on the player train",
+            views.len()
+        );
     }
     commands.insert_resource(Displays(views));
 }

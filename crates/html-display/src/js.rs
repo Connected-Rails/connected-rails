@@ -107,14 +107,17 @@ impl Runtime {
         let script = doc.script.clone();
         let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
         STATES.with(|s| {
-            s.borrow_mut().insert(token, GaugeState {
-                doc,
-                sheet,
-                on_frame: Vec::new(),
-                on_button: Vec::new(),
-                elements: HashMap::new(),
-                buttons: [false; 8],
-            })
+            s.borrow_mut().insert(
+                token,
+                GaugeState {
+                    doc,
+                    sheet,
+                    on_frame: Vec::new(),
+                    on_button: Vec::new(),
+                    elements: HashMap::new(),
+                    buttons: [false; 8],
+                },
+            )
         });
         let mut context = Context::default();
         let sim = match install_globals(&mut context, token) {
@@ -275,7 +278,10 @@ impl Drop for Runtime {
 /// surface. Returns the `sim` object for the per-tick updates.
 fn install_globals(ctx: &mut Context, token: u64) -> JsResult<JsObject> {
     let get_by_id = NativeFunction::from_copy_closure(move |_this, args, ctx| {
-        let id = args.get_or_undefined(0).to_string(ctx)?.to_std_string_lossy();
+        let id = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_lossy();
         let Some(idx) = with_state(token, |st| st.doc.find_by_id(&id)).flatten() else {
             return Ok(JsValue::null());
         };
@@ -351,7 +357,10 @@ fn build_element_object(ctx: &mut Context, token: u64, idx: usize) -> JsObject {
     let text_set = accessor_fn(
         ctx,
         NativeFunction::from_copy_closure(move |_this, args, ctx| {
-            let text = args.get_or_undefined(0).to_string(ctx)?.to_std_string_lossy();
+            let text = args
+                .get_or_undefined(0)
+                .to_string(ctx)?
+                .to_std_string_lossy();
             let _ = with_state(token, |st| st.doc.set_text_content(idx, &text));
             Ok(JsValue::undefined())
         }),
@@ -382,7 +391,10 @@ fn build_element_object(ctx: &mut Context, token: u64, idx: usize) -> JsObject {
     });
     let set_attribute = NativeFunction::from_copy_closure(move |_this, args, ctx| {
         let name = attr_name(args.get_or_undefined(0), ctx)?;
-        let value = args.get_or_undefined(1).to_string(ctx)?.to_std_string_lossy();
+        let value = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_lossy();
         let _ = with_state(token, |st| st.doc.set_attribute(idx, &name, &value));
         Ok(JsValue::undefined())
     });
@@ -402,15 +414,19 @@ fn build_element_object(ctx: &mut Context, token: u64, idx: usize) -> JsObject {
         Ok(JsValue::undefined())
     });
     let class_toggle = NativeFunction::from_copy_closure(move |_this, args, ctx| {
-        let class = args.get_or_undefined(0).to_string(ctx)?.to_std_string_lossy();
-        let present =
-            with_state(token, |st| st.doc.class_toggle(idx, &class)).unwrap_or(false);
+        let class = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_lossy();
+        let present = with_state(token, |st| st.doc.class_toggle(idx, &class)).unwrap_or(false);
         Ok(JsValue::from(present))
     });
     let class_contains = NativeFunction::from_copy_closure(move |_this, args, ctx| {
-        let class = args.get_or_undefined(0).to_string(ctx)?.to_std_string_lossy();
-        let present =
-            with_state(token, |st| st.doc.class_contains(idx, &class)).unwrap_or(false);
+        let class = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_lossy();
+        let present = with_state(token, |st| st.doc.class_contains(idx, &class)).unwrap_or(false);
         Ok(JsValue::from(present))
     });
     let class_list = ObjectInitializer::new(ctx)
@@ -421,8 +437,14 @@ fn build_element_object(ctx: &mut Context, token: u64, idx: usize) -> JsObject {
         .build();
 
     let set_property = NativeFunction::from_copy_closure(move |_this, args, ctx| {
-        let name = args.get_or_undefined(0).to_string(ctx)?.to_std_string_lossy();
-        let value = args.get_or_undefined(1).to_string(ctx)?.to_std_string_lossy();
+        let name = args
+            .get_or_undefined(0)
+            .to_string(ctx)?
+            .to_std_string_lossy();
+        let value = args
+            .get_or_undefined(1)
+            .to_string(ctx)?
+            .to_std_string_lossy();
         let _ = with_state(token, |st| st.doc.style_set_property(idx, &name, &value));
         Ok(JsValue::undefined())
     });
@@ -455,5 +477,8 @@ fn accessor_fn(ctx: &mut Context, nf: NativeFunction) -> JsFunction {
 }
 
 fn attr_name(value: &JsValue, ctx: &mut Context) -> JsResult<String> {
-    Ok(value.to_string(ctx)?.to_std_string_lossy().to_ascii_lowercase())
+    Ok(value
+        .to_string(ctx)?
+        .to_std_string_lossy()
+        .to_ascii_lowercase())
 }

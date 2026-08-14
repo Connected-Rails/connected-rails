@@ -323,7 +323,13 @@ pub fn animate_parts(
         let Some(value) = part_value(&part.function, vehicle, &cab, sim.0.time) else {
             continue;
         };
-        apply_motion(&part.motion, &node.base, value, &mut transform, &mut visibility);
+        apply_motion(
+            &part.motion,
+            &node.base,
+            value,
+            &mut transform,
+            &mut visibility,
+        );
     }
 }
 
@@ -350,7 +356,13 @@ pub fn animate_controls(
             continue;
         };
         let value = spec.input.get(train, cab) as f32;
-        apply_motion(&spec.motion, &node.base, value, &mut transform, &mut visibility);
+        apply_motion(
+            &spec.motion,
+            &node.base,
+            value,
+            &mut transform,
+            &mut visibility,
+        );
     }
 }
 
@@ -394,7 +406,12 @@ fn part_value(function: &str, vehicle: &Vehicle, cab: &CabInputs, time: f64) -> 
         // indicator leaves the part at its rest position.
         _ => {
             if let Some(name) = function.strip_prefix("gauge:") {
-                let value = vehicle.safety.indicators().iter().find(|i| i.name == name)?.value?;
+                let value = vehicle
+                    .safety
+                    .indicators()
+                    .iter()
+                    .find(|i| i.name == name)?
+                    .value?;
                 match name {
                     // Target speeds share the speedometer scale.
                     "mfa_v_soll" | "mfa_v_ziel" => {
@@ -411,7 +428,12 @@ fn part_value(function: &str, vehicle: &Vehicle, cab: &CabInputs, time: f64) -> 
                 }
             } else {
                 let name = function.strip_prefix("lamp:")?;
-                let lamp = vehicle.safety.indicators().iter().find(|i| i.name == name)?.lamp;
+                let lamp = vehicle
+                    .safety
+                    .indicators()
+                    .iter()
+                    .find(|i| i.name == name)?
+                    .lamp;
                 match lamp {
                     LampState::Off => 0.0,
                     LampState::On => 1.0,
@@ -548,7 +570,10 @@ mod tests {
 
     #[test]
     fn digits_come_from_their_decimal_place() {
-        assert_eq!(digit_function("digit:lzb_v_soll:1"), Some(("lzb_v_soll", 1)));
+        assert_eq!(
+            digit_function("digit:lzb_v_soll:1"),
+            Some(("lzb_v_soll", 1))
+        );
         assert_eq!(digit_function("gauge:speed"), None);
         assert_eq!(digit_at(Some(123.7), 0), Some(3));
         assert_eq!(digit_at(Some(123.7), 1), Some(2));

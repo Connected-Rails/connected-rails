@@ -150,8 +150,10 @@ pub(crate) fn parse_stylesheet(css: &str) -> Stylesheet {
         let Some(close) = after.find('}') else { break };
         let body = &after[..close];
         rest = &after[close + 1..];
-        let selectors: Vec<Selector> =
-            selector_text.split(',').filter_map(parse_selector).collect();
+        let selectors: Vec<Selector> = selector_text
+            .split(',')
+            .filter_map(parse_selector)
+            .collect();
         if selectors.is_empty() {
             continue;
         }
@@ -239,7 +241,14 @@ pub(crate) fn compute_into(doc: &Document, sheet: &Stylesheet, styles: &mut Vec<
     styles.clear();
     styles.resize(doc.nodes.len(), ComputedStyle::default());
     let mut matched: Vec<(u32, usize)> = Vec::new();
-    compute_node(doc, sheet, ROOT, ComputedStyle::default(), styles, &mut matched);
+    compute_node(
+        doc,
+        sheet,
+        ROOT,
+        ComputedStyle::default(),
+        styles,
+        &mut matched,
+    );
 }
 
 fn compute_node(
@@ -522,9 +531,8 @@ fn parse_hex_color(hex: &str) -> Option<[f32; 4]> {
 }
 
 fn named_color(name: &str) -> Option<[f32; 4]> {
-    let rgb = |r: u32, g: u32, b: u32| {
-        Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
-    };
+    let rgb =
+        |r: u32, g: u32, b: u32| Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]);
     match name.to_ascii_lowercase().as_str() {
         "black" => rgb(0, 0, 0),
         "white" => rgb(255, 255, 255),

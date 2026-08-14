@@ -216,7 +216,8 @@ fn drag_gain(
 ) -> Option<Vec2> {
     const DELTA: f32 = 0.25;
     let parent = node_global.affine() * node_local.compute_affine().inverse();
-    let at = |v: f32| parent * (node.base * models::motion_transform(&spec.motion, v)).compute_affine();
+    let at =
+        |v: f32| parent * (node.base * models::motion_transform(&spec.motion, v)).compute_affine();
     let grabbed = at(value).inverse().transform_point3(hit);
     let moved = at(value + DELTA).transform_point3(grabbed);
     let s0 = camera.world_to_viewport(cam_tf, hit).ok()?;
@@ -277,7 +278,10 @@ pub fn apply_mouse(
         let node = nodes.get(entity).ok()?;
         let spec = control_spec(sim, node)?;
         let cab = sim.controls.get(node.train)?;
-        Some((spec.input.key(), spec.input.get(&sim.trains[node.train], cab)))
+        Some((
+            spec.input.key(),
+            spec.input.get(&sim.trains[node.train], cab),
+        ))
     });
 }
 
@@ -300,7 +304,11 @@ const HIGHLIGHT: LinearRgba = LinearRgba {
 /// per-control clones made at bind time, so nothing else lights up with them).
 pub fn update_highlight(
     mouse: Res<CabMouse>,
-    meshes: Query<(&ControlMesh, &MeshMaterial3d<StandardMaterial>, &Highlightable)>,
+    meshes: Query<(
+        &ControlMesh,
+        &MeshMaterial3d<StandardMaterial>,
+        &Highlightable,
+    )>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut last: Local<Option<Entity>>,
 ) {

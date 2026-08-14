@@ -243,6 +243,9 @@ pub struct View {
     /// Whether the user has moved the camera yet. Until they have, the
     /// viewport says how.
     pub used: bool,
+    /// The 3D viewport in logical pixels — what the panels leave free.
+    /// `ui::draw` stores it each frame; the camera only listens inside it.
+    pub viewport: Rect,
 }
 
 impl Default for View {
@@ -253,6 +256,8 @@ impl Default for View {
             distance: 40.0,
             target: Vec3::new(0.0, 2.0, 0.0),
             used: false,
+            // Empty until the first UI pass: no camera input on frame zero.
+            viewport: Rect::default(),
         }
     }
 }
@@ -537,11 +542,19 @@ fn orbit_camera(
     buttons: Res<ButtonInput<MouseButton>>,
     mut motion: MessageReader<bevy::input::mouse::MouseMotion>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
-    // Do not steal the mouse while it is over a panel. `bevy_egui` updates the
-    // resource after the pass, when the panel layout of the frame is known.
-    over_ui: Res<bevy_egui::input::EguiWantsInput>,
+    window: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    let over_ui = over_ui.wants_any_pointer_input();
+    // Do not steal the mouse while it is over a panel. egui cannot answer
+    // "is the pointer over UI?" here: the panels dock into a hand-built
+    // background `Ui` (ui::draw), which egui's area hit test never sees —
+    // `EguiWantsInput` stays false over them. The layout is ours, so the
+    // check is ours: only listen while the cursor is inside the viewport
+    // rect the last UI pass left free.
+    let over_ui = window
+        .single()
+        .ok()
+        .and_then(|w| w.cursor_position())
+        .is_none_or(|p| !view.viewport.contains(p));
 
     let drag: Vec2 = motion.read().map(|m| m.delta).sum();
     if !over_ui && buttons.pressed(MouseButton::Right) && drag != Vec2::ZERO {

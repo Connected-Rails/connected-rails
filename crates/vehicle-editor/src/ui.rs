@@ -41,7 +41,7 @@ pub fn draw(
     mut assets: ResMut<AssetServer>,
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
-    view: Res<crate::View>,
+    mut view: ResMut<crate::View>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     if !*themed {
@@ -84,6 +84,10 @@ pub fn draw(
     // In memory only; written when the user leaves.
     editor.settings.panels = Some((left, right));
     track_changes(&mut editor, before);
+    // What the panels left free is the 3D viewport; the camera in
+    // `orbit_camera` only takes the mouse inside this rect.
+    let free = root.available_rect_before_wrap();
+    view.viewport = Rect::new(free.min.x, free.min.y, free.max.x, free.max.y);
     viewport_hint(&ctx, &root, &view);
     Ok(())
 }

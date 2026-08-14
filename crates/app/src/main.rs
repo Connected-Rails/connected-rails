@@ -13,6 +13,7 @@ mod ui;
 use ai_driver::{AiDriver, ScheduledStop, Timetable};
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
+use bevy::audio::{DefaultSpatialScale, SpatialScale};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
@@ -91,9 +92,15 @@ fn main() {
         ..default()
     }))
     .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
+    // Spatial audio is measured in metres here, and a train is heard hundreds of them
+    // away — at the default scale of 1 everything but the cab would be inaudible.
+    .insert_resource(DefaultSpatialScale(SpatialScale::new(0.02)))
     .init_resource::<ui::CameraState>()
     .init_resource::<mods_ui::ModManager>()
-    .add_systems(Startup, (setup, audio::setup_audio))
+    .add_systems(Startup, setup)
+    // The sound table needs the trains and their view entities, which `setup` only
+    // creates when its commands are applied — that is after `Startup`.
+    .add_systems(PostStartup, audio::setup_audio)
     .add_systems(
         Update,
         (

@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-14 · `cargo test --workspace`: **279 tests green** · clippy and fmt clean.
+As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,10 +11,10 @@ As of 2026-08-14 · `cargo test --workspace`: **279 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD and moving parts |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD, moving parts and the sound table |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
-| **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — start-up chain simulated and operable via keyboard, weather changes through scenario actions, terrain from the DGM, the basic sounds of M2; no 3D cab, no sounds per vehicle file and none positioned in the world, no vegetation/texturing |
+| **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — start-up chain simulated and operable via keyboard, weather changes through scenario actions, terrain from the DGM, sound table per vehicle file with triggers, conditions and dependency curves, positioned in the world; no 3D cab, no recorded samples (the sources are generated), no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
 | **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/scenarios/signal types as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
@@ -66,12 +66,29 @@ As of 2026-08-14 · `cargo test --workspace`: **279 tests green** · clippy and 
   quasi-continuous. Engine and pump find their working point against each other every time
   step. Dynamic brakes come from the drive model: rheostatic, regenerative or hydrodynamic
   (retarder).
-- **Sound (ch. 13):** six loops that follow the state of the player's train — rolling noise
-  over speed, traction (converter whine over speed, diesel over engine speed) over the
-  tractive effort, air at every pressure change of pipe and cylinder, the compressor of the
-  main reservoir, the horn and the buzzer of Sifa/PZB (`ProtectionOutput::alert`). The loops
-  are **generated at startup**, a few oscillators and a noise generator written into a WAV
-  buffer, so the repository carries no samples. Volumes fade rather than jump.
+- **Sound (ch. 13):** a **declarative sound table in the vehicle file**, after the model
+  Zusi uses. An entry has three parts: a **trigger** (what starts it — `Loop` means *no*
+  trigger, the continuously modulated case), **conditions** (state predicates that mute it
+  or release it) and **dependencies** (curves with support points that map a quantity onto
+  volume and playback speed). The mapping quantity → volume/pitch is therefore data, not
+  code: a rolling noise and a contactor click are the same mechanism, the click with a
+  trigger and no loop, the rolling noise the other way round.
+  **`sim-core` hands out no sound events.** It exports a named set of state quantities
+  (`sound::SoundState`: speed, distance, engine speed, tap changer notch, converter circuit,
+  tractive and brake effort, pipe and cylinder, air flow, slip, power controller, pantograph,
+  main switch, compressor, doors, horn, protection alert); edge detection on them *is* the
+  trigger, and it runs in the app. A tap changer notch is a number whose crossing fires the
+  contactor, brake squeal a condition (speed window ∧ brake force) on a loop. Rail joints,
+  the one noise that does not follow from the vehicle state, come out of a distance interval.
+  Entries marked `positional` are placed on the vehicle — distance attenuation and Doppler,
+  so **other trains are audible**; the buzzer and the rest of the desk stay unplaced.
+  A vehicle without a table of its own runs on the generated default (`sound::default_table`):
+  rolling, traction split into an electric and a diesel entry, air, compressor, horn, buzzer,
+  rail joints and tap changer contactors. Their samples are **generated at startup**, a few
+  oscillators and a noise generator written into a WAV buffer, so the repository carries no
+  samples — a mod's own files take the same path, only the `file` of the entry changes.
+  The table is edited in the vehicle editor (Sounds section) and documented in
+  [MODS.md](MODS.md). Volumes fade rather than jump.
 - **Train protection (ch. 9):** trait abstraction + country package DE with all intermittent
   builds, LZB and three Sifa builds:
   - **Indusi/PZB** as one state machine plus a parameter set per build — **I 54**, **I 60**,
@@ -156,8 +173,10 @@ As of 2026-08-14 · `cargo test --workspace`: **279 tests green** · clippy and 
   hunting, payload, curve resistance factor), the complete brake equipment (control valve,
   friction pairing, brake position, load braking, forces and pressures, additional brakes,
   reservoir volumes,
-  compressor, leakage, wheel slip protection) and the drive with all its detailed data (motor,
-  engine map, converter circuits with change points and hysteresis, retarder). A hydraulic
+  compressor, leakage, wheel slip protection), the drive with all its detailed data (motor,
+  engine map, converter circuits with change points and hysteresis, retarder) and the
+  **sound table** — one card per entry with its trigger, its conditions and its dependency
+  curves, each curve with a sparkline over its support points. A hydraulic
   transmission is fitted rather than entered: the drive panel plots the tractive effort curve
   the parameters actually produce, and a suggestion turns five data sheet figures into a
   starting set to fit from. It also imports glTF
@@ -235,12 +254,21 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   because the two axes line up closely enough. The earlier rulebook, with only 95 and 75, is
   not modelled. **The ÖBB PZB 60** runs on the contemporary German Indusi set — no figures of
   its own are published. The tables sit in `PzbVariant::spec` as `const` values.
-- **The sound is continuous modulation only**, not an event stream: volume and pitch of six
-  loops follow the simulation state every frame. Discrete noises (rail joints, tap changer
-  contactors, brake squeal), the sound table in the vehicle file and positional audio of
-  other trains are what the full audio of M6 adds — that is when `sim-core` needs to hand out
-  events instead of state. The loops are synthetic, so they sound like a simulator of 1998;
-  a mod's own samples take the same path once `VehicleSpec` carries them.
+- **Rail joints come out of a distance interval** (`Trigger::Every` over `Distance`), not
+  out of the track. In Zusi the route builder places them, with an editor function that
+  inserts one every x metres — this is that function at run time. A `DeviceKind` on the edge
+  replaces the interval as soon as joints are to sit where the track says they do; that is
+  the one sound trigger which genuinely has to come from the line rather than from the
+  vehicle state.
+- **The generated sources are synthetic**, so the default table sounds like a simulator of
+  1998. That is the sources, not the architecture: Zusi's sound designers solve a transition
+  with several loops cross-faded by volume and pitch curve — the ICE 3 carries one file per
+  semitone rather than pitching one loop across the range — and the table format here does
+  exactly that, several entries with overlapping curves. What is missing is somebody's
+  recordings, and those go in a mod, not in this repository.
+- **No interior/exterior filter** (plan 13 asks for a lowpass in the cab): a placed sound is
+  attenuated and Doppler-shifted, but the cab wall does not muffle it. Bevy's audio has no
+  filter graph, so this needs a decoder wrapper rather than a parameter.
 - **Geoid undulation** as a constant offset per line.
 - **Device payload** as RON *text* instead of `ron::Value` (Value loses unit enum variants).
 - **No CRS framework:** UTM 32/33 directly as a Snyder series in `world-coords::geo` instead of
@@ -295,6 +323,7 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 6. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
    (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
 7. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
-8. **Full audio (ch. 13)** — samples and a sound table per vehicle instead of the generated
-   loops, discrete events out of `sim-core`, positional sound for other trains.
+8. **Recorded samples for the sound table** — the mechanism is in place and positional; what
+   is missing is the audio itself. Rail joints out of the track instead of out of a distance
+   interval, and a lowpass for the cab, belong in the same pass.
 9. **3D cab (M6)** — the biggest chunk.

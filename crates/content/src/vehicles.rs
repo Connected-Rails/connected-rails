@@ -78,6 +78,9 @@ pub fn br101() -> VehicleSpec {
         hunting: 0.0,
         script: None,
         model: None,
+        // No table of its own: the vehicle runs on the generated loops
+        // (`sim_core::sound::default_table`).
+        sounds: Vec::new(),
     }
 }
 
@@ -144,6 +147,9 @@ pub fn br110() -> VehicleSpec {
         hunting: 0.0,
         script: None,
         model: None,
+        // No table of its own: the vehicle runs on the generated loops
+        // (`sim_core::sound::default_table`).
+        sounds: Vec::new(),
     }
 }
 
@@ -253,6 +259,9 @@ pub fn br218() -> VehicleSpec {
         hunting: 0.0,
         script: None,
         model: None,
+        // No table of its own: the vehicle runs on the generated loops
+        // (`sim_core::sound::default_table`).
+        sounds: Vec::new(),
     }
 }
 
@@ -292,6 +301,9 @@ pub fn passenger_coach() -> VehicleSpec {
         hunting: 0.0,
         script: None,
         model: None,
+        // No table of its own: the vehicle runs on the generated loops
+        // (`sim_core::sound::default_table`).
+        sounds: Vec::new(),
     }
 }
 
@@ -335,6 +347,9 @@ pub fn freight_wagon() -> VehicleSpec {
         hunting: 0.0,
         script: None,
         model: None,
+        // No table of its own: the vehicle runs on the generated loops
+        // (`sim_core::sound::default_table`).
+        sounds: Vec::new(),
     }
 }
 
@@ -458,6 +473,9 @@ pub fn railcar() -> VehicleSpec {
         hunting: 0.0,
         script: None,
         model: None,
+        // No table of its own: the vehicle runs on the generated loops
+        // (`sim_core::sound::default_table`).
+        sounds: Vec::new(),
     }
 }
 

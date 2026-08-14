@@ -14,6 +14,7 @@
 mod model;
 mod powertrain;
 mod settings;
+mod sounds;
 mod ui;
 
 use bevy::asset::io::AssetSourceBuilder;

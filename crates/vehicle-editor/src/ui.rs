@@ -4,7 +4,7 @@
 //! forms. Every labelled field goes through [`row`], every section through
 //! `editor_ui::section`, so labels and fields line up across the whole panel.
 
-use crate::{Editor, Status, model, powertrain};
+use crate::{Editor, Status, model, powertrain, sounds};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use editor_ui::{colors, field, space};
@@ -461,7 +461,7 @@ fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
 /// The sections of the data panel, in the order they are drawn: id and the
 /// i18n key of the title. The jump bar sits above the scroll area and has to
 /// name them before the first one has been laid out.
-const SECTIONS: [(&str, &str); 8] = [
+const SECTIONS: [(&str, &str); 9] = [
     ("base", "group-base-data"),
     ("gear", "group-running-gear"),
     ("coupler", "group-coupler"),
@@ -469,6 +469,7 @@ const SECTIONS: [(&str, &str); 8] = [
     ("brake", "group-brake"),
     ("drive", "group-drive"),
     ("equipment", "group-equipment"),
+    ("sounds", "group-sounds"),
     ("behaviour", "group-behaviour"),
 ];
 
@@ -781,6 +782,10 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                             equipment_panel(ui, spec);
                         },
                     );
+
+                    nav_section(ui, jump, &mut current, "sounds", "group-sounds", |ui| {
+                        sounds::panel(ui, spec);
+                    });
 
                     nav_section(
                         ui,

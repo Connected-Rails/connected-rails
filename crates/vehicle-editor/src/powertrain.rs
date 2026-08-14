@@ -95,8 +95,16 @@ pub fn brake_panel(
         // Selectable in the combo since forever, but nothing ever drew its
         // points — the curve was set once and then out of reach, and a
         // hand-written one was invisible.
-        subheading(ui, t!("brk-friction-points"));
-        table_editor(ui, "friction", "km/h", "", 0.01, 0.0..=1.0, points);
+        table_editor(
+            ui,
+            "friction",
+            t!("brk-friction-points"),
+            "km/h",
+            "",
+            0.01,
+            0.0..=1.0,
+            points,
+        );
     }
 
     subheading(ui, t!("group-additional-brakes"));
@@ -314,10 +322,13 @@ fn slip_combo(ui: &mut egui::Ui, slip: &mut SlipProtection) {
     });
 }
 
-/// Points of a tractive effort or torque table, editable row by row.
+/// Titled `(x, y)` table behind a clickable sparkline — the shared curve
+/// editor, parameterised for this panel's units and ranges.
+#[allow(clippy::too_many_arguments)]
 fn table_editor(
     ui: &mut egui::Ui,
     id: &str,
+    title: String,
     x_unit: &'static str,
     y_unit: &'static str,
     // Forces run to a million in whole newtons, a friction coefficient to one
@@ -326,31 +337,21 @@ fn table_editor(
     y_range: std::ops::RangeInclusive<f64>,
     points: &mut Vec<(f64, f64)>,
 ) {
-    let mut remove = None;
-    for (i, (x, y)) in points.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            field(ui, x, 1.0, 0.0..=10_000.0, x_unit);
-            field(ui, y, y_speed, y_range.clone(), y_unit);
-            if ui.small_button("×").clicked() {
-                remove = Some(i);
-            }
-        });
-    }
-    if let Some(i) = remove {
-        points.remove(i);
-    }
-    // Several tables can sit in one panel; the id keeps their buttons apart.
-    if ui
-        .push_id(id, |ui| ui.button(t!("action-add-point")))
-        .inner
-        .clicked()
-    {
-        let last = points.last().copied().unwrap_or((0.0, 0.0));
-        points.push((last.0 + 20.0, last.1));
-    }
-    // The shape of what the rows above describe. A curve is the one thing a
-    // column of numbers hides.
-    editor_ui::sparkline(ui, points, x_unit, y_unit);
+    subheading(ui, title.clone());
+    editor_ui::curve_editor(
+        ui,
+        &editor_ui::CurveSpec {
+            id: egui::Id::new(("powertrain-curve", id)),
+            title,
+            x_unit,
+            y_unit,
+            x_speed: 1.0,
+            y_speed,
+            x_range: 0.0..=10_000.0,
+            y_range,
+        },
+        points,
+    );
 }
 
 /// Drive.
@@ -393,10 +394,26 @@ pub fn drive_panel(ui: &mut egui::Ui, traction: &mut Option<TractionSpec>) {
                     field(ui, ramp_time, 0.1, 0.1..=30.0, "s");
                 });
             });
-            subheading(ui, t!("table-tractive-effort"));
-            table_editor(ui, "traction", "km/h", "N", 100.0, 0.0..=1_000_000.0, force);
-            subheading(ui, t!("table-dynamic-brake"));
-            table_editor(ui, "brake", "km/h", "N", 100.0, 0.0..=1_000_000.0, brake);
+            table_editor(
+                ui,
+                "traction",
+                t!("table-tractive-effort"),
+                "km/h",
+                "N",
+                100.0,
+                0.0..=1_000_000.0,
+                force,
+            );
+            table_editor(
+                ui,
+                "brake",
+                t!("table-dynamic-brake"),
+                "km/h",
+                "N",
+                100.0,
+                0.0..=1_000_000.0,
+                brake,
+            );
         }
         TractionSpec::TapChanger {
             steps,
@@ -823,10 +840,10 @@ fn engine_editor(ui: &mut egui::Ui, e: &mut DieselEngine) {
             });
         }
     });
-    subheading(ui, t!("table-torque"));
     table_editor(
         ui,
         "torque",
+        t!("table-torque"),
         "/min",
         "N·m",
         100.0,

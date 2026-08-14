@@ -176,7 +176,8 @@ As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and 
   compressor, leakage, wheel slip protection), the drive with all its detailed data (motor,
   engine map, converter circuits with change points and hysteresis, retarder) and the
   **sound table** — one card per entry with its trigger, its conditions and its dependency
-  curves, each curve with a sparkline over its support points. A hydraulic
+  curves, each curve a sparkline over its support points that opens the shared modal
+  curve editor (draggable points plus an exact-value table). A hydraulic
   transmission is fitted rather than entered: the drive panel plots the tractive effort curve
   the parameters actually produce, and a suggestion turns five data sheet figures into a
   starting set to fit from. It also imports glTF

@@ -164,29 +164,37 @@ The vehicle editor's left panel is the reference implementation
 - Checkbox-toggled values ("Magnetic track brake" → force): the checkbox owns
   its line, the value follows as a normal labelled row below it — never put
   long checkbox labels into a grid's label column, they stretch it.
-- **A table of `(x, y)` points closes with `editor_ui::sparkline`** — the
-  curve the rows describe, in `ACCENT` on a `BG_INPUT` well, no axes and no
-  numbers. It is not an analysis tool: it exists because a point typed one
-  digit wrong reads as an obvious kink in the shape and as a plausible number
-  in the column. Fewer than two points draw nothing. **The y axis starts at
-  zero**, not at the smallest value: these are physical magnitudes, and
-  normalised to their own range a friction factor falling from 1.0 to 0.6
-  fills the plot exactly like one falling to nothing — which is the one
-  question the picture is asked. **Hovering reads the value out** at that
-  speed, interpolated between the points, so the plot needs no axes, ticks or
-  labels of its own: shape at rest, figures on demand. **A dot marks a point
-  the user typed** — `sparkline` draws them, `sparkline_fn` does not, because
-  there a dot per sample says nothing about the vehicle and turns the line
-  into a dotted one. The well is the same `BG_INPUT` with the same
-  `BORDER_SUBTLE` edge as a text field.
+- **A stored table of `(x, y)` points goes through `editor_ui::curve_editor`**
+  — the one component for every editable curve in every editor. In the form it
+  is only a sparkline well: the curve in `ACCENT` on a `BG_INPUT` well, a dot
+  per typed point, no axes and no numbers. That well is not an analysis tool —
+  it exists because a point typed one digit wrong reads as an obvious kink in
+  the shape and as a plausible number in a column. **Hovering reads the value
+  out**, interpolated between the points, plus the hint that a click opens the
+  editor; an empty curve draws the well with `curve-empty` in it, so the way
+  in never disappears. **A click opens a modal** with the room editing needs:
+  a plot with axes, round ticks (k/M notation above ten thousand — the axis
+  names the scale, the table has the figures) and points dragged with the
+  mouse — double-click adds one, right-click removes one — next to a column
+  of drag fields for the exact values. `CurveSpec` carries id, title, units,
+  drag speeds and ranges; points sort by x when the interaction ends, never
+  during it, and the plot's scale freezes while a point is dragged so the
+  picture cannot slide under the cursor. **The y axis starts at zero**, not at
+  the smallest value: these are physical magnitudes, and normalised to their
+  own range a friction factor falling from 1.0 to 0.6 fills the plot exactly
+  like one falling to nothing — which is the one question the picture is
+  asked. **A dot marks a point the user typed** — `sparkline` and the wells
+  draw them, `sparkline_fn` does not, because there a dot per sample says
+  nothing about the vehicle and turns the line into a dotted one. The well is
+  the same `BG_INPUT` with the same `BORDER_SUBTLE` edge as a text field.
 - **A curve the vehicle computes rather than stores gets `sparkline_fn`** —
   running resistance from three Davis coefficients, friction from the pairing,
   tractive effort from a handful of limits. Sample **`sim-core`'s own
   function** (`VehicleSpec::resistance`, `BrakeKind::friction_factor`,
   `TractionSpec::available_force`), never a copy: a plot that reimplements the
   physics drifts from it. Where a variant stores points instead (effort curve,
-  custom friction) the table's own sparkline already shows them — draw one or
-  the other, not both.
+  custom friction) `curve_editor`'s well already shows them — draw one or the
+  other, not both.
 - **Derived readouts close a section**, as a `.small()` `TEXT_SECONDARY`
   label: running resistance at 100 km/h, braked weight percentage. They turn
   coefficients the user cannot judge into a figure they know from the real
@@ -289,7 +297,12 @@ The vehicle editor's left panel is the reference implementation
 - **Nothing throws work away silently.** New, Open, Quit and the window's
   close button all go through `confirm_discard` first, which asks
   Save / Discard / Cancel via `rfd::MessageDialog` (already a dependency — no
-  hand-built modal). The close button needs `close_when_requested: false` on
+  hand-built modal). **Every native dialog names the editor window as its
+  owner** — build it through `message_dialog`/`file_dialog` (vehicle editor),
+  which take the parent from `Editor::window` (a `RawHandleWrapper` clone the
+  `draw` system refreshes each frame). A parentless dialog is free to open
+  *behind* the editor on Windows, where a modal that blocks all input reads
+  as a hang. The close button needs `close_when_requested: false` on
   the `WindowPlugin` plus a `WindowCloseRequested` handler, otherwise the one
   route most people take stays unguarded. A "• unsaved" marker reports the
   state; it does not protect it.
@@ -345,7 +358,7 @@ stay editable underneath.
 **Every option a combo offers must have its data on screen.** Picking
 "own characteristic" for the friction pairing set a curve that nothing then
 drew — the points were in the file, unreachable and invisible. When a variant
-carries data, render it; `table_editor` does the `(x, y)` lists.
+carries data, render it; `editor_ui::curve_editor` does the `(x, y)` lists.
 
 Whole branches of the form only appear for one setting — the four drive types
 build four different panels, and `--screenshot` shows whichever the example

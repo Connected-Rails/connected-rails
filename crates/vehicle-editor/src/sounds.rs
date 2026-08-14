@@ -259,7 +259,7 @@ fn curve(
     slot: &mut Option<Curve>,
     range: std::ops::RangeInclusive<f64>,
 ) {
-    editor_ui::subheading(ui, title);
+    editor_ui::subheading(ui, title.clone());
     let mut present = slot.is_some();
     if ui
         .checkbox(&mut present, t!("snd-curve-follows"))
@@ -275,37 +275,18 @@ fn curve(
         return;
     };
     quantity_combo(ui, ("curve", id), &mut curve.quantity);
-
-    let mut remove = None;
-    // Support points are only meaningful in ascending x. Sorting while a value is being
-    // dragged would pull the field out from under the cursor, so it happens once the drag
-    // ends — by which time the user has stopped looking at the row anyway.
-    let mut settle = false;
-    egui::Grid::new(format!("snd-curve-{}-{}", id.0, id.1))
-        .num_columns(3)
-        .spacing(egui::vec2(space::S, 6.0))
-        .show(ui, |ui| {
-            for (i, point) in curve.points.iter_mut().enumerate() {
-                let x = field(ui, &mut point.0, 0.5, -10_000.0..=10_000.0, "");
-                field(ui, &mut point.1, 0.01, range.clone(), "");
-                settle |= x.drag_stopped() || x.lost_focus();
-                if ui.small_button("×").clicked() {
-                    remove = Some(i);
-                }
-                ui.end_row();
-            }
-        });
-    if let Some(i) = remove {
-        curve.points.remove(i);
-    }
-    if settle {
-        curve.points.sort_by(|a, b| a.0.total_cmp(&b.0));
-    }
-    ui.horizontal(|ui| {
-        if ui.small_button(t!("action-add-point")).clicked() {
-            let last = curve.points.last().copied().unwrap_or((0.0, 0.0));
-            curve.points.push((last.0 + 10.0, last.1));
-        }
-    });
-    editor_ui::sparkline(ui, &curve.points, "", "");
+    editor_ui::curve_editor(
+        ui,
+        &editor_ui::CurveSpec {
+            id: egui::Id::new(("snd-curve", id)),
+            title,
+            x_unit: "",
+            y_unit: "",
+            x_speed: 0.5,
+            y_speed: 0.01,
+            x_range: -10_000.0..=10_000.0,
+            y_range: range,
+        },
+        &mut curve.points,
+    );
 }

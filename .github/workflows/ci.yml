@@ -11,6 +11,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI never debugs and never rebuilds twice on one runner: no debuginfo at
+  # all (the MSVC PDB writer is a large slice of the Windows wall time) and no
+  # incremental bookkeeping (useless here, bloats the cache by gigabytes).
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_INCREMENTAL: 0
 
 jobs:
   # One job per platform. Separate fmt/clippy/doc jobs would compile the whole Bevy
@@ -28,6 +33,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # A red run has still built the whole dependency tree; keep that
+          # work, so the fixed retry starts warm instead of from scratch.
+          cache-on-failure: true
 
       # Bevy needs ALSA and udev headers to build on Linux.
       - name: Install Linux dependencies

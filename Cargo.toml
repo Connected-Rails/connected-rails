@@ -23,7 +23,7 @@ license = "EUPL-1.2"
 [workspace.dependencies]
 glam = { version = "0.32", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-ron = "0.10"
+ron = "0.12"
 # Lua 5.4, statically linked; `send` so the runtime can live in a Bevy resource.
 mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }
 bevy = "0.19"

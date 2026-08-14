@@ -42,8 +42,8 @@ pub fn draw(
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button(t!("menu-file"), |ui| {
                     if ui.button(t!("action-open-line")).clicked() {
-                        let mut dialog = rfd::FileDialog::new()
-                            .add_filter(t!("filter-line-ron"), &["ron"]);
+                        let mut dialog =
+                            rfd::FileDialog::new().add_filter(t!("filter-line-ron"), &["ron"]);
                         // The dialog names the editor window as its owner —
                         // without one, Windows may open it behind the editor.
                         // SAFETY: only used as the dialog owner; nothing draws

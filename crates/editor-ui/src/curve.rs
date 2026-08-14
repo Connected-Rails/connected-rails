@@ -185,7 +185,13 @@ fn well(ui: &mut egui::Ui, sense: Sense, clickable: bool) -> (Rect, egui::Respon
     (rect, response)
 }
 
-fn draw_curve(painter: &egui::Painter, rect: Rect, dom: Domain, sorted: &[(f64, f64)], marks: bool) {
+fn draw_curve(
+    painter: &egui::Painter,
+    rect: Rect,
+    dom: Domain,
+    sorted: &[(f64, f64)],
+    marks: bool,
+) {
     let line: Vec<Pos2> = sorted.iter().map(|&p| dom.to_screen(rect, p)).collect();
     painter.add(egui::Shape::line(
         line.clone(),
@@ -277,7 +283,12 @@ fn editable_well(ui: &mut egui::Ui, spec: &CurveSpec, points: &[(f64, f64)]) -> 
 
 const CANVAS: Vec2 = Vec2::new(430.0, 300.0);
 
-fn show_modal(ui: &mut egui::Ui, spec: &CurveSpec, points: &mut Vec<(f64, f64)>, open_id: egui::Id) {
+fn show_modal(
+    ui: &mut egui::Ui,
+    spec: &CurveSpec,
+    points: &mut Vec<(f64, f64)>,
+    open_id: egui::Id,
+) {
     let mut close = false;
     let modal = egui::Modal::new(spec.id.with("modal")).show(ui.ctx(), |ui| {
         ui.label(crate::heading(spec.title.clone()));
@@ -508,7 +519,8 @@ fn canvas(ui: &mut egui::Ui, spec: &CurveSpec, points: &mut Vec<(f64, f64)>) -> 
         && let Some(pointer) = bg.hover_pos()
         && plot.contains(pointer)
     {
-        ui.ctx().output_mut(|o| o.cursor_icon = CursorIcon::Crosshair);
+        ui.ctx()
+            .output_mut(|o| o.cursor_icon = CursorIcon::Crosshair);
         if sorted.len() >= 2 {
             hover_readout(&bg, plot, &sorted, spec.x_unit, spec.y_unit, None);
         }
@@ -664,10 +676,16 @@ mod tests {
     /// Axis ticks land on round numbers whatever the data span is.
     #[test]
     fn ticks_are_round_and_cover_the_span() {
-        assert_eq!(super::ticks(0.0, 350_000.0), vec![
-            0.0, 50_000.0, 100_000.0, 150_000.0, 200_000.0, 250_000.0, 300_000.0, 350_000.0
-        ]);
-        assert_eq!(super::ticks(0.0, 1.08), vec![0.0, 0.2, 0.4, 0.6000000000000001, 0.8, 1.0]);
+        assert_eq!(
+            super::ticks(0.0, 350_000.0),
+            vec![
+                0.0, 50_000.0, 100_000.0, 150_000.0, 200_000.0, 250_000.0, 300_000.0, 350_000.0
+            ]
+        );
+        assert_eq!(
+            super::ticks(0.0, 1.08),
+            vec![0.0, 0.2, 0.4, 0.6000000000000001, 0.8, 1.0]
+        );
         assert_eq!(super::tick_label(300_000.0, 50_000.0), "300k");
         assert_eq!(super::tick_label(1_500_000.0, 1_000_000.0), "1.5M");
         assert_eq!(super::tick_label(0.6000000000000001, 0.2), "0.6");

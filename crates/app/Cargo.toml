@@ -15,6 +15,9 @@ track-model = { workspace = true }
 world-coords = { workspace = true }
 content = { workspace = true }
 mod-runtime = { workspace = true }
+# HTML/CSS/JS cab screens (plan ch. 12). A gauge holds a boa context, which is
+# `!Send` — the app keeps them in a non-send resource (displays.rs).
+html-display = { path = "../html-display" }
 ai-driver = { workspace = true }
 glam = { workspace = true }
 # `wav`: the sound loops are generated at startup as WAV buffers (ch. 13), so rodio has

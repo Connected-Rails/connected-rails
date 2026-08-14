@@ -150,6 +150,13 @@ pub struct VehicleModel {
     /// Moving parts.
     #[serde(default)]
     pub parts: Vec<Part>,
+    /// Interactive 3D cab (plan ch. 12). `None` = keyboard only, the cab camera
+    /// falls back to its built-in position.
+    #[serde(default)]
+    pub cab: Option<crate::cab::CabSpec>,
+    /// Screens in the cab, rendered to texture (plan ch. 12).
+    #[serde(default)]
+    pub displays: Vec<crate::cab::DisplaySpec>,
 }
 
 /// Static vehicle description (from the vehicle database, RON).

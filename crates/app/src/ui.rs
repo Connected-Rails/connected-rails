@@ -6,6 +6,7 @@
 use crate::mods_ui::ModManager;
 use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
+use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use i18n::t;
 use sim_core::brakes::DriverBrakeValve;
@@ -135,6 +136,11 @@ pub fn player_input(
     cab.lzb_test = keys.pressed(KeyCode::KeyB);
     cab.horn = keys.pressed(KeyCode::KeyH);
 
+    // Wipers: Y steps through off – interval – slow – fast, wrapping around.
+    if keys.just_pressed(KeyCode::KeyY) {
+        cab.wipers = (cab.wipers + 1) % 4;
+    }
+
     // Preparation: battery, pantograph, main switch, compressor.
     let train = &mut sim.0.trains[index];
     for v in &mut train.vehicles {
@@ -182,6 +188,8 @@ pub fn player_input(
 #[allow(clippy::too_many_arguments)]
 pub fn camera_control(
     keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
     sim: Res<SimResource>,
     origin: Res<Origin>,
@@ -224,6 +232,11 @@ pub fn camera_control(
     if keys.pressed(KeyCode::NumpadSubtract) {
         state.distance = (state.distance + 30.0 * dt).min(400.0);
     }
+    // Right-drag looks around; the left button stays free for the cab controls.
+    if buttons.pressed(MouseButton::Right) {
+        state.yaw -= motion.delta.x * 0.003;
+        state.pitch = (state.pitch - motion.delta.y * 0.003).clamp(-1.2, 1.2);
+    }
 
     let Ok(mut transform) = camera.single_mut() else {
         return;
@@ -237,8 +250,20 @@ pub fn camera_control(
 
     match state.mode {
         CameraMode::Cab => {
-            // Cab window: 8 m ahead of the vehicle centre, 2.8 m above the rail head.
-            let eye = pos + forward * 8.0 + up * 2.8 - right * 0.6;
+            // Eye point from the occupied vehicle's cab data; vehicles without one
+            // fall back to the old guess: 8 m ahead of the centre, 2.8 m up.
+            let seat = train.vehicles.get(train.cab).unwrap_or(&train.vehicles[0]);
+            let eye = match seat.spec.model.as_ref().and_then(|m| m.cab.as_ref()) {
+                Some(cab) => {
+                    let pose = seat.pos.pose(&sim.0.net);
+                    let anchor = origin.0.to_render(pose.pos)
+                        + origin.0.dir_to_render(pose.up) * 2.2;
+                    // Vehicle views sit 2.2 m above the rail head (`sync_vehicles`);
+                    // the eye is model space below that anchor.
+                    anchor + origin.0.look_rotation(pose.tangent, pose.up) * Vec3::from(cab.eye)
+                }
+                None => pos + forward * 8.0 + up * 2.8 - right * 0.6,
+            };
             let look =
                 Quat::from_axis_angle(up, state.yaw) * Quat::from_axis_angle(right, state.pitch);
             transform.translation = eye;
@@ -278,12 +303,14 @@ pub fn spawn_hud(commands: &mut Commands) {
 }
 
 /// Fill the HUD with speedometer, brake pressures and train protection displays (plan 16.3).
+#[allow(clippy::too_many_arguments)]
 pub fn update_hud(
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
     terrain: Res<TerrainInfo>,
     streamer: Res<TerrainStreamer>,
     view: Res<ViewDistance>,
+    mouse: Res<crate::cab::CabMouse>,
     mut query: Query<&mut Text, With<HudText>>,
 ) {
     let Ok(mut text) = query.single_mut() else {
@@ -472,6 +499,15 @@ pub fn update_hud(
             ));
         }
         lines.push(String::new());
+    }
+
+    // The cab control under the mouse, with its position in percent.
+    if let Some((key, value)) = mouse.hover_info {
+        lines.push(t!(
+            "hud-control",
+            name = t!(key),
+            value = format!("{:3.0}", value * 100.0)
+        ));
     }
 
     lines.push(t!("hud-keys-drive"));

@@ -1048,6 +1048,12 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
                     editor_ui::section(ui, "parts", t!("group-parts"), |ui| {
                         parts_list(ui, editor);
                     });
+                    editor_ui::section(ui, "cab", t!("group-cab"), |ui| {
+                        crate::cab::panel(ui, editor);
+                    });
+                    editor_ui::section(ui, "displays", t!("group-displays"), |ui| {
+                        crate::displays::panel(ui, editor);
+                    });
                     editor_ui::section(ui, "nodes", t!("group-nodes"), |ui| {
                         node_list(ui, editor);
                     });
@@ -1261,11 +1267,15 @@ fn node_list(ui: &mut egui::Ui, editor: &mut Editor) {
     }
 }
 
-/// Width of the motion combo inside a part card.
-const MOTION_COMBO_W: f32 = 110.0;
+/// Width of the motion combo inside a part or cab control card.
+pub(crate) const MOTION_COMBO_W: f32 = 110.0;
 
 /// Kind of motion of a part.
-fn motion_combo(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
+pub(crate) fn motion_combo(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    motion: &mut Motion,
+) -> bool {
     let mut changed = false;
     let key = match motion {
         Motion::Visibility => "motion-visible",
@@ -1309,7 +1319,7 @@ fn motion_combo(ui: &mut egui::Ui, id: usize, motion: &mut Motion) -> bool {
 
 /// Axis and amount of a rotating or translating part: four equal-width drag
 /// fields, so the row reads as one line of coordinates.
-fn motion_params(ui: &mut egui::Ui, motion: &mut Motion) -> bool {
+pub(crate) fn motion_params(ui: &mut egui::Ui, motion: &mut Motion) -> bool {
     let mut changed = false;
     match motion {
         Motion::Visibility => {}

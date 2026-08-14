@@ -58,16 +58,23 @@ def normalize(v):
 
 
 class Prim:
-    """One glTF primitive: flat-shaded triangles with per-face normals."""
+    """One glTF primitive: flat-shaded triangles with per-face normals.
 
-    def __init__(self):
+    `textured=True` adds TEXCOORD_0 — needed only where a texture is mapped
+    (the display screens); everything else stays untextured.
+    """
+
+    def __init__(self, textured=False):
         self.pos, self.nrm, self.idx = [], [], []
+        self.uv = [] if textured else None
 
-    def tri(self, a, b, c):
+    def tri(self, a, b, c, uvs=None):
         n = normalize(cross(sub(b, a), sub(c, a)))
         base = len(self.pos)
         self.pos += [a, b, c]
         self.nrm += [n, n, n]
+        if self.uv is not None:
+            self.uv += list(uvs) if uvs else [(0.0, 0.0)] * 3
         self.idx += [base, base + 1, base + 2]
 
     def quad(self, a, b, c, d):  # corners CCW seen from outside
@@ -237,6 +244,182 @@ def build_lod1():
     return {"red": prim}
 
 
+def build_cab_interior():
+    """Cab 1 interior (the -Z end): floor, walls, desk, seat, instrument panel.
+
+    Only what the driver sees from the eye point — the body loft is culled from
+    inside, so the windscreen and side windows act as openings by themselves.
+    """
+    prims = {name: Prim() for name in ("roof", "frame", "wheel", "light")}
+    wall, frame, dark, light = prims["roof"], prims["frame"], prims["wheel"], prims["light"]
+
+    wall.box((-1.35, 1.28, -8.0), (1.35, 1.32, -5.95))     # floor
+    wall.box((-1.35, 1.32, -6.0), (1.35, 3.3, -5.95))      # back wall
+    wall.box((-1.35, 3.3, -8.0), (1.35, 3.36, -5.95))      # ceiling
+    wall.box((-1.15, 1.32, -8.3), (1.15, 2.1, -8.2))       # front wall below screen
+    wall.box((-1.15, 3.3, -8.45), (1.15, 3.36, -8.0))      # screen header
+    for x_sign in (1.0, -1.0):                              # side walls, window cut-out
+        x0, x1 = sorted((x_sign * 1.30, x_sign * 1.35))
+        wall.box((x0, 1.32, -8.0), (x1, 3.3, -6.8))
+        wall.box((x0, 1.32, -6.8), (x1, 2.3, -6.0))
+    wall.box((-1.1, 1.9, -7.6), (1.1, 2.15, -7.0))         # desk top
+    wall.box((-0.3, 1.32, -7.5), (0.3, 1.9, -7.1))         # desk pedestal
+    dark.box((-0.75, 1.7, -6.4), (-0.35, 1.85, -6.0))      # seat
+    dark.box((-0.75, 1.85, -6.1), (-0.35, 2.4, -6.0))      # backrest
+
+    frame.box((-0.35, 2.15, -7.62), (0.35, 2.55, -7.56))   # instrument panel
+    light.box((-0.26, 2.30, -7.559), (-0.14, 2.46, -7.554))  # speedometer dial
+    dark.box((0.06, 2.34, -7.559), (0.14, 2.42, -7.554))   # 1000 Hz lamp housing
+    # Target-distance column: a dark slot the bright bar node slides up in.
+    dark.box((-0.025, 2.295, -7.559), (0.025, 2.465, -7.554))
+    # Window of the four-digit distance counter above the lamp housing.
+    dark.box((0.005, 2.468, -7.559), (0.215, 2.525, -7.554))
+    # Housings of the three cab screens; the faces themselves are separate
+    # UV-mapped quad nodes (`screen_mfa`, `screen_brake`, `screen_ebula`).
+    dark.box((0.29, 2.17, -7.60), (0.71, 2.44, -7.578))
+    dark.box((-0.96, 2.19, -7.60), (-0.69, 2.39, -7.578))
+    dark.box((-0.68, 2.19, -7.60), (-0.38, 2.41, -7.578))
+    return prims
+
+
+def build_lever(height, knob):
+    """Upright control lever; the node's base rotation leans it to its rest."""
+    p = Prim()
+    p.box((-0.025, 0.0, -0.025), (0.025, height, 0.025))
+    return {"frame": p, "wheel": _knob(height, knob)}
+
+
+def _knob(height, size):
+    p = Prim()
+    p.box((-size, height, -size), (size, height + 2 * size, size))
+    return p
+
+
+def build_switch():
+    """Small toggle switch for the preparation row."""
+    p = Prim()
+    p.box((-0.012, 0.0, -0.012), (0.012, 0.07, 0.012))
+    return {"wheel": p}
+
+
+def build_button():
+    """Push button (Sifa); pressed by translating the node downwards."""
+    p = Prim()
+    p.box((-0.04, 0.0, -0.04), (0.04, 0.035, 0.04))
+    return {"red": p}
+
+
+def build_needle(mat="frame", half_w=0.006, length=0.052):
+    """Instrument needle pointing +Y from its pivot, proud of the dial.
+
+    The second (target) needle is narrower and shorter than the default so the
+    two never share a coplanar face when they point the same way.
+    """
+    p = Prim()
+    p.box((-half_w, 0.0, 0.0), (half_w, length, 0.004))
+    return {mat: p}
+
+
+def oblique_box(prim, origin, axes, extents):
+    """Box spanned by three orthonormal axes; extents = ((u0,u1),(v0,v1),(w0,w1))."""
+    u, v, w = axes
+    (u0, u1), (v0, v1), (w0, w1) = extents
+
+    def pt(a, b, c):
+        return tuple(origin[i] + a * u[i] + b * v[i] + c * w[i] for i in range(3))
+
+    def neg(d):
+        return (-d[0], -d[1], -d[2])
+
+    faces = [
+        ((pt(u1, v0, w0), pt(u1, v1, w0), pt(u1, v1, w1), pt(u1, v0, w1)), u),
+        ((pt(u0, v0, w0), pt(u0, v1, w0), pt(u0, v1, w1), pt(u0, v0, w1)), neg(u)),
+        ((pt(u0, v1, w0), pt(u1, v1, w0), pt(u1, v1, w1), pt(u0, v1, w1)), v),
+        ((pt(u0, v0, w0), pt(u1, v0, w0), pt(u1, v0, w1), pt(u0, v0, w1)), neg(v)),
+        ((pt(u0, v0, w1), pt(u1, v0, w1), pt(u1, v1, w1), pt(u0, v1, w1)), w),
+        ((pt(u0, v0, w0), pt(u1, v0, w0), pt(u1, v1, w0), pt(u0, v1, w0)), neg(w)),
+    ]
+    for corners, outward in faces:
+        prim.oriented_quad(*corners, outward=outward)
+
+
+def build_wiper():
+    """Wiper arm and blade lying on the raked -Z windscreen, pointing up along
+    the glass from the pivot at the node origin. The runtime rotates the node
+    about the glass normal, so the blade stays on the pane through the sweep.
+    """
+    p = Prim()
+    # Frame of the -Z front face: u across, v up the glass, w outward normal.
+    u = (1.0, 0.0, 0.0)
+    v = normalize((0.0, 1.0, RAKE))
+    w = normalize((0.0, RAKE, -1.0))
+    # Arm above the blade; the glass quad sits 1 cm proud of the face plane.
+    oblique_box(p, (0.0, 0.0, 0.0), (u, v, w), ((-0.012, 0.012), (-0.03, 0.58), (0.020, 0.034)))
+    oblique_box(p, (0.0, 0.0, 0.0), (u, v, w), ((-0.016, 0.016), (0.17, 0.62), (0.012, 0.020)))
+    return {"frame": p}
+
+
+def build_gauge_bar():
+    """Bright sliding indicator of the target-distance slot; the node origin is
+    the bottom of the slot and the runtime translates it upward."""
+    p = Prim()
+    p.box((-0.015, 0.0, 0.0), (0.015, 0.02, 0.004))
+    return {"light": p}
+
+
+def build_screen(width, height):
+    """Cab display face: a single +Z quad whose UVs map the render texture —
+    u runs left→right (+X), v top→bottom (image row 0 is the top). Without
+    TEXCOORD_0 the runtime's emissive texture would not apply and the screen
+    would glow plain white. The dark housing behind it belongs to the interior
+    mesh, which needs no UVs."""
+    p = Prim(textured=True)
+    w, h = width / 2, height / 2
+    a, b, c, d = (-w, -h, 0.0), (w, -h, 0.0), (w, h, 0.0), (-w, h, 0.0)
+    p.tri(a, b, c, [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0)])
+    p.tri(a, c, d, [(0.0, 1.0), (1.0, 0.0), (0.0, 0.0)])
+    return {"glass": p}
+
+
+# Standard 7-segment table: a top, b top-right, c bottom-right, d bottom,
+# e bottom-left, f top-left, g middle.
+SEVEN_SEG = [
+    "abcdef", "bc", "abdeg", "abcdg", "bcfg",
+    "acdfg", "acdefg", "abc", "abcdefg", "abcdfg",
+]
+
+
+def build_digit(digit):
+    """7-segment glyph for the distance counter, ~0.025 m tall.
+
+    The verticals stop short of the horizontals — no two segments overlap, so
+    no coplanar faces, and the gaps read as a real segmented display.
+    """
+    w, h, t, depth = 0.016, 0.025, 0.004, 0.003
+    x0, x1, mid = -w / 2, w / 2, h / 2
+    seg = {
+        "a": ((x0, h - t), (x1, h)),
+        "d": ((x0, 0.0), (x1, t)),
+        "g": ((x0, mid - t / 2), (x1, mid + t / 2)),
+        "f": ((x0, mid + t / 2), (x0 + t, h - t)),
+        "b": ((x1 - t, mid + t / 2), (x1, h - t)),
+        "e": ((x0, t), (x0 + t, mid - t / 2)),
+        "c": ((x1 - t, t), (x1, mid - t / 2)),
+    }
+    p = Prim()
+    for s in SEVEN_SEG[digit]:
+        (sx0, sy0), (sx1, sy1) = seg[s]
+        p.box((sx0, sy0, 0.0), (sx1, sy1, depth))
+    return {"light": p}
+
+
+def build_lamp_cap():
+    """Light cap of an indicator lamp; shown/hidden by the lamp function."""
+    p = Prim()
+    p.box((-0.018, -0.018, 0.0), (0.018, 0.018, 0.006))
+    return {"light": p}
+
+
 def build_pantograph():
     """Lowered single-arm pantograph; node origin sits on the roof.
 
@@ -286,13 +469,19 @@ def build_gltf():
             flat_nrm = [c for v in prim.nrm for c in v]
             mins = [min(p[i] for p in prim.pos) for i in range(3)]
             maxs = [max(p[i] for p in prim.pos) for i in range(3)]
+            attributes = {
+                "POSITION": accessor(struct.pack(f"<{len(flat_pos)}f", *flat_pos),
+                                     5126, len(prim.pos), "VEC3", 34962, (mins, maxs)),
+                "NORMAL": accessor(struct.pack(f"<{len(flat_nrm)}f", *flat_nrm),
+                                   5126, len(prim.nrm), "VEC3", 34962),
+            }
+            if prim.uv is not None:
+                flat_uv = [c for v in prim.uv for c in v]
+                attributes["TEXCOORD_0"] = accessor(
+                    struct.pack(f"<{len(flat_uv)}f", *flat_uv),
+                    5126, len(prim.uv), "VEC2", 34962)
             gl_prims.append({
-                "attributes": {
-                    "POSITION": accessor(struct.pack(f"<{len(flat_pos)}f", *flat_pos),
-                                         5126, len(prim.pos), "VEC3", 34962, (mins, maxs)),
-                    "NORMAL": accessor(struct.pack(f"<{len(flat_nrm)}f", *flat_nrm),
-                                       5126, len(prim.nrm), "VEC3", 34962),
-                },
+                "attributes": attributes,
                 "indices": accessor(struct.pack(f"<{len(prim.idx)}I", *prim.idx),
                                     5125, len(prim.idx), "SCALAR", 34963),
                 "material": MAT[mat_name],
@@ -303,15 +492,102 @@ def build_gltf():
     lod0 = add_mesh("br101_LOD0", build_lod0())
     lod1 = add_mesh("br101_LOD1", build_lod1())
     pant = add_mesh("pantograph", build_pantograph())
+    cab = add_mesh("cab_interior", build_cab_interior())
+    lever = add_mesh("lever", build_lever(0.24, 0.045))
+    lever_small = add_mesh("lever_small", build_lever(0.14, 0.03))
+    switch = add_mesh("switch", build_switch())
+    button = add_mesh("button", build_button())
+    needle = add_mesh("needle", build_needle())
+    needle_red = add_mesh("needle_red", build_needle("red", 0.005, 0.046))
+    lamp_cap = add_mesh("lamp_cap", build_lamp_cap())
+    wiper = add_mesh("wiper", build_wiper())
+    dist_bar = add_mesh("distance_bar", build_gauge_bar())
+    screen_large = add_mesh("screen_large", build_screen(0.40, 0.25))
+    screen_small = add_mesh("screen_small", build_screen(0.25, 0.18))
+    screen_medium = add_mesh("screen_medium", build_screen(0.28, 0.20))
+    digits = [add_mesh(f"digit_{d}", build_digit(d)) for d in range(10)]
+
+    def lean_x(deg):
+        """Node base rotation about +X — the rest pose the motion adds to."""
+        half = math.radians(deg) / 2
+        return [math.sin(half), 0.0, 0.0, math.cos(half)]
 
     pant_extras = {"ts_function": "pantograph", "ts_motion": "rotate", "ts_axis": "1 0 0", "ts_amount": 45}
+    gauge_extras = {"ts_function": "gauge:speed", "ts_motion": "rotate", "ts_axis": "0 0 1", "ts_amount": -240}
     nodes = [
         {"name": "body_LOD0", "mesh": lod0},
         {"name": "body_LOD1", "mesh": lod1},
         {"name": "pant_front", "mesh": pant, "translation": [0.0, Y_ROOF + 0.02, -5.7], "extras": pant_extras},
         {"name": "pant_rear", "mesh": pant, "translation": [0.0, Y_ROOF + 0.02, 5.7],
          "rotation": [0.0, 1.0, 0.0, 0.0], "extras": pant_extras},
+        # Cab 1 (the -Z end): interior shell plus the interactive controls the
+        # vehicle file binds in its `cab:` section. Levers rest leaned back so
+        # the motion sweeps them through upright at mid-travel.
+        {"name": "cab_LOD0", "mesh": cab},
+        {"name": "cab_throttle", "mesh": lever,
+         "translation": [-0.85, 2.15, -7.3], "rotation": lean_x(-30)},
+        {"name": "cab_brake", "mesh": lever,
+         "translation": [-0.15, 2.15, -7.3], "rotation": lean_x(-30)},
+        {"name": "cab_reverser", "mesh": lever_small,
+         "translation": [-0.55, 2.15, -7.15], "rotation": lean_x(-20)},
+        {"name": "cab_sifa", "mesh": button, "translation": [-0.55, 2.15, -6.95]},
+        {"name": "cab_battery", "mesh": switch,
+         "translation": [0.45, 2.15, -7.3], "rotation": lean_x(-25)},
+        {"name": "cab_pantograph", "mesh": switch,
+         "translation": [0.6, 2.15, -7.3], "rotation": lean_x(-25)},
+        {"name": "cab_main_switch", "mesh": switch,
+         "translation": [0.75, 2.15, -7.3], "rotation": lean_x(-25)},
+        {"name": "cab_compressor", "mesh": switch,
+         "translation": [0.9, 2.15, -7.3], "rotation": lean_x(-25)},
+        {"name": "gauge_speed", "mesh": needle,
+         "translation": [-0.2, 2.38, -7.552], "extras": gauge_extras},
+        # Second needle on the same dial: AFB/LZB target speed. Sits 0.0015 m
+        # behind gauge_speed and 0.0005 m proud of the dial — no coplanar faces.
+        {"name": "gauge_v_soll", "mesh": needle_red,
+         "translation": [-0.2, 2.38, -7.5535]},
+        {"name": "lamp_1000hz", "mesh": lamp_cap, "translation": [0.1, 2.38, -7.553]},
+        # Wiper pivot at the bottom of the -Z windscreen, on the front face
+        # plane z = -(Z_NOSE - RAKE*(y - Y_FLOOR)); the vehicle file rotates it
+        # about the glass normal.
+        {"name": "wiper_left", "mesh": wiper,
+         "translation": [-0.45, 2.2, -(Z_NOSE - RAKE * (2.2 - Y_FLOOR))]},
+        {"name": "cab_wipers", "mesh": switch,
+         "translation": [0.25, 2.15, -7.3], "rotation": lean_x(-25)},
+        # Bottom of the target-distance slot; the runtime translates the bar up.
+        {"name": "gauge_distance_bar", "mesh": dist_bar,
+         "translation": [0.0, 2.30, -7.5535]},
+        # Cab displays: the MFA screen on the right of the desk with its two
+        # softkeys in front of it, the small brake screen on the far left, and
+        # the EBuLa screen between the brake screen and the instrument panel.
+        {"name": "screen_mfa", "mesh": screen_large,
+         "translation": [0.5, 2.305, -7.575]},
+        {"name": "screen_brake", "mesh": screen_small,
+         "translation": [-0.825, 2.29, -7.575]},
+        {"name": "screen_ebula", "mesh": screen_medium,
+         "translation": [-0.53, 2.30, -7.575]},
+        {"name": "cab_disp_1", "mesh": button, "translation": [0.42, 2.15, -7.45]},
+        {"name": "cab_disp_2", "mesh": button, "translation": [0.58, 2.15, -7.45]},
+        # EBuLa softkeys; the HTML page sees them as onButton indices 3 and 4.
+        {"name": "cab_disp_3", "mesh": button, "translation": [-0.61, 2.15, -7.45]},
+        {"name": "cab_disp_4", "mesh": button, "translation": [-0.45, 2.15, -7.45]},
     ]
+
+    # Distance counter: four digit places (place 0 = ones, rightmost = +X seen
+    # by the driver looking towards -Z). Each place is a parent node whose ten
+    # children "0"-"9" carry one glyph each; the app shows the matching child.
+    # Children are indices into the nodes array and stay out of the scene roots.
+    roots = list(range(len(nodes)))
+    for place in range(4):
+        parent = {
+            "name": f"digit_dist_{place}",
+            "translation": [0.185 - 0.05 * place, 2.475, -7.5535],
+            "children": [],
+        }
+        nodes.append(parent)
+        roots.append(len(nodes) - 1)
+        for d in range(10):
+            parent["children"].append(len(nodes))
+            nodes.append({"name": str(d), "mesh": digits[d]})
 
     return {
         "asset": {
@@ -320,7 +596,7 @@ def build_gltf():
             "copyright": "TrainSim-DE project. Procedural model built from scratch in tools/gen_br101.py, no third-party assets; licensed like the project.",
         },
         "scene": 0,
-        "scenes": [{"name": "br101", "nodes": list(range(len(nodes)))}],
+        "scenes": [{"name": "br101", "nodes": roots}],
         "nodes": nodes,
         "meshes": meshes,
         "materials": [dict(name=n, pbrMetallicRoughness=m) for n, m in MATERIALS],

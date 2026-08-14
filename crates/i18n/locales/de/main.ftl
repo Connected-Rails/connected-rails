@@ -170,7 +170,7 @@ action-take-suggestions = Alle Vorschläge übernehmen
 action-take-suggestions-hint = bindet { $count } noch nicht gebundene Knoten
 action-take-suggestions-none = alle vorgeschlagenen Knoten sind bereits gebunden
 part-function-placeholder = Funktion
-part-function-hint = Was der Knoten darstellt. Bekannte Formen: door_<name> · pantograph · switch:<name> · gauge:<name> · lamp:<name> · wheel — eigene Namen sind erlaubt, die App bildet ab, was sie kennt.
+part-function-hint = Was der Knoten darstellt. Bekannte Formen: door_<name> · pantograph · switch:<name> · gauge:<Name oder Melder> · lamp:<Name oder Melder> · digit:<Melder>:<Stelle> · wiper · wheel — eigene Namen sind erlaubt, die App bildet ab, was sie kennt.
 part-amount-hint = voller Ausschlag der Bewegung — vom Funktionswert 0 bis 1
 group-nodes = Knoten in der Datei
 node-bind-hint = als bewegtes Teil binden
@@ -445,6 +445,7 @@ snd-quantity-tractive-effort = Zugkraft [kN]
 snd-quantity-brake-effort = Bremskraft [kN]
 snd-quantity-brake-pipe = Hauptluftleitung [bar]
 snd-quantity-brake-cylinder = Bremszylinder [bar]
+snd-quantity-main-reservoir = Hauptluftbehälter [bar]
 snd-quantity-air-flow = Luftstrom [bar/s]
 snd-quantity-slip = Schlupfgeschwindigkeit [m/s]
 snd-quantity-throttle = Fahrschalter
@@ -454,6 +455,80 @@ snd-quantity-compressor = Kompressor
 snd-quantity-doors = Türen
 snd-quantity-alert = Zugsicherung meldet
 snd-quantity-horn = Signalhorn
+
+## Vehicle editor — cab
+##
+## Interactive 3D cab: each control binds a glTF node to a simulation input;
+## the input decides whether it acts as a push button, a switch or a lever.
+## The cab-input-* names double as control labels in the simulator HUD.
+
+group-cab = Führerstand
+cab-none = Noch kein Führerstand — das Modell bekommt Augpunkt und mausbedienbare Bedienelemente.
+action-add-cab = Führerstand anlegen
+action-add-cab-hint = Augpunkt plus mausbedienbare Bedienelemente
+action-add-control = Bedienelement hinzufügen
+action-add-control-hint = bindet einen glTF-Node an einen Simulationseingang
+cab-eye = Augpunkt
+cab-eye-hint = m im Modellraum: X rechts, Y über Schienenoberkante, −Z voraus
+cab-control-node = Node
+cab-control-input = Eingang
+cab-control-test = Test
+cab-control-test-hint = bewegt den Node in der Vorschau; wird nicht gespeichert
+
+cab-input-throttle = Fahrschalter
+cab-input-reverser = Richtungsschalter
+cab-input-brake-valve = Führerbremsventil
+cab-input-direct-brake = Zusatzbremse
+cab-input-afb-target = AFB-Sollgeschwindigkeit
+cab-input-sifa = Sifa
+cab-input-pzb-acknowledge = PZB Wachsam
+cab-input-pzb-exempt = PZB Frei
+cab-input-pzb-override = PZB Befehl
+cab-input-lzb-takeover = LZB Übernahme
+cab-input-lzb-end = LZB Ende
+cab-input-lzb-test = LZB Prüftaste
+cab-input-horn = Makrofon
+cab-input-sanding = Sanden
+cab-input-brake-release = Lösetaste Lokbremse
+cab-input-engine-start = Anlasser
+cab-input-door-release-left = Türfreigabe links
+cab-input-door-release-right = Türfreigabe rechts
+cab-input-door-close = Türen schließen
+cab-input-parking-brake = Feststellbremse
+cab-input-ep-brake = ep-Bremse
+cab-input-afb = AFB
+cab-input-battery = Batterie
+cab-input-pantograph = Stromabnehmer
+cab-input-main-switch = Hauptschalter
+cab-input-compressor = Luftpresser
+cab-input-train-type = Zugartschalter
+cab-input-wipers = Wischerschalter
+cab-input-display-1 = Display-Taste 1
+cab-input-display-2 = Display-Taste 2
+cab-input-display-3 = Display-Taste 3
+cab-input-display-4 = Display-Taste 4
+cab-input-display-5 = Display-Taste 5
+cab-input-display-6 = Display-Taste 6
+cab-input-display-7 = Display-Taste 7
+cab-input-display-8 = Display-Taste 8
+
+## Vehicle editor — displays
+##
+## Screens in the cab, rendered to texture: a name the script hook answers to,
+## the glTF node that shows the texture, and its resolution. Content comes
+## from the widget list in the file or from the vehicle script's display(ctx).
+
+group-displays = Displays
+action-add-display = Display hinzufügen
+action-add-display-hint = ein in eine Textur gerenderter Bildschirm auf einem glTF-Node — Widgets oder der display(ctx)-Skript-Hook zeichnen ihn
+disp-name = Name
+disp-name-hint = wonach der Skript-Hook gefragt wird (ctx.display)
+disp-node = Node
+disp-size = Auflösung
+disp-size-hint = px — Breite × Höhe der gerenderten Textur
+disp-html = HTML-Datei
+disp-html-hint = Pfad unterhalb von mods/ — der Bildschirm wird aus dieser HTML/CSS/JS-Seite gezeichnet statt aus Widgets oder dem Skript-Hook
+disp-widgets = { $count } Widgets — werden in der Fahrzeugdatei gepflegt
 
 ## Streckeneditor
 
@@ -523,7 +598,8 @@ hud-scenario-passed = Szenario bestanden
 hud-scenario-failed = Szenario gescheitert
 hud-outcome = { $result }: { $reason }
 hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
-hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse
+hud-control = { $name }: { $value } %
+hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer
 hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera  F9 Mods
 
 ## Mod-Verwaltung

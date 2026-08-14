@@ -19,6 +19,7 @@
 //! Everything is addressed as `"<mod>:<file stem>"`, so two mods may use the same file
 //! names. Nothing here is fatal: a broken file produces a warning, the rest still loads.
 
+pub mod display;
 pub mod script;
 
 use content::route::LineSource;

@@ -17,7 +17,9 @@ content = { workspace = true }
 mod-runtime = { workspace = true }
 ai-driver = { workspace = true }
 glam = { workspace = true }
-bevy = { workspace = true }
+# `wav`: the sound loops are generated at startup as WAV buffers (ch. 13), so rodio has
+# to be able to decode them — Bevy only brings the ogg decoder by default.
+bevy = { workspace = true, features = ["wav"] }
 
 [features]
 # Links Bevy as a shared library instead of statically: much faster relinks.

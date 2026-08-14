@@ -3,6 +3,7 @@
 //! The app ticks `sim-core` with a fixed time step and mirrors the state into ECS components.
 //! Simulation logic does **not** belong here.
 
+mod audio;
 mod models;
 mod mods_ui;
 mod render;
@@ -92,7 +93,7 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
     .init_resource::<ui::CameraState>()
     .init_resource::<mods_ui::ModManager>()
-    .add_systems(Startup, setup)
+    .add_systems(Startup, (setup, audio::setup_audio))
     .add_systems(
         Update,
         (
@@ -106,6 +107,7 @@ fn main() {
             streaming::stream_terrain,
             terrain_visibility,
             ui::update_hud,
+            audio::update_audio,
             mods_ui::mod_manager,
         )
             .chain(),

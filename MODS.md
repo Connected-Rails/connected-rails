@@ -392,18 +392,32 @@ example.
 
 Start it with `cargo run -p app -- --line example:beispielstrecke`.
 
-A `LineConductor` device carries the LZB telegram as its payload:
+A `LineConductor` device marks a line conductor section — the cable, not what it transmits:
 
 ```ron
-(kind: LineConductor, edge: 2, s: 0.0, payload: "(permitted_speed:160.0,target_speed:0.0,\
-target_distance:3000.0,length:3000.0,block_mode:Full,cir_elke:false)"),
+(kind: LineConductor, edge: 1, s: 0.0, payload: "(length:4000.0,cir_elke:false,end:false)"),
 ```
 
-`block_mode` is `Full` (LZB block markers instead of signals) or `Partial` (the LZB is laid
-over the signal block division, the signals stay binding and their PZB magnets keep working).
-`cir_elke: true` marks a CIR-ELKE section: steeper braking curve, 5 km/h speed steps, and
-speed rises that take effect at the head of the train instead of at its rear. Both fields
-may be left out — the defaults are `Full` and `false`.
+`length` is how far the section transmits, `cir_elke: true` marks a CIR-ELKE section (steeper
+braking curve, 5 km/h speed steps, speed rises effective at the head of the train instead of
+at its rear), `end: true` marks the last section of an LZB area, where the end procedure runs.
+The last two may be left out.
+
+The movement authority is not written into the line: the LZB centre builds it every step from
+the block division and the state of the interlocking. The block division is a line datum of
+its own — `BlockMarker` devices naming the section behind them:
+
+```ron
+(kind: BlockMarker, edge: 2, s: 0.0, payload: "(section:2)"),
+```
+
+An authority runs to the first boundary that is not clear: a block marker whose section is
+occupied, or a main signal at stop. v-target is the most restrictive point ahead — a speed
+step of the line counts as much as a stop, so a slow section needs no device of its own.
+Whether the block mode ends up as full or partial block mode falls out of the line data too —
+a line with block markers of its own divides the authority itself, a line without them leaves
+the main signals as the only boundaries, and the signals stay binding together with their PZB
+magnets.
 
 `scenarios/*.ron` is a `Scenario` — triggers and actions, see the README section on scenarios.
 Start one with `--scenario example:probefahrt`. A modded scenario brings no timetable of its

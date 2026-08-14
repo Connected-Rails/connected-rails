@@ -514,6 +514,16 @@ impl Train {
             weight / mass * 100.0
         }
     }
+
+    /// Filling time of the slowest brake in the train [s] — the brake position (BRA) of the
+    /// brake sheet, in the form the braking curve needs it: a train is only braked through
+    /// when its last vehicle is, so a single wagon in G decides for the whole train.
+    pub fn brake_apply_time(&self) -> f64 {
+        self.vehicles
+            .iter()
+            .map(|v| v.spec.brake.effective_position().apply_time())
+            .fold(0.0, f64::max)
+    }
 }
 
 /// Helper trait: shift a position by an amount without network access (only `s`),

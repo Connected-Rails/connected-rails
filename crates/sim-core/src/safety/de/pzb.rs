@@ -5,24 +5,25 @@
 //! They differ only in *which* supervisions are derived from an influence. Therefore one
 //! state machine [`Pzb`] plus a per-variant parameter set [`PzbSpec`] covers all of them:
 //!
-//! | Variant | 1000 Hz | 500 Hz | Distance sup. | Restrictive | Function test |
-//! |---|---|---|---|---|---|
-//! | [`PzbVariant::I54`]     | time step | fixed | — | — | — |
-//! | [`PzbVariant::I60`]     | time step | fixed | — | — | — |
-//! | [`PzbVariant::I60M`]    | time step | fixed | — | — | yes |
-//! | [`PzbVariant::I60R`]    | time step | fixed | 1250 m | yes | yes |
-//! | [`PzbVariant::Pzb60`]   | time step | fixed | — | — | — |
-//! | [`PzbVariant::Pzb90V15`]| ramp | ramp 153 m | 1250 m | after a stop | yes |
-//! | [`PzbVariant::Pzb90V20`]| ramp | ramp 153 m | 1250 m | + 15 s < 10 km/h | yes |
+//! | Variant | 1000 Hz | check speeds O/M/U | 500 Hz | Distance sup. | Restrictive | Function test |
+//! |---|---|---|---|---|---|---|
+//! | [`PzbVariant::I54`]     | time step | 95/90/80 after 20 s | fixed | — | — | — |
+//! | [`PzbVariant::I60`]     | time step | 95/75/60 after 20/26/34 s | fixed | — | — | — |
+//! | [`PzbVariant::I60M`]    | time step | as I 60 | fixed | — | — | yes |
+//! | [`PzbVariant::I60R`]    | ramp | as I 60 | fixed | 1250 m | yes | yes |
+//! | [`PzbVariant::Pzb60`]   | time step | as I 60 | fixed | — | — | — |
+//! | [`PzbVariant::Pzb90V15`]| ramp | 85/70/55 over 23/29/38 s | ramp 153 m | 1250 m | after a stop | yes |
+//! | [`PzbVariant::Pzb90V20`]| ramp | 85/70/55 over 23/29/38 s | ramp 153 m | 1250 m | + 15 s < 10 km/h | yes |
 //!
 //! On the trackside, 500 Hz, 1000 Hz and 2000 Hz track magnets are effective; their
 //! activation depends on the signal aspect and is decided by the interlocking
 //! (`TracksideEvent::active`).
 //!
-//! Numeric values according to Ril 483.0111 (PZB 90, train categories O/M/U); the values of
-//! the older variants are those of the Indusi rulebooks they were built to, the Austrian
-//! ones those of the ÖBB PZB 60. Country packages are compile-time Rust (plan 9.1), so the
-//! parameter sets are `const` tables rather than data files.
+//! Every build carries the check speeds of its own time: those of the PZB 90 follow
+//! Ril 483.0111, the older ones the Indusi rulebooks they were built to — the harmonisation
+//! down to 85/70/55 came with the PZB 90, so an I 60 loco runs 10 km/h faster past a
+//! 1000 Hz magnet than the same loco rebuilt. Country packages are compile-time Rust
+//! (plan 9.1), so the parameter sets are `const` tables rather than data files.
 
 use crate::cab::{CabInputs, Edge};
 use crate::safety::{
@@ -214,62 +215,80 @@ pub const T_SLOW: f64 = 15.0;
 /// Speed threshold for the restrictive supervision [km/h].
 pub const V_SLOW: f64 = 10.0;
 
-/// Train categories of the German Indusi builds I 54 … I 60R.
+/// Train categories of the German Indusi builds I 60 … I 60R — the check speeds of the
+/// Indusi rulebooks of their own time (95/75/60 after 20/26/34 s), which the PZB 90 only
+/// later harmonised down to 85/70/55.
 const INDUSI_DE: (PzbParams, PzbParams, PzbParams) = (
     PzbParams {
         v1000_start: 165.0,
-        v1000_end: 85.0,
-        t1000: 23.0,
+        v1000_end: 95.0,
+        t1000: 20.0,
         v500_start: 65.0,
         v500_end: 65.0,
-        lamp: "85",
+        lamp: "95",
     },
     PzbParams {
         v1000_start: 125.0,
-        v1000_end: 70.0,
-        t1000: 29.0,
+        v1000_end: 75.0,
+        t1000: 26.0,
         v500_start: 50.0,
         v500_end: 50.0,
-        lamp: "70",
+        lamp: "75",
     },
     PzbParams {
         v1000_start: 105.0,
-        v1000_end: 55.0,
-        t1000: 38.0,
+        v1000_end: 60.0,
+        t1000: 34.0,
         v500_start: 40.0,
         v500_end: 40.0,
-        lamp: "55",
+        lamp: "60",
     },
 );
 
-/// Train categories of the PZB 90 — same check speeds, but as braking curves.
-const PZB90_DE: (PzbParams, PzbParams, PzbParams) = (
+/// Train categories of the Indusi I 54.
+///
+/// ponytail: from 1959 the I 54 was set by the vehicle's maximum speed, not by train
+/// category — over 120 km/h 95, 100…120 km/h 90, under 100 km/h 80, each supervised 20 s
+/// after the influence. The two axes line up closely enough that the train type carries it;
+/// a vehicle-speed setting of its own would need the device to be told the vehicle's v-max.
+/// The earlier state of the rulebook, with only 95 and 75, is not modelled.
+const I54_DE: (PzbParams, PzbParams, PzbParams) = (
+    INDUSI_DE.0,
     PzbParams {
-        v500_end: 45.0,
-        ..INDUSI_DE.0
-    },
-    PzbParams {
-        v500_end: 35.0,
+        v1000_end: 90.0,
+        t1000: 20.0,
+        lamp: "90",
         ..INDUSI_DE.1
     },
     PzbParams {
-        v500_end: 25.0,
+        v1000_end: 80.0,
+        t1000: 20.0,
+        lamp: "80",
         ..INDUSI_DE.2
     },
 );
 
-/// Train categories of the ÖBB PZB 60 — same check speeds, shorter supervision time.
-const PZB60_AT: (PzbParams, PzbParams, PzbParams) = (
+/// Train categories of the PZB 90 — the harmonised check speeds, and as braking curves.
+const PZB90_DE: (PzbParams, PzbParams, PzbParams) = (
     PzbParams {
-        t1000: 20.0,
+        v1000_end: 85.0,
+        t1000: 23.0,
+        v500_end: 45.0,
+        lamp: "85",
         ..INDUSI_DE.0
     },
     PzbParams {
-        t1000: 26.0,
+        v1000_end: 70.0,
+        t1000: 29.0,
+        v500_end: 35.0,
+        lamp: "70",
         ..INDUSI_DE.1
     },
     PzbParams {
-        t1000: 34.0,
+        v1000_end: 55.0,
+        t1000: 38.0,
+        v500_end: 25.0,
+        lamp: "55",
         ..INDUSI_DE.2
     },
 );
@@ -301,14 +320,23 @@ const RESTRICTIVE_V20: Restrictive = Restrictive {
 impl PzbVariant {
     pub fn spec(self) -> PzbSpec {
         match self {
-            PzbVariant::I54 | PzbVariant::I60 => INDUSI_BASE,
+            PzbVariant::I54 => PzbSpec {
+                o: I54_DE.0,
+                m: I54_DE.1,
+                u: I54_DE.2,
+                ..INDUSI_BASE
+            },
+            PzbVariant::I60 => INDUSI_BASE,
             PzbVariant::I60M => PzbSpec {
                 self_test: true,
                 ..INDUSI_BASE
             },
-            // The restrictive programme brought the distance supervision and the
-            // supervised override with it; the 1000 Hz supervision stayed the I 60 one.
+            // The restrictive programme brought the distance supervision and the supervised
+            // override with it. Being computer-controlled, the I 60R also replaced the check
+            // point of the 1000 Hz influence with a curve — but onto the I 60 check speed,
+            // 165 down to 95 km/h over the I 60 supervision time.
             PzbVariant::I60R => PzbSpec {
+                curve_1000: Curve1000::Ramp,
                 d_1000: Some(D_1000),
                 restrictive: Some(Restrictive {
                     t_slow: None,
@@ -318,12 +346,9 @@ impl PzbVariant {
                 self_test: true,
                 ..INDUSI_BASE
             },
-            PzbVariant::Pzb60 => PzbSpec {
-                o: PZB60_AT.0,
-                m: PZB60_AT.1,
-                u: PZB60_AT.2,
-                ..INDUSI_BASE
-            },
+            // ponytail: no figures of the ÖBB PZB 60 are published, so it runs on the
+            // contemporary German Indusi set — which is what it was built from.
+            PzbVariant::Pzb60 => INDUSI_BASE,
             // V1.5: the restrictive mode is only entered after a stop and supervises a
             // constant 45 km/h, the 500 Hz curve included.
             PzbVariant::Pzb90V15 => PzbSpec {
@@ -990,19 +1015,61 @@ mod tests {
 
     #[test]
     fn indusi_i54_supervises_the_check_speed_only_after_the_time() {
-        // I 54, category O: 23 s of grace, then 85 km/h.
+        // I 54, category O: 20 s of grace, then 95 km/h.
         let mut r = Rig::variant(PzbVariant::I54, TrainType::O, 120.0);
         r.magnet(MagnetFrequency::Hz1000);
         r.acknowledge();
-        r.run(20.0);
+        r.run(19.0);
         assert!(
             r.pzb.supervised_speed().is_none(),
             "no braking curve while the time runs"
         );
         assert!(!r.braking());
-        r.run(4.0);
-        assert_eq!(r.pzb.supervised_speed(), Some(85.0));
+        r.run(2.0);
+        assert_eq!(r.pzb.supervised_speed(), Some(95.0));
         assert!(r.braking(), "120 km/h after the time has run");
+    }
+
+    /// The whole point of the per-build tables: the same loco is supervised differently
+    /// depending on which build it carries. The PZB 90 harmonised the check speeds down.
+    #[test]
+    fn the_older_builds_keep_their_own_check_speeds() {
+        let check = |variant, train_type| {
+            let mut r = Rig::variant(variant, train_type, 60.0);
+            r.magnet(MagnetFrequency::Hz1000);
+            r.acknowledge();
+            r.run(40.0);
+            r.pzb.supervised_speed().expect("supervision running")
+        };
+        for (train_type, indusi, pzb90) in [
+            (TrainType::O, 95.0, 85.0),
+            (TrainType::M, 75.0, 70.0),
+            (TrainType::U, 60.0, 55.0),
+        ] {
+            assert_eq!(check(PzbVariant::I60, train_type), indusi);
+            assert_eq!(check(PzbVariant::Pzb60, train_type), indusi, "ÖBB PZB 60");
+            assert_eq!(check(PzbVariant::Pzb90V20, train_type), pzb90);
+        }
+        // The I 54 was set by the vehicle's maximum speed: 95/90/80.
+        assert_eq!(check(PzbVariant::I54, TrainType::M), 90.0);
+        assert_eq!(check(PzbVariant::I54, TrainType::U), 80.0);
+    }
+
+    /// The I 60R is computer-controlled: a falling curve instead of a check point, but onto
+    /// the I 60 check speed.
+    #[test]
+    fn indusi_i60r_supervises_a_curve_onto_the_old_check_speed() {
+        let mut r = Rig::variant(PzbVariant::I60R, TrainType::O, 150.0);
+        r.magnet(MagnetFrequency::Hz1000);
+        r.acknowledge();
+        r.run(10.0);
+        let half = r.pzb.supervised_speed().expect("curve running");
+        assert!(
+            half > 125.0 && half < 135.0,
+            "halfway down from 165 to 95: {half}"
+        );
+        r.run(11.0);
+        assert_eq!(r.pzb.supervised_speed(), Some(95.0));
     }
 
     #[test]
@@ -1078,14 +1145,14 @@ mod tests {
     }
 
     #[test]
-    fn oebb_pzb60_uses_the_shorter_supervision_time() {
+    fn oebb_pzb60_runs_on_the_contemporary_indusi_set() {
         let mut r = Rig::variant(PzbVariant::Pzb60, TrainType::O, 120.0);
         r.magnet(MagnetFrequency::Hz1000);
         r.acknowledge();
         r.run(19.0);
         assert!(!r.braking(), "20 s of grace");
         r.run(2.0);
-        assert_eq!(r.pzb.supervised_speed(), Some(85.0));
+        assert_eq!(r.pzb.supervised_speed(), Some(95.0));
         assert!(r.braking());
     }
 

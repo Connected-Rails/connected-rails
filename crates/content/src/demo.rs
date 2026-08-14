@@ -6,8 +6,9 @@ use crate::route::{
     DeviceSource, EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource, SectionSource,
     SignalSource,
 };
+use sim_core::interlock::BlockMarkerPayload;
 use sim_core::interlock::{SignalKind, SignalSystem};
-use sim_core::safety::de::{LzbBlockMode, LzbTelegram, MagnetPayload};
+use sim_core::safety::de::{LzbSection, MagnetPayload};
 use track_model::{DeviceKind, Facing, Segment};
 
 /// Start point of the Musterbahn (Lower Saxony, UTM zone 32).
@@ -115,22 +116,17 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 0.0,
                 payload: magnet(&MagnetPayload::hz2000(1)),
             },
-            // 5: start of the line cable (LZB) in the third section
+            // 5: start of the line cable (LZB) behind the main signal, over the last 4 km
             DeviceSource {
                 kind: DeviceKind::LineConductor,
-                edge: 2,
+                edge: 1,
                 s: 0.0,
                 facing: Facing::Forward,
                 lateral_offset: 0.0,
-                payload: ron::to_string(&LzbTelegram {
-                    permitted_speed: 160.0,
-                    target_speed: 0.0,
-                    target_distance: 3000.0,
-                    end_of_authority: false,
-                    length: 3000.0,
-                    // The example line runs the LZB in full block mode without CIR-ELKE.
-                    block_mode: LzbBlockMode::Full,
+                payload: ron::to_string(&LzbSection {
+                    length: 4000.0,
                     cir_elke: false,
+                    end: false,
                 })
                 .unwrap(),
             },
@@ -143,10 +139,30 @@ pub fn musterbahn() -> LineSource {
                 lateral_offset: 5.0,
                 payload: "(name:\"Musterstadt\",length:210.0)".into(),
             },
+            // 7/8: LZB block markers — the block division of the line under the LZB. They are
+            // what makes the section run in full block mode; without them the main signals
+            // would stay the only boundaries.
+            DeviceSource {
+                kind: DeviceKind::BlockMarker,
+                edge: 1,
+                s: 0.0,
+                facing: Facing::Forward,
+                lateral_offset: 0.0,
+                payload: ron::to_string(&BlockMarkerPayload { section: 1 }).unwrap(),
+            },
+            DeviceSource {
+                kind: DeviceKind::BlockMarker,
+                edge: 2,
+                s: 0.0,
+                facing: Facing::Forward,
+                lateral_offset: 0.0,
+                payload: ron::to_string(&BlockMarkerPayload { section: 2 }).unwrap(),
+            },
         ],
         sections: vec![
             SectionSource { edges: vec![0] },
-            SectionSource { edges: vec![1, 2] },
+            SectionSource { edges: vec![1] },
+            SectionSource { edges: vec![2] },
         ],
         signals: vec![
             SignalSource {
@@ -164,7 +180,7 @@ pub fn musterbahn() -> LineSource {
                 system: SignalSystem::HV,
                 device: 2,
                 next: None,
-                guarded: vec![1],
+                guarded: vec![1, 2],
                 requires_route: false,
                 diverging_speed: None,
                 signal_type: None,
@@ -185,7 +201,7 @@ mod tests {
         let line = musterbahn();
         let compiled = line.compile().expect("compiles");
         assert_eq!(compiled.net.edges().len(), 3);
-        assert_eq!(compiled.net.devices().len(), 7);
+        assert_eq!(compiled.net.devices().len(), 9);
         assert_eq!(compiled.interlock.signals.len(), 2);
 
         // Edges join up geometrically.

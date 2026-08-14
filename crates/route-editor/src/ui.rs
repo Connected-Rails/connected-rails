@@ -18,6 +18,7 @@ pub fn draw(
     focus: Res<Focus>,
     line: Res<Line>,
     mut themed: Local<bool>,
+    windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     if !*themed {
@@ -41,9 +42,16 @@ pub fn draw(
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button(t!("menu-file"), |ui| {
                     if ui.button(t!("action-open-line")).clicked() {
-                        request.open_line = rfd::FileDialog::new()
-                            .add_filter(t!("filter-line-ron"), &["ron"])
-                            .pick_file();
+                        let mut dialog =
+                            rfd::FileDialog::new().add_filter(t!("filter-line-ron"), &["ron"]);
+                        // The dialog names the editor window as its owner —
+                        // without one, Windows may open it behind the editor.
+                        // SAFETY: only used as the dialog owner; nothing draws
+                        // or resizes through the handle.
+                        if let Ok(window) = windows.single() {
+                            dialog = dialog.set_parent(&unsafe { window.get_handle() });
+                        }
+                        request.open_line = dialog.pick_file();
                         ui.close();
                     }
                     ui.separator();

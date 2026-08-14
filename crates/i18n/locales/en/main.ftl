@@ -297,6 +297,12 @@ table-tractive-effort = Tractive effort (km/h → N)
 table-dynamic-brake = Dynamic brake (km/h → N)
 table-torque = Full load torque (1/min → N·m)
 action-add-point = + point
+action-close = Close
+
+# The shared curve editor: every (x, y) table opens it from its sparkline.
+curve-empty = no points yet
+curve-open-hint = Click opens the curve editor.
+curve-editor-help = Drag points · double-click adds a point · right-click removes it
 
 tap-steps = Notches
 tap-steps-hint = of the tap changer

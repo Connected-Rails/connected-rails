@@ -297,6 +297,12 @@ table-tractive-effort = Zugkraft (km/h → N)
 table-dynamic-brake = Elektrische Bremse (km/h → N)
 table-torque = Volllastmoment (1/min → N·m)
 action-add-point = + Punkt
+action-close = Schließen
+
+# The shared curve editor: every (x, y) table opens it from its sparkline.
+curve-empty = noch keine Punkte
+curve-open-hint = Klick öffnet den Kurveneditor.
+curve-editor-help = Punkte ziehen · Doppelklick fügt einen Punkt hinzu · Rechtsklick entfernt ihn
 
 tap-steps = Fahrstufen
 tap-steps-hint = des Schaltwerks

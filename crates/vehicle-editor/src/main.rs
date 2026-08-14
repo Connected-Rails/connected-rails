@@ -93,6 +93,9 @@ pub struct Editor {
     /// The comment warning has been answered once; do not ask again this
     /// session.
     pub warned_about_comments: bool,
+    /// Handle of the editor window. Native dialogs name it as their owner —
+    /// without one, Windows is free to open them behind the editor.
+    pub window: Option<bevy::window::RawHandleWrapper>,
     /// What survives between runs.
     pub settings: settings::Settings,
 }
@@ -120,6 +123,7 @@ impl Default for Editor {
             redo: Vec::new(),
             changing: false,
             warned_about_comments: false,
+            window: None,
             settings,
         }
     }

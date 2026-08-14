@@ -6,3 +6,4 @@ license.workspace = true
 
 [dependencies]
 bevy_egui = { workspace = true }
+i18n = { workspace = true }

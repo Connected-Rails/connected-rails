@@ -42,8 +42,12 @@ pub fn draw(
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
     mut view: ResMut<crate::View>,
+    windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
+    // Kept on the editor so every dialog site (including the close handler in
+    // `main.rs`) can name the window as its owner.
+    editor.window = windows.single().ok().cloned();
     if !*themed {
         // Fonts installed by `apply` become active with the next pass — skip
         // one frame so nothing draws with a font family that is not there yet.
@@ -156,6 +160,31 @@ fn handle_shortcuts(ctx: &egui::Context, editor: &mut Editor) {
     }
 }
 
+/// The owner of every native dialog. Without one, Windows is free to open the
+/// dialog behind the editor window — where a modal that blocks all input reads
+/// as a hang.
+fn dialog_parent(editor: &Editor) -> Option<bevy::window::ThreadLockedRawWindowHandleWrapper> {
+    // SAFETY: the handle is only handed to rfd as the dialog owner; nothing
+    // draws or resizes through it.
+    editor.window.as_ref().map(|w| unsafe { w.get_handle() })
+}
+
+/// Starts a message dialog owned by the editor window.
+fn message_dialog(editor: &Editor) -> rfd::MessageDialog {
+    match dialog_parent(editor) {
+        Some(parent) => rfd::MessageDialog::new().set_parent(&parent),
+        None => rfd::MessageDialog::new(),
+    }
+}
+
+/// Starts a file dialog owned by the editor window.
+fn file_dialog(editor: &Editor) -> rfd::FileDialog {
+    match dialog_parent(editor) {
+        Some(parent) => rfd::FileDialog::new().set_parent(&parent),
+        None => rfd::FileDialog::new(),
+    }
+}
+
 /// Asks before unsaved work is thrown away; `true` means go ahead.
 ///
 /// The status bar reports the unsaved state but does not defend it — before
@@ -165,7 +194,7 @@ pub fn confirm_discard(editor: &mut Editor) -> bool {
     if !editor.dirty {
         return true;
     }
-    match rfd::MessageDialog::new()
+    match message_dialog(editor)
         .set_level(rfd::MessageLevel::Warning)
         .set_title(t!("confirm-unsaved-title"))
         .set_description(t!("confirm-unsaved", name = editor.spec.name))
@@ -203,7 +232,7 @@ fn needs_saving(editor: &Editor) -> bool {
 /// command line without one, so a headless run never waits on a modal.
 fn report_failure(editor: &Editor) {
     if editor.status.is_error() {
-        rfd::MessageDialog::new()
+        message_dialog(editor)
             .set_level(rfd::MessageLevel::Error)
             .set_title(t!("dialog-error-title"))
             .set_description(editor.status.text())
@@ -229,7 +258,7 @@ fn confirm_comment_loss(editor: &mut Editor, path: &std::path::Path) -> bool {
     if !has_comments {
         return true;
     }
-    let go_ahead = rfd::MessageDialog::new()
+    let go_ahead = message_dialog(editor)
         .set_level(rfd::MessageLevel::Warning)
         .set_title(t!("confirm-comments-title"))
         .set_description(t!("confirm-comments", file = path.display()))
@@ -255,7 +284,7 @@ fn save(editor: &mut Editor) {
 }
 
 fn save_as(editor: &mut Editor) {
-    if let Some(path) = rfd::FileDialog::new()
+    if let Some(path) = file_dialog(editor)
         .add_filter(t!("filter-vehicle-ron"), &["ron"])
         .set_file_name("vehicle.ron")
         .save_file()
@@ -266,7 +295,7 @@ fn save_as(editor: &mut Editor) {
 }
 
 fn open(editor: &mut Editor) {
-    if let Some(path) = rfd::FileDialog::new()
+    if let Some(path) = file_dialog(editor)
         .add_filter(t!("filter-vehicle-ron"), &["ron"])
         .pick_file()
     {
@@ -409,7 +438,7 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
                     ui.separator();
                     // The first question on any bug report from a modder.
                     if ui.button(t!("action-about")).clicked() {
-                        rfd::MessageDialog::new()
+                        message_dialog(editor)
                             .set_title(t!("window-vehicle-editor"))
                             .set_description(t!(
                                 "about-version",
@@ -441,7 +470,7 @@ fn language_menu(ui: &mut egui::Ui, settings: &mut crate::settings::Settings) {
 /// Opens a glTF file. The path is stored relative to the `mods/` directory, because that is
 /// how the simulator finds it later (`mods://<mod>/assets/…`).
 fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
-    let Some(path) = rfd::FileDialog::new()
+    let Some(path) = file_dialog(editor)
         .add_filter(t!("filter-model-gltf"), &["gltf", "glb"])
         .set_directory(crate::mods_dir())
         .pick_file()

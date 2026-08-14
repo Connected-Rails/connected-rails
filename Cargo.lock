@@ -2547,6 +2547,7 @@ name = "editor-ui"
 version = "0.1.0"
 dependencies = [
  "bevy_egui",
+ "i18n",
 ]
 
 [[package]]

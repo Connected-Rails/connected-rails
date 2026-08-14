@@ -1,177 +1,346 @@
-//! Basic sounds (plan ch. 13).
+//! Sound (plan ch. 13) — the vehicle's sound table put to work.
 //!
-//! Every sound is one looping sink whose volume and playback speed follow the simulation
-//! state of the player's train — rolling noise, traction, air, compressor, horn and the
-//! train protection buzzer. The loops are **generated**, not shipped: a handful of
-//! oscillators and a noise generator written into a WAV buffer at startup.
+//! Nothing here decides *what* a train sounds like. That is written in the vehicle file
+//! ([`sim_core::sound`]): which sample follows which quantity, under which conditions,
+//! started by which trigger. This module only does what needs an audio device — it turns
+//! the entries into sinks, follows their curves every frame and detects the edges that a
+//! trigger fires on.
 //!
-//! ponytail: continuous modulation only, no event queue. Discrete noises (rail joints,
-//! tap changer contactors, brake squeal), sounds per vehicle file and positional audio of
-//! other trains belong to the full audio of M6 — that is when `sim-core` gets an event
-//! stream and `VehicleSpec` a sound table.
+//! Two kinds of entry come out of the same table:
+//!
+//! - **without a trigger** — a loop whose volume and pitch are modulated (rolling noise,
+//!   traction, air).
+//! - **with a trigger** — a one-shot, spawned in the frame the edge is crossed (rail joints,
+//!   tap changer contactors).
+//!
+//! A vehicle without a table of its own runs on [`sim_core::sound::default_table`], and its
+//! samples are **generated**: a handful of oscillators and a noise generator written into a
+//! WAV buffer at start-up, addressed as `synth:<name>`. So the repository carries no binary
+//! samples, and a mod that brings its own files takes exactly the same path — only the
+//! `file` of the entry changes.
 
-use crate::{PlayerTrain, SimResource};
-use bevy::audio::Volume;
+use crate::render::VehicleView;
+use crate::{PlayerTrain, SimResource, models, ui};
+use bevy::audio::{AudioSinkPlayback, SpatialAudioSink, SpatialListener, Volume};
 use bevy::prelude::*;
+use sim_core::sound::{SoundSpec, SoundState, default_table};
+use sim_core::train::VehicleSpec;
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-/// Sample rate of the generated loops [Hz]. Enough for engine hum and hiss, and every
+/// Sample rate of the generated sources [Hz]. Enough for engine hum and hiss, and every
 /// buffer stays under 50 kB.
 const RATE: u32 = 22_050;
 
-/// The sounds of the cab. Each one is an entity with an `AudioPlayer` that never stops —
-/// only its volume changes.
-#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Channel {
-    /// Wheels on the rail, rises with speed.
-    Rolling,
-    /// Traction: converter whine or diesel engine.
-    Traction,
-    /// Air flowing through the brake valves.
-    Air,
-    /// Main reservoir compressor.
-    Compressor,
-    /// Horn (Makrofon), two-tone.
-    Horn,
-    /// Sifa/PZB buzzer.
-    Buzzer,
+/// Gap between the ears of the listener [m] — the stereo base of the cab.
+const EAR_GAP: f32 = 0.3;
+
+/// Which entry of which vehicle a sink plays.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Sound {
+    train: usize,
+    vehicle: usize,
+    /// Index into the vehicle's sound table.
+    entry: usize,
 }
 
-/// Creates the loops and starts them silently.
-pub fn setup_audio(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>) {
-    // Rolling: low-passed noise plus the rumble of the running gear.
-    let mut low = 0.0;
-    let mut rumble = noise();
-    let rolling = generate(move |t| {
-        low += (rumble() - low) * 0.08;
-        low * 3.0 + (t * TAU * 50.0).sin() * 0.15
-    });
-    // Traction: converter whine — a fundamental with two harmonics.
-    let traction = generate(|t| tone(t, &[(200.0, 0.5), (400.0, 0.3), (800.0, 0.12)]));
-    // Air: white noise, high-passed so it hisses instead of rumbling.
-    let mut low = 0.0;
-    let mut hiss = noise();
-    let air = generate(move |t| {
-        let white = hiss();
-        low += (white - low) * 0.35;
-        (white - low) * 0.8 + (t * TAU * 120.0).sin() * 0.05
-    });
-    // Compressor: a low hum, chugging six times a second.
-    let compressor =
-        generate(|t| tone(t, &[(80.0, 0.6), (160.0, 0.2)]) * (0.6 + 0.4 * (t * TAU * 6.0).sin()));
-    // Horn: the two-tone of a Makrofon, both notes with their octave.
-    let horn = generate(|t| tone(t, &[(370.0, 0.4), (440.0, 0.4), (740.0, 0.1), (880.0, 0.1)]));
-    // Buzzer: 800 Hz with odd harmonics — that is what makes it nag rather than sing.
-    let buzzer = generate(|t| tone(t, &[(800.0, 0.5), (2400.0, 0.17), (4000.0, 0.1)]));
+/// The sources behind the tables, by the `file` of the entry.
+#[derive(Resource)]
+pub struct Sounds {
+    sources: HashMap<String, Handle<AudioSource>>,
+    /// The table a vehicle without one of its own runs on.
+    default: Vec<SoundSpec>,
+    /// View entity of every vehicle — what a placed sound hangs off. Vehicles are spawned
+    /// once at start-up, so this is looked up here instead of re-queried every frame.
+    emitters: HashMap<(usize, usize), Entity>,
+}
 
-    for (channel, source) in [
-        (Channel::Rolling, rolling),
-        (Channel::Traction, traction),
-        (Channel::Air, air),
-        (Channel::Compressor, compressor),
-        (Channel::Horn, horn),
-        (Channel::Buzzer, buzzer),
-    ] {
-        commands.spawn((
-            AudioPlayer::new(sources.add(source)),
-            PlaybackSettings::LOOP.with_volume(Volume::SILENT),
-            channel,
-        ));
+impl Sounds {
+    /// The sound table of a vehicle.
+    ///
+    /// ponytail: a hauled vehicle without a table of its own stays silent instead of
+    /// inheriting the default — that one carries a compressor and a horn, which a coach has
+    /// no business making. A coach that is to roll audibly writes its own two entries.
+    fn table<'a>(&'a self, spec: &'a VehicleSpec) -> &'a [SoundSpec] {
+        if !spec.sounds.is_empty() {
+            &spec.sounds
+        } else if spec.traction.is_some() {
+            &self.default
+        } else {
+            &[]
+        }
     }
 }
 
-/// What the cab hears, read off the simulation once per frame.
-#[derive(Clone, Copy, Default, Debug)]
-struct Cues {
-    /// Driving speed [km/h], always positive.
-    speed: f32,
-    /// Tractive effort as a share of the reference force.
-    effort: f32,
-    /// Playback speed of the traction loop.
-    traction_pitch: f32,
-    /// Pressure change in the brake system [bar/s].
-    air: f32,
-    compressor: bool,
-    horn: bool,
-    /// The train protection demands an operation.
-    alert: bool,
-}
-
-/// Volume and playback speed of one channel.
-fn level(channel: Channel, cues: &Cues) -> (f32, f32) {
-    match channel {
-        Channel::Rolling => (
-            (cues.speed / 60.0).min(1.0) * 0.55,
-            0.7 + cues.speed / 200.0,
-        ),
-        Channel::Traction => (cues.effort * 0.45, cues.traction_pitch),
-        Channel::Air => ((cues.air * 3.0).min(1.0) * 0.5, 1.0),
-        Channel::Compressor => (if cues.compressor { 0.3 } else { 0.0 }, 1.0),
-        Channel::Horn => (if cues.horn { 0.7 } else { 0.0 }, 1.0),
-        Channel::Buzzer => (if cues.alert { 0.35 } else { 0.0 }, 1.0),
-    }
-}
-
-/// Volume and pitch of every channel, from the state of the player's train.
-pub fn update_audio(
+/// Creates the sources, places the listener and starts every loop silently.
+///
+/// Runs in `PostStartup`: the trains and their view entities are created by `setup`, and the
+/// commands of a `Startup` system are only applied afterwards.
+pub fn setup_audio(
+    mut commands: Commands,
+    mut assets: ResMut<Assets<AudioSource>>,
+    server: Res<AssetServer>,
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
+    views: Query<(Entity, &VehicleView)>,
+    camera: Query<Entity, With<ui::CabCamera>>,
+) {
+    // The listener sits at the camera — the cab, or the outside view.
+    if let Ok(camera) = camera.single() {
+        commands
+            .entity(camera)
+            .insert(SpatialListener::new(EAR_GAP));
+    }
+
+    let mut bank = Sounds {
+        sources: HashMap::new(),
+        default: default_table(),
+        emitters: views
+            .iter()
+            .map(|(entity, view)| ((view.train, view.vehicle), entity))
+            .collect(),
+    };
+
+    // Which files the loaded vehicles actually ask for — a mod's table may name any of them.
+    let mut wanted: Vec<String> = Vec::new();
+    for train in &sim.0.trains {
+        for vehicle in &train.vehicles {
+            for entry in bank.table(&vehicle.spec) {
+                if !wanted.contains(&entry.file) {
+                    wanted.push(entry.file.clone());
+                }
+            }
+        }
+    }
+    for file in wanted {
+        // `synth:<name>` is generated here, everything else is a sample out of a mod.
+        let handle = match file.strip_prefix("synth:") {
+            Some(name) => match synth(name) {
+                Some(source) => assets.add(source),
+                None => {
+                    warn!("sound: unknown generated source {file}");
+                    continue;
+                }
+            },
+            None => server.load(models::asset_path(&file)),
+        };
+        bank.sources.insert(file, handle);
+    }
+
+    let (mut loops, mut triggered) = (0, 0);
+    for (t, train) in sim.0.trains.iter().enumerate() {
+        for (v, vehicle) in train.vehicles.iter().enumerate() {
+            for (i, entry) in bank.table(&vehicle.spec).iter().enumerate() {
+                if !entry.is_loop() {
+                    triggered += 1;
+                    continue;
+                }
+                loops += 1;
+                let Some(handle) = bank.sources.get(&entry.file) else {
+                    continue;
+                };
+                let marker = Sound {
+                    train: t,
+                    vehicle: v,
+                    entry: i,
+                };
+                let settings = PlaybackSettings {
+                    spatial: entry.positional,
+                    ..PlaybackSettings::LOOP
+                }
+                .with_volume(Volume::SILENT);
+                let bundle = (AudioPlayer::new(handle.clone()), settings, marker);
+                match bank.emitters.get(&(t, v)) {
+                    // Placed in the world: the sink rides along on the vehicle, so distance
+                    // attenuation and Doppler fall out of its transform.
+                    Some(parent) if entry.positional => {
+                        commands
+                            .entity(*parent)
+                            .with_child((bundle, Transform::default()));
+                    }
+                    // Not placed: a cab sound. Only the train being driven has a cab that
+                    // anyone is sitting in.
+                    _ if t == player.0 && !entry.positional => {
+                        commands.spawn(bundle);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    info!(
+        "Sound: {loops} loops and {triggered} triggered entries from {} sources",
+        bank.sources.len()
+    );
+    commands.insert_resource(bank);
+}
+
+/// Follows the curves of every loop and fires the triggered entries.
+pub fn update_audio(
+    mut commands: Commands,
+    sim: Res<SimResource>,
+    bank: Res<Sounds>,
     time: Res<Time>,
-    // Brake pipe and cylinder of the previous frame — air is heard when it moves.
-    mut last: Local<Option<(f64, f64)>>,
-    mut sinks: Query<(&Channel, &mut AudioSink)>,
+    // The state of the previous frame: triggers need an edge, air a difference.
+    mut previous: Local<HashMap<(usize, usize), SoundState>>,
+    mut plain: Query<(&Sound, &mut AudioSink)>,
+    mut spatial: Query<(&Sound, &mut SpatialAudioSink)>,
 ) {
     let dt = time.delta_secs_f64().clamp(1e-3, 0.25);
     let sim = &sim.0;
-    let Some(train) = sim.trains.get(player.0) else {
-        return;
-    };
-    let loco = &train.vehicles[0];
-    let cab = &sim.controls[player.0];
-    let speed = train.speed_kmh().abs() as f32;
 
-    let (pipe, cylinder) = (loco.brake.pipe, loco.brake.cylinder);
-    let (prev_pipe, prev_cylinder) = last.unwrap_or((pipe, cylinder));
-    *last = Some((pipe, cylinder));
-    // Pressure change at the traction unit in bar/s: venting and filling both hiss.
-    let air = ((pipe - prev_pipe).abs() + (cylinder - prev_cylinder).abs()) / dt;
-
-    // Diesel engines are heard by their speed, electrics by the driving speed —
-    // the converter whine follows the motor, and that follows the wheel.
-    let rpm = loco.traction.engine_rpm as f32;
-    let traction_pitch = if rpm > 0.0 {
-        (rpm / 900.0).clamp(0.4, 2.5)
-    } else {
-        0.5 + speed / 150.0
-    };
-    let cues = Cues {
-        speed,
-        // ponytail: 250 kN as the reference instead of the vehicle's own maximum — no drive
-        // model states one, and the loudness of a loco does not follow its data sheet anyway.
-        effort: (loco.tractive_effort.abs() as f32 / 250_000.0).min(1.0),
-        traction_pitch,
-        air: air as f32,
-        compressor: loco.brake.compressor_running && loco.traction.compressor,
-        horn: cab.horn,
-        alert: sim.runtime[player.0].protection.alert,
-    };
-
-    for (channel, mut sink) in sinks.iter_mut() {
-        let (volume, pitch) = level(*channel, &cues);
-        // Fade instead of jumping: a volume set hard clicks in the speaker.
-        let fade = (dt as f32 * 12.0).min(1.0);
-        let faded = sink.volume().fade_towards(Volume::Linear(volume), fade);
-        sink.set_volume(faded);
-        sink.set_speed(pitch);
+    // One reading per vehicle — every entry of that vehicle is evaluated against it.
+    let mut states: HashMap<(usize, usize), SoundState> = HashMap::new();
+    for (t, train) in sim.trains.iter().enumerate() {
+        let cab = sim.controls[t];
+        let alert = sim.runtime[t].protection.alert;
+        for (v, vehicle) in train.vehicles.iter().enumerate() {
+            if bank.table(&vehicle.spec).is_empty() {
+                continue;
+            }
+            let state = SoundState::sample(vehicle, &cab, alert, previous.get(&(t, v)), dt);
+            states.insert((t, v), state);
+        }
     }
+
+    // Loops: volume and pitch, faded rather than set hard — a volume that jumps clicks.
+    let fade = (dt as f32 * 12.0).min(1.0);
+    let level = |sound: &Sound| -> Option<(f32, f32)> {
+        let state = states.get(&(sound.train, sound.vehicle))?;
+        let spec = sim.trains.get(sound.train)?.vehicles.get(sound.vehicle)?;
+        let entry = bank.table(&spec.spec).get(sound.entry)?;
+        let (volume, pitch) = entry.level(state);
+        Some((volume as f32, pitch as f32))
+    };
+    for (sound, mut sink) in plain.iter_mut() {
+        if let Some((volume, pitch)) = level(sound) {
+            apply(&mut *sink, volume, pitch, fade);
+        }
+    }
+    for (sound, mut sink) in spatial.iter_mut() {
+        if let Some((volume, pitch)) = level(sound) {
+            apply(&mut *sink, volume, pitch, fade);
+        }
+    }
+
+    // Triggered entries: one-shots, spawned in the frame the edge is crossed.
+    for (&(t, v), state) in states.iter() {
+        let Some(before) = previous.get(&(t, v)) else {
+            // The first frame has no edge — everything would fire at once.
+            continue;
+        };
+        let spec = &sim.trains[t].vehicles[v].spec;
+        for entry in bank.table(spec).iter().filter(|e| !e.is_loop()) {
+            if !entry.fires(state, before) {
+                continue;
+            }
+            let Some(handle) = bank.sources.get(&entry.file) else {
+                continue;
+            };
+            let (volume, pitch) = entry.level(state);
+            let settings = PlaybackSettings {
+                spatial: entry.positional,
+                ..PlaybackSettings::DESPAWN
+            }
+            .with_volume(Volume::Linear(volume as f32))
+            .with_speed(pitch as f32);
+            let bundle = (AudioPlayer::new(handle.clone()), settings);
+            match bank.emitters.get(&(t, v)) {
+                Some(parent) if entry.positional => {
+                    commands
+                        .entity(*parent)
+                        .with_child((bundle, Transform::default()));
+                }
+                _ => {
+                    commands.spawn(bundle);
+                }
+            }
+        }
+    }
+
+    *previous = states;
 }
 
-/// One second of mono 16-bit PCM in a WAV container.
+/// Volume (faded) and playback speed of one sink.
+fn apply(sink: &mut impl AudioSinkPlayback, volume: f32, pitch: f32, fade: f32) {
+    let faded = sink.volume().fade_towards(Volume::Linear(volume), fade);
+    sink.set_volume(faded);
+    sink.set_speed(pitch);
+}
+
+/// The generated sources, addressed as `synth:<name>` from a sound table.
 ///
-/// Generating the loops saves the repository a set of binary samples, and every whole
-/// frequency runs through a whole number of periods in a second — so the loop has no seam.
-fn generate(mut sample: impl FnMut(f32) -> f32) -> AudioSource {
-    let count = RATE as usize;
+/// Loops are one second long so that every whole frequency runs through a whole number of
+/// periods and the loop has no seam; the one-shots are as short as the noise they stand for.
+fn synth(name: &str) -> Option<AudioSource> {
+    let source = match name {
+        // Rolling: low-passed noise plus the rumble of the running gear.
+        "rolling" => {
+            let mut low = 0.0;
+            let mut rumble = noise();
+            generate(1.0, move |t| {
+                low += (rumble() - low) * 0.08;
+                low * 3.0 + (t * TAU * 50.0).sin() * 0.15
+            })
+        }
+        // Traction: converter whine — a fundamental with two harmonics.
+        "traction" => generate(1.0, |t| {
+            tone(t, &[(200.0, 0.5), (400.0, 0.3), (800.0, 0.12)])
+        }),
+        // Air: white noise, high-passed so it hisses instead of rumbling.
+        "air" => {
+            let mut low = 0.0;
+            let mut hiss = noise();
+            generate(1.0, move |t| {
+                let white = hiss();
+                low += (white - low) * 0.35;
+                (white - low) * 0.8 + (t * TAU * 120.0).sin() * 0.05
+            })
+        }
+        // Compressor: a low hum, chugging six times a second.
+        "compressor" => generate(1.0, |t| {
+            tone(t, &[(80.0, 0.6), (160.0, 0.2)]) * (0.6 + 0.4 * (t * TAU * 6.0).sin())
+        }),
+        // Horn: the two-tone of a Makrofon, both notes with their octave.
+        "horn" => generate(1.0, |t| {
+            tone(t, &[(370.0, 0.4), (440.0, 0.4), (740.0, 0.1), (880.0, 0.1)])
+        }),
+        // Buzzer: 800 Hz with odd harmonics — that is what makes it nag rather than sing.
+        "buzzer" => generate(1.0, |t| {
+            tone(t, &[(800.0, 0.5), (2400.0, 0.17), (4000.0, 0.1)])
+        }),
+        // Brake squeal: a high note that wanders, the way a block does on the tread.
+        "squeal" => generate(1.0, |t| {
+            let wobble = 1.0 + 0.02 * (t * TAU * 7.0).sin();
+            tone(t, &[(2100.0 * wobble, 0.35), (4200.0 * wobble, 0.12)])
+        }),
+        // Rail joint: a noise burst that decays — the wheel dropping into the gap.
+        "joint" => {
+            let mut burst = noise();
+            generate(0.14, move |t| {
+                (burst() * 0.7 + (t * TAU * 90.0).sin() * 0.5) * decay(t, 22.0)
+            })
+        }
+        // Contactor: the same shape, shorter and metallic — a tap changer notch.
+        "contactor" => {
+            let mut click = noise();
+            generate(0.09, move |t| {
+                (click() * 0.5 + tone(t, &[(1300.0, 0.4), (2600.0, 0.2)])) * decay(t, 45.0)
+            })
+        }
+        _ => return None,
+    };
+    Some(source)
+}
+
+/// Exponential envelope of a one-shot: 1 at the start, silent at the end.
+fn decay(t: f32, rate: f32) -> f32 {
+    (-t * rate).exp()
+}
+
+/// `seconds` of mono 16-bit PCM in a WAV container.
+fn generate(seconds: f32, mut sample: impl FnMut(f32) -> f32) -> AudioSource {
+    let count = (RATE as f32 * seconds) as usize;
     let data = count as u32 * 2;
     let mut bytes = Vec::with_capacity(44 + data as usize);
     bytes.extend_from_slice(b"RIFF");
@@ -220,12 +389,13 @@ fn noise() -> impl FnMut() -> f32 {
 mod tests {
     use super::*;
     use bevy::audio::{Decodable, Source};
+    use sim_core::sound::default_table;
 
     /// The buffer has to survive rodio — without the `wav` feature the decoder panics,
     /// and the app would go silent without a word.
     #[test]
     fn the_loops_decode() {
-        let source = generate(|t| (t * TAU * 440.0).sin());
+        let source = generate(1.0, |t| (t * TAU * 440.0).sin());
         let decoder = source.decoder();
         assert_eq!(decoder.sample_rate().get(), RATE);
         assert_eq!(decoder.channels().get(), 1);
@@ -234,7 +404,7 @@ mod tests {
 
     #[test]
     fn wav_buffer_is_well_formed() {
-        let source = generate(|t| (t * TAU * 440.0).sin());
+        let source = generate(1.0, |t| (t * TAU * 440.0).sin());
         let bytes = &source.bytes;
         assert_eq!(&bytes[0..4], b"RIFF");
         assert_eq!(&bytes[8..12], b"WAVE");
@@ -247,85 +417,23 @@ mod tests {
             u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize,
             bytes.len() - 8
         );
+        // A one-shot is short, and short enough to still be a valid buffer.
+        let click = generate(0.09, |t| decay(t, 45.0));
+        assert_eq!(click.bytes.len(), 44 + (RATE as f32 * 0.09) as usize * 2);
     }
 
-    /// A standing, unmanned vehicle is silent, and each channel answers to its own cue.
+    /// Every `synth:` name the default table asks for has to exist — a typo would leave the
+    /// simulator silent with nothing but a warning in the log.
     #[test]
-    fn every_channel_follows_its_cue() {
-        let quiet = Cues {
-            traction_pitch: 1.0,
-            ..default()
-        };
-        for channel in [
-            Channel::Rolling,
-            Channel::Traction,
-            Channel::Air,
-            Channel::Compressor,
-            Channel::Horn,
-            Channel::Buzzer,
-        ] {
-            assert_eq!(level(channel, &quiet).0, 0.0, "{channel:?}");
+    fn the_default_table_finds_all_its_sources() {
+        for entry in default_table() {
+            let name = entry
+                .file
+                .strip_prefix("synth:")
+                .unwrap_or_else(|| panic!("{} is not generated", entry.file));
+            assert!(synth(name).is_some(), "{name}");
         }
-
-        // Rolling noise rises with speed and stops rising at the top.
-        let slow = level(
-            Channel::Rolling,
-            &Cues {
-                speed: 30.0,
-                ..quiet
-            },
-        );
-        let fast = level(
-            Channel::Rolling,
-            &Cues {
-                speed: 90.0,
-                ..quiet
-            },
-        );
-        assert!(slow.0 > 0.0 && slow.0 < fast.0);
-        assert!(fast.1 > slow.1, "faster also means higher pitched");
-        let faster = level(
-            Channel::Rolling,
-            &Cues {
-                speed: 250.0,
-                ..quiet
-            },
-        );
-        assert_eq!(fast.0, faster.0, "the volume is capped");
-
-        // Buttons and lamps are on or off, nothing in between.
-        assert!(
-            level(
-                Channel::Horn,
-                &Cues {
-                    horn: true,
-                    ..quiet
-                }
-            )
-            .0 > 0.0
-        );
-        assert!(
-            level(
-                Channel::Buzzer,
-                &Cues {
-                    alert: true,
-                    ..quiet
-                }
-            )
-            .0 > 0.0
-        );
-        assert!(
-            level(
-                Channel::Compressor,
-                &Cues {
-                    compressor: true,
-                    ..quiet
-                }
-            )
-            .0 > 0.0
-        );
-        // Air hisses at any pressure change, in either direction.
-        assert!(level(Channel::Air, &Cues { air: 0.2, ..quiet }).0 > 0.0);
+        assert!(synth("nonexistent").is_none());
     }
 
     #[test]
@@ -341,5 +449,14 @@ mod tests {
         }
         // No DC offset — otherwise the loop would thump at every seam.
         assert!(sum.abs() / 10_000.0 < 0.05, "{sum}");
+    }
+
+    /// The envelope of a one-shot has to be gone by the end of the buffer, otherwise the
+    /// sound is cut off with a click.
+    #[test]
+    fn one_shots_decay_to_silence() {
+        assert_eq!(decay(0.0, 22.0), 1.0);
+        assert!(decay(0.14, 22.0) < 0.05);
+        assert!(decay(0.09, 45.0) < 0.02);
     }
 }

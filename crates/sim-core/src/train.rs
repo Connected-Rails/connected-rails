@@ -5,6 +5,7 @@ use crate::doors::{DoorControl, DoorSystem, VehicleDoors};
 use crate::drive::TractionSpec;
 use crate::electric::TractionState;
 use crate::safety::{SafetyEquipment, SafetySystems};
+use crate::sound::SoundSpec;
 use serde::{Deserialize, Serialize};
 use track_model::TrackPosition;
 
@@ -232,6 +233,11 @@ pub struct VehicleSpec {
     /// Visual model. The simulation ignores it; app and editor read it (plan ch. 15).
     #[serde(default)]
     pub model: Option<VehicleModel>,
+    /// Sound table (plan ch. 13, [`crate::sound`]): which sample follows which quantity,
+    /// under which conditions, started by which trigger. Empty means the vehicle runs on
+    /// [`crate::sound::default_table`] — the generated loops.
+    #[serde(default)]
+    pub sounds: Vec<SoundSpec>,
 }
 
 impl VehicleSpec {
@@ -309,6 +315,7 @@ impl Default for VehicleSpec {
             hunting: 0.0,
             script: None,
             model: None,
+            sounds: Vec::new(),
         }
     }
 }

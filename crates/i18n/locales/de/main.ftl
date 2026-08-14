@@ -392,6 +392,63 @@ ret-brake-power = Bremsleistung
 ret-brake-power-hint = W — was der Kühler abführen kann
 ret-fill-time = Füllzeit
 
+## Fahrzeugeditor — Sounds
+##
+## Die Soundtabelle des Fahrzeugs: ein Eintrag je Klang, jeder mit Auslöser,
+## Bedingungen und Abhängigkeitskurven. Eine Größe ist ein Zustandswert der
+## Simulation, dem der Klang folgen kann.
+
+group-sounds = Sounds
+snd-default-table = Keine eigene Tabelle — das Fahrzeug fährt auf den erzeugten Schleifen.
+action-add-sound = Sound hinzufügen
+action-add-sound-hint = ein Eintrag: Auslöser, Bedingungen, Abhängigkeiten
+snd-name-placeholder = Name des Eintrags
+snd-file-placeholder = <mod>/assets/<datei>.ogg oder synth:<name>
+snd-file-hint =
+    Sample unterhalb des mods-Verzeichnisses oder eine erzeugte Quelle:
+    synth:rolling, synth:traction, synth:air, synth:compressor, synth:horn,
+    synth:buzzer, synth:joint, synth:contactor
+snd-trigger = Auslöser
+snd-trigger-hint = was den Sound startet — ohne Auslöser läuft er als Schleife und wird nur moduliert
+snd-trigger-loop = keiner (Schleife)
+snd-trigger-rises = steigt über
+snd-trigger-falls = fällt unter
+snd-trigger-every = je Intervall von
+snd-quantity = Größe
+snd-threshold = Schwelle
+snd-interval = Intervall
+snd-interval-hint = löst bei jedem Vielfachen aus — 30 m Weg sind ein Schienenstoß, 1 Fahrstufe ein Schütz
+snd-positional = Im Raum platziert
+snd-positional-hint = mit Entfernung gedämpft und dopplerverschoben; aus heißt, der Führerstand hört ihn an fester Stelle
+snd-conditions = Bedingungen
+snd-conditions-hint = der Sound ist nur hörbar, solange jede Größe in ihrem Fenster liegt
+snd-min = Untere Grenze
+snd-max = Obere Grenze
+action-add-condition = Bedingung hinzufügen
+snd-volume = Lautstärke
+snd-pitch = Abspielgeschwindigkeit
+snd-curve-follows = folgt einer Größe
+snd-curve-follows-hint = ohne Kennlinie läuft der Sound in seiner eigenen Lautstärke und Tonhöhe
+
+snd-quantity-speed = Geschwindigkeit [km/h]
+snd-quantity-distance = Zurückgelegter Weg [m]
+snd-quantity-engine-rpm = Motordrehzahl [1/min]
+snd-quantity-tap-changer-step = Fahrstufe Schaltwerk
+snd-quantity-circuit = Wandlerkreis
+snd-quantity-tractive-effort = Zugkraft [kN]
+snd-quantity-brake-effort = Bremskraft [kN]
+snd-quantity-brake-pipe = Hauptluftleitung [bar]
+snd-quantity-brake-cylinder = Bremszylinder [bar]
+snd-quantity-air-flow = Luftstrom [bar/s]
+snd-quantity-slip = Schlupfgeschwindigkeit [m/s]
+snd-quantity-throttle = Fahrschalter
+snd-quantity-pantograph = Stromabnehmer
+snd-quantity-main-switch = Hauptschalter
+snd-quantity-compressor = Kompressor
+snd-quantity-doors = Türen
+snd-quantity-alert = Zugsicherung meldet
+snd-quantity-horn = Signalhorn
+
 ## Streckeneditor
 
 action-open-line = Strecke öffnen…

@@ -333,6 +333,51 @@ mod tests {
         assert!(!loco.safety.build().indicators().is_empty());
     }
 
+    /// The sound table comes out of the vehicle file like everything else — a loop that is
+    /// modulated, a loop held by conditions, and one entry with a trigger.
+    #[test]
+    fn a_modded_vehicle_brings_its_sound_table() {
+        use sim_core::sound::{Quantity, SoundState, Trigger};
+
+        let mods = example_mods();
+        let loco = &mods.vehicles["example:br101_afb"];
+        let entry = |name: &str| {
+            loco.sounds
+                .iter()
+                .find(|s| s.name == name)
+                .unwrap_or_else(|| panic!("{name} missing"))
+        };
+
+        let rolling = entry("rolling");
+        assert!(rolling.is_loop());
+        let fast = SoundState {
+            speed: 120.0,
+            ..SoundState::default()
+        };
+        assert!(rolling.level(&fast).0 > 0.0);
+        assert!(rolling.level(&fast).1 > 1.0, "faster is also higher");
+
+        // Squeal is a condition on a loop: braking slowly yes, rolling fast no.
+        let squeal = entry("brake-squeal");
+        let braking = SoundState {
+            speed: 8.0,
+            brake_effort: 60.0,
+            ..SoundState::default()
+        };
+        assert!(squeal.level(&braking).0 > 0.0);
+        assert_eq!(squeal.level(&fast).0, 0.0);
+
+        // The joint is the only entry that is an event.
+        let joint = entry("rail-joint");
+        assert_eq!(
+            joint.trigger,
+            Trigger::Every {
+                quantity: Quantity::Distance,
+                interval: 30.0
+            }
+        );
+    }
+
     /// The whole chain: line from a mod → compile → signal type → aspect from the table.
     #[test]
     fn a_modded_line_gets_its_aspect_from_the_rule_table() {

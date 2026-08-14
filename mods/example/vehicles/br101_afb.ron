@@ -72,6 +72,92 @@
     doors: Tb0,
     // Behaviour script: <mod>:<file stem> below scripts/.
     script: Some("example:afb"),
+    // Sound table. Each entry is a trigger (what starts it), conditions (when it may be
+    // heard) and dependencies (which quantity moves volume and playback speed). An entry
+    // without a trigger is a loop that is only modulated — that is the normal case for
+    // driving noise. A table stated here replaces the generated default completely, so it
+    // has to carry everything the vehicle is to make.
+    //
+    // `synth:<name>` is one of the sources the app generates at start-up. A mod's own
+    // samples go in the same field: `file: "example/assets/whine.ogg"`.
+    sounds: [
+        // Rolling noise over speed — louder and higher, both capped at the top.
+        (
+            name: "rolling",
+            file: "synth:rolling",
+            trigger: Loop,
+            volume: Some((quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 0.7), (200.0, 1.7)])),
+            positional: true,
+        ),
+        // Converter whine: volume over the tractive effort, pitch over the driving speed —
+        // the motor follows the wheel on a three-phase drive.
+        (
+            name: "traction",
+            file: "synth:traction",
+            trigger: Loop,
+            volume: Some((quantity: TractiveEffort, points: [(0.0, 0.0), (250.0, 0.45)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 0.5), (150.0, 1.5)])),
+            positional: true,
+        ),
+        // Air hisses whenever a pressure moves, in either direction.
+        (
+            name: "air",
+            file: "synth:air",
+            trigger: Loop,
+            volume: Some((quantity: AirFlow, points: [(0.0, 0.0), (0.33, 0.5)])),
+            positional: true,
+        ),
+        (
+            name: "compressor",
+            file: "synth:compressor",
+            trigger: Loop,
+            volume: Some((quantity: Compressor, points: [(0.0, 0.0), (1.0, 0.3)])),
+            positional: true,
+        ),
+        (
+            name: "horn",
+            file: "synth:horn",
+            trigger: Loop,
+            volume: Some((quantity: Horn, points: [(0.0, 0.0), (1.0, 0.7)])),
+            positional: true,
+        ),
+        // The buzzer sits in the cab: not placed in the world, so it does not fade with
+        // distance when the camera goes outside.
+        (
+            name: "buzzer",
+            file: "synth:buzzer",
+            trigger: Loop,
+            volume: Some((quantity: Alert, points: [(0.0, 0.0), (1.0, 0.35)])),
+            positional: false,
+        ),
+        // Brake squeal is a *condition* on a loop, not an event: it is heard while the train
+        // is slow and braking, and it stops when either stops being true.
+        (
+            name: "brake-squeal",
+            file: "synth:squeal",
+            trigger: Loop,
+            conditions: [
+                (quantity: Speed, min: 3.0, max: 25.0),
+                (quantity: BrakeEffort, min: 10.0, max: 10000.0),
+            ],
+            volume: Some((quantity: Speed, points: [(3.0, 0.0), (8.0, 0.3), (25.0, 0.0)])),
+            pitch: Some((quantity: Speed, points: [(3.0, 0.9), (25.0, 1.25)])),
+            positional: true,
+        ),
+        // Rail joints: the same table, only with a trigger instead of a loop. One per 30 m
+        // of distance travelled — a real joint sits where the track says, which is what a
+        // trackside device will do later.
+        (
+            name: "rail-joint",
+            file: "synth:joint",
+            trigger: Every(quantity: Distance, interval: 30.0),
+            conditions: [(quantity: Speed, min: 3.0, max: 10000.0)],
+            volume: Some((quantity: Speed, points: [(3.0, 0.12), (120.0, 0.35)])),
+            pitch: Some((quantity: Speed, points: [(3.0, 0.8), (160.0, 1.4)])),
+            positional: true,
+        ),
+    ],
     // Model, relative to the mods directory. `_LOD0`/`_LOD1` come from the node names,
     // the pantograph from the Blender custom property `ts_function` in the glTF `extras`.
     model: Some((

@@ -15,6 +15,7 @@ pub mod rng;
 pub mod safety;
 pub mod scenario;
 pub mod score;
+pub mod sound;
 pub mod timetable;
 pub mod train;
 

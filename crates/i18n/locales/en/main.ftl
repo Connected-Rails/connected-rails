@@ -392,6 +392,63 @@ ret-brake-power = Brake power
 ret-brake-power-hint = W — what the cooler can carry off
 ret-fill-time = Filling time
 
+## Vehicle editor — sounds
+##
+## The sound table of the vehicle: one entry per sound, each with a trigger,
+## conditions and dependency curves. A quantity is a state value of the
+## simulation the sound can follow.
+
+group-sounds = Sounds
+snd-default-table = No table of its own — the vehicle runs on the generated loops.
+action-add-sound = Add sound
+action-add-sound-hint = one entry: trigger, conditions, dependencies
+snd-name-placeholder = Name of the entry
+snd-file-placeholder = <mod>/assets/<file>.ogg or synth:<name>
+snd-file-hint =
+    Sample below the mods directory, or a generated source: synth:rolling,
+    synth:traction, synth:air, synth:compressor, synth:horn, synth:buzzer,
+    synth:joint, synth:contactor
+snd-trigger = Trigger
+snd-trigger-hint = what starts the sound — without one it loops and is only modulated
+snd-trigger-loop = none (loop)
+snd-trigger-rises = rises above
+snd-trigger-falls = falls below
+snd-trigger-every = every interval of
+snd-quantity = Quantity
+snd-threshold = Threshold
+snd-interval = Interval
+snd-interval-hint = fires at every multiple — 30 m of distance is a rail joint, 1 notch a contactor
+snd-positional = Placed in the world
+snd-positional-hint = attenuated by distance and Doppler-shifted; off means the cab hears it at a constant place
+snd-conditions = Conditions
+snd-conditions-hint = the sound is only heard while every quantity lies inside its window
+snd-min = Lower bound
+snd-max = Upper bound
+action-add-condition = Add condition
+snd-volume = Volume
+snd-pitch = Playback speed
+snd-curve-follows = follows a quantity
+snd-curve-follows-hint = without a curve the sound plays at its own volume and pitch
+
+snd-quantity-speed = Speed [km/h]
+snd-quantity-distance = Distance travelled [m]
+snd-quantity-engine-rpm = Engine speed [1/min]
+snd-quantity-tap-changer-step = Tap changer notch
+snd-quantity-circuit = Converter circuit
+snd-quantity-tractive-effort = Tractive effort [kN]
+snd-quantity-brake-effort = Brake force [kN]
+snd-quantity-brake-pipe = Brake pipe [bar]
+snd-quantity-brake-cylinder = Brake cylinder [bar]
+snd-quantity-air-flow = Air flow [bar/s]
+snd-quantity-slip = Slip speed [m/s]
+snd-quantity-throttle = Power controller
+snd-quantity-pantograph = Pantograph
+snd-quantity-main-switch = Main switch
+snd-quantity-compressor = Compressor
+snd-quantity-doors = Doors
+snd-quantity-horn = Horn
+snd-quantity-alert = Train protection alert
+
 ## Route editor
 
 action-open-line = Open line…

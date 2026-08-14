@@ -257,6 +257,88 @@ Modelling rules that matter for the simulation:
 - **LOD0** is the close-up model; higher levels get coarser. What is not visible from 150 m
   away does not belong in LOD1.
 
+### Sounds
+
+The sound table sits in the vehicle file and is maintained in the vehicle editor. An entry
+has three parts:
+
+- **Trigger** — what starts the sound. `Loop` means *no* trigger: the sound runs
+  continuously and only its volume and pitch are modulated. That is the normal case for
+  driving noise.
+- **Conditions** — state predicates. All of them have to hold, otherwise the sound stays
+  silent. Brake squeal is a condition, not an event.
+- **Dependencies** — curves with support points that map a quantity onto volume and
+  playback speed.
+
+```ron
+sounds: [
+    // A loop, modulated: no trigger, two curves.
+    (
+        name: "rolling",
+        file: "synth:rolling",
+        trigger: Loop,
+        volume: Some((quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)])),
+        pitch: Some((quantity: Speed, points: [(0.0, 0.7), (200.0, 1.7)])),
+        positional: true,
+    ),
+    // A loop held by conditions: heard only while slow *and* braking.
+    (
+        name: "brake-squeal",
+        file: "synth:squeal",
+        trigger: Loop,
+        conditions: [
+            (quantity: Speed, min: 3.0, max: 25.0),
+            (quantity: BrakeEffort, min: 10.0, max: 10000.0),
+        ],
+        volume: Some((quantity: Speed, points: [(3.0, 0.0), (8.0, 0.3), (25.0, 0.0)])),
+        positional: true,
+    ),
+    // An event: the same table, only with a trigger instead of a loop.
+    (
+        name: "rail-joint",
+        file: "synth:joint",
+        trigger: Every(quantity: Distance, interval: 30.0),
+        conditions: [(quantity: Speed, min: 3.0, max: 10000.0)],
+        volume: Some((quantity: Speed, points: [(3.0, 0.12), (120.0, 0.35)])),
+        positional: true,
+    ),
+]
+```
+
+`file` is a sample below the mods directory (`example/assets/whine.ogg`, the same path
+scheme as a model) or one of the sources the app generates at start-up: `synth:rolling`,
+`synth:traction`, `synth:air`, `synth:compressor`, `synth:horn`, `synth:buzzer`,
+`synth:squeal`, `synth:joint`, `synth:contactor`.
+
+`positional: true` places the sound on the vehicle: it is attenuated by distance and
+Doppler-shifted, which is what makes another train audible as it passes. Sounds of the
+driver's desk — buzzer, Sifa — set it to `false` so they stay at a constant place when the
+camera goes outside.
+
+Triggers:
+
+| Trigger | Fires |
+|---|---|
+| `Loop` | never — the sound runs and is modulated |
+| `Rises(quantity: X, threshold: t)` | when `X` crosses `t` upwards |
+| `Falls(quantity: X, threshold: t)` | when `X` crosses `t` downwards |
+| `Every(quantity: X, interval: i)` | at every multiple of `i` — 30 m of `Distance` is a rail joint, 1 of `TapChangerStep` a contactor |
+
+Quantities: `Speed` [km/h], `Distance` [m], `EngineRpm` [1/min], `TapChangerStep`,
+`Circuit`, `TractiveEffort` [kN], `BrakeEffort` [kN], `BrakePipe` [bar],
+`BrakeCylinder` [bar], `AirFlow` [bar/s], `Slip` [m/s], `Throttle`, `Pantograph`,
+`MainSwitch`, `Compressor`, `Doors`, `Horn`, `Alert`. Curves interpolate linearly between
+their support points and hold the last value beyond the ends.
+
+A table stated here **replaces** the generated default completely, so it has to carry
+everything the vehicle is to make. A vehicle without a table runs on the generated loops if
+it is powered, and stays silent if it is hauled — a coach that is to roll audibly writes its
+own entry. `mods/example/vehicles/br101_afb.ron` is a complete table to start from.
+
+One sound that follows different quantities in different states is two entries with one
+condition each — that is how the traction loop is split into an electric case (pitch over
+speed, `EngineRpm` in 0…0) and a diesel case (pitch over `EngineRpm`, from 1 upwards).
+
 ### Behaviour hook `update(ctx)`
 
 Called once per frame for the train whose leading vehicle names a script. `ctx` is read-only;

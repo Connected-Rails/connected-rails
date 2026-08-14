@@ -517,7 +517,7 @@ pub fn sparkline_fn(
     f: impl Fn(f64) -> f64,
 ) {
     const STEPS: usize = 40;
-    if !(x_max > 0.0) {
+    if x_max <= 0.0 || x_max.is_nan() {
         return;
     }
     let points: Vec<(f64, f64)> = (0..=STEPS)

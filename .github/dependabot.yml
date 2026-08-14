@@ -9,6 +9,11 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+    ignore:
+      # glam has to stay on the version bevy_math pulls in. A second glam in the
+      # tree makes Vec3 and Quat two unrelated types and nothing that touches a
+      # Transform compiles. Bump it by hand together with bevy.
+      - dependency-name: glam
 
   - package-ecosystem: github-actions
     directory: /

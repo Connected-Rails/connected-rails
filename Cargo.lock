@@ -122,7 +122,7 @@ version = "0.1.0"
 dependencies = [
  "content",
  "i18n",
- "ron 0.10.1",
+ "ron",
  "serde",
  "sim-core",
  "track-model",
@@ -459,7 +459,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "either",
  "petgraph",
- "ron 0.12.2",
+ "ron",
  "serde",
  "smallvec",
  "thiserror 2.0.20",
@@ -555,7 +555,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "js-sys",
- "ron 0.12.2",
+ "ron",
  "serde",
  "stackfuture",
  "thiserror 2.0.20",
@@ -1898,7 +1898,7 @@ dependencies = [
  "bevy_transform",
  "bevy_utils",
  "derive_more",
- "ron 0.12.2",
+ "ron",
  "serde",
  "thiserror 2.0.20",
  "uuid",
@@ -2226,7 +2226,7 @@ name = "content"
 version = "0.1.0"
 dependencies = [
  "glam",
- "ron 0.10.1",
+ "ron",
  "serde",
  "serde_json",
  "sim-core",
@@ -3554,7 +3554,7 @@ version = "0.1.0"
 dependencies = [
  "i18n",
  "image",
- "ron 0.10.1",
+ "ron",
  "serde",
  "ureq",
  "world-coords",
@@ -3977,7 +3977,7 @@ version = "0.1.0"
 dependencies = [
  "content",
  "mlua",
- "ron 0.10.1",
+ "ron",
  "serde",
  "sim-core",
  "track-model",
@@ -5094,19 +5094,6 @@ dependencies = [
 
 [[package]]
 name = "ron"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "beceb6f7bf81c73e73aeef6dd1356d9a1b2b4909e1f0fc3e59b034f9572d7b7f"
-dependencies = [
- "base64 0.22.1",
- "bitflags 2.13.1",
- "serde",
- "serde_derive",
- "unicode-ident",
-]
-
-[[package]]
-name = "ron"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81116b9531d61eabc41aeb228e4b6b2435bcca3233b98cf3b3077d4e6e9debb3"
@@ -5349,7 +5336,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "i18n",
- "ron 0.10.1",
+ "ron",
  "serde",
  "track-model",
  "world-coords",
@@ -5878,7 +5865,7 @@ name = "track-model"
 version = "0.1.0"
 dependencies = [
  "glam",
- "ron 0.10.1",
+ "ron",
  "serde",
  "world-coords",
 ]
@@ -6092,7 +6079,7 @@ dependencies = [
  "editor-ui",
  "i18n",
  "rfd",
- "ron 0.10.1",
+ "ron",
  "serde",
  "serde_json",
  "sim-core",

@@ -443,7 +443,8 @@ cargo test --workspace
 
 Licensed under the EUPL v. 1.2 — contributions are accepted under the same licence. Mods are
 exempt: RON data, assets and Lua scripts are not derivative works and may be sold under any
-licence, see the mod exception in [LICENSE](LICENSE).
+licence, see the mod exception in [LICENSE](LICENSE). Material from other projects that is
+checked into the repository is listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ## Releases
 

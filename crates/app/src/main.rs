@@ -16,7 +16,7 @@ mod ui;
 use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
-use bevy::audio::{DefaultSpatialScale, SpatialScale};
+use bevy::audio::{AddAudioSource, DefaultSpatialScale, SpatialScale};
 use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -116,6 +116,9 @@ fn main() {
         }),
         ..default()
     }))
+    // Placed sounds play through the cab-wall lowpass, which lives in a decoder
+    // (`audio::Exterior`) because Bevy's audio has no filter graph.
+    .add_audio_source::<audio::Exterior>()
     .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
     // Spatial audio is measured in metres here, and a train is heard hundreds of them
     // away — at the default scale of 1 everything but the cab would be inaudible.

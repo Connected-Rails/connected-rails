@@ -3,7 +3,7 @@
 
 use crate::Sim;
 use crate::safety::ProtectionAction;
-use crate::timetable::Timetable;
+use crate::timetable::{Timetable, TimetableKind};
 use serde::{Deserialize, Serialize};
 
 /// Weighting of the scoring criteria.
@@ -152,9 +152,12 @@ impl ScoreKeeper {
         self.stops.push(StopReport {
             name: stop.name.clone(),
             position_error: error,
-            delay: sim.time - stop.arrival,
+            delay: self.timetable.delay(sim.time, stop.arrival),
         });
         self.next_stop += 1;
+        if self.timetable.kind == TimetableKind::Daily {
+            self.next_stop %= self.timetable.stops.len();
+        }
     }
 
     /// Score with a breakdown.

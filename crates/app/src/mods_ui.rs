@@ -1,13 +1,10 @@
 //! Mod manager (plan 19.7): list the installed mods, switch them on and off, show what a
 //! mod is missing.
 //!
-//! F9 opens the panel, ↑/↓ pick a mod, Enter toggles it. Switching writes `enabled` back
-//! into that mod's `mod.ron` and takes effect on the next start — reloading mid-run would
-//! mean rebuilding the line, the trains and the interlocking from scratch.
-//!
-//! ponytail: keyboard-driven text panel on the existing Bevy UI instead of pulling `egui`
-//! into the simulator for one screen. It becomes a real screen when the game gets a main
-//! menu to hang it off.
+//! The list lives on the main menu (`menu.rs`), where a toggle takes effect when the run
+//! starts. F9 opens the same list in the simulator; there a toggle only takes effect after
+//! a restart — reloading mid-run would mean rebuilding the line, the trains and the
+//! interlocking from scratch.
 
 use crate::Mods;
 use bevy::prelude::*;
@@ -22,8 +19,8 @@ pub struct ModPanel;
 pub struct ModManager {
     pub open: bool,
     pub selected: usize,
-    /// Set once something was toggled — the change needs a restart.
-    restart_needed: bool,
+    /// Set once something was toggled — the loaded set no longer matches the disk.
+    pub(crate) restart_needed: bool,
 }
 
 pub fn spawn_panel(commands: &mut Commands) {
@@ -66,29 +63,41 @@ pub fn mod_manager(
     }
     *visibility = Visibility::Inherited;
 
-    let count = mods.0.mods.manifests.len();
-    if count > 0 {
-        if keys.just_pressed(KeyCode::ArrowDown) {
-            manager.selected = (manager.selected + 1) % count;
-        }
-        if keys.just_pressed(KeyCode::ArrowUp) {
-            manager.selected = (manager.selected + count - 1) % count;
-        }
-        if keys.just_pressed(KeyCode::Enter) {
-            let index = manager.selected;
-            let manifest = &mut mods.0.mods.manifests[index];
-            let wanted = !manifest.enabled;
-            match manifest.set_enabled(wanted) {
-                Ok(()) => manager.restart_needed = true,
-                Err(e) => warn!("mod {}: {e}", manifest.id),
-            }
-        }
-    }
-
-    **text = render(&mods.0, &manager);
+    navigate(&keys, &mut manager, &mut mods.0);
+    **text = render(&mods.0, &manager, false);
 }
 
-fn render(runtime: &mod_runtime::ModRuntime, manager: &ModManager) -> String {
+/// ↑/↓ select, Enter toggles `enabled` on disk — shared by the F9 panel and the menu.
+pub(crate) fn navigate(
+    keys: &ButtonInput<KeyCode>,
+    manager: &mut ModManager,
+    runtime: &mut mod_runtime::ModRuntime,
+) {
+    let count = runtime.mods.manifests.len();
+    if count == 0 {
+        return;
+    }
+    if keys.just_pressed(KeyCode::ArrowDown) {
+        manager.selected = (manager.selected + 1) % count;
+    }
+    if keys.just_pressed(KeyCode::ArrowUp) {
+        manager.selected = (manager.selected + count - 1) % count;
+    }
+    if keys.just_pressed(KeyCode::Enter) {
+        let manifest = &mut runtime.mods.manifests[manager.selected];
+        let wanted = !manifest.enabled;
+        match manifest.set_enabled(wanted) {
+            Ok(()) => manager.restart_needed = true,
+            Err(e) => warn!("mod {}: {e}", manifest.id),
+        }
+    }
+}
+
+pub(crate) fn render(
+    runtime: &mod_runtime::ModRuntime,
+    manager: &ModManager,
+    in_menu: bool,
+) -> String {
     let mods = &runtime.mods;
     let mut lines = vec![t!("mods-title"), String::new()];
     if mods.manifests.is_empty() {
@@ -116,7 +125,9 @@ fn render(runtime: &mod_runtime::ModRuntime, manager: &ModManager) -> String {
         "mods-content",
         vehicles = mods.vehicles.len(),
         lines = mods.lines.len(),
+        compositions = mods.compositions.len(),
         scenarios = mods.scenarios.len(),
+        timetables = mods.timetables.len(),
         signals = mods.signal_types.len(),
         scripts = mods.scripts.len(),
     ));
@@ -129,11 +140,17 @@ fn render(runtime: &mod_runtime::ModRuntime, manager: &ModManager) -> String {
             lines.push(format!("  {entry}"));
         }
     }
-    if manager.restart_needed {
+    // On the menu a toggle simply applies when the run starts; in the simulator it
+    // has to wait for a restart.
+    if manager.restart_needed && !in_menu {
         lines.push(String::new());
         lines.push(t!("mods-restart"));
     }
     lines.push(String::new());
-    lines.push(t!("mods-keys"));
+    lines.push(if in_menu {
+        t!("mods-keys-menu")
+    } else {
+        t!("mods-keys")
+    });
     lines.join("\n")
 }

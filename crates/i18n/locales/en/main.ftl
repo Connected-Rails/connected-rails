@@ -602,15 +602,23 @@ hud-control = { $name }: { $value } %
 hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper
 hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera  F9 mods
 
+## Main menu
+
+menu-start = Start driving
+menu-mods = Mods
+menu-quit = Quit
+menu-keys = ↑/↓ select   Enter confirm
+
 ## Mod manager
 
 mods-title = Mods
 mods-none = No mods installed — put a mod directory into mods/.
 mods-missing-depends = requires: { $depends } (missing or switched off)
-mods-content = Content: { $vehicles } vehicles, { $lines } lines, { $scenarios } scenarios, { $signals } signal types, { $scripts } scripts
+mods-content = Content: { $vehicles } vehicles, { $lines } lines, { $compositions } compositions, { $scenarios } scenarios, { $timetables } timetables, { $signals } signal types, { $scripts } scripts
 mods-log = Warnings:
 mods-restart = Change takes effect after a restart.
 mods-keys = ↑/↓ select   Enter on/off   F9 close
+mods-keys-menu = ↑/↓ select   Enter on/off   Esc back
 
 ## Scoring
 

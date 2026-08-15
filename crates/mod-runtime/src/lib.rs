@@ -7,13 +7,15 @@
 //! A mod is a directory below `mods/`:
 //!
 //! ```text
-//! mods/<id>/mod.ron          manifest (id, name, version, author, depends)
-//!          /vehicles/*.ron   VehicleSpec
-//!          /lines/*.ron      LineSource
-//!          /scenarios/*.ron  Scenario
-//!          /signals/*.ron    SignalType (state machine, optional script hook)
-//!          /scripts/*.lua    behaviour scripts
-//!          /assets/…         models, textures, sounds (asset source `mods://`)
+//! mods/<id>/mod.ron           manifest (id, name, version, author, depends)
+//!          /vehicles/*.ron    VehicleSpec
+//!          /lines/*.ron       LineSource — a line, or a module with `boundaries`
+//!          /compositions/*.ron Composition — modules merged into one line
+//!          /scenarios/*.ron   Scenario
+//!          /timetable/*.ron   Timetable (referenced by a scenario for stop scoring)
+//!          /signals/*.ron     SignalType (state machine, optional script hook)
+//!          /scripts/*.lua     behaviour scripts
+//!          /assets/…          models, textures, sounds (asset source `mods://`)
 //! ```
 //!
 //! Everything is addressed as `"<mod>:<file stem>"`, so two mods may use the same file
@@ -22,11 +24,14 @@
 pub mod display;
 pub mod script;
 
+use content::Composition;
+use content::compose::{Composed, ModuleOffsets};
 use content::route::LineSource;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use sim_core::interlock::{Interlock, SignalType};
-use sim_core::scenario::Scenario;
+use sim_core::scenario::{Action, Scenario, Trigger};
+use sim_core::timetable::Timetable;
 use sim_core::train::VehicleSpec;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -104,7 +109,9 @@ pub struct Mods {
     pub manifests: Vec<ModManifest>,
     pub vehicles: BTreeMap<String, VehicleSpec>,
     pub lines: BTreeMap<String, LineSource>,
+    pub compositions: BTreeMap<String, Composition>,
     pub scenarios: BTreeMap<String, Scenario>,
+    pub timetables: BTreeMap<String, Timetable>,
     pub signal_types: BTreeMap<String, SignalType>,
     /// Lua sources, keyed `"<mod>:<file stem>"`.
     pub scripts: BTreeMap<String, String>,
@@ -192,9 +199,21 @@ impl Mods {
         );
         read_ron(&dir.join("lines"), id, &mut self.lines, &mut self.warnings);
         read_ron(
+            &dir.join("compositions"),
+            id,
+            &mut self.compositions,
+            &mut self.warnings,
+        );
+        read_ron(
             &dir.join("scenarios"),
             id,
             &mut self.scenarios,
+            &mut self.warnings,
+        );
+        read_ron(
+            &dir.join("timetable"),
+            id,
+            &mut self.timetables,
             &mut self.warnings,
         );
         read_ron(
@@ -207,6 +226,26 @@ impl Mods {
             insert(path, id, &mut self.scripts, &mut self.warnings, |t| {
                 Ok(t.to_string())
             });
+        }
+    }
+
+    /// Resolves a `--line`-style reference: a plain line as it stands, a composition
+    /// merged into one line. The notes are worth logging — per-module index offsets,
+    /// boundaries that stayed open. A plain line counts as a module of itself with
+    /// zero offsets, so module-qualified content works against it too.
+    pub fn resolve_line(&self, name: &str) -> Result<Composed, String> {
+        if let Some(line) = self.lines.get(name) {
+            let mut offsets = BTreeMap::new();
+            offsets.insert(name.to_string(), ModuleOffsets::default());
+            return Ok(Composed {
+                line: line.clone(),
+                offsets,
+                notes: Vec::new(),
+            });
+        }
+        match self.compositions.get(name) {
+            Some(composition) => composition.compose(&self.lines),
+            None => Err("not found".into()),
         }
     }
 
@@ -234,6 +273,77 @@ impl Mods {
             }
         }
         warnings
+    }
+}
+
+/// Resolves the module-qualified indices of a scenario against the composed line's
+/// offsets, in place. `module` on the scenario is the default, `module` on an event
+/// overrides it; the fields are cleared afterwards, so applying this twice cannot shift
+/// twice. An unknown module name leaves the event untouched and comes back as a warning.
+pub fn qualify_scenario(
+    scenario: &mut Scenario,
+    offsets: &BTreeMap<String, ModuleOffsets>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let default = scenario.module.take();
+    for event in &mut scenario.events {
+        let Some(module) = event.module.take().or_else(|| default.clone()) else {
+            continue;
+        };
+        let Some(off) = offsets.get(&module) else {
+            warnings.push(format!("event {}: unknown module {module}", event.name));
+            continue;
+        };
+        shift_trigger(&mut event.trigger, off);
+        for action in &mut event.actions {
+            shift_action(action, off);
+        }
+    }
+    warnings
+}
+
+/// The timetable counterpart of [`qualify_scenario`]: shifts each stop's `edge` by its
+/// module's offset. Same rules — per-stop `module` beats the timetable's, the fields
+/// are cleared, unknown modules warn and leave the stop alone.
+pub fn qualify_timetable(
+    timetable: &mut Timetable,
+    offsets: &BTreeMap<String, ModuleOffsets>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let default = timetable.module.take();
+    for stop in &mut timetable.stops {
+        let Some(module) = stop.module.take().or_else(|| default.clone()) else {
+            continue;
+        };
+        let Some(off) = offsets.get(&module) else {
+            warnings.push(format!("stop {}: unknown module {module}", stop.name));
+            continue;
+        };
+        stop.edge.0 += off.edges;
+    }
+    warnings
+}
+
+fn shift_trigger(trigger: &mut Trigger, off: &ModuleOffsets) {
+    match trigger {
+        Trigger::TrainPast { edge, .. } | Trigger::TrainStopped { edge, .. } => {
+            edge.0 += off.edges;
+        }
+        Trigger::SignalStop { signal, .. } => signal.0 += off.signals,
+        Trigger::All(list) | Trigger::Any(list) => {
+            for t in list {
+                shift_trigger(t, off);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn shift_action(action: &mut Action, off: &ModuleOffsets) {
+    match action {
+        Action::SetSwitch { node, .. } => node.0 += off.nodes,
+        Action::RequestRoute(route) | Action::ReleaseRoute(route) => route.0 += off.routes,
+        _ => {}
     }
 }
 
@@ -306,6 +416,57 @@ mod tests {
         assert!(mods.vehicles.contains_key("example:br101_afb"));
         assert!(mods.signal_types.contains_key("example:ks_main"));
         assert!(mods.scripts.contains_key("example:afb"));
+        // The scenario references its timetable, and the timetable is loaded.
+        let scenario = &mods.scenarios["example:probefahrt"];
+        let name = scenario.timetable.as_deref().expect("timetable reference");
+        let timetable = &mods.timetables[name];
+        assert!(!timetable.stops.is_empty());
+        assert!(mods.compositions.contains_key("example:gesamtstrecke"));
+    }
+
+    /// The example composition merges its two modules into one line, connected by
+    /// nothing but the shared boundary coordinates.
+    #[test]
+    fn a_composition_merges_modules_into_one_line() {
+        let mods = example_mods();
+        let composed = mods
+            .resolve_line("example:gesamtstrecke")
+            .expect("composes");
+        let line = &composed.line;
+        assert_eq!(line.edges.len(), 2);
+        // The seam is fused: the second module's edge continues at the first one's end.
+        assert_eq!(line.edges[1].from, line.edges[0].to);
+        assert!(composed.notes.iter().any(|n| n.contains("edges +1")));
+        // The second module's magnet follows its shifted signal index.
+        assert!(line.devices[3].payload.contains("signal:Some(1)"));
+        // The composition's signal link crosses the boundary.
+        assert_eq!(line.signals[0].next, Some(1));
+        let compiled = line.compile().expect("composed line compiles");
+        assert_eq!(compiled.interlock.signals.len(), 2);
+    }
+
+    /// Module-qualified indices in scenario and timetable resolve against the
+    /// composition's offsets — no offset arithmetic in the content files.
+    #[test]
+    fn module_qualified_references_resolve_against_the_composition() {
+        let mods = example_mods();
+        let composed = mods
+            .resolve_line("example:gesamtstrecke")
+            .expect("composes");
+
+        let mut scenario = mods.scenarios["example:modulfahrt"].clone();
+        assert!(qualify_scenario(&mut scenario, &composed.offsets).is_empty());
+        match &scenario.events[0].trigger {
+            sim_core::scenario::Trigger::TrainStopped { edge, .. } => assert_eq!(edge.0, 1),
+            other => panic!("unexpected trigger {other:?}"),
+        }
+
+        let mut timetable = mods.timetables["example:modulfahrt"].clone();
+        assert!(qualify_timetable(&mut timetable, &composed.offsets).is_empty());
+        assert_eq!(timetable.stops[0].edge.0, 1);
+        // Applying it twice cannot shift twice — the module fields are consumed.
+        qualify_timetable(&mut timetable, &composed.offsets);
+        assert_eq!(timetable.stops[0].edge.0, 1);
     }
 
     #[test]

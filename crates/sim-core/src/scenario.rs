@@ -79,6 +79,11 @@ pub struct Event {
     /// Fire only once (the normal case).
     #[serde(default = "yes")]
     pub once: bool,
+    /// Module whose local indices this event's trigger and actions use — resolved
+    /// against the composed line by the mod runtime, then cleared. `None` falls back
+    /// to the scenario's `module`; without either, indices are those of the line.
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 fn yes() -> bool {
@@ -99,6 +104,17 @@ pub struct Scenario {
     /// Optional Lua script hook (plan 19.7), named `"<mod>:<file stem>"`.
     #[serde(default)]
     pub script: Option<String>,
+    /// Optional timetable for the player train, named `"<mod>:<file stem>"` —
+    /// without one the scoring counts scenario points only.
+    #[serde(default)]
+    pub timetable: Option<String>,
+    /// Optional line the scenario runs on, named `"<mod>:<file stem>"` — a plain line
+    /// or a composition of modules. `--line` on the command line wins.
+    #[serde(default)]
+    pub line: Option<String>,
+    /// Default module for the events' indices — see [`Event::module`].
+    #[serde(default)]
+    pub module: Option<String>,
 }
 
 impl Scenario {

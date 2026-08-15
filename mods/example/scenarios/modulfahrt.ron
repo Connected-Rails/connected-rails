@@ -1,0 +1,25 @@
+// A run across the module seam of the example composition. The scenario names the
+// composition as its line, and `module` makes every index in this file module-local:
+// `edge: EdgeId(0)` means edge 0 *of Modul Ost*, wherever the composition puts it —
+// no offset arithmetic in content files. A single event could override the default
+// with its own `module:`.
+//
+//   cargo run -p app -- --scenario example:modulfahrt
+(
+    name: "Modulfahrt",
+    description: "Across the seam: run from Modul West to the stop in Modul Ost.",
+    player_train: 0,
+    line: Some("example:gesamtstrecke"),
+    module: Some("example:modul_ost"),
+    events: [
+        (
+            name: "ziel",
+            trigger: TrainStopped(train: 0, edge: EdgeId(0), s: 1700.0, radius: 60.0),
+            actions: [
+                Score(points: 20, reason: "Stopped in Modul Ost"),
+                Finish(success: true, reason: "Module run complete"),
+            ],
+        ),
+    ],
+    timetable: Some("example:modulfahrt"),
+)

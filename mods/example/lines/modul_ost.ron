@@ -1,0 +1,30 @@
+// The second module of the example composition. Its edge starts exactly where
+// modul_west ends — that shared coordinate *is* the connection: the composition snaps
+// boundaries that lie on the same spot (within a metre) without any further wiring.
+(
+    name: "Modul Ost",
+    geoid_offset: 46.0,
+    nodes: [Buffer, Buffer],
+    edges: [
+        (
+            from: 0,
+            to: 1,
+            start: Geo(point: (lat: 51.999996401, lon: 10.029120734, height: 99.999), heading_deg: 90.0),
+            segments: [(len: 2000.0, k0: 0.0, dk: 0.0)],
+            grade: [(0.0, 0.0)],
+            speed: [(0.0, 120.0)],
+        ),
+    ],
+    devices: [
+        (kind: Signal, edge: 0, s: 1800.0, lateral_offset: 3.0, payload: "(signal:Some(0))"),
+        (kind: Magnet, edge: 0, s: 1800.0, payload: "(frequency:Hz2000,signal:Some(0),activation:WhenStop)"),
+    ],
+    sections: [(edges: [0])],
+    signals: [
+        (kind: Main, system: Ks, device: 0, guarded: [0], signal_type: Some("example:ks_main")),
+    ],
+    routes: [],
+    boundaries: [
+        (name: "von_west", node: 0),
+    ],
+)

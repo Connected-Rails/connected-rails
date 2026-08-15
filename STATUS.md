@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and fmt clean.
+As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -16,7 +16,7 @@ As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and 
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; weather changes through scenario actions, terrain from the DGM; no recorded samples (the sources are generated), no day/night or weather **rendering**, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
-| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/scenarios/signal types as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
+| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
 ## What is in place
 
@@ -142,7 +142,10 @@ As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and 
   signal aspect, emergency brake application, chaining with delay, `All`/`Any`)
   and actions (message, announcement, switch, route, weather, points, scenario end).
 - **Scoring (ch. 11):** timetable adherence, stopping accuracy, emergency brake applications,
-  speed limit violations and traction energy → itemised score.
+  speed limit violations and traction energy → itemised score. A timetable is either
+  `Scenario` (times from the start of the run, runs once) or `Daily` (seconds since
+  midnight, wrapping around every 24 h — delay, departure and the AI's stop list wrap
+  with it).
 - **Alignment (ch. 15):** design elements are reconstructed from the point sequence —
   section separation, radius averaging over the whole curve (Kåsa), rounding to standard radii
   with tolerance, transition curves and cant per the rulebook (`c = 11.8·v²/R` minus
@@ -151,6 +154,26 @@ As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and 
   curvature. Acceptance: an alignment designed to the rulebook is recovered with the exact
   radius, correct cant and < 6 m positional deviation, even with ±2 m noise on the
   support points.
+- **Line modules (ch. 15, after the Zusi 3 model):** a module is a `LineSource` with
+  named `boundaries` — `Buffer` nodes at the open ends. A `Composition`
+  (`compositions/*.ron` in a mod) chains modules into one line: every index space is
+  shifted by the module's offset (including the indices inside magnet, signal and block
+  marker payloads), and boundaries that lie at the same geo position are fused into one
+  joint automatically — the georeference *is* the connection, so a module transition is
+  nothing more than starting an edge at the neighbour's agreed coordinates. Explicit
+  `connections` cover the rest. Several versions of a module (epochs, rebuilds) are
+  several files; the composition picks one by name. A composition is addressed like a
+  line (`--line example:gesamtstrecke`), and a scenario can name its line or composition
+  itself (`Scenario::line`) — the way a timetable chains modules. `signal_links` on the
+  composition set a signal's `next` across the boundary, so the last signal of one
+  module announces the first of the next within the same update. Timetables and
+  scenarios address positions **module-locally**: a `module` on the file (or per stop /
+  per event) makes every index mean "of that module", and the mod runtime resolves them
+  against the composition's offsets — no offset arithmetic in content files. **UTM
+  zones cannot shift a transition:** module anchors are geodetic and the world is ECEF, so modules
+  whose data came through different zones meet to the millimetre — the zone-seam
+  displacement known from Zusi has no source here (pinned by a test at the 32/33
+  boundary).
 - **Import (ch. 15):** Overpass JSON → way chain → alignment → `LineSource`. From OSM come
   geometry, `maxspeed` and `name`; DGM tiles (XYZ or ESRI ASCII Grid) from a single file or
   an entire directory supply the gradient profile. Tiles are loaded lazily (sheet boundaries
@@ -159,7 +182,10 @@ As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and 
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track, view distance limit per LOD level in the app, built while driving (see
-  streaming above).
+  streaming above). **One elevation source per UTM zone**: `--dgm`/`--epsg` may be
+  repeated, and a line across the 12° zone boundary takes each height from the first
+  source that has one — the tile grid stays in the first zone, which is only a
+  partitioning and continues past the boundary without a seam.
 - **Aerial imagery overlay (ch. 15):** dedicated `imagery` crate with Web Mercator tile maths,
   provider configuration (tile template or WMS, placeholders, keys, zoom limits,
   attribution) and a two-level cache (memory + disk, budget with eviction of the oldest
@@ -195,19 +221,28 @@ As of 2026-08-14 · `cargo test --workspace`: **287 tests green** · clippy and 
   the placeholder body; the level of detail follows the camera distance, and the bound parts
   follow the simulation (pantograph, gauges, switches, lamps). `--camera outside` starts on
   the external camera.
-- **Mod runtime (ch. 19):** `mods/<id>/` with manifest, vehicles, lines, scenarios, signal types
+- **Mod runtime (ch. 19):** `mods/<id>/` with manifest, vehicles, lines, compositions,
+  scenarios, timetables, signal types
   and scripts; everything addressed as `"<mod>:<file>"`, loaded in dependency order, broken files
   are warnings instead of crashes. **Data and behaviour are separate:** the vehicle description
   stays RON, only behaviour is Lua. Signals are a declarative state machine (situation → aspect +
-  lamp image) with an optional script hook for what a table cannot express. Lua runs sandboxed
+  lamp image) with an optional script hook for what a table cannot express; the rules are
+  evaluated in signalling order, so a signal announces its follower's final aspect from the
+  same update. Lua runs sandboxed
   (`table`/`string`/`math` only) via `mlua`; a failing script is switched off, not fatal.
   `mods/` is an asset source, so models, textures and sounds of a mod are addressed as
   `mods://<mod>/assets/…`. The app takes `--line`, `--loco` and `--scenario <mod>:<name>`.
+  A scenario references its timetable (`timetable: Some("<mod>:<name>")`) and gets stop
+  scoring with it; without one only the scenario points count.
   Lines and scenarios have their own hooks (`on_load`, `on_frame`): the script decides *when*
   an event fires, the actions of that event stay declarative RON — an event with
-  `trigger: Never` waits for the script. **F9 opens the mod manager**: installed mods with
-  version, on/off state, missing dependencies and the loading warnings; switching writes
-  `enabled` back into `mod.ron` (that one field only) and takes effect on the next start.
+  `trigger: Never` waits for the script. **The mod manager lives on the main menu**
+  (installed mods with version, on/off state, missing dependencies and the loading
+  warnings); switching writes `enabled` back into `mod.ron` (that one field only) and takes
+  effect when the run starts, because the world is built only on leaving the menu. F9 opens
+  the same list in the simulator, where a toggle needs a restart. Any run flag on the
+  command line (`--line`, `--frames`, …) skips the menu, so CLI and CI invocations stay
+  non-interactive.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
 
@@ -297,21 +332,29 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **Mod hooks run once per frame**, not once per simulation step — a Lua call every 5 ms per
   train for behaviour that reacts in tenths of a second would be pure overhead. A hook that
   genuinely has to see every step moves into `Sim::step`.
-- **The mod manager is a keyboard-driven text panel** on the existing Bevy UI, not `egui` in
-  the simulator for one screen. Switching a mod needs a restart — reloading mid-run would
-  mean rebuilding line, trains and interlocking. It becomes a real screen once the game gets
-  a main menu to hang it off.
-- **A modded scenario brings no timetable**, so its scoring counts scenario points only.
-  `timetable/*.ron` in a mod is the place for it when a mod wants stop scoring.
-- **A modded signal announces one step late** if the signal ahead of it is modded as well: the
-  rule table sees the following signal's built-in aspect from the same update. At 200 Hz the
-  difference is 5 ms; evaluating the rules in signalling order would remove it.
+- **The main menu and the mod manager are keyboard-driven text panels** on the existing
+  Bevy UI — no mouse, no `egui` in the simulator. A clickable menu comes when it grows
+  real content (line, vehicle and scenario selection); the state machine behind it
+  (`GameState::Menu`/`Driving`) is already the one it will hang off. Toggling a mod
+  mid-run still needs going through a restart — reloading would mean rebuilding line,
+  trains and interlocking.
+- **A composed line runs one script** — the composition's, or the single module script
+  found; further module scripts are dropped with a note. Running every module's hook
+  side by side needs a script list in the runtime, nothing in the format.
+- **Boundary snapping is a constant** (`compose::SNAP_DISTANCE`, 1 m) — module edges are
+  placed at agreed coordinates. A per-composition tolerance steps in when real survey
+  data needs one.
+- **The simulation clock starts at zero**, there is no time-of-day. A `Daily` timetable
+  therefore effectively begins at midnight; a start-of-day offset belongs in the scenario
+  once day/night arrives (M6), and `Timetable::delay`/`next_occurrence` are the two places
+  that map clock to schedule.
 
 ## Sensible next steps
 
 1. **Route editor with tools**: so far it only displays. Next up: drawing alignments,
    placing switches and signals, positioning platforms — the aerial image behind it is the
-   template for that.
+   template for that. Module tooling belongs in the same pass: placing boundaries,
+   showing a neighbour module's edge as a ghost so the builder hits its coordinates.
 2. **Signal models**: the lamp images of a modded signal are strings without geometry —
    signals are still drawn as plain devices. The same path as for vehicles (glTF plus a
    binding table) is missing.

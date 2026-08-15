@@ -253,17 +253,22 @@ pub fn tile_distance(k: TileKey, p: DVec2, options: &TerrainOptions) -> f64 {
 
 /// Terrain generator that keeps line and elevation data resident and hands out single
 /// tiles (plan 4.3: load radius around camera and trains, everything else discarded).
+///
+/// It takes **one elevation source per UTM zone**: a line across the 12° zone boundary
+/// carries a zone 32 and a zone 33 source, and every support point takes its height from
+/// the first source that has one. The tile grid stays in `options.zone` — it is only a
+/// partitioning and continues past the zone boundary without a seam.
 pub struct TerrainBuilder {
     centerline: Centerline,
-    source: Option<TerrainSource>,
+    sources: Vec<TerrainSource>,
     options: TerrainOptions,
 }
 
 impl TerrainBuilder {
-    pub fn new(net: &TrackNetwork, source: Option<TerrainSource>, options: TerrainOptions) -> Self {
+    pub fn new(net: &TrackNetwork, sources: Vec<TerrainSource>, options: TerrainOptions) -> Self {
         Self {
             centerline: Centerline::build(net, &options),
-            source,
+            sources,
             options,
         }
     }
@@ -274,13 +279,7 @@ impl TerrainBuilder {
 
     /// Builds a single tile; `None` if it lies outside the line corridor.
     pub fn build_key(&mut self, k: TileKey, stats: &mut TerrainStats) -> Option<TerrainTile> {
-        build_key(
-            k,
-            &self.centerline,
-            self.source.as_mut(),
-            &self.options,
-            stats,
-        )
+        build_key(k, &self.centerline, &mut self.sources, &self.options, stats)
     }
 
     /// Every tile of the corridor, in a stable order.
@@ -290,7 +289,7 @@ impl TerrainBuilder {
 
     /// How often a DGM tile was read from disk.
     pub fn load_count(&self) -> usize {
-        self.source.as_ref().map_or(0, |s| s.load_count())
+        self.sources.iter().map(|s| s.load_count()).sum()
     }
 }
 
@@ -316,7 +315,7 @@ fn corridor_keys(centerline: &Centerline, options: &TerrainOptions) -> Vec<TileK
 fn build_key(
     k: TileKey,
     centerline: &Centerline,
-    source: Option<&mut TerrainSource>,
+    sources: &mut [TerrainSource],
     options: &TerrainOptions,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -326,7 +325,7 @@ fn build_key(
         return None;
     }
     let (step, lod) = level_of_detail(distance, options);
-    let tile = build_tile(min, step, lod, centerline, source, options, stats);
+    let tile = build_tile(min, step, lod, centerline, sources, options, stats);
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
     stats.triangles += tile.triangles();
@@ -335,11 +334,12 @@ fn build_key(
 
 /// Builds the terrain around all tracks of the network.
 ///
-/// `source` may be `None` — then flat terrain at `fallback_height` is created, which
-/// is enough for test scenes and lines without a DGM.
+/// `sources` may be empty — then flat terrain at `fallback_height` is created, which
+/// is enough for test scenes and lines without a DGM. Several sources cover a line
+/// across a UTM zone boundary, one per zone.
 pub fn build(
     net: &TrackNetwork,
-    source: Option<&mut TerrainSource>,
+    sources: &mut [TerrainSource],
     options: &TerrainOptions,
 ) -> (Vec<TerrainTile>, TerrainStats) {
     let centerline = Centerline::build(net, options);
@@ -347,20 +347,17 @@ pub fn build(
         return (Vec::new(), TerrainStats::default());
     }
 
-    let mut source = source;
     let mut tiles = Vec::new();
     let mut stats = TerrainStats::default();
 
     for k in corridor_keys(&centerline, options) {
         // Tiles that do not touch the corridor are dropped entirely.
-        if let Some(tile) = build_key(k, &centerline, source.as_deref_mut(), options, &mut stats) {
+        if let Some(tile) = build_key(k, &centerline, sources, options, &mut stats) {
             tiles.push(tile);
         }
     }
 
-    if let Some(s) = source {
-        stats.tile_loads = s.load_count();
-    }
+    stats.tile_loads = sources.iter().map(|s| s.load_count()).sum();
     (tiles, stats)
 }
 
@@ -378,13 +375,32 @@ fn level_of_detail(distance: f64, options: &TerrainOptions) -> (f64, u8) {
     }
 }
 
+/// Height at a grid-zone UTM point from the first source that has one. A source in the
+/// grid zone is asked in UTM directly; one in another zone through the geodetic detour
+/// (`lat`/`lon` are the same point, already converted).
+fn sample_height(
+    sources: &mut [TerrainSource],
+    p: DVec2,
+    lat: f64,
+    lon: f64,
+    grid_zone: u8,
+) -> Option<f64> {
+    sources.iter_mut().find_map(|s| {
+        if s.zone == grid_zone {
+            s.height_at_utm(p.x, p.y)
+        } else {
+            s.height_at(lat.to_degrees(), lon.to_degrees())
+        }
+    })
+}
+
 /// Builds a single tile.
 fn build_tile(
     min: DVec2,
     step: f64,
     lod: u8,
     centerline: &Centerline,
-    mut source: Option<&mut TerrainSource>,
+    sources: &mut [TerrainSource],
     options: &TerrainOptions,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
@@ -402,9 +418,8 @@ fn build_tile(
     for iy in 0..=n {
         for ix in 0..=n {
             let p = min + DVec2::new(ix as f64 * step, iy as f64 * step);
-            let ground = source
-                .as_deref_mut()
-                .and_then(|s| s.height_at_utm(p.x, p.y))
+            let (lat, lon) = geo::from_utm(p.x, p.y, options.zone);
+            let ground = sample_height(sources, p, lat, lon, options.zone)
                 .map(|h| h + options.geoid_offset)
                 .unwrap_or_else(|| {
                     stats.missing += 1;
@@ -422,7 +437,6 @@ fn build_tile(
             };
             heights.push(height);
 
-            let (lat, lon) = geo::from_utm(p.x, p.y, options.zone);
             let world = geo::to_ecef(lat, lon, height);
             positions.push(to_render(frame.to_local(world)));
         }
@@ -557,8 +571,7 @@ mod tests {
     #[test]
     fn terrain_is_generated_only_in_the_corridor() {
         let net = test_net();
-        let mut source = test_source();
-        let (tiles, stats) = build(&net, Some(&mut source), &options());
+        let (tiles, stats) = build(&net, &mut [test_source()], &options());
 
         assert!(stats.tiles > 0);
         assert_eq!(tiles.len(), stats.tiles);
@@ -578,8 +591,7 @@ mod tests {
     #[test]
     fn lod_gets_coarser_with_distance() {
         let net = test_net();
-        let mut source = test_source();
-        let (tiles, _) = build(&net, Some(&mut source), &options());
+        let (tiles, _) = build(&net, &mut [test_source()], &options());
 
         let fine = tiles.iter().filter(|t| t.lod == 0).count();
         let coarse = tiles.iter().filter(|t| t.lod > 0).count();
@@ -595,8 +607,7 @@ mod tests {
     #[test]
     fn triangle_count_stays_manageable() {
         let net = test_net();
-        let mut source = test_source();
-        let (_, stats) = build(&net, Some(&mut source), &options());
+        let (_, stats) = build(&net, &mut [test_source()], &options());
 
         // For comparison: the same corridor at full DGM1 resolution.
         let area = 1000.0 * 2.0 * options().radius; // m²
@@ -617,7 +628,7 @@ mod tests {
 
         // The real lever is the grading: with each LOD level the triangle count of an
         // equally sized tile is quartered.
-        let (tiles, _) = build(&net, Some(&mut test_source()), &options());
+        let (tiles, _) = build(&net, &mut [test_source()], &options());
         let per_lod = |lod: u8| tiles.iter().find(|t| t.lod == lod).map(|t| t.triangles());
         if let (Some(fine), Some(coarse)) = (per_lod(0), per_lod(1)) {
             let ratio = fine as f64 / coarse as f64;
@@ -630,7 +641,7 @@ mod tests {
         let net = test_net();
         let options = options();
         let centerline = Centerline::build(&net, &options);
-        let (tiles, _) = build(&net, Some(&mut test_source()), &options);
+        let (tiles, _) = build(&net, &mut [test_source()], &options);
 
         // The test data must differ, otherwise the test checks nothing.
         let p = centerline.points[10];
@@ -683,9 +694,9 @@ mod tests {
     fn streamed_tiles_match_the_batch_build() {
         let net = test_net();
         let options = options();
-        let (batch, batch_stats) = build(&net, Some(&mut test_source()), &options);
+        let (batch, batch_stats) = build(&net, &mut [test_source()], &options);
 
-        let mut builder = TerrainBuilder::new(&net, Some(test_source()), options);
+        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options);
         let mut stats = TerrainStats::default();
         let keys = builder.corridor_keys();
         let streamed: Vec<TerrainTile> = keys
@@ -705,7 +716,7 @@ mod tests {
     fn the_load_radius_only_covers_nearby_tiles() {
         let net = test_net();
         let options = options();
-        let mut builder = TerrainBuilder::new(&net, Some(test_source()), options);
+        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options);
         let edge = &net.edges()[0];
         let start = to_utm(edge.eval(0.0).pos, &options);
         let end = to_utm(edge.eval(edge.length()).pos, &options);
@@ -731,17 +742,60 @@ mod tests {
     #[test]
     fn without_a_dgm_the_terrain_is_flat() {
         let net = test_net();
-        let (tiles, stats) = build(&net, None, &options());
+        let (tiles, stats) = build(&net, &mut [], &options());
         assert!(!tiles.is_empty());
         assert!(stats.missing > 0, "missing heights are counted");
         assert_eq!(stats.tile_loads, 0);
     }
 
+    /// A line across the 12° zone boundary takes its heights from one source per UTM
+    /// zone — the tile grid stays in zone 32, the zone 33 source answers through the
+    /// geodetic detour.
+    #[test]
+    fn sources_from_both_zones_cover_a_line_across_the_boundary() {
+        // 1 km straight at 52° N crossing 12° E in the middle.
+        let mut net = TrackNetwork::new();
+        let a = net.add_node(track_model::NodeKind::Buffer);
+        let b = net.add_node(track_model::NodeKind::Buffer);
+        net.add_edge(TrackEdge::new(
+            EdgeId(0),
+            a,
+            b,
+            geo::to_ecef_deg(52.0, 11.9927, 100.0),
+            0.0,
+            vec![Segment::straight(1000.0)],
+        ));
+
+        // One flat source per zone, each ending at the boundary: west of 12° E only the
+        // zone 32 data answers, east of it only the zone 33 data.
+        let grid = |zone: u8, e_from: f64, e_to: f64, height: f64| {
+            let (e12, n12) = geo::to_utm(52.0f64.to_radians(), 12.0f64.to_radians(), zone);
+            let mut text = String::new();
+            let cols = ((e_to - e_from) / 25.0) as i64;
+            for iy in -80..=80 {
+                for ix in 0..=cols {
+                    let x = (e12 / 25.0).round() * 25.0 + e_from + ix as f64 * 25.0;
+                    let y = (n12 / 25.0).round() * 25.0 + iy as f64 * 25.0;
+                    text.push_str(&format!("{x} {y} {height}\n"));
+                }
+            }
+            TerrainSource::from_tile(HeightTile::parse_xyz(&text, zone).unwrap())
+        };
+        let west = || grid(32, -3000.0, 50.0, 100.0);
+        let east = || grid(33, -50.0, 3000.0, 200.0);
+
+        // With the zone 32 source alone the eastern half has no data…
+        let (_, west_only) = build(&net, &mut [west()], &options());
+        assert!(west_only.missing > 0, "east of 12° must be uncovered");
+        // …with one source per zone every support point has a height.
+        let (_, both) = build(&net, &mut [west(), east()], &options());
+        assert_eq!(both.missing, 0, "both zones together cover the corridor");
+    }
+
     #[test]
     fn tiles_have_skirts() {
         let net = test_net();
-        let mut source = test_source();
-        let (tiles, _) = build(&net, Some(&mut source), &options());
+        let (tiles, _) = build(&net, &mut [test_source()], &options());
         let tile = &tiles[0];
         let n = (tile.step.recip() * 512.0).round() as usize;
         let grid_vertices = (n + 1) * (n + 1);

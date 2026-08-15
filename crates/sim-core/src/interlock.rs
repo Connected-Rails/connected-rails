@@ -565,35 +565,30 @@ impl Interlock {
             sig.situation.diverging = diverging;
         }
 
-        // 2. Distant signalling derived from the following main signal.
-        for i in 0..self.signals.len() {
-            let Some(next) = self.signals[i].next else {
-                if self.signals[i].kind != SignalKind::Main {
-                    self.signals[i].aspect.distant = None;
-                }
-                continue;
-            };
-            let next_main = self.signals[next.index()]
-                .aspect
-                .main
-                .unwrap_or(MainAspect::Stop);
-            let distant = match next_main {
-                MainAspect::Proceed | MainAspect::Substitute => DistantAspect::ExpectProceed,
-                MainAspect::ProceedSlow => DistantAspect::ExpectSlow,
-                _ => DistantAspect::ExpectStop,
-            };
-            self.signals[i].aspect.distant = Some(distant);
-            self.signals[i].situation.next_stop = next_main.is_stop();
-            self.signals[i].situation.next_slow = next_main == MainAspect::ProceedSlow;
-        }
+        // 2. Distant signalling and the mod rule tables, in signalling order: a signal is
+        // evaluated after its `next`, so `situation.next_*` and the distant aspect see the
+        // following signal's *final* aspect — rule table included — from the same update.
+        // A `next` cycle (ring line) is cut where the walk started; within the ring the
+        // announcement is then one step late, which is where every signal stood before.
+        for i in self.signalling_order() {
+            if let Some(next) = self.signals[i].next {
+                let next_main = self.signals[next.index()]
+                    .aspect
+                    .main
+                    .unwrap_or(MainAspect::Stop);
+                let distant = match next_main {
+                    MainAspect::Proceed | MainAspect::Substitute => DistantAspect::ExpectProceed,
+                    MainAspect::ProceedSlow => DistantAspect::ExpectSlow,
+                    _ => DistantAspect::ExpectStop,
+                };
+                self.signals[i].aspect.distant = Some(distant);
+                self.signals[i].situation.next_stop = next_main.is_stop();
+                self.signals[i].situation.next_slow = next_main == MainAspect::ProceedSlow;
+            } else if self.signals[i].kind != SignalKind::Main {
+                self.signals[i].aspect.distant = None;
+            }
 
-        // 3. Signal types from mods: the rule table replaces the built-in aspect.
-        //
-        // ponytail: `situation.next_*` comes from pass 2, i.e. from the built-in aspect of
-        // the following signal. Two typed signals in a row therefore announce each other one
-        // step late (5 ms at 200 Hz). Evaluate the rules in signalling order if that ever
-        // becomes visible.
-        for i in 0..self.signals.len() {
+            // Signal types from mods: the rule table replaces the built-in aspect.
             let Some(ty) = self.signals[i]
                 .type_index
                 .and_then(|t| self.types.get(t as usize))
@@ -612,6 +607,32 @@ impl Interlock {
             self.signals[i].aspect = aspect;
             self.signals[i].lamps = lamps;
         }
+    }
+
+    /// Signal indices ordered so that a signal comes after its `next` — the order the
+    /// aspects propagate against the direction of travel.
+    fn signalling_order(&self) -> Vec<usize> {
+        let n = self.signals.len();
+        let mut order = Vec::with_capacity(n);
+        // 0 = unvisited, 1 = on the current chain, 2 = ordered.
+        let mut state = vec![0u8; n];
+        for start in 0..n {
+            let mut chain = Vec::new();
+            let mut i = start;
+            while state[i] == 0 {
+                state[i] = 1;
+                chain.push(i);
+                match self.signals[i].next {
+                    Some(next) if state[next.index()] == 0 => i = next.index(),
+                    _ => break,
+                }
+            }
+            for &j in chain.iter().rev() {
+                state[j] = 2;
+                order.push(j);
+            }
+        }
+        order
     }
 
     /// Registers a signal type and returns its index (for the mod runtime).
@@ -794,6 +815,91 @@ mod tests {
         il.update(&mut net);
         assert_eq!(il.signal(sid).aspect.main, Some(MainAspect::Stop));
         assert!(il.signal(sid).lamps.is_empty());
+    }
+
+    /// Two typed signals in a row announce each other within the same update: the
+    /// predecessor's rule table sees the follower's rule-table aspect, not its built-in one.
+    #[test]
+    fn chained_typed_signals_announce_in_the_same_update() {
+        let mut net = TrackNetwork::new();
+        let a = net.add_node(NodeKind::Buffer);
+        let b = net.add_node(NodeKind::Buffer);
+        let e = net.add_edge(TrackEdge::new(
+            EdgeId(0),
+            a,
+            b,
+            to_ecef_deg(52.0, 10.0, 100.0),
+            0.0,
+            vec![Segment::straight(1000.0)],
+        ));
+        let mut il = Interlock::new();
+        let sec = il.add_section(vec![e]);
+        // The follower's type demands a locked route although the built-in logic does not:
+        // built-in says proceed, the rule table says stop.
+        let ty_route = il.add_type(SignalType {
+            system: SignalSystem::Ks,
+            rules: vec![AspectRule {
+                when: Condition {
+                    route: Some(true),
+                    ..Condition::default()
+                },
+                show: Aspect {
+                    main: Some(MainAspect::Proceed),
+                    distant: None,
+                    speed: None,
+                },
+                lamps: vec!["green".into()],
+            }],
+            script: None,
+        });
+        let ty_announce = il.add_type(SignalType {
+            system: SignalSystem::Ks,
+            rules: vec![
+                AspectRule {
+                    when: Condition {
+                        next_stop: Some(true),
+                        ..Condition::default()
+                    },
+                    show: Aspect {
+                        main: Some(MainAspect::Proceed),
+                        distant: Some(DistantAspect::ExpectStop),
+                        speed: None,
+                    },
+                    lamps: vec!["yellow".into()],
+                },
+                AspectRule {
+                    when: Condition::default(),
+                    show: Aspect {
+                        main: Some(MainAspect::Proceed),
+                        distant: Some(DistantAspect::ExpectProceed),
+                        speed: None,
+                    },
+                    lamps: vec!["green".into()],
+                },
+            ],
+            script: None,
+        });
+        // The announcing signal is stored *before* its follower, so storage order
+        // would evaluate it first — the signalling order must not.
+        let mut first = Signal::new(SignalId(0), SignalKind::Main, DeviceId(0));
+        first.type_index = Some(ty_announce);
+        first.next = Some(SignalId(1));
+        let first_id = il.add_signal(first);
+        let mut follower = Signal::new(SignalId(0), SignalKind::Main, DeviceId(1));
+        follower.guarded = vec![sec];
+        follower.type_index = Some(ty_route);
+        let follower_id = il.add_signal(follower);
+
+        il.update_occupancy(&[]);
+        il.update(&mut net);
+        // No route locked: the follower's table shows stop (fallback) although its
+        // built-in aspect would be proceed — and the first signal already announces it.
+        assert_eq!(il.signal(follower_id).aspect.main, Some(MainAspect::Stop));
+        assert_eq!(il.signal(first_id).lamps, ["yellow"]);
+        assert_eq!(
+            il.signal(first_id).aspect.distant,
+            Some(DistantAspect::ExpectStop)
+        );
     }
 
     #[test]

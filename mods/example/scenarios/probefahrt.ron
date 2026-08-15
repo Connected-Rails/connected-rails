@@ -33,4 +33,9 @@
         ),
     ],
     script: Some("example:probefahrt"),
+    // Stop scoring: without a timetable only the scenario points above count.
+    timetable: Some("example:probefahrt"),
+    // The line the scenario runs on — `--line` on the command line wins. A composition
+    // name works here too, so a scenario can chain modules.
+    line: Some("example:beispielstrecke"),
 )

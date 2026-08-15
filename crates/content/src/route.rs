@@ -109,6 +109,15 @@ fn default_system() -> SignalSystem {
     SignalSystem::Ks
 }
 
+/// Named connection point of a module: a `Buffer` node at which another module may attach
+/// (plan ch. 15; the composition is in [`crate::compose`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoundarySource {
+    pub name: String,
+    /// Index into `nodes`; must be a `Buffer` at the open end of an edge.
+    pub node: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteSource {
     pub entry: u32,
@@ -140,6 +149,10 @@ pub struct LineSource {
     pub signals: Vec<SignalSource>,
     #[serde(default)]
     pub routes: Vec<RouteSource>,
+    /// Connection points for the module composition; a line that is never composed
+    /// simply has none.
+    #[serde(default)]
+    pub boundaries: Vec<BoundarySource>,
     /// Optional Lua script hook (plan 19.7), named `"<mod>:<file stem>"`.
     #[serde(default)]
     pub script: Option<String>,

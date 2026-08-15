@@ -1,7 +1,7 @@
 //! Example scenarios on the Musterbahn (plan ch. 11.4).
 
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
-use sim_core::timetable::{ScheduledStop, Timetable};
+use sim_core::timetable::{ScheduledStop, Timetable, TimetableKind};
 use sim_core::train::RailCondition;
 use track_model::EdgeId;
 
@@ -10,6 +10,8 @@ pub fn re_4711() -> Timetable {
     Timetable {
         number: "RE 4711".into(),
         category: "RE".into(),
+        kind: TimetableKind::Scenario,
+        module: None,
         stops: vec![ScheduledStop {
             name: "Musterstadt".into(),
             edge: EdgeId(2),
@@ -17,6 +19,7 @@ pub fn re_4711() -> Timetable {
             arrival: 420.0,
             departure: 480.0,
             platform: "2".into(),
+            module: None,
         }],
     }
 }
@@ -38,6 +41,7 @@ pub fn to_musterstadt() -> Scenario {
                     "RE 4711 nach Musterstadt, Abfahrt frei. Zulässig 160 km/h.".into(),
                 )],
                 once: true,
+                module: None,
             },
             Event {
                 name: "block_frei".into(),
@@ -50,6 +54,7 @@ pub fn to_musterstadt() -> Scenario {
                     "Zug 2 hat den Block geräumt — Signal geht auf Fahrt.".into(),
                 )],
                 once: true,
+                module: None,
             },
             Event {
                 name: "regen".into(),
@@ -62,6 +67,7 @@ pub fn to_musterstadt() -> Scenario {
                     Action::Message("Regen setzt ein — Bremswege werden länger.".into()),
                 ],
                 once: true,
+                module: None,
             },
             Event {
                 name: "einfahrt".into(),
@@ -74,6 +80,7 @@ pub fn to_musterstadt() -> Scenario {
                     "In Kürze Musterstadt, Bahnsteig 2, Halt an der Haltetafel bei km 6,6.".into(),
                 )],
                 once: true,
+                module: None,
             },
             Event {
                 name: "zwangsbremsung".into(),
@@ -88,6 +95,7 @@ pub fn to_musterstadt() -> Scenario {
                     },
                 ],
                 once: true,
+                module: None,
             },
             Event {
                 name: "ziel".into(),
@@ -102,6 +110,7 @@ pub fn to_musterstadt() -> Scenario {
                     reason: "Musterstadt erreicht".into(),
                 }],
                 once: true,
+                module: None,
             },
             Event {
                 name: "vorbeigefahren".into(),
@@ -115,9 +124,13 @@ pub fn to_musterstadt() -> Scenario {
                     reason: "Bahnsteig überfahren".into(),
                 }],
                 once: true,
+                module: None,
             },
         ],
         script: None,
+        timetable: None,
+        line: None,
+        module: None,
     }
 }
 

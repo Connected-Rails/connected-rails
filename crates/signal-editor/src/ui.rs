@@ -4,12 +4,13 @@
 //! things a signal model is made of: the part list (glTF files chained by
 //! mount points), the lamp bindings, and a lamp test for the preview.
 
-use crate::{Editor, Status};
+use crate::{Editor, PartState, Status};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use editor_ui::{colors, space};
 use i18n::t;
-use sim_core::interlock::{LampBinding, SignalModel, SignalPart};
+use sim_core::interlock::{LampBinding, MotionBinding, SignalModel, SignalPart};
+use sim_core::train::{Lod, Motion, lod_level};
 
 const SHORTCUT_NEW: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N);
@@ -47,11 +48,12 @@ pub fn draw(
     let before = editor.model.clone();
     status_bar(&mut root, &editor);
     panel(&mut root, &mut editor);
-    // Any edit marks the file unsaved; a change to the part list also rebuilds
-    // the preview (lamp bindings are applied live and need no rebuild).
+    // Any edit marks the file unsaved. A change to the parts or motions also
+    // rebuilds the preview — a motion edit must put displaced nodes back on
+    // their file transforms. Lamp bindings and LOD distances apply live.
     if editor.model != before {
         editor.dirty = true;
-        if editor.model.parts != before.parts {
+        if editor.model.parts != before.parts || editor.model.motions != before.motions {
             editor.revision += 1;
         }
     }
@@ -359,6 +361,12 @@ fn panel(root: &mut egui::Ui, editor: &mut Editor) {
                 editor_ui::section(ui, "parts", t!("group-signal-parts"), |ui| {
                     parts_section(ui, editor);
                 });
+                editor_ui::section(ui, "lods", t!("group-lods"), |ui| {
+                    lods_section(ui, editor);
+                });
+                editor_ui::section(ui, "motions", t!("group-signal-motions"), |ui| {
+                    motions_section(ui, editor);
+                });
                 editor_ui::section(ui, "lamps", t!("group-signal-lamps"), |ui| {
                     lamps_section(ui, editor);
                 });
@@ -494,6 +502,238 @@ fn mount_row(ui: &mut egui::Ui, editor: &mut Editor, i: usize) {
     });
 }
 
+/// Default distances for freshly detected levels — the vehicle editor's set.
+const DEFAULT_LOD_DISTANCES: [f64; 4] = [150.0, 400.0, 1_000.0, 4_000.0];
+
+/// The levels present in the loaded parts' node names, with default distances.
+fn detect_lods(parts: &[PartState]) -> Vec<Lod> {
+    let levels: std::collections::BTreeSet<u8> = parts
+        .iter()
+        .flat_map(|s| s.nodes.iter().filter_map(|n| lod_level(n)))
+        .collect();
+    levels
+        .into_iter()
+        .enumerate()
+        .map(|(i, level)| Lod {
+            level,
+            distance: DEFAULT_LOD_DISTANCES.get(i).copied().unwrap_or(4_000.0),
+        })
+        .collect()
+}
+
+/// Levels of detail over all parts: read from the node names, distance per level.
+fn lods_section(ui: &mut egui::Ui, editor: &mut Editor) {
+    let detected = detect_lods(&editor.parts);
+    let same = editor
+        .model
+        .lods
+        .iter()
+        .map(|l| l.level)
+        .eq(detected.iter().map(|l| l.level));
+    if ui
+        .add_enabled(
+            !detected.is_empty() && !same,
+            egui::Button::new(t!("action-read-node-names")),
+        )
+        .on_hover_text(t!("action-read-node-names-hint", count = detected.len()))
+        .clicked()
+    {
+        editor.model.lods = detected;
+    }
+    let mut remove = None;
+    for i in 0..editor.model.lods.len() {
+        ui.horizontal(|ui| {
+            let level = editor.model.lods[i].level;
+            // The type designation stays a literal, as everywhere.
+            if ui
+                .selectable_label(editor.preview_lod == level, format!("LOD{level}"))
+                .on_hover_text(t!("lod-show-hint"))
+                .clicked()
+            {
+                editor.preview_lod = level;
+            }
+            ui.add(
+                egui::DragValue::new(&mut editor.model.lods[i].distance)
+                    .speed(10.0)
+                    .range(1.0..=100_000.0)
+                    .suffix(" m"),
+            )
+            .on_hover_text(t!("lod-distance-hint"));
+            if ui.button("×").clicked() {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = remove {
+        let gone = editor.model.lods.remove(i);
+        // Previewing a removed level would hide everything without a word.
+        if editor.preview_lod == gone.level {
+            editor.preview_lod = editor.model.lods.iter().map(|l| l.level).min().unwrap_or(0);
+        }
+    }
+}
+
+/// Moving nodes: lamp-image string, node, motion and travel time.
+fn motions_section(ui: &mut egui::Ui, editor: &mut Editor) {
+    let mut remove = None;
+    for i in 0..editor.model.motions.len() {
+        editor_ui::card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let mut lamp = editor.model.motions[i].lamp.clone();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut lamp)
+                            .hint_text(t!("sig-lamp"))
+                            .desired_width(90.0),
+                    )
+                    .changed()
+                {
+                    editor.model.motions[i].lamp = lamp;
+                }
+                let part = editor.model.motions[i].part as usize;
+                let selected = editor
+                    .model
+                    .parts
+                    .get(part)
+                    .map(|p| part_label(part, p))
+                    .unwrap_or_else(|| format!("#{part}"));
+                egui::ComboBox::from_id_salt(("motion-part", i))
+                    .selected_text(selected)
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for j in 0..editor.model.parts.len() {
+                            let label = part_label(j, &editor.model.parts[j]);
+                            if ui.selectable_label(part == j, label).clicked() {
+                                editor.model.motions[i].part = j as u32;
+                            }
+                        }
+                    });
+                let part = editor.model.motions[i].part as usize;
+                let nodes = editor
+                    .parts
+                    .get(part)
+                    .map(|s| s.nodes.clone())
+                    .unwrap_or_default();
+                let node = editor.model.motions[i].node.clone();
+                let missing = !nodes.is_empty() && !nodes.contains(&node);
+                let mut text = egui::RichText::new(if node.is_empty() {
+                    t!("sig-node")
+                } else {
+                    node.clone()
+                });
+                if missing {
+                    text = text.color(colors::ERROR);
+                }
+                egui::ComboBox::from_id_salt(("motion-node", i))
+                    .selected_text(text)
+                    .show_ui(ui, |ui| {
+                        for candidate in &nodes {
+                            if ui.selectable_label(*candidate == node, candidate).clicked() {
+                                editor.model.motions[i].node = candidate.clone();
+                            }
+                        }
+                    });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("×").clicked() {
+                        remove = Some(i);
+                    }
+                });
+            });
+            motion_row(ui, i, &mut editor.model.motions[i]);
+        });
+        ui.add_space(space::XS);
+    }
+    if let Some(i) = remove {
+        editor.model.motions.remove(i);
+    }
+    if ui.button(t!("action-add-motion")).clicked() {
+        editor.model.motions.push(MotionBinding {
+            lamp: String::new(),
+            part: 0,
+            node: String::new(),
+            motion: Motion::Rotate {
+                axis: [0.0, 0.0, 1.0],
+                degrees: 45.0,
+            },
+            seconds: 1.5,
+        });
+    }
+}
+
+/// Motion kind, axis, amount and travel time of one binding.
+fn motion_row(ui: &mut egui::Ui, index: usize, binding: &mut MotionBinding) {
+    ui.horizontal(|ui| {
+        let selected = match binding.motion {
+            Motion::Visibility => t!("motion-visible"),
+            Motion::Rotate { .. } => t!("motion-rotate"),
+            Motion::Translate { .. } => t!("motion-move"),
+        };
+        egui::ComboBox::from_id_salt(("motion-kind", index))
+            .selected_text(selected)
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                let rotate = Motion::Rotate {
+                    axis: [0.0, 0.0, 1.0],
+                    degrees: 45.0,
+                };
+                let translate = Motion::Translate {
+                    axis: [0.0, 1.0, 0.0],
+                    metres: 0.5,
+                };
+                for (label, template) in [
+                    (t!("motion-visible"), Motion::Visibility),
+                    (t!("motion-rotate"), rotate),
+                    (t!("motion-move"), translate),
+                ] {
+                    let here = std::mem::discriminant(&binding.motion)
+                        == std::mem::discriminant(&template);
+                    if ui.selectable_label(here, label).clicked() && !here {
+                        binding.motion = template;
+                    }
+                }
+            });
+        match &mut binding.motion {
+            Motion::Visibility => {}
+            Motion::Rotate { axis, degrees } => {
+                axis_drags(ui, axis);
+                ui.add(
+                    egui::DragValue::new(degrees)
+                        .speed(1.0)
+                        .range(-360.0..=360.0)
+                        .suffix("°"),
+                );
+            }
+            Motion::Translate { axis, metres } => {
+                axis_drags(ui, axis);
+                ui.add(
+                    egui::DragValue::new(metres)
+                        .speed(0.01)
+                        .range(-10.0..=10.0)
+                        .suffix(" m"),
+                );
+            }
+        }
+        ui.add(
+            egui::DragValue::new(&mut binding.seconds)
+                .speed(0.1)
+                .range(0.0..=60.0)
+                .suffix(" s"),
+        )
+        .on_hover_text(t!("sig-seconds-hint"));
+    });
+}
+
+fn axis_drags(ui: &mut egui::Ui, axis: &mut [f32; 3]) {
+    for value in axis.iter_mut() {
+        ui.add(
+            egui::DragValue::new(value)
+                .speed(0.05)
+                .range(-1.0..=1.0)
+                .max_decimals(2),
+        );
+    }
+}
+
 fn lamps_section(ui: &mut egui::Ui, editor: &mut Editor) {
     let mut remove = None;
     for i in 0..editor.model.lamps.len() {
@@ -594,12 +834,14 @@ fn lamps_section(ui: &mut egui::Ui, editor: &mut Editor) {
 }
 
 /// Toggles per lamp image — what the aspect rules would light, lit by hand.
+/// Motion strings are lamp images too: toggling one swings its arm.
 fn test_section(ui: &mut egui::Ui, editor: &mut Editor) {
     let images: std::collections::BTreeSet<String> = editor
         .model
         .lamps
         .iter()
         .map(|l| l.lamp.clone())
+        .chain(editor.model.motions.iter().map(|m| m.lamp.clone()))
         .filter(|l| !l.is_empty())
         .collect();
     if images.is_empty() {
@@ -649,6 +891,7 @@ mod tests {
                 part: 0,
                 node: "lamp_red".into(),
             }],
+            ..Default::default()
         };
         let nodes = vec![
             vec!["lamp_red".into(), "lamp_green".into(), "mast".into()],

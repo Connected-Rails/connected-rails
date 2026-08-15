@@ -215,6 +215,14 @@ pub struct SignalModel {
     /// Which glTF node is which lamp-image string.
     #[serde(default)]
     pub lamps: Vec<LampBinding>,
+    /// Moving nodes — semaphore arms and the like.
+    #[serde(default)]
+    pub motions: Vec<MotionBinding>,
+    /// Levels of detail over all parts, coarsest last — nodes named
+    /// `<name>_LOD<level>` switch by camera distance, beyond the last distance
+    /// they disappear. Empty = the whole assembly at every distance.
+    #[serde(default)]
+    pub lods: Vec<crate::train::Lod>,
 }
 
 /// One glTF file of a signal assembly.
@@ -238,6 +246,34 @@ pub struct LampBinding {
     pub part: u32,
     /// glTF node — visible while its string is in the signal's lamp image.
     pub node: String,
+}
+
+/// Binds one lamp-image string to a moving node — a semaphore arm is a motion
+/// bound to its own string (`"fluegel1"`), which the aspect rules put into the
+/// lamp image like any lamp.
+///
+/// The string is the *target*: while it is in the current lamp image the node
+/// travels to 1, without it back to 0, at the pace the travel time sets — so a
+/// quick aspect change swings the arm through its real intermediate positions.
+/// One binding per node; an aspect that moves two arms simply lists two strings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MotionBinding {
+    /// Lamp-image string that drives the node to full travel.
+    pub lamp: String,
+    /// Part the node lives in.
+    #[serde(default)]
+    pub part: u32,
+    /// glTF node the motion moves.
+    pub node: String,
+    /// How the node moves over the travel 0 … 1.
+    pub motion: crate::train::Motion,
+    /// Travel time of the full swing [s]; 0 switches instantly.
+    #[serde(default = "default_motion_seconds")]
+    pub seconds: f64,
+}
+
+fn default_motion_seconds() -> f64 {
+    1.5
 }
 
 /// Track clear detection section (axle counter section).

@@ -1,0 +1,21 @@
+// Semaphore (Form) main signal: the aspect is shown by arms, not lamps.
+//
+// The lamp images name the moved elements; the model's `motions` bind them to
+// the arm nodes and swing them with a travel time (see signal_models/form_hp.ron).
+(
+    system: HV,
+    rules: [
+        // Hp0 — both arms at rest.
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: []),
+        // Hp2 — slow speed: both arms diagonal.
+        (
+            when: (diverging: Some(true)),
+            show: (main: Some(ProceedSlow), speed: Some(40.0)),
+            lamps: ["fluegel1", "fluegel2"],
+        ),
+        // Hp1 — proceed: the upper arm alone.
+        (when: (), show: (main: Some(Proceed)), lamps: ["fluegel1"]),
+    ],
+    script: None,
+    model: Some("example:form_hp"),
+)

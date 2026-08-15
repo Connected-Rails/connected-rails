@@ -135,6 +135,12 @@ pub struct Lod {
     pub distance: f64,
 }
 
+/// `body_LOD2` → `Some(2)` — the naming convention app and editors share.
+pub fn lod_level(name: &str) -> Option<u8> {
+    let (_, tail) = name.rsplit_once("_LOD")?;
+    tail.parse().ok()
+}
+
 /// Visual description of a vehicle: glTF file, levels of detail, moving parts.
 ///
 /// Pure data — `sim-core` never renders. It sits next to the physical data so that a

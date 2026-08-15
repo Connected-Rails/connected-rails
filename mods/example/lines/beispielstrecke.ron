@@ -2,7 +2,9 @@
 // trackside equipment. `signal_type` points at a signal type of a mod — with it the aspect
 // comes from that state machine instead of the built-in logic.
 //
-// 4 km straight, one Ks main signal at km 2.0 with a 1000 Hz magnet 1000 m ahead of it.
+// 4 km straight, one Ks main signal at km 2.0 with a 1000 Hz magnet 1000 m ahead of it,
+// and a semaphore (Form) main signal at km 3.5 whose arms are moved by the model's
+// motion bindings (signal_models/form_hp.ron).
 (
     name: "Beispielstrecke",
     geoid_offset: 46.0,
@@ -25,6 +27,7 @@
         // 500 Hz magnet 250 m ahead of the signal, and 2000 Hz at the signal itself.
         (kind: Magnet, edge: 0, s: 1750.0, payload: "(frequency:Hz500,signal:Some(0),activation:WhenStop)"),
         (kind: Magnet, edge: 0, s: 2000.0, payload: "(frequency:Hz2000,signal:Some(0),activation:WhenStop)"),
+        (kind: Signal, edge: 0, s: 3500.0, lateral_offset: 3.0, payload: "(signal:Some(1))"),
     ],
     sections: [(edges: [0])],
     signals: [
@@ -34,6 +37,15 @@
             device: 1,
             guarded: [0],
             signal_type: Some("example:ks_main"),
+        ),
+        // The semaphore guards nothing on this demo line — it stands at proceed
+        // and swings its arm as the run starts.
+        (
+            kind: Main,
+            system: HV,
+            device: 4,
+            guarded: [],
+            signal_type: Some("example:hv_form"),
         ),
     ],
     routes: [],

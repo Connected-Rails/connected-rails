@@ -22,8 +22,9 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use i18n::t;
 use serde::{Deserialize, Serialize};
-use sim_core::interlock::{LampBinding, SignalModel};
-use std::collections::BTreeSet;
+use sim_core::interlock::{LampBinding, MotionBinding, SignalModel};
+use sim_core::train::{Motion, lod_level};
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 /// Asset source of the mods: `mods://<mod>/assets/…` — the same one the simulator uses.
@@ -85,6 +86,8 @@ pub struct Editor {
     pub parts: Vec<PartState>,
     /// Lamp-image strings lit in the preview.
     pub lit: BTreeSet<String>,
+    /// Which level of detail the viewport shows (with a non-empty LOD table).
+    pub preview_lod: u8,
     /// Bumped on any structural change — the preview is rebuilt from scratch.
     pub revision: u64,
     /// Handle of the editor window, the owner of every native dialog.
@@ -101,6 +104,7 @@ impl Default for Editor {
             status: Status::Info(t!("status-new-signal-model")),
             parts: Vec::new(),
             lit: BTreeSet::new(),
+            preview_lod: 0,
             revision: 0,
             window: None,
             settings: Settings::load(),
@@ -124,6 +128,7 @@ impl Editor {
                 self.dirty = false;
                 self.parts.clear();
                 self.lit.clear();
+                self.preview_lod = 0;
                 self.revision += 1;
             }
             Err(e) => {
@@ -364,6 +369,8 @@ fn main() {
             sync_parts,
             mount_preview,
             preview_lamps,
+            preview_motions,
+            apply_preview_lod,
             orbit_camera,
             ground_grid,
             confirm_close,
@@ -389,6 +396,10 @@ fn setup(
 ) {
     commands.spawn((
         Camera3d::default(),
+        // HDR + bloom, like the simulator: the lamp test glows the way the
+        // night run will.
+        bevy::camera::Hdr,
+        bevy::post_process::bloom::Bloom::NATURAL,
         Projection::Perspective(PerspectiveProjection {
             far: 5_000.0,
             ..default()
@@ -604,6 +615,111 @@ fn preview_lamps(
     }
 }
 
+/// Moves motion-bound nodes towards their lamp-test targets — the editor's copy
+/// of the simulator's swing, driven by the toggles instead of the interlocking.
+/// Base transforms are remembered on first touch.
+fn preview_motions(
+    time: Res<Time>,
+    editor: Res<Editor>,
+    roots: Query<(Entity, &PreviewPart)>,
+    children: Query<&Children>,
+    mut named: Query<(&Name, &mut Transform)>,
+    mut bases: Local<HashMap<Entity, Transform>>,
+    mut values: Local<HashMap<Entity, f32>>,
+) {
+    let dt = time.delta_secs();
+    for (root, part) in roots.iter() {
+        let bindings: Vec<&MotionBinding> = editor
+            .model
+            .motions
+            .iter()
+            .filter(|m| m.part as usize == part.part)
+            .collect();
+        if bindings.is_empty() {
+            continue;
+        }
+        let mut stack = vec![root];
+        while let Some(entity) = stack.pop() {
+            // Do not cross into parts mounted inside this one.
+            if entity != root && roots.contains(entity) {
+                continue;
+            }
+            if let Ok(kids) = children.get(entity) {
+                stack.extend(kids.iter());
+            }
+            let Ok((name, mut transform)) = named.get_mut(entity) else {
+                continue;
+            };
+            let Some(binding) = bindings.iter().find(|m| m.node == name.as_str()) else {
+                continue;
+            };
+            let target = if editor.lit.contains(&binding.lamp) {
+                1.0
+            } else {
+                0.0
+            };
+            let value = values.entry(entity).or_insert(0.0);
+            *value = slew(*value, target, dt, binding.seconds as f32);
+            // Visibility motions are the lamp mechanism; the preview leaves
+            // them to the lamp test.
+            if !matches!(binding.motion, Motion::Visibility) {
+                let base = *bases.entry(entity).or_insert(*transform);
+                *transform = base * motion_transform(&binding.motion, *value);
+            }
+        }
+    }
+}
+
+/// One step of the travel towards `target` — the editor's copy of the
+/// simulator's linear swing.
+fn slew(value: f32, target: f32, dt: f32, seconds: f32) -> f32 {
+    if seconds <= 0.0 {
+        return target;
+    }
+    let step = dt / seconds;
+    (value + (target - value).clamp(-step, step)).clamp(0.0, 1.0)
+}
+
+/// Transform a [`Motion`] produces at `value` — the editor's copy of the
+/// mapping the app applies at runtime.
+fn motion_transform(motion: &Motion, value: f32) -> Transform {
+    match *motion {
+        Motion::Visibility => Transform::IDENTITY,
+        Motion::Rotate { axis, degrees } => Transform::from_rotation(Quat::from_axis_angle(
+            Vec3::from(axis).normalize_or_zero(),
+            (degrees * value).to_radians(),
+        )),
+        Motion::Translate { axis, metres } => {
+            Transform::from_translation(Vec3::from(axis) * metres * value)
+        }
+    }
+}
+
+/// Shows only the previewed level of detail once a LOD table exists — otherwise
+/// every level sits inside the others. Without a table all levels show.
+fn apply_preview_lod(
+    mut commands: Commands,
+    editor: Res<Editor>,
+    mut nodes: Query<(Entity, &Name, Option<&mut Visibility>)>,
+) {
+    for (entity, name, visibility) in nodes.iter_mut() {
+        let Some(level) = lod_level(name.as_str()) else {
+            continue;
+        };
+        let wanted = if editor.model.lods.is_empty() || level == editor.preview_lod {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        match visibility {
+            Some(mut current) => *current = wanted,
+            None => {
+                commands.entity(entity).insert(wanted);
+            }
+        }
+    }
+}
+
 /// Orbit with the right mouse button, zoom with the wheel — same as the other
 /// editors; the hand-built background `Ui` is hit-test blind, so the cursor is
 /// tested against the stored viewport rect.
@@ -765,6 +881,7 @@ mod tests {
                     node: "zs3_4".into(),
                 },
             ],
+            ..Default::default()
         }
     }
 

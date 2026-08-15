@@ -22,4 +22,12 @@
         (lamp: "zs1", part: 1, node: "lamp_zs1"),
         (lamp: "zs3_4", part: 2, node: "zs3_4"),
     ],
+    // Optional levels of detail over all parts: `<name>_LOD<n>` nodes switch by
+    // camera distance (here only the mast has two levels); nodes without the
+    // suffix are every level's furniture. Beyond the last distance the LOD
+    // nodes disappear.
+    lods: [
+        (level: 0, distance: 200.0),
+        (level: 1, distance: 2500.0),
+    ],
 )

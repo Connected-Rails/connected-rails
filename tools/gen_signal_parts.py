@@ -1,13 +1,17 @@
 """Procedural signal part models for the example mod.
 
-Writes three glTF files below mods/example/assets/ — created entirely from
+Writes four glTF files below mods/example/assets/ — created entirely from
 scratch in this script, no third-party assets, so the files carry the
 project's licence:
 
-  sig_mast.gltf        mast with base plate; mount point ``mp_schirm``
+  sig_mast.gltf        mast with base plate; mount point ``mp_schirm``.
+                       Two levels of detail (mast_LOD0/mast_LOD1)
   sig_schirm_ks.gltf   Ks screen with lamp nodes lamp_red/green/yellow/zs1
                        and the mount point ``mp_top`` for a Zs3
   sig_zs3.gltf         Zs3 speed indicator board with the digit node ``zs3_4``
+  sig_form_hp.gltf     H/V semaphore main signal: mast plus the arm pivots
+                       ``fluegel1`` (rest horizontal) and ``fluegel2``
+                       (rest hanging) for motion bindings
 
 Conventions per MODS.md: origin at the part's attachment (the mast at its foot
 on rail-top height), +Y up, the face towards the approaching driver looks
@@ -188,16 +192,21 @@ SCHIRM_Y = 3.0  # mp_schirm height on the mast
 
 
 def build_mast():
-    mast = Prim()
-    mast.box((-0.06, 0.0, -0.06), (0.06, MAST_H, 0.06))
-    mast.box((-0.16, 0.0, -0.16), (0.16, 0.06, 0.16))  # base plate
+    # LOD0: mast with base plate and a small cable box; LOD1: the bare pole.
+    lod0 = Prim()
+    lod0.box((-0.06, 0.0, -0.06), (0.06, MAST_H, 0.06))
+    lod0.box((-0.16, 0.0, -0.16), (0.16, 0.06, 0.16))  # base plate
+    lod0.box((-0.10, 0.9, -0.14), (0.10, 1.25, -0.06))  # cable box on the back
+    lod1 = Prim()
+    lod1.box((-0.06, 0.0, -0.06), (0.06, MAST_H, 0.06))
     write_gltf(
         "sig_mast.gltf",
         "sig_mast",
         [GREY],
-        [("mast", {"grey": mast})],
+        [("mast_LOD0", {"grey": lod0}), ("mast_LOD1", {"grey": lod1})],
         [
-            {"name": "mast", "mesh": "mast"},
+            {"name": "mast_LOD0", "mesh": "mast_LOD0"},
+            {"name": "mast_LOD1", "mesh": "mast_LOD1"},
             # The screen hangs in front of the mast, facing the driver (+Z).
             {"name": "mp_schirm", "translation": [0.0, SCHIRM_Y, 0.08]},
         ],
@@ -259,6 +268,49 @@ def build_zs3():
     )
 
 
+RED_ARM = ("red_arm", dict(baseColorFactor=[0.7, 0.05, 0.05, 1.0], metallicFactor=0.0, roughnessFactor=0.6), None)
+
+FORM_MAST_H = 6.0
+
+
+def build_form():
+    """H/V semaphore: lattice-ish mast plus two arm pivots for motion bindings.
+
+    ``fluegel1`` rests horizontal (arm along +X) and swings 45 deg up for Hp1;
+    ``fluegel2`` rests hanging along the mast and swings 135 deg up to stand
+    parallel for Hp2. Rest pose = Hp0, so the motions' travel 0 is stop.
+    """
+    mast = Prim()
+    mast.box((-0.07, 0.0, -0.07), (0.07, FORM_MAST_H, 0.07))
+    mast.box((-0.18, 0.0, -0.18), (0.18, 0.06, 0.18))  # base plate
+    # Upper arm: red blade with a white tip, pivot at the node origin.
+    arm1 = Prim()
+    arm1.box((0.05, -0.09, 0.0), (1.05, 0.09, 0.03))
+    arm2 = Prim()
+    arm2.box((-0.09, -1.05, 0.0), (0.09, -0.05, 0.03))
+    tip1 = Prim()
+    tip1.box((1.05, -0.09, 0.0), (1.25, 0.09, 0.03))
+    tip2 = Prim()
+    tip2.box((-0.09, -1.25, 0.0), (0.09, -1.05, 0.03))
+    write_gltf(
+        "sig_form_hp.gltf",
+        "sig_form_hp",
+        [GREY, RED_ARM, WHITE],
+        [
+            ("mast", {"grey": mast}),
+            ("fluegel1", {"red_arm": arm1, "white": tip1}),
+            ("fluegel2", {"red_arm": arm2, "white": tip2}),
+        ],
+        [
+            {"name": "mast", "mesh": "mast"},
+            {"name": "fluegel1", "mesh": "fluegel1",
+             "translation": [0.0, FORM_MAST_H - 0.4, 0.10]},
+            {"name": "fluegel2", "mesh": "fluegel2",
+             "translation": [0.0, FORM_MAST_H - 1.5, 0.10]},
+        ],
+    )
+
+
 def check():
     # Outward normals on a convex solid — the writer relies on CCW winding.
     prim = Prim()
@@ -274,3 +326,4 @@ if __name__ == "__main__":
     build_mast()
     build_schirm()
     build_zs3()
+    build_form()

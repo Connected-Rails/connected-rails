@@ -219,11 +219,7 @@ pub fn bind_nodes(
     }
 }
 
-/// `body_LOD2` → `Some(2)` — the same convention the vehicle editor writes.
-fn lod_level(name: &str) -> Option<u8> {
-    let (_, tail) = name.rsplit_once("_LOD")?;
-    tail.parse().ok()
-}
+pub use sim_core::train::lod_level;
 
 /// Shows exactly the level of detail whose distance the vehicle is within.
 pub fn update_lod(

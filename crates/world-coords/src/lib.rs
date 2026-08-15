@@ -8,6 +8,7 @@ use glam::{DQuat, DVec3, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 pub mod geo;
+pub mod sun;
 
 /// Position in the ECEF frame (metres, f64). Newtype so that f32 paths cannot accidentally
 /// take world coordinates (see risk table in chapter 19).

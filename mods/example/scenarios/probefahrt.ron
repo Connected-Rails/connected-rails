@@ -6,6 +6,9 @@
 (
     name: "Probefahrt",
     description: "Short test run on the example line: pull away, then obey the main signal.",
+    // Wall clock at the start of the run: a summer morning shortly after sunrise.
+    // Drives sun and moon and anchors Daily timetables; omitted = midsummer noon.
+    start: (year: 2026, month: 8, day: 15, hour: 6, minute: 45, utc_offset: 2.0),
     player_train: 0,
     events: [
         (

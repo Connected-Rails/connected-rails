@@ -192,7 +192,7 @@ impl AiDriver {
                             self.state = DriverState::Dwelling;
                             self.depart_at = self
                                 .timetable
-                                .next_occurrence(sim.time, stop.departure)
+                                .next_occurrence(sim.time, sim.start.seconds(), stop.departure)
                                 .max(sim.time + 20.0);
                             return;
                         }

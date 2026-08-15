@@ -61,8 +61,11 @@ pub struct Sim {
     pub runtime: Vec<TrainRuntime>,
     /// Cabs: one set of inputs per train (AI or player write into it).
     pub controls: Vec<CabInputs>,
-    /// Simulation time [s].
+    /// Simulation time [s since the start of the run].
     pub time: f64,
+    /// Wall clock at `time == 0` — date and time of day (plan ch. 14).
+    #[serde(default)]
+    pub start: scenario::StartTime,
     pub rng: rng::Rng,
     /// Scenario with events and messages (plan 11.4).
     #[serde(default)]
@@ -87,6 +90,7 @@ impl Sim {
             runtime: Vec::new(),
             controls: Vec::new(),
             time: 0.0,
+            start: scenario::StartTime::default(),
             rng: rng::Rng::new(seed),
             scenario: scenario::ScenarioRuntime::default(),
             score: score::ScoreKeeper::default(),
@@ -96,8 +100,15 @@ impl Sim {
 
     /// Load a scenario; the player train is scored as well.
     pub fn set_scenario(&mut self, scenario: scenario::Scenario, timetable: timetable::Timetable) {
+        self.start = scenario.start;
         self.score = score::ScoreKeeper::new(scenario.player_train, timetable);
         self.scenario = scenario::ScenarioRuntime::new(scenario);
+    }
+
+    /// Wall clock [s since local midnight of the start day]; keeps growing past
+    /// [`timetable::DAY`] on multi-day runs.
+    pub fn clock(&self) -> f64 {
+        self.start.seconds() + self.time
     }
 
     pub fn add_train(&mut self, train: Train) -> usize {

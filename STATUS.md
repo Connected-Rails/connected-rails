@@ -14,7 +14,7 @@ As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and 
 | **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
-| **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; weather changes through scenario actions, terrain from the DGM; no recorded samples (the sources are generated), no day/night or weather **rendering**, no vegetation/texturing |
+| **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; weather changes through scenario actions, terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; no recorded samples (the sources are generated), no weather **rendering**, no night lighting of signals/lamps, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
 | **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
@@ -348,10 +348,13 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **Boundary snapping is a constant** (`compose::SNAP_DISTANCE`, 1 m) — module edges are
   placed at agreed coordinates. A per-composition tolerance steps in when real survey
   data needs one.
-- **The simulation clock starts at zero**, there is no time-of-day. A `Daily` timetable
-  therefore effectively begins at midnight; a start-of-day offset belongs in the scenario
-  once day/night arrives (M6), and `Timetable::delay`/`next_occurrence` are the two places
-  that map clock to schedule.
+- **The simulation clock counts seconds since the start of the run**; the wall clock
+  comes from the scenario's `start` (date, local time, UTC offset — default midsummer
+  noon) via `Sim::clock()`. It anchors `Daily` timetables (`Timetable::delay`/
+  `next_occurrence` take the start-of-day offset) and drives sun and moon: positions
+  from date, time and the georeferenced location (`world_coords::sun`, low-precision
+  astronomy), so the season falls out of the date. Seasonal *appearance* (vegetation,
+  snow) remains content/texturing work (ch. 14 "seasons v2").
 
 ## Sensible next steps
 
@@ -374,7 +377,7 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 8. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
    interval belong in the same pass.
-9. **Day/night and weather rendering (M6)** — the cab is interactive now; what M6 still
-   misses is the world outside the windscreen: sun position from time and place, rain/fog
-   affecting visibility, night lighting (signals, instruments, headlights). Detailed cab
+9. **Weather rendering and night lighting (M6)** — sun and moon now follow the scenario
+   clock over the georeferenced line; what M6 still misses is rain/fog affecting
+   visibility and night lighting (signals, instruments, headlights). Detailed cab
    models are content work per vehicle, not engine work.

@@ -199,6 +199,7 @@ fn switch_and_route_actions_are_wired() {
         Scenario {
             name: "Stellwerkstest".into(),
             description: String::new(),
+            start: Default::default(),
             player_train: 0,
             events: vec![Event {
                 name: "stellen".into(),

@@ -578,7 +578,7 @@ group-errors = Errors
 
 ## Simulator HUD
 
-hud-speed = v = { $speed } km/h   max { $limit } km/h   distance { $distance } m   t = { $time } s
+hud-speed = v = { $speed } km/h   max { $limit } km/h   distance { $distance } m   { $time }
 hud-brakes = BP { $pipe } bar   C { $cylinder } bar   AR { $auxiliary } bar   MR { $main } bar   Direct { $direct } bar   Air { $air } Nl
 hud-traction = Power controller { $throttle }   Tractive effort { $tractive } kN   Braking effort { $braking } kN   Brake { $valve }
 hud-electrics = Battery { $battery }   Pantograph { $pantograph } %   Main switch { $switch }   Contact line { $voltage } V   Spring brake { $parking }

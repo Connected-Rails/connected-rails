@@ -94,21 +94,26 @@ impl Timetable {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serializable")
     }
 
-    /// Signed deviation of `time` from `scheduled` [s], positive = late.
+    /// Signed deviation from `scheduled` [s], positive = late. `time` is seconds since
+    /// the start of the run, `start` what the wall clock showed at that start
+    /// (`Sim::start.seconds()`) — only `Daily` timetables use it.
     /// A daily timetable measures around the clock: 23:59 against a 0:01 slot is
     /// two minutes early, not a day late.
-    pub fn delay(&self, time: f64, scheduled: f64) -> f64 {
+    pub fn delay(&self, time: f64, start: f64, scheduled: f64) -> f64 {
         match self.kind {
             TimetableKind::Scenario => time - scheduled,
-            TimetableKind::Daily => (time - scheduled + DAY / 2.0).rem_euclid(DAY) - DAY / 2.0,
+            TimetableKind::Daily => {
+                (start + time - scheduled + DAY / 2.0).rem_euclid(DAY) - DAY / 2.0
+            }
         }
     }
 
-    /// The next absolute simulation time at or after `time` that `scheduled` refers to.
-    pub fn next_occurrence(&self, time: f64, scheduled: f64) -> f64 {
+    /// The next simulation time (seconds since the start of the run) at or after
+    /// `time` that `scheduled` refers to.
+    pub fn next_occurrence(&self, time: f64, start: f64, scheduled: f64) -> f64 {
         match self.kind {
             TimetableKind::Scenario => scheduled,
-            TimetableKind::Daily => time + (scheduled - time).rem_euclid(DAY),
+            TimetableKind::Daily => time + (scheduled - start - time).rem_euclid(DAY),
         }
     }
 }
@@ -124,19 +129,36 @@ mod tests {
             ..Timetable::default()
         };
         // 23:59 against a 0:01 slot: two minutes early.
-        assert_eq!(daily.delay(DAY - 60.0, 60.0), -120.0);
+        assert_eq!(daily.delay(DAY - 60.0, 0.0, 60.0), -120.0);
         // 0:01 against a 23:59 slot: two minutes late, on any day.
-        assert_eq!(daily.delay(DAY + 60.0, DAY - 60.0), 120.0);
+        assert_eq!(daily.delay(DAY + 60.0, 0.0, DAY - 60.0), 120.0);
         // The next 0:01 seen from 23:59 of day two lies 120 s ahead.
         assert_eq!(
-            daily.next_occurrence(2.0 * DAY - 60.0, 60.0),
+            daily.next_occurrence(2.0 * DAY - 60.0, 0.0, 60.0),
             2.0 * DAY + 60.0
         );
         // A slot that is due right now stays put.
-        assert_eq!(daily.next_occurrence(DAY + 60.0, 60.0), DAY + 60.0);
+        assert_eq!(daily.next_occurrence(DAY + 60.0, 0.0, 60.0), DAY + 60.0);
 
         let scenario = Timetable::default();
-        assert_eq!(scenario.delay(500.0, 480.0), 20.0);
-        assert_eq!(scenario.next_occurrence(100.0, 480.0), 480.0);
+        assert_eq!(scenario.delay(500.0, 0.0, 480.0), 20.0);
+        assert_eq!(scenario.next_occurrence(100.0, 0.0, 480.0), 480.0);
+    }
+
+    #[test]
+    fn daily_times_use_the_start_of_day() {
+        let daily = Timetable {
+            kind: TimetableKind::Daily,
+            ..Timetable::default()
+        };
+        // The run starts at 07:00 — the 07:05 slot is due 300 s in, on time.
+        let start = 7.0 * 3600.0;
+        assert_eq!(daily.delay(300.0, start, start + 300.0), 0.0);
+        assert_eq!(daily.next_occurrence(0.0, start, start + 300.0), 300.0);
+        // A 06:55 slot seen from a 07:00 start lies almost a full day ahead.
+        assert_eq!(
+            daily.next_occurrence(0.0, start, start - 300.0),
+            DAY - 300.0
+        );
     }
 }

@@ -426,6 +426,7 @@ A scenario is a RON file of events — triggers plus actions:
 ```ron
 (
     name: "Regionalbahn nach Musterstadt",
+    start: (year: 2026, month: 8, day: 15, hour: 6, minute: 45, utc_offset: 2.0),
     player_train: 0,
     events: [
         (name: "abfahrt", trigger: Time(5.0),
@@ -443,7 +444,9 @@ limit violations and traction energy; the HUD shows messages and the score. A sc
 gets its timetable by reference (`timetable: Some("<mod>:<name>")`, a `timetable/*.ron`
 in the mod) — without one, only the scenario's own points count. A timetable is either
 `kind: Scenario` (times from the start of the run, runs once) or `kind: Daily` (times as
-seconds since midnight, wrapping around every 24 h).
+seconds since midnight, wrapping around every 24 h). `start:` sets date and local time
+of the run (default: midsummer noon) — it anchors `Daily` timetables and puts the sun
+and moon where they belong for the georeferenced line, season included.
 
 ## Contributing
 

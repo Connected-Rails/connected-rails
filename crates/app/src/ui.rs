@@ -323,12 +323,18 @@ pub fn update_hud(
     let cab = &sim.controls[player.0];
 
     let mut lines = Vec::new();
+    let clock = sim.clock().rem_euclid(sim_core::timetable::DAY);
     lines.push(t!(
         "hud-speed",
         speed = format!("{:6.1}", train.speed_kmh()),
         limit = format!("{:5.0}", loco.pos.speed_limit(&sim.net)),
         distance = format!("{:8.0}", runtime.odometer),
-        time = format!("{:6.0}", sim.time),
+        time = format!(
+            "{:02}:{:02}:{:02}",
+            (clock / 3600.0) as u32,
+            (clock / 60.0) as u32 % 60,
+            clock as u32 % 60
+        ),
     ));
     lines.push(t!(
         "hud-brakes",

@@ -90,12 +90,59 @@ fn yes() -> bool {
     true
 }
 
+/// Wall-clock date and time at the start of the run (`sim.time == 0`), plan ch. 14.
+///
+/// Drives the sun and moon and anchors `Daily` timetables; `Scenario` timetables
+/// and event triggers stay relative to the start of the run.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct StartTime {
+    pub year: i32,
+    /// 1–12.
+    pub month: u32,
+    /// 1–31.
+    pub day: u32,
+    /// 0–23, local time.
+    pub hour: u32,
+    pub minute: u32,
+    /// Local clock ahead of UT [h] — Germany: 1 in winter, 2 in summer.
+    pub utc_offset: f64,
+}
+
+impl Default for StartTime {
+    /// Midsummer noon — matches the fixed lighting the simulator had before.
+    fn default() -> Self {
+        Self {
+            year: 2026,
+            month: 6,
+            day: 21,
+            hour: 12,
+            minute: 0,
+            utc_offset: 2.0,
+        }
+    }
+}
+
+impl StartTime {
+    /// Seconds since local midnight.
+    pub fn seconds(&self) -> f64 {
+        f64::from(self.hour * 3600 + self.minute * 60)
+    }
+
+    /// Seconds since **UT** midnight of the start day — what astronomy wants.
+    pub fn seconds_ut(&self) -> f64 {
+        self.seconds() - self.utc_offset * 3600.0
+    }
+}
+
 /// A complete scenario.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scenario {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Wall-clock date and time the run begins at.
+    #[serde(default)]
+    pub start: StartTime,
     /// The train the player drives.
     #[serde(default)]
     pub player_train: usize,

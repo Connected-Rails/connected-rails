@@ -1,0 +1,15 @@
+// A scenery object with a track reference: the glTF plus the pose its author
+// meant. The route editor's object tool drops it at exactly this lateral
+// offset, rotation and height; every placed instance stores concrete values
+// and can deviate (lines/*.ron, `objects:`).
+//
+// lateral_offset: metres, positive = right of increasing arc length.
+// yaw_deg: rotation about up, clockwise from above; 0 = front along the track.
+// height: metres above the railhead.
+(
+    name: "Mast",
+    model: "example/assets/sig_mast.gltf",
+    lateral_offset: -3.5,
+    yaw_deg: 0.0,
+    height: 0.0,
+)

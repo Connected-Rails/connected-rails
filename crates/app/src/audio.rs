@@ -332,7 +332,13 @@ pub fn update_audio(
             if bank.table(&vehicle.spec).is_empty() {
                 continue;
             }
-            let state = SoundState::sample(vehicle, &cab, alert, previous.get(&(t, v)), dt);
+            let mut state = SoundState::sample(vehicle, &cab, alert, previous.get(&(t, v)), dt);
+            // The sampler deliberately sees no track — the roughness of the
+            // type under the vehicle is filled in here, where the net lives.
+            state.roughness = sim
+                .net
+                .track_type_at(vehicle.pos.edge, vehicle.pos.s)
+                .roughness;
             states.insert((t, v), state);
         }
     }

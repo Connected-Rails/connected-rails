@@ -176,6 +176,7 @@ pub fn import_line(
             grade: shift_profile(&fitted.grade, offset, len),
             cant: shift_profile(&fitted.cant, offset, len),
             speed: shift_profile(&fitted.speed, offset, len),
+            track_type: vec![],
         });
         offset += len;
     }
@@ -190,6 +191,7 @@ pub fn import_line(
         nodes,
         edges,
         devices: Vec::new(),
+        objects: Vec::new(),
         sections: Vec::new(),
         signals: Vec::new(),
         routes: Vec::new(),

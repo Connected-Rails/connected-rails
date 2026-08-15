@@ -6,13 +6,14 @@
 //! that leaves the alignment tangentially and hits the clicked point, so the
 //! drawn track is G1-continuous by construction.
 
-use crate::{Focus, Line, Origin};
+use crate::{Focus, Ghost, Line, Origin, TrackObjects};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use content::route::{DeviceSource, EdgeSource, EdgeStart, GeoPoint, NodeSource};
+use content::LineSource;
+use content::route::{DeviceSource, EdgeSource, EdgeStart, GeoPoint, NodeSource, ObjectSource};
 use glam::{DVec2, DVec3};
 use i18n::t;
-use track_model::{DeviceKind, Facing, Segment, TrackNetwork};
+use track_model::{DeviceKind, Facing, Segment, TrackNetwork, TrackPose};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
 /// Active tool of the viewport.
@@ -22,6 +23,8 @@ pub enum Tool {
     Select,
     DrawTrack,
     PlaceDevice,
+    PlaceSwitch,
+    PlaceObject,
 }
 
 /// What the Select tool holds.
@@ -31,6 +34,7 @@ pub enum Selection {
     None,
     Edge(usize),
     Device(usize),
+    Object(usize),
 }
 
 /// Tool state, selection and what the UI pass leaves behind for the input
@@ -40,8 +44,17 @@ pub struct EditorState {
     pub tool: Tool,
     pub selection: Selection,
     pub drawing: Option<Drawing>,
+    /// Active support-point drag of the Select tool: `(edge, point index)`.
+    pub drag: Option<(usize, usize)>,
     /// Kind the Place-device tool stamps.
     pub device_kind: Option<DeviceKind>,
+    /// Object (`"<mod>:<name>"`) the Place-object tool stamps.
+    pub object: Option<String>,
+    /// Repeat spacing of the object panel [m]; `None` = the 65 m of a
+    /// standard catenary span.
+    pub repeat_interval: Option<f64>,
+    /// Repeat end position [m along the edge]; `None` = the edge's end.
+    pub repeat_until: Option<f64>,
     /// Free viewport in logical pixels. The panels dock into a hand-built
     /// background `Ui`, which egui's area hit test never sees — so "is the
     /// mouse over UI?" is answered against this rect, not by egui.
@@ -76,6 +89,8 @@ pub struct Drawing {
     /// Compass heading of the first segment [deg]; `None` until the second click.
     pub heading_deg: Option<f64>,
     pub segments: Vec<Segment>,
+    /// The edge this drawing branches off (switch tool): `(edge, s)`.
+    pub branch_of: Option<(usize, f64)>,
     /// End of the drawn alignment in the frame's EN plane.
     end: DVec2,
     /// Math heading at the end [rad], 0 = east, counter-clockwise.
@@ -94,9 +109,26 @@ impl Drawing {
             },
             heading_deg: None,
             segments: Vec::new(),
+            branch_of: None,
             end: DVec2::ZERO,
             end_heading: 0.0,
         }
+    }
+
+    /// Branch drawing for the switch tool: starts on the track at `pose`
+    /// (`edge`, `s`) with the track's own heading fixed, so the branch leaves
+    /// tangentially — a turnout, not a crossing.
+    ///
+    /// ponytail: facing turnouts only — the branch runs with the clicked
+    /// track's direction. A trailing tool draws against the root's heading.
+    pub fn branch_at(pose: &TrackPose, geoid_offset: f64, edge: usize, s: f64) -> Self {
+        let mut drawing = Self::start_at(pose.pos, geoid_offset);
+        let tangent = drawing.frame.dir_to_local(pose.tangent);
+        let heading = tangent.y.atan2(tangent.x);
+        drawing.heading_deg = Some((90.0 - heading.to_degrees()).rem_euclid(360.0));
+        drawing.end_heading = heading;
+        drawing.branch_of = Some((edge, s));
+        drawing
     }
 
     fn local(&self, p: EcefPos) -> DVec2 {
@@ -280,9 +312,189 @@ pub fn device_pos(net: &TrackNetwork, device: &DeviceSource) -> Option<EcefPos> 
     Some(EcefPos(pose.pos.0 + right * device.lateral_offset))
 }
 
+/// The positions a repeat run stamps: every `interval` metres from `start`
+/// (exclusive) to `end` (inclusive, within float noise).
+///
+/// ponytail: repetition stays on one edge — a row that runs across joints and
+/// switches needs path-following, and the next edge is one click away.
+pub fn repeat_positions(start: f64, interval: f64, end: f64) -> Vec<f64> {
+    if interval < 1.0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut s = start + interval;
+    while s <= end + 1e-9 {
+        out.push(s);
+        s += interval;
+    }
+    out
+}
+
+/// Stamps copies of object `index` along its edge, every `interval` metres up
+/// to `until` (clamped to the edge). Copies carry the instance's own offset,
+/// rotation and height — the row repeats what stands, not the registry
+/// default. Returns how many were placed; one undo step covers them all.
+pub fn repeat_object(line: &mut Line, index: usize, interval: f64, until: f64) -> usize {
+    let Some(template) = line.source.objects.get(index).cloned() else {
+        return 0;
+    };
+    let Some(edge) = line.net.edges().get(template.edge as usize) else {
+        return 0;
+    };
+    let positions = repeat_positions(template.s, interval, until.min(edge.length()));
+    let placed = positions.len();
+    for s in positions {
+        line.source.objects.push(ObjectSource {
+            s,
+            ..template.clone()
+        });
+    }
+    placed
+}
+
+/// World position of a scenery object, offset and height included.
+pub fn object_pos(net: &TrackNetwork, object: &ObjectSource) -> Option<EcefPos> {
+    let edge = net.edges().get(object.edge as usize)?;
+    let pose = edge.eval(object.s.clamp(0.0, edge.length()));
+    let right = pose.tangent.cross(pose.up).normalize_or_zero();
+    Some(EcefPos(
+        pose.pos.0 + right * object.lateral_offset + pose.up * object.height,
+    ))
+}
+
 /// How close a click has to come, scaled with the view height.
 fn pick_radius(focus: &Focus) -> f64 {
     (focus.height * 0.02).max(8.0)
+}
+
+/// World position of a source node — where its first edge starts or ends.
+pub fn node_pos(source: &LineSource, net: &TrackNetwork, node: u32) -> Option<EcefPos> {
+    source.edges.iter().enumerate().find_map(|(i, e)| {
+        let edge = net.edges().get(i)?;
+        if e.from == node {
+            Some(edge.eval(0.0).pos)
+        } else if e.to == node {
+            Some(edge.end_pose().pos)
+        } else {
+            None
+        }
+    })
+}
+
+/// Snaps a picked point onto the nearest ghost boundary within the pick
+/// radius — hitting the neighbour's agreed coordinates is what the ghost is
+/// loaded for. Horizontal distance only: the map plane and the ghost's rails
+/// need not share a height.
+pub fn snap_ghost(p: EcefPos, ghost: &Ghost, focus: &Focus) -> EcefPos {
+    let frame = EnuFrame::at(p);
+    ghost
+        .boundaries
+        .iter()
+        .map(|(_, b)| {
+            let local = frame.to_local(*b);
+            (*b, DVec2::new(local.x, local.y).length())
+        })
+        .filter(|(_, d)| *d <= pick_radius(focus))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(b, _)| b)
+        .unwrap_or(p)
+}
+
+/// Support points of edge `i` — the segment boundaries, as world positions.
+///
+/// ponytail: empty for edges with transition curves (`dk ≠ 0`) — the
+/// arc-to-point refit would flatten them; re-fitting clothoids around a moved
+/// point is an alignment-aware pass of its own.
+pub fn support_points(line: &Line, i: usize) -> Vec<EcefPos> {
+    let Some(edge) = line.net.edges().get(i) else {
+        return Vec::new();
+    };
+    if edge.segments.iter().any(|g| g.dk != 0.0) {
+        return Vec::new();
+    }
+    let mut s = 0.0;
+    let mut points = vec![edge.eval(0.0).pos];
+    for segment in &edge.segments {
+        s += segment.len;
+        points.push(edge.eval(s).pos);
+    }
+    points
+}
+
+/// Index of the first draggable support point: the start is only free on a
+/// geo-anchored edge — a `Continue` start belongs to the previous edge.
+pub fn first_draggable(source: &LineSource, edge: usize) -> usize {
+    match source.edges.get(edge).map(|e| e.start) {
+        Some(EdgeStart::Geo { .. }) => 0,
+        _ => 1,
+    }
+}
+
+/// Handle under the cursor: index into the selected edge's support points.
+fn pick_support_point(line: &Line, edge: usize, p: EcefPos, radius: f64) -> Option<usize> {
+    support_points(line, edge)
+        .iter()
+        .enumerate()
+        .skip(first_draggable(&line.source, edge))
+        .map(|(k, q)| (k, q.distance(p)))
+        .filter(|(_, d)| *d <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(k, _)| k)
+}
+
+/// Re-fits a support-point chain: one tangent-continuous arc or straight per
+/// target, like the draw tool. `None` when a target falls behind the heading.
+fn refit_chain(heading0: f64, targets: &[DVec2]) -> Option<Vec<Segment>> {
+    let mut position = DVec2::ZERO;
+    let mut heading = heading0;
+    let mut segments = Vec::with_capacity(targets.len());
+    for target in targets {
+        let (segment, next) = segment_to(position, heading, *target)?;
+        segments.push(segment);
+        position = *target;
+        heading = next;
+    }
+    Some(segments)
+}
+
+/// Moves support point `point` of `edge` to `p` and refits the whole chain
+/// arc-to-point through the unchanged points — exactly what redrawing the
+/// edge through the same clicks would produce. A target the chain cannot
+/// reach freezes the drag instead of bending the track somewhere else.
+fn drag_support_point(line: &mut Line, edge: usize, point: usize, p: EcefPos) {
+    let mut points = support_points(line, edge);
+    if point >= points.len() {
+        return;
+    }
+    points[point] = p;
+    let heading0 = line.net.edges()[edge].heading0;
+    // The frame moves with the anchor; over the few km of one edge the frames
+    // are parallel enough (same tolerance the draw tool works in).
+    let frame = EnuFrame::at(points[0]);
+    let targets: Vec<DVec2> = points[1..]
+        .iter()
+        .map(|q| {
+            let local = frame.to_local(*q);
+            DVec2::new(local.x, local.y)
+        })
+        .collect();
+    let Some(segments) = refit_chain(heading0, &targets) else {
+        return;
+    };
+    let Some(source) = line.source.edges.get_mut(edge) else {
+        return;
+    };
+    source.segments = segments;
+    if point == 0
+        && let EdgeStart::Geo {
+            point: geo_point, ..
+        } = &mut source.start
+    {
+        let (lat, lon, _) = geo::from_ecef(p);
+        geo_point.lat = lat.to_degrees();
+        geo_point.lon = lon.to_degrees();
+        // Height stays — the map plane knows nothing about the railhead.
+    }
 }
 
 /// Removes whatever is selected — the Delete key and the Edit menu share it.
@@ -290,18 +502,54 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
     match std::mem::take(&mut state.selection) {
         Selection::Edge(i) => line.source.remove_edge(i),
         Selection::Device(i) => line.source.remove_device(i),
+        // Nothing references objects by index — a plain remove suffices.
+        Selection::Object(i) => {
+            if i < line.source.objects.len() {
+                line.source.objects.remove(i);
+            }
+        }
         Selection::None => {}
     }
 }
 
-/// Turns the finished drawing into two buffer nodes and one edge.
-pub fn finish_drawing(line: &mut Line, state: &mut EditorState) {
+/// Turns the finished drawing into track: a free drawing becomes two buffer
+/// nodes and one edge; a branch drawing (switch tool) splits its base edge and
+/// wires the joint into a turnout whose diverging leg is the drawing. `false`
+/// only when the split failed — the drawing is gone either way.
+pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
     let Some(drawing) = state.drawing.take() else {
-        return;
+        return true;
     };
     let (Some(heading_deg), false) = (drawing.heading_deg, drawing.segments.is_empty()) else {
-        return;
+        return true;
     };
+    if let Some((base, s)) = drawing.branch_of {
+        let Some((joint, straight)) = line.source.split_edge(base, s) else {
+            return false;
+        };
+        let buffer = line.source.nodes.len() as u32;
+        line.source.nodes.push(NodeSource::Buffer);
+        let branch = line.source.edges.len();
+        line.source.edges.push(EdgeSource {
+            from: joint,
+            to: buffer,
+            // Continue = end pose of the first half = the cut, tangentially.
+            start: EdgeStart::Continue { edge: base as u32 },
+            segments: drawing.segments,
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+        });
+        line.source.nodes[joint as usize] = NodeSource::Switch {
+            root: (base as u32, true),
+            straight: (straight, false),
+            diverging: (branch as u32, false),
+            throw_time: 6.0,
+        };
+        state.selection = Selection::Edge(branch);
+        return true;
+    }
     let node = line.source.nodes.len() as u32;
     line.source.nodes.push(NodeSource::Buffer);
     line.source.nodes.push(NodeSource::Buffer);
@@ -316,11 +564,13 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) {
         grade: vec![],
         cant: vec![],
         speed: vec![],
+        track_type: vec![],
     });
     state.selection = Selection::Edge(line.source.edges.len() - 1);
+    true
 }
 
-/// Mouse and keyboard input of the three tools.
+/// Mouse and keyboard input of the tools.
 #[allow(clippy::too_many_arguments)]
 pub fn tool_input(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -329,6 +579,8 @@ pub fn tool_input(
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     origin: Res<Origin>,
     focus: Res<Focus>,
+    ghost: Res<Ghost>,
+    objects: Res<TrackObjects>,
     mut state: ResMut<EditorState>,
     mut line: ResMut<Line>,
     mut overlay: ResMut<crate::overlay::Overlay>,
@@ -339,9 +591,33 @@ pub fn tool_input(
         Selection::Device(i) if i >= line.source.devices.len() => {
             state.selection = Selection::None;
         }
+        Selection::Object(i) if i >= line.source.objects.len() => {
+            state.selection = Selection::None;
+        }
         _ => {}
     }
     if state.typing {
+        return;
+    }
+
+    // Ground point under the cursor, while it is over the free viewport.
+    let picked = windows
+        .single()
+        .ok()
+        .and_then(|w| w.cursor_position())
+        .filter(|c| state.viewport.contains(*c))
+        .and_then(|c| {
+            let (camera, camera_transform) = camera.single().ok()?;
+            pick_ground(camera, camera_transform, c, &origin.0, &focus)
+        });
+
+    // An active support-point drag owns the mouse until the button goes up.
+    if let Some((edge, point)) = state.drag {
+        if !buttons.pressed(MouseButton::Left) {
+            state.drag = None;
+        } else if let Some(p) = picked {
+            drag_support_point(&mut line, edge, point, snap_ghost(p, &ghost, &focus));
+        }
         return;
     }
 
@@ -351,14 +627,18 @@ pub fn tool_input(
     if keys.just_pressed(KeyCode::Delete) {
         delete_selection(&mut line, &mut state);
     }
-    if keys.just_pressed(KeyCode::Enter) || buttons.just_pressed(MouseButton::Right) {
-        finish_drawing(&mut line, &mut state);
+    if (keys.just_pressed(KeyCode::Enter) || buttons.just_pressed(MouseButton::Right))
+        && !finish_drawing(&mut line, &mut state)
+    {
+        overlay.status = t!("status-split-failed");
     }
     // Tool switching from the keyboard, as every map editor has it.
     for (key, tool) in [
         (KeyCode::Digit1, Tool::Select),
         (KeyCode::Digit2, Tool::DrawTrack),
         (KeyCode::Digit3, Tool::PlaceDevice),
+        (KeyCode::Digit4, Tool::PlaceSwitch),
+        (KeyCode::Digit5, Tool::PlaceObject),
     ] {
         if keys.just_pressed(key) && state.tool != tool {
             state.tool = tool;
@@ -369,24 +649,34 @@ pub fn tool_input(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    let Some(cursor) = windows.single().ok().and_then(|w| w.cursor_position()) else {
-        return;
-    };
-    if !state.viewport.contains(cursor) {
-        return;
-    }
-    let Ok((camera, camera_transform)) = camera.single() else {
-        return;
-    };
-    let Some(p) = pick_ground(camera, camera_transform, cursor, &origin.0, &focus) else {
+    let Some(p) = picked else {
         return;
     };
     state.map_used = true;
 
     match state.tool {
-        Tool::DrawTrack => match &mut state.drawing {
-            None => state.drawing = Some(Drawing::start_at(p, line.source.geoid_offset)),
-            Some(drawing) => drawing.click(p),
+        Tool::DrawTrack => {
+            let p = snap_ghost(p, &ghost, &focus);
+            match &mut state.drawing {
+                None => state.drawing = Some(Drawing::start_at(p, line.source.geoid_offset)),
+                Some(drawing) => drawing.click(p),
+            }
+        }
+        Tool::PlaceSwitch => match &mut state.drawing {
+            Some(drawing) => drawing.click(snap_ghost(p, &ghost, &focus)),
+            None => match nearest_on_network(&line.net, p) {
+                Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                    let length = line.net.edges()[edge].length();
+                    if s < 1.0 || s > length - 1.0 {
+                        overlay.status = t!("status-split-at-end");
+                    } else {
+                        let pose = line.net.edges()[edge].eval(s);
+                        state.drawing =
+                            Some(Drawing::branch_at(&pose, line.source.geoid_offset, edge, s));
+                    }
+                }
+                _ => overlay.status = t!("status-no-track-hit"),
+            },
         },
         Tool::PlaceDevice => {
             match nearest_on_network(&line.net, p) {
@@ -405,8 +695,43 @@ pub fn tool_input(
                 _ => overlay.status = t!("status-no-track-hit"),
             };
         }
+        Tool::PlaceObject => {
+            // The chosen object, or the first installed one — its defaults
+            // are what "placed relative to the track" means.
+            let name = state
+                .object
+                .clone()
+                .or_else(|| objects.map.keys().next().cloned());
+            let Some(name) = name else {
+                overlay.status = t!("status-no-objects");
+                return;
+            };
+            state.object = Some(name.clone());
+            match nearest_on_network(&line.net, p) {
+                Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                    let spec = objects.map.get(&name);
+                    line.source.objects.push(ObjectSource {
+                        object: name,
+                        edge: edge as u32,
+                        s,
+                        lateral_offset: spec.map_or(0.0, |o| o.lateral_offset),
+                        yaw_deg: spec.map_or(0.0, |o| o.yaw_deg),
+                        height: spec.map_or(0.0, |o| o.height),
+                    });
+                    state.selection = Selection::Object(line.source.objects.len() - 1);
+                }
+                _ => overlay.status = t!("status-no-track-hit"),
+            }
+        }
         Tool::Select => {
             let radius = pick_radius(&focus);
+            // A handle of the selected edge outranks reselection.
+            if let Selection::Edge(i) = state.selection
+                && let Some(k) = pick_support_point(&line, i, p, radius)
+            {
+                state.drag = Some((i, k));
+                return;
+            }
             let device = line
                 .source
                 .devices
@@ -415,9 +740,26 @@ pub fn tool_input(
                 .filter_map(|(i, d)| Some((i, device_pos(&line.net, d)?.distance(p))))
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .filter(|(_, d)| *d <= radius);
-            state.selection = match device {
-                Some((i, _)) => Selection::Device(i),
-                None => match nearest_on_network(&line.net, p) {
+            let object = line
+                .source
+                .objects
+                .iter()
+                .enumerate()
+                .filter_map(|(i, o)| Some((i, object_pos(&line.net, o)?.distance(p))))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .filter(|(_, d)| *d <= radius);
+            // Equipment first, furniture second, the track last.
+            state.selection = match (device, object) {
+                (Some((i, d)), Some((j, o))) => {
+                    if d <= o {
+                        Selection::Device(i)
+                    } else {
+                        Selection::Object(j)
+                    }
+                }
+                (Some((i, _)), None) => Selection::Device(i),
+                (None, Some((j, _))) => Selection::Object(j),
+                (None, None) => match nearest_on_network(&line.net, p) {
                     Some((i, _, d)) if d <= radius => Selection::Edge(i),
                     _ => Selection::None,
                 },
@@ -426,10 +768,29 @@ pub fn tool_input(
     }
 }
 
-/// Selection highlight and drawing preview.
+/// Circle gizmo lying flat on the ground at `p`.
+fn ground_circle(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    p: EcefPos,
+    radius: f32,
+    color: Color,
+) {
+    let up = origin.dir_to_render(EnuFrame::at(p).up);
+    let rotation = Quat::from_rotation_arc(Vec3::Z, up);
+    gizmos.circle(
+        Isometry3d::new(origin.to_render(p) + up, rotation),
+        radius,
+        color,
+    );
+}
+
+/// Selection highlight, support-point handles, boundaries and drawing preview.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_gizmos(
     state: Res<EditorState>,
     line: Res<Line>,
+    ghost: Res<Ghost>,
     origin: Res<Origin>,
     focus: Res<Focus>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -437,6 +798,30 @@ pub fn draw_gizmos(
     mut gizmos: Gizmos,
 ) {
     let accent = Color::srgb(0.36, 0.61, 0.96);
+
+    // Boundary markers: own in warn yellow, the ghost module's in its grey.
+    let boundary_radius = (focus.height * 0.015).max(5.0) as f32;
+    for boundary in &line.source.boundaries {
+        if let Some(p) = node_pos(&line.source, &line.net, boundary.node) {
+            ground_circle(
+                &mut gizmos,
+                &origin.0,
+                p,
+                boundary_radius,
+                Color::srgb(0.89, 0.71, 0.30),
+            );
+        }
+    }
+    for (_, p) in &ghost.boundaries {
+        ground_circle(
+            &mut gizmos,
+            &origin.0,
+            *p,
+            boundary_radius,
+            Color::srgb(0.55, 0.57, 0.62),
+        );
+    }
+
     match state.selection {
         Selection::Edge(i) => {
             if let Some(edge) = line.net.edges().get(i) {
@@ -448,19 +833,31 @@ pub fn draw_gizmos(
                 });
                 gizmos.linestrip(points, accent);
             }
+            // Draggable support points as handles.
+            if state.tool == Tool::Select {
+                let handle_radius = (focus.height * 0.008).max(2.5) as f32;
+                for p in support_points(&line, i)
+                    .iter()
+                    .skip(first_draggable(&line.source, i))
+                {
+                    ground_circle(&mut gizmos, &origin.0, *p, handle_radius, accent);
+                }
+            }
         }
         Selection::Device(i) => {
             if let Some(device) = line.source.devices.get(i)
                 && let Some(p) = device_pos(&line.net, device)
             {
-                let up = origin.0.dir_to_render(EnuFrame::at(p).up);
-                let rotation = Quat::from_rotation_arc(Vec3::Z, up);
                 let radius = (focus.height * 0.012).max(4.0) as f32;
-                gizmos.circle(
-                    Isometry3d::new(origin.0.to_render(p) + up, rotation),
-                    radius,
-                    accent,
-                );
+                ground_circle(&mut gizmos, &origin.0, p, radius, accent);
+            }
+        }
+        Selection::Object(i) => {
+            if let Some(object) = line.source.objects.get(i)
+                && let Some(p) = object_pos(&line.net, object)
+            {
+                let radius = (focus.height * 0.012).max(4.0) as f32;
+                ground_circle(&mut gizmos, &origin.0, p, radius, accent);
             }
         }
         Selection::None => {}
@@ -531,6 +928,7 @@ mod tests {
             nodes: vec![],
             edges: vec![],
             devices: vec![],
+            objects: vec![],
             sections: vec![],
             signals: vec![],
             routes: vec![],
@@ -548,8 +946,9 @@ mod tests {
             dirty: false,
             needs_rebuild: false,
             recenter: false,
+            issues: Vec::new(),
         };
-        finish_drawing(&mut doc, &mut state);
+        assert!(finish_drawing(&mut doc, &mut state));
         line = doc.source;
         let compiled = line.compile().expect("compiles");
         let end = compiled.net.edges()[0].end_pose().pos;
@@ -558,5 +957,148 @@ mod tests {
             "end missed the click by {} m",
             end.distance(bend)
         );
+    }
+
+    /// The switch tool splits the clicked edge and wires the drawn branch as
+    /// the diverging leg — the result compiles and forks at the cut.
+    #[test]
+    fn a_finished_branch_becomes_a_turnout() {
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let mut doc = Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            recenter: false,
+            issues: Vec::new(),
+        };
+
+        // Branch off edge 0 at km 1.5, curving away to the left.
+        let pose = doc.net.edges()[0].eval(1500.0);
+        let mut drawing = Drawing::branch_at(&pose, doc.source.geoid_offset, 0, 1500.0);
+        let frame = EnuFrame::at(pose.pos);
+        let tangent = frame.dir_to_local(pose.tangent);
+        let left = DVec3::new(-tangent.y, tangent.x, 0.0);
+        drawing.click(frame.to_ecef(tangent * 400.0 + left * 60.0));
+        assert_eq!(drawing.segments.len(), 1);
+        let mut state = EditorState {
+            drawing: Some(drawing),
+            ..Default::default()
+        };
+        assert!(finish_drawing(&mut doc, &mut state));
+
+        let compiled = doc.source.compile().expect("turnout compiles");
+        // Split into first half, curve, climb, second half, branch.
+        assert_eq!(doc.source.edges.len(), 5);
+        let switch = doc
+            .source
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                NodeSource::Switch {
+                    root,
+                    straight,
+                    diverging,
+                    ..
+                } => Some((*root, *straight, *diverging)),
+                _ => None,
+            })
+            .expect("a switch node exists");
+        assert_eq!(switch, ((0, true), (3, false), (4, false)));
+        // Both legs leave the cut tangentially.
+        let cut = compiled.net.edges()[0].end_pose();
+        for leg in [3, 4] {
+            let start = compiled.net.edges()[leg].eval(0.0);
+            assert!(start.pos.distance(cut.pos) < 0.01, "leg {leg} detached");
+            assert!(
+                start.tangent.dot(cut.tangent) > 0.999_999,
+                "leg {leg} kinks"
+            );
+        }
+    }
+
+    /// The repeat function stamps a row of copies along the edge, carrying
+    /// the instance's own offset and rotation, and stops where it was told.
+    #[test]
+    fn repeating_an_object_stamps_a_row() {
+        let mut source = content::musterbahn();
+        source.objects.push(ObjectSource {
+            object: "ex:mast".into(),
+            edge: 0,
+            s: 100.0,
+            lateral_offset: -3.5,
+            yaw_deg: 15.0,
+            height: 0.5,
+        });
+        let net = source.compile().unwrap().net;
+        let mut doc = Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            recenter: false,
+            issues: Vec::new(),
+        };
+
+        let placed = repeat_object(&mut doc, 0, 65.0, 500.0);
+        assert_eq!(placed, 6, "165, 230, 295, 360, 425, 490");
+        assert_eq!(doc.source.objects.len(), 7);
+        assert!((doc.source.objects[1].s - 165.0).abs() < 1e-9);
+        let last = doc.source.objects.last().unwrap();
+        assert!((last.s - 490.0).abs() < 1e-9);
+        assert_eq!(last.lateral_offset, -3.5, "the instance's own offset");
+        assert_eq!(last.yaw_deg, 15.0);
+        assert_eq!(last.edge, 0);
+        doc.source.compile().expect("still compiles");
+
+        // The row is clamped to the edge (3000 m), and a degenerate spacing
+        // places nothing instead of looping forever.
+        assert_eq!(repeat_object(&mut doc, 0, 1000.0, 99_999.0), 2);
+        assert_eq!(repeat_object(&mut doc, 0, 0.0, 500.0), 0);
+    }
+
+    /// Dragging a support point moves exactly that point; the refit chain
+    /// still passes through the untouched ones.
+    #[test]
+    fn dragging_a_support_point_refits_the_chain() {
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let mut doc = Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            recenter: false,
+            issues: Vec::new(),
+        };
+
+        // Edge 2 (straight, geo after a re-anchor? — it is `Continue`, so its
+        // interior/end points drag, its start does not).
+        assert_eq!(first_draggable(&doc.source, 2), 1);
+        let points = support_points(&doc, 2);
+        assert_eq!(points.len(), 2, "one straight segment, two support points");
+
+        // Pull the end 200 m to the left of the old tangent.
+        let end = doc.net.edges()[2].end_pose();
+        let frame = EnuFrame::at(end.pos);
+        let tangent = frame.dir_to_local(end.tangent);
+        let target = frame.to_ecef(DVec3::new(-tangent.y, tangent.x, 0.0) * 200.0);
+        drag_support_point(&mut doc, 2, 1, target);
+
+        let compiled = doc.source.compile().expect("still compiles");
+        let moved = compiled.net.edges()[2].end_pose().pos;
+        assert!(
+            moved.distance(target) < 1.0,
+            "end missed the drag target by {} m",
+            moved.distance(target)
+        );
+        // The start stayed where the curve hands over.
+        let start = compiled.net.edges()[2].eval(0.0).pos;
+        let handover = compiled.net.edges()[1].end_pose().pos;
+        assert!(start.distance(handover) < 0.01);
     }
 }

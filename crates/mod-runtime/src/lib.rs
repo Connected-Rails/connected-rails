@@ -15,6 +15,8 @@
 //!          /timetable/*.ron   Timetable (referenced by a scenario for stop scoring)
 //!          /signals/*.ron     SignalType (state machine, optional script hook)
 //!          /signal_models/*.ron SignalModel (glTF parts on mount points, lamp bindings)
+//!          /track_types/*.ron TrackType (texture, roughness, superstructure speed, LZB)
+//!          /objects/*.ron     TrackObject (3D object with its default pose relative to the track)
 //!          /scripts/*.lua     behaviour scripts
 //!          /assets/…          models, textures, sounds (asset source `mods://`)
 //! ```
@@ -36,6 +38,7 @@ use sim_core::timetable::Timetable;
 use sim_core::train::VehicleSpec;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use track_model::{TrackNetwork, TrackObject, TrackType};
 
 pub use script::{ModRuntime, Scripts};
 
@@ -115,6 +118,8 @@ pub struct Mods {
     pub timetables: BTreeMap<String, Timetable>,
     pub signal_types: BTreeMap<String, SignalType>,
     pub signal_models: BTreeMap<String, SignalModel>,
+    pub track_types: BTreeMap<String, TrackType>,
+    pub objects: BTreeMap<String, TrackObject>,
     /// Lua sources, keyed `"<mod>:<file stem>"`.
     pub scripts: BTreeMap<String, String>,
     /// Everything that went wrong — displayed, never fatal (plan 19.3).
@@ -230,6 +235,18 @@ impl Mods {
             &mut self.signal_models,
             &mut self.warnings,
         );
+        read_ron(
+            &dir.join("track_types"),
+            id,
+            &mut self.track_types,
+            &mut self.warnings,
+        );
+        read_ron(
+            &dir.join("objects"),
+            id,
+            &mut self.objects,
+            &mut self.warnings,
+        );
         for path in files(&dir.join("scripts"), "lua") {
             insert(path, id, &mut self.scripts, &mut self.warnings, |t| {
                 Ok(t.to_string())
@@ -281,6 +298,13 @@ impl Mods {
             }
         }
         warnings
+    }
+
+    /// Resolves the track type names of a compiled network against the loaded
+    /// `track_types/*.ron` and caps every edge's speed profile with the
+    /// superstructure limit (see `TrackNetwork::apply_track_types`).
+    pub fn apply_track_types(&self, net: &mut TrackNetwork) -> Vec<String> {
+        net.apply_track_types(|name| self.track_types.get(name).cloned())
     }
 
     /// Name of the 3D model of signal `index`: the placement's override wins over the
@@ -435,6 +459,15 @@ mod tests {
         assert!(mods.manifests.iter().any(|m| m.id == "example"));
         assert!(mods.vehicles.contains_key("example:br101_afb"));
         assert!(mods.signal_types.contains_key("example:ks_main"));
+        assert!(mods.objects.contains_key("example:mast"));
+        // The example line places that object; the check knows the registry.
+        let line = &mods.lines["example:beispielstrecke"];
+        assert_eq!(line.objects.len(), 2);
+        assert!(
+            line.check(&mods.track_types, &mods.objects).is_empty(),
+            "{:?}",
+            line.check(&mods.track_types, &mods.objects)
+        );
         assert!(mods.scripts.contains_key("example:afb"));
         // The scenario references its timetable, and the timetable is loaded.
         let scenario = &mods.scenarios["example:probefahrt"];
@@ -442,6 +475,33 @@ mod tests {
         let timetable = &mods.timetables[name];
         assert!(!timetable.stops.is_empty());
         assert!(mods.compositions.contains_key("example:gesamtstrecke"));
+    }
+
+    /// The example line's track types resolve against `track_types/*.ron`:
+    /// the specs replace the placeholders and the superstructure limit caps
+    /// the speed profile.
+    #[test]
+    fn track_types_resolve_and_cap() {
+        let mods = example_mods();
+        assert!(mods.track_types.contains_key("example:hauptbahn"));
+        let line = &mods.lines["example:beispielstrecke"];
+        let mut net = line.compile().expect("compiles").net;
+        let warnings = mods.apply_track_types(&mut net);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let edge = track_model::EdgeId(0);
+        assert_eq!(net.track_type_at(edge, 1000.0).roughness, 1.0);
+        assert_eq!(net.track_type_at(edge, 3500.0).roughness, 1.4);
+        // Altbau allows the 120 km/h the line runs — the profile is unchanged.
+        assert_eq!(net.edges()[0].speed.at(3500.0), 120.0);
+
+        // An unknown name warns and keeps default properties.
+        let mut line = line.clone();
+        line.edges[0].track_type = vec![(0.0, "example:fehlt".into())];
+        let mut net = line.compile().unwrap().net;
+        let warnings = mods.apply_track_types(&mut net);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("example:fehlt"));
     }
 
     /// A signal's 3D model: the placement's override wins over the type's default,

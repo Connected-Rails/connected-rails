@@ -46,6 +46,7 @@ pub fn musterbahn() -> LineSource {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![(0.0, 160.0)],
+                track_type: vec![],
             },
             EdgeSource {
                 from: 1,
@@ -59,6 +60,7 @@ pub fn musterbahn() -> LineSource {
                 grade: vec![],
                 cant: vec![(0.0, 0.0), (200.0, 80.0), (800.0, 0.0)],
                 speed: vec![(0.0, 130.0)],
+                track_type: vec![],
             },
             EdgeSource {
                 from: 2,
@@ -68,6 +70,7 @@ pub fn musterbahn() -> LineSource {
                 grade: vec![(0.0, 0.0), (500.0, 8.0), (2500.0, 0.0)],
                 cant: vec![],
                 speed: vec![(0.0, 160.0)],
+                track_type: vec![],
             },
         ],
         devices: vec![
@@ -159,6 +162,7 @@ pub fn musterbahn() -> LineSource {
                 payload: ron::to_string(&BlockMarkerPayload { section: 2 }).unwrap(),
             },
         ],
+        objects: vec![],
         sections: vec![
             SectionSource { edges: vec![0] },
             SectionSource { edges: vec![1] },

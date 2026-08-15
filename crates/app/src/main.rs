@@ -10,6 +10,7 @@ mod menu;
 mod models;
 mod mods_ui;
 mod render;
+mod scenery;
 mod signals;
 mod streaming;
 mod ui;
@@ -358,6 +359,11 @@ fn setup(
     {
         warn!("{}: {warning}", line_source.name);
     }
+    // Track types: specs behind the names, and the superstructure speed cap
+    // merged into the one profile AI, LZB, HUD and scoring read.
+    for warning in mods.mods.apply_track_types(&mut line.net) {
+        warn!("{}: {warning}", line_source.name);
+    }
     let mut sim = Sim::new(line.net, line.interlock, 2024);
 
     // `--loco <mod>:<name>` puts a vehicle from a mod at the head of the train.
@@ -457,8 +463,20 @@ fn setup(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &assets,
         &sim.net,
         &origin,
+    );
+    // Scenery objects: the line's furniture, placed relative to the track.
+    scenery::spawn_objects(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &assets,
+        &line_source,
+        &sim.net,
+        &origin,
+        &mods.mods.objects,
     );
 
     // Signal models (plan ch. 15.3): the placement's override, otherwise the signal

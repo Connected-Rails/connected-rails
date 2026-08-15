@@ -17,6 +17,9 @@
             segments: [(len: 4000.0, k0: 0.0, dk: 0.0)],
             grade: [(0.0, 0.0)],
             speed: [(0.0, 120.0)],
+            // Superstructure per section: welded main line, jointed track from km 3 —
+            // the rolling noise gets rougher there (track_types/*.ron).
+            track_type: [(0.0, "example:hauptbahn"), (3000.0, "example:altbau")],
         ),
     ],
     devices: [
@@ -28,6 +31,16 @@
         (kind: Magnet, edge: 0, s: 1750.0, payload: "(frequency:Hz500,signal:Some(0),activation:WhenStop)"),
         (kind: Magnet, edge: 0, s: 2000.0, payload: "(frequency:Hz2000,signal:Some(0),activation:WhenStop)"),
         (kind: Signal, edge: 0, s: 3500.0, lateral_offset: 3.0, payload: "(signal:Some(1))"),
+        // 2000 Hz magnet at the semaphore — it stands at proceed on this demo line,
+        // so the magnet never fires, but a main signal without one is a wiring hole
+        // the editor's rule check rightly flags.
+        (kind: Magnet, edge: 0, s: 3500.0, payload: "(frequency:Hz2000,signal:Some(1),activation:WhenStop)"),
+    ],
+    // Scenery with a track reference: two masts left of the line (objects/mast.ron
+    // carries the default offset and rotation the editor stamps on placement).
+    objects: [
+        (object: "example:mast", edge: 0, s: 500.0, lateral_offset: -3.5),
+        (object: "example:mast", edge: 0, s: 1200.0, lateral_offset: -3.5),
     ],
     sections: [(edges: [0])],
     signals: [

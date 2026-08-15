@@ -58,6 +58,28 @@ impl StepProfile<f64> {
         }
         acc
     }
+
+    /// Pointwise minimum of two profiles — how a superstructure speed limit
+    /// caps the line's speed profile. Breakpoints are the union of both;
+    /// consecutive equal values collapse.
+    pub fn min_merge(&self, other: &StepProfile<f64>) -> StepProfile<f64> {
+        let mut breaks: Vec<f64> = self
+            .steps
+            .iter()
+            .chain(other.steps.iter())
+            .map(|(s, _)| *s)
+            .collect();
+        breaks.sort_by(|a, b| a.total_cmp(b));
+        breaks.dedup();
+        let mut steps: Vec<(f64, f64)> = Vec::with_capacity(breaks.len());
+        for s in breaks {
+            let value = self.at(s).min(other.at(s));
+            if steps.last().is_none_or(|(_, last)| *last != value) {
+                steps.push((s, value));
+            }
+        }
+        StepProfile::new(steps)
+    }
 }
 
 #[cfg(test)]

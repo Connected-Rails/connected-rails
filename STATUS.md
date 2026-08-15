@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and fmt clean.
+As of 2026-08-15 · `cargo test --workspace`: **359 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,12 +11,12 @@ As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v1: tracks + devices — arc-to-point track drawing, device placement and per-device fields, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v2 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** (except vegetation/texturing, tracked as next step 6) — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather rendering**: `Sim::weather` (clear/rain/snow/fog) set by the `SetWeather` scenario action — overcast sky, dimmed sun, distance fog from the weather's visibility, rain/snow particle fields around the camera, and the implied rail condition on every train (`mods/example/scenarios/regenfahrt.ron` shows it); terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0); no recorded samples (the sources are generated — content, not code), no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
-| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
+| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models/track types/track objects as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
 ## What is in place
 
@@ -30,6 +30,21 @@ As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and 
   keep running in areas that carry no graphics.
 - **Track model (ch. 5):** one segment type (`k0`, `dk`) for straight, curve and clothoid;
   switches with throw time, locking and trailing-move detection; trackside devices with RON payload.
+  **Track types** (superstructure classes, `track_types/*.ron` in a mod): texture, color,
+  roughness, superstructure speed limit and an LZB flag — assigned per edge as a step
+  profile over `s`, so one edge changes its type section by section, with the reserved
+  name `"default"` returning to the built-in type. The mod runtime resolves the names
+  after compile (like signal types) and merges `max_speed` into the one speed profile AI,
+  LZB, HUD and scoring already read; the app skins the ballast bed per section (texture
+  via `mods://`, else the type color) and feeds `roughness` into the sound table as the
+  `Roughness` quantity.
+  **Track objects** (`objects/*.ron` in a mod): a 3D object plus the pose its author
+  defined relative to the track — lateral offset, rotation about up, height. A line
+  places instances at `(edge, s)`; each placement stores concrete values stamped from
+  the object's defaults and editable per instance. The app spawns the glTF at the track
+  pose (floating-origin safe like signal models, placeholder block for unknown names);
+  the simulation reads none of it — objects are the line's furniture and follow edge
+  deletion and splitting like devices.
 - **Driving dynamics (ch. 6):** Davis, air resistance from cw·A, curve resistance after Röckl
   with its own factor, gradient resistance, couplers with slack and breaking force,
   Curtius/Kniffler adhesion with wheel slip/slide, sanding. Wheel slip protection in three
@@ -72,7 +87,10 @@ As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and 
   or release it) and **dependencies** (curves with support points that map a quantity onto
   volume and playback speed). The mapping quantity → volume/pitch is therefore data, not
   code: a rolling noise and a contactor click are the same mechanism, the click with a
-  trigger and no loop, the rolling noise the other way round.
+  trigger and no loop, the rolling noise the other way round. `factors` are further curves
+  multiplied into the volume — the rolling entry carries one on the `Roughness` quantity,
+  the roughness of the track type under the vehicle, so jointed superstructure is audibly
+  louder than welded rail.
   **`sim-core` hands out no sound events.** It exports a named set of state quantities
   (`sound::SoundState`: speed, distance, engine speed, tap changer notch, converter circuit,
   tractive and brake effort, pipe and cylinder, air flow, slip, power controller, pantograph,
@@ -208,10 +226,32 @@ As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and 
   All of it controllable through a RON file, reloadable at runtime.
 - **Editors (ch. 15):** three separate programs with a desktop UI (menu bar, docked panels,
   native file dialogs): `route-editor` edits a line over the aerial imagery overlay
-  (editor v1 — tracks + devices): a **track drawing tool** that appends one
+  (editor v2): a **track drawing tool** that appends one
   tangent-continuous arc or straight per click (arc-to-point, G1 by construction), a
   **device tool** that drops any `DeviceKind` onto the nearest track, and a selection
   panel with the device's fields (kind, position, facing, lateral offset, RON payload).
+  A **switch tool** clicks a point on a track and draws the branch: on finish the edge
+  is split at the cut (`LineSource::split_edge` — devices, profiles, sections, switch
+  legs and followers all follow), the joint becomes the turnout node and the branch its
+  diverging leg, tangential by construction. **Support points are draggable**: the
+  selected edge shows a handle per segment boundary, a drag refits the whole chain
+  arc-to-point through the untouched points (edges with transition curves offer no
+  handles — a refit would flatten them). A **rule check** (`LineSource::check`, run on
+  every rebuild) lists wiring that compiles but fails on the line — distant signal
+  without linked 1000 Hz magnet, main without 2000 Hz, distant without `next`, device
+  beyond its track, broken magnet/block-marker payloads, boundary on a non-buffer —
+  each finding with a jump-to button. The **module panel** places `boundaries` on the
+  open ends of the selected track and loads a neighbour module as a grey **ghost**:
+  read-only track plus its boundaries as snap targets, so drawing clicks land exactly
+  on the agreed coordinates. **Track types are edited per section** in the selection
+  panel — `(s, type)` rows with a color chip each, the map tints the ribbon per section
+  in the same palette, and the type combo lists every installed mod's types. An
+  **object tool** (key 5) drops any installed mod's 3D object (`objects/*.ron`) onto the
+  nearest track at the object's own default offset and rotation; the selection panel
+  edits position, lateral offset, rotation and height per placed instance, and
+  **Repeat in a row** stamps copies along the track (spacing, default 65 m; end
+  position) — the Zusi editor function "insert one every x metres", each copy an
+  ordinary instance that can be moved or deleted on its own.
   Deleting an edge or device **remaps every index in the file** — devices, signals,
   `next` links, routes, sections and switch legs follow, and an edge that continued
   from a removed one is re-anchored geographically first (tested in `content::route`).
@@ -221,7 +261,7 @@ As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and 
   bar, collapsible sections in editing order); the imagery template is edited in
   place (provider, opacity, zoom mode, offset, offline) instead of via letter keys
   alone; the map pans with the middle mouse button and zooms with the wheel (tools on
-  1/2/3); device payloads come from one-click RON templates serialised from the
+  1/2/3/4); device payloads come from one-click RON templates serialised from the
   `sim-core` types;
   `vehicle-editor` edits the vehicle base data (LÜP, gauge,
   v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
@@ -268,7 +308,7 @@ As of 2026-08-15 · `cargo test --workspace`: **342 tests green** · clippy and 
   suggestions included), guards against mount cycles, edits motions and LOD distances,
   and lights any lamp image in its preview — arms swing there exactly as in the run.
 - **Mod runtime (ch. 19):** `mods/<id>/` with manifest, vehicles, lines, compositions,
-  scenarios, timetables, signal types
+  scenarios, timetables, signal types, track types, track objects
   and scripts; everything addressed as `"<mod>:<file>"`, loaded in dependency order, broken files
   are warnings instead of crashes. **Data and behaviour are separate:** the vehicle description
   stays RON, only behaviour is Lua. Signals are a declarative state machine (situation → aspect +
@@ -364,6 +404,13 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **One terrain builder behind a mutex:** the DGM cache inside it is shared state, so tile
   builds run one after another even though they sit on the task pool. One source per
   worker if a single tile at a time turns out to be too slow.
+- **The switch tool places facing turnouts only** — the branch leaves in the running
+  direction of the clicked track. A trailing connection is drawn from the other side;
+  a real trailing tool needs the drawing to run against the root's heading.
+- **Support-point dragging refits arcs only**: edges carrying transition curves show no
+  handles, because the arc-to-point refit would flatten the clothoids. Re-fitting
+  transitions around a moved point belongs to an alignment-aware pass (ch. 15 already
+  has the reconstruction).
 - **The track ribbon is not streamed** — one mesh per edge at startup. A whole 100 km line
   costs a few hundred thousand vertices there; only when the ballast bed gets sleepers and
   a texture does the same tile logic have to be applied to it.
@@ -400,11 +447,11 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 
 ## Sensible next steps
 
-1. **Route editor v2**: drawing tracks and placing devices are in (M3). Still open:
-   placing switches (split an edge, wire the turnout node), editing existing geometry
-   (dragging support points), rule checking ("1000 Hz magnet missing at the distant
-   signal"), and the module tooling — placing boundaries, showing a neighbour module's
-   edge as a ghost so the builder hits its coordinates.
+1. **Route editor v3**: v2 covers switches, geometry dragging, rule checking and the
+   module tooling. Still open: a UI for the signal/section/route tables (a placed
+   Signal device still gets its `SignalSource` entry — kind, system, `next`, guarded
+   sections — typed in RON), switch fields (throw time) in the panel, and trailing
+   turnouts (the switch tool places facing ones).
 2. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
 3. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node

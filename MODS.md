@@ -431,7 +431,8 @@ has three parts:
   rolling entry uses it for the track: `factors: [(quantity: Roughness, points: [(0.5,
   0.75), (2.0, 1.4)])]` — the `Roughness` quantity is the `roughness` of the track type
   under the vehicle (see Track types), so jointed superstructure is audibly louder than
-  welded rail.
+  welded rail. `Rain` is the same pattern for the weather: 1.0 while it rains, 0
+  otherwise — the hook for a rain-on-the-roof loop, as a condition or a volume curve.
 
 ```ron
 sounds: [

@@ -86,6 +86,7 @@ without a matching rule shows stop.
 | `tilt_angle_deg` | maximum tilt angle [°], 0 without tilting technology |
 | `passenger_doors` | vehicle has passenger doors that follow the door control |
 | `safety` | train protection fitted: `None` or `De(pzb: Some(Pzb90V20), lzb: true, sifa: Some(TimeTime), train_type: O)` |
+| `afb` | AFB fitted: the built-in target speed controller drives the power controller toward the cab's AFB dial and brakes like the prototype — dynamic brake first, the air brake blends in where that does not suffice; under LZB guidance the LZB's v-soll caps the dial |
 | `doors` | door control the vehicle brings: `None` / `Tb0` / `Tav` / `UicWtb` |
 | `hunting` | hunting −1 … 1, 0 = standard |
 | `script` | optional behaviour hook `"<mod>:<name>"` |
@@ -531,7 +532,10 @@ the returned table is applied to the cab controls, `nil` leaves the driver in ch
 
 Values are checked when applied: non-finite numbers are ignored, the rest is clamped.
 
-`mods/example/scripts/afb.lua` — the AFB that `sim-core` does not implement:
+`mods/example/scripts/afb.lua` — a scripted AFB. `sim-core` brings its own
+(`afb: true` in the vehicle file); the example vehicle leaves that flag off and
+shows how a script replaces the built-in behaviour, here with the line speed as
+an additional ceiling:
 
 ```lua
 local M = {}

@@ -139,6 +139,8 @@ sifa-time-distance = time-distance
 eq-lzb = LZB 80/I 80
 eq-lzb-on-board = on board
 eq-lzb-hint = guides only on lines with a conductor cable
+eq-afb = AFB fitted
+eq-afb-hint = automatic driving/braking control: holds the target speed set in the cab; under LZB guidance the LZB's v-soll caps it
 eq-passenger-doors = Passenger doors
 eq-passenger-doors-hint = these doors follow the door control of the train
 eq-doors = Door control
@@ -610,6 +612,7 @@ group-errors = Errors
 hud-speed = v = { $speed } km/h   max { $limit } km/h   distance { $distance } m   { $time }
 hud-brakes = BP { $pipe } bar   C { $cylinder } bar   AR { $auxiliary } bar   MR { $main } bar   Direct { $direct } bar   Air { $air } Nl
 hud-traction = Power controller { $throttle }   Tractive effort { $tractive } kN   Braking effort { $braking } kN   Brake { $valve }
+hud-afb = AFB { $state }   target { $target } km/h
 hud-electrics = Battery { $battery }   Pantograph { $pantograph } %   Main switch { $switch }   Contact line { $voltage } V   Spring brake { $parking }
 hud-tap = Notch { $step }/{ $steps }   Motor current { $current } A   Field { $field } %   Dynamic brake { $force } kN
 hud-diesel = Engine { $rpm } 1/min   Fill { $fill } %   Circuit { $circuit }   ν { $nu }   Retarder { $retarder } %
@@ -628,7 +631,7 @@ hud-scenario-failed = Scenario failed
 hud-outcome = { $result }: { $reason }
 hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
 hud-control = { $name }: { $value } %
-hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper
+hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper  6 AFB  7/8 AFB target
 hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera  F9 mods
 
 ## Main menu

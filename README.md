@@ -122,7 +122,7 @@ end
 
 A `vehicles/*.ron` is the plain vehicle description; `script` is the only addition. The hook is
 called once per frame for the train whose leading vehicle names it and writes cab controls —
-here the AFB that is otherwise still missing (`mods/example/scripts/afb.lua`):
+here an AFB variant that replaces the built-in one (`mods/example/scripts/afb.lua`):
 
 ```lua
 -- ctx: dt, time, v_kmh, speed_limit_kmh, mass_t, throttle, reverser, afb, afb_target, …

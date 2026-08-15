@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-15 · `cargo test --workspace`: **329 tests green** · clippy and fmt clean.
+As of 2026-08-15 · `cargo test --workspace`: **332 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -13,7 +13,7 @@ As of 2026-08-15 · `cargo test --workspace`: **329 tests green** · clippy and 
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
 | **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
-| **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
+| **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; weather changes through scenario actions, terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), the leading vehicle's headlight cone follows the darkness; no recorded samples (the sources are generated), no weather **rendering**, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
 | **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
@@ -130,6 +130,16 @@ As of 2026-08-15 · `cargo test --workspace`: **329 tests green** · clippy and 
     Switching the battery on starts it.
   - **Sifa** in three builds: time-time, time-distance (30 s **or** 1250 m) and RZM
     (time-distance plus a minimum interval between operations).
+  - **AFB** (ch. 9.4 — a vehicle feature, not a train protection system): target speed
+    controller, fitted per vehicle (`VehicleSpec::afb`). It drives the power controller
+    and brakes as the prototype does: the dynamic brake is preferential, and the air
+    brake blends in through the driver's brake valve once the dynamic brake does not
+    suffice — immediately on a train whose drive has none. A brake application by the
+    driver overrides it (traction cut, and the AFB never releases what the driver
+    applied). Under LZB guidance the LZB's v-soll caps the dial, so the train runs down
+    the braking curve by itself; forced braking still wins, exactly as it does against
+    the driver's levers. The example script `afb.lua` replaces it for the modded BR 101,
+    which leaves the flag off.
 - **Door control (ch. 9.5a):** **TB0**, **TAV** and **UIC-WTB**, taken from the leading
   vehicle's equipment (`VehicleSpec::doors`, like `VehicleSpec::safety` for the train
   protection). Release only at a

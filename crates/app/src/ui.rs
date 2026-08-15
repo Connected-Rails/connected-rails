@@ -51,6 +51,16 @@ pub fn player_input(
 ) {
     let dt = time.delta_secs_f64();
     let index = player.0;
+    // AFB dial ceiling: the running-gear limit of the occupied vehicle.
+    let afb_max = {
+        let train = &sim.0.trains[index];
+        train
+            .vehicles
+            .get(train.cab)
+            .map(|v| v.spec.v_max)
+            .filter(|v| *v > 0.0)
+            .unwrap_or(160.0)
+    };
     let cab = &mut sim.0.controls[index];
 
     // Power controller (W/S), including electric brake in the negative range.
@@ -139,6 +149,17 @@ pub fn player_input(
     // Wipers: Y steps through off – interval – slow – fast, wrapping around.
     if keys.just_pressed(KeyCode::KeyY) {
         cab.wipers = (cab.wipers + 1) % 4;
+    }
+
+    // AFB: 6 on/off, 7/8 dial the target speed in 10 km/h steps.
+    if keys.just_pressed(KeyCode::Digit6) {
+        cab.afb = !cab.afb;
+    }
+    if keys.just_pressed(KeyCode::Digit7) {
+        cab.afb_target = (cab.afb_target - 10.0).max(0.0);
+    }
+    if keys.just_pressed(KeyCode::Digit8) {
+        cab.afb_target = (cab.afb_target + 10.0).min(afb_max);
     }
 
     // Preparation: battery, pantograph, main switch, compressor.
@@ -355,6 +376,13 @@ pub fn update_hud(
         ),
         valve = format!("{:?}", cab.brake_valve),
     ));
+    if train.vehicles.get(train.cab).is_some_and(|v| v.spec.afb) {
+        lines.push(t!(
+            "hud-afb",
+            state = onoff(cab.afb),
+            target = format!("{:3.0}", cab.afb_target),
+        ));
+    }
     lines.push(t!(
         "hud-electrics",
         battery = onoff(loco.traction.battery),

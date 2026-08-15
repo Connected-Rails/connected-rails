@@ -379,6 +379,14 @@ impl SafetySystems {
         }
     }
 
+    /// v-Soll of a guiding LZB [km/h] — the AFB's ceiling (plan 9.4).
+    pub fn lzb_v_soll(&self) -> Option<f64> {
+        match self {
+            SafetySystems::None => None,
+            SafetySystems::De(de) => de.lzb.as_ref().and_then(|l| l.permitted_speed()),
+        }
+    }
+
     /// Position of the train type switch (Zugartschalter), if a PZB is fitted.
     pub fn train_type(&self) -> Option<de::TrainType> {
         match self {

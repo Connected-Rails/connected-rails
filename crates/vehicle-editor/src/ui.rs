@@ -921,6 +921,9 @@ fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
         ui.add_space(space::XS);
     }
 
+    // AFB is vehicle equipment like the door control, not a train protection system.
+    ui.checkbox(&mut spec.afb, t!("eq-afb"))
+        .on_hover_text(t!("eq-afb-hint"));
     ui.checkbox(&mut spec.passenger_doors, t!("eq-passenger-doors"))
         .on_hover_text(t!("eq-passenger-doors-hint"));
     editor_ui::form_grid("doors").show(ui, |ui| {

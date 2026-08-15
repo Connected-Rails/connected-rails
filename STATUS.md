@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-15 · `cargo test --workspace`: **332 tests green** · clippy and fmt clean.
+As of 2026-08-15 · `cargo test --workspace`: **341 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,7 +11,7 @@ As of 2026-08-15 · `cargo test --workspace`: **332 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v1: tracks + devices — arc-to-point track drawing, device placement and per-device fields, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; weather changes through scenario actions, terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), the leading vehicle's headlight cone follows the darkness; no recorded samples (the sources are generated), no weather **rendering**, no vegetation/texturing |
@@ -207,8 +207,23 @@ As of 2026-08-15 · `cargo test --workspace`: **332 tests green** · clippy and 
   places the tiles georeferenced beneath the track ribbon.
   All of it controllable through a RON file, reloadable at runtime.
 - **Editors (ch. 15):** three separate programs with a desktop UI (menu bar, docked panels,
-  native file dialogs): `route-editor` shows a line with an aerial imagery overlay and can
-  load another one at runtime; `vehicle-editor` edits the vehicle base data (LÜP, gauge,
+  native file dialogs): `route-editor` edits a line over the aerial imagery overlay
+  (editor v1 — tracks + devices): a **track drawing tool** that appends one
+  tangent-continuous arc or straight per click (arc-to-point, G1 by construction), a
+  **device tool** that drops any `DeviceKind` onto the nearest track, and a selection
+  panel with the device's fields (kind, position, facing, lateral offset, RON payload).
+  Deleting an edge or device **remaps every index in the file** — devices, signals,
+  `next` links, routes, sections and switch legs follow, and an edge that continued
+  from a removed one is re-anchored geographically first (tested in `content::route`).
+  Undo/redo snapshots one step per interaction; New/Open/Save/Quit and the window's
+  close button go through the discard and comment-loss guards of the vehicle editor.
+  The panel follows the editor design system (sticky header with the line name, jump
+  bar, collapsible sections in editing order); the imagery template is edited in
+  place (provider, opacity, zoom mode, offset, offline) instead of via letter keys
+  alone; the map pans with the middle mouse button and zooms with the wheel (tools on
+  1/2/3); device payloads come from one-click RON templates serialised from the
+  `sim-core` types;
+  `vehicle-editor` edits the vehicle base data (LÜP, gauge,
   v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
   hunting, payload, curve resistance factor), the complete brake equipment (control valve,
   friction pairing, brake position, load braking, forces and pressures, additional brakes,
@@ -385,10 +400,11 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 
 ## Sensible next steps
 
-1. **Route editor with tools**: so far it only displays. Next up: drawing alignments,
-   placing switches and signals, positioning platforms — the aerial image behind it is the
-   template for that. Module tooling belongs in the same pass: placing boundaries,
-   showing a neighbour module's edge as a ghost so the builder hits its coordinates.
+1. **Route editor v2**: drawing tracks and placing devices are in (M3). Still open:
+   placing switches (split an edge, wire the turnout node), editing existing geometry
+   (dragging support points), rule checking ("1000 Hz magnet missing at the distant
+   signal"), and the module tooling — placing boundaries, showing a neighbour module's
+   edge as a ghost so the builder hits its coordinates.
 2. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
 3. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node

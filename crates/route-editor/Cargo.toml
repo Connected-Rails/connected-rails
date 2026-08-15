@@ -20,6 +20,7 @@ glam = { workspace = true }
 bevy = { workspace = true }
 bevy_egui = { workspace = true }
 rfd = { workspace = true }
+ron = { workspace = true }
 
 [features]
 # Links Bevy as a shared library instead of statically: much faster relinks.

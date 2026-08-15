@@ -1,0 +1,12 @@
+// A composition chains georeferenced modules into one line. Connections need no
+// wiring here: boundaries that lie at the same position snap together by themselves;
+// `connections: [((module, boundary), (module, boundary))]` states a pairing explicitly
+// where that is not wanted. Start it with:
+//   cargo run -p app -- --line example:gesamtstrecke
+(
+    name: "Gesamtstrecke",
+    modules: ["example:modul_west", "example:modul_ost"],
+    // Cross-boundary distant signalling: west's exit signal announces the first signal
+    // of Modul Ost. `next` inside a module is module-local, so the link lives here.
+    signal_links: [(("example:modul_west", 0), ("example:modul_ost", 0))],
+)

@@ -187,6 +187,7 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         routes: vec![],
+        boundaries: Vec::new(),
         script: None,
     }
 }

@@ -12,7 +12,7 @@ signals, your own lines. See [Mods](#mods) for the guide.
 
 ```bash
 cargo test --workspace     # all acceptance tests (headless, no GPU)
-cargo run -p app           # start the simulator
+cargo run -p app           # start the simulator (main menu: start, mods, quit)
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
 
@@ -20,6 +20,11 @@ cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # 
 cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
+
+Without arguments the simulator starts on the main menu, where mods are switched on and
+off — a toggle there takes effect when the run starts. Any run flag (`--line`, `--loco`,
+`--scenario`, `--frames`, `--screenshot`, …) skips the menu, so the invocations above stay
+non-interactive.
 
 For a faster edit-compile-run loop, add `--features dev` to any of the three binaries
 (`app`, `route-editor`, `vehicle-editor`). It links Bevy as a shared library, which cuts the
@@ -43,18 +48,25 @@ Everything is meant to be moddable: your own locomotives, your own signals, your
 A mod is a directory below `mods/`; `mods/example/` is the reference to copy from.
 
 ```
-mods/<id>/mod.ron          id, name, version, author, depends, enabled
-         /vehicles/*.ron   locomotives and coaches
-         /lines/*.ron      track, equipment, signals
-         /scenarios/*.ron  triggers and actions
-         /signals/*.ron    signal types (aspect table + optional script)
-         /scripts/*.lua    behaviour
-         /assets/…         models, textures, sounds — as `mods://<id>/assets/…`
+mods/<id>/mod.ron           id, name, version, author, depends, enabled
+         /vehicles/*.ron    locomotives and coaches
+         /lines/*.ron       track, equipment, signals — a line, or a module with boundaries
+         /compositions/*.ron modules chained into one line (georeferenced, auto-snapping)
+         /scenarios/*.ron   triggers and actions
+         /timetable/*.ron   timetables (stop scoring, referenced by a scenario)
+         /signals/*.ron     signal types (aspect table + optional script)
+         /scripts/*.lua     behaviour
+         /assets/…          models, textures, sounds — as `mods://<id>/assets/…`
 ```
 
 Everything is addressed as `"<mod>:<file stem>"`, e.g. `example:br101_afb`, so two mods may use
 the same file names. Nothing is fatal: a broken file is a warning, everything else still loads.
 Mods are loaded in dependency order (`depends`), alphabetically within that.
+
+Lines are built from **modules** (Zusi-style): a module declares named `boundaries` at its
+open ends, and a composition chains modules into one line — boundaries that lie at the
+same geo position connect automatically. Several versions of a module (other epochs) are
+simply several files; the composition picks one. See [MODS.md](MODS.md#modules-and-compositions).
 
 ### Data and behaviour are separate
 
@@ -210,7 +222,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `1`–`4` | Battery / pantograph / main switch / air compressor |
 | `5` | Start the diesel engine |
 | `F1`–`F3` | Camera: cab / external / lineside |
-| `F9` | Mod manager: switch mods on and off (↑/↓ select, `Enter` toggles) |
+| `F9` | Mod manager (↑/↓ select, `Enter` toggles — in-game only after a restart; on the main menu a toggle applies on start) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 
 ## Example line
@@ -241,6 +253,13 @@ The app shows the terrain automatically (flat without DGM):
 
 ```bash
 cargo run -p app -- --dgm ./dgm1_niedersachsen --epsg 25832
+```
+
+For a line across the 12° UTM zone boundary, repeat the pair — one elevation source per
+zone; the n-th `--epsg` belongs to the n-th `--dgm`:
+
+```bash
+cargo run -p app -- --dgm ./dgm1_west --epsg 25832 --dgm ./dgm1_ost --epsg 25833
 ```
 
 ## Editors
@@ -420,7 +439,11 @@ A scenario is a RON file of events — triggers plus actions:
 ```
 
 Scored are timetable adherence, stopping accuracy, emergency brake applications, speed
-limit violations and traction energy; the HUD shows messages and the score.
+limit violations and traction energy; the HUD shows messages and the score. A scenario
+gets its timetable by reference (`timetable: Some("<mod>:<name>")`, a `timetable/*.ron`
+in the mod) — without one, only the scenario's own points count. A timetable is either
+`kind: Scenario` (times from the start of the run, runs once) or `kind: Daily` (times as
+seconds since midnight, wrapping around every 24 h).
 
 ## Contributing
 

@@ -1,0 +1,21 @@
+// A timetable turns a scenario's stops into scored stops: position error and delay
+// per stop, on top of the scenario's own points. A scenario references it by name
+// (`timetable: Some("example:probefahrt")`).
+//
+// `kind: Scenario` counts times from the start of the run; `kind: Daily` reads them
+// as seconds since midnight and wraps around every 24 h — a looping all-day timetable.
+(
+    number: "Lt 91351",
+    category: "Lt",
+    kind: Scenario,
+    stops: [
+        (
+            name: "Beispielstadt Bksig",
+            edge: EdgeId(0),
+            s: 1980.0,
+            arrival: 150.0,
+            departure: 210.0,
+            platform: "1",
+        ),
+    ],
+)

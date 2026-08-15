@@ -167,12 +167,14 @@ fn custom_scenarios_run_from_ron() {
                 trigger: Time(1.0),
                 actions: [Message("Los geht's"), Score(points: 10, reason: "Pünktlich losgefahren")],
                 once: true,
+                module: None,
             ),
             (
                 name: "ende",
                 trigger: After(event: "start", delay: 2.0),
                 actions: [Finish(success: true, reason: "fertig")],
                 once: true,
+                module: None,
             ),
         ],
     )"#;
@@ -210,8 +212,12 @@ fn switch_and_route_actions_are_wired() {
                     Action::ReleaseRoute(sim_core::interlock::RouteId(0)),
                 ],
                 once: true,
+                module: None,
             }],
             script: None,
+            timetable: None,
+            line: None,
+            module: None,
         },
         re_4711(),
     );

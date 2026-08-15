@@ -10,7 +10,7 @@ use sim_core::Sim;
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::cab::CabInputs;
 use sim_core::lookahead::{self, Lookahead};
-pub use timetable::{ScheduledStop, Timetable};
+pub use timetable::{ScheduledStop, Timetable, TimetableKind};
 
 /// Driving behaviour of the AI driver.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -190,7 +190,10 @@ impl AiDriver {
                             .is_some_and(|d| d < 50.0)
                         {
                             self.state = DriverState::Dwelling;
-                            self.depart_at = stop.departure.max(sim.time + 20.0);
+                            self.depart_at = self
+                                .timetable
+                                .next_occurrence(sim.time, stop.departure)
+                                .max(sim.time + 20.0);
                             return;
                         }
                     }
@@ -202,6 +205,12 @@ impl AiDriver {
             DriverState::Dwelling => {
                 if sim.time >= self.depart_at {
                     self.next_stop += 1;
+                    // A daily timetable starts over instead of finishing.
+                    if self.next_stop >= self.timetable.stops.len()
+                        && self.timetable.kind == TimetableKind::Daily
+                    {
+                        self.next_stop = 0;
+                    }
                     self.state = if self.next_stop >= self.timetable.stops.len() {
                         DriverState::Finished
                     } else {

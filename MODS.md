@@ -16,13 +16,15 @@ roughly 80 % of every mod declarative, checkable and safe.
 ## Structure of a mod
 
 ```
-mods/<id>/mod.ron          manifest
-         /vehicles/*.ron   VehicleSpec
-         /lines/*.ron      LineSource
-         /scenarios/*.ron  Scenario
-         /signals/*.ron    SignalType
-         /scripts/*.lua    behaviour
-         /assets/…         models, textures, sounds — as `mods://<id>/assets/…`
+mods/<id>/mod.ron           manifest
+         /vehicles/*.ron    VehicleSpec
+         /lines/*.ron       LineSource — a line, or a module with `boundaries`
+         /compositions/*.ron Composition — modules chained into one line
+         /scenarios/*.ron   Scenario
+         /timetable/*.ron   Timetable — referenced by a scenario for stop scoring
+         /signals/*.ron     SignalType
+         /scripts/*.lua     behaviour
+         /assets/…          models, textures, sounds — as `mods://<id>/assets/…`
 ```
 
 Everything is addressed as `"<mod>:<file stem>"` — `mods/example/vehicles/br101_afb.ron`
@@ -45,10 +47,13 @@ becomes `example:br101_afb`. Two mods may therefore use the same file names.
 Only `id` and `name` are mandatory. `depends` lists mod ids that have to be loaded first;
 `enabled: false` skips the mod without deleting it.
 
-**F9 in the simulator opens the mod manager**: every installed mod with its version, whether
-it is switched on, which of its dependencies are missing, and the loading warnings. ↑/↓ pick
-a mod, Enter switches it on or off — that writes `enabled` back into its `mod.ron` (only that
-field; comments in the file survive) and takes effect on the next start.
+**The mod manager lives on the main menu** (start the simulator without arguments): every
+installed mod with its version, whether it is switched on, which of its dependencies are
+missing, and the loading warnings. ↑/↓ pick a mod, Enter switches it on or off — that writes
+`enabled` back into its `mod.ron` (only that field; comments in the file survive) and takes
+effect when the run starts. F9 opens the same list in the simulator; a toggle there only
+takes effect after a restart, because reloading mid-run would mean rebuilding line, trains
+and interlocking.
 
 **Nothing is fatal.** A broken file produces a warning, everything else still loads. A script
 that raises an error is switched off after the first error and the run continues. A signal type
@@ -548,6 +553,8 @@ return M
 
 The interlocking stays country-neutral: it computes the *situation* of a signal, the signal type
 maps it to an aspect. The first matching rule wins, an empty `when: ()` matches everything.
+Signals are evaluated in signalling order — `next_stop`/`next_slow` see the following signal's
+final aspect, rule table included, from the same update.
 
 | `when` | |
 |---|---|
@@ -663,9 +670,96 @@ a line with block markers of its own divides the authority itself, a line withou
 the main signals as the only boundaries, and the signals stay binding together with their PZB
 magnets.
 
+### Modules and compositions
+
+A big line is built from **modules**, after the Zusi 3 model: a module is an ordinary
+`LineSource` whose open ends carry named `boundaries` — `Buffer` nodes at which another
+module may attach:
+
+```ron
+boundaries: [(name: "nach_ost", node: 1)],
+```
+
+A **composition** (`compositions/*.ron`) chains modules into one line:
+
+```ron
+(
+    name: "Gesamtstrecke",
+    modules: ["example:modul_west", "example:modul_ost"],
+)
+```
+
+**The connection comes from the georeference.** Every module is placed in real
+coordinates; two boundaries that lie on the same spot (within a metre) snap together by
+themselves. Building a module transition therefore means nothing more than starting your
+module's edge at the agreed coordinates of the neighbour's boundary — no wiring, no
+extra file. `connections: [(("<mod>:<module>", "<boundary>"), (…, …))]` states a pairing
+explicitly for the rare case where positions alone cannot decide.
+
+**UTM zones cannot shift a transition.** Module anchors are geodetic (`lat`/`lon`) and
+compile into ECEF, one global frame for the whole world — there are no per-zone planar
+coordinates anywhere in the line data. Modules whose source data came through different
+UTM zones (say, a composition spanning the 12° E boundary between zones 32 and 33)
+therefore meet to the millimetre; the metre-sized zone-seam displacement known from
+Zusi's module system has no place to come from. A test pins this
+(`compose::modules_from_different_utm_zones_meet_exactly`). UTM appears only where
+elevation data is read (DGM tiles are delivered in a zone grid) — there the app takes
+one source per zone: repeat `--dgm <dir> --epsg <code>` for each side of the boundary.
+
+The composition is addressed like a line: `--line example:gesamtstrecke`. On loading,
+every index space of a module (nodes, edges, devices, sections, signals, routes —
+including the indices inside magnet, signal and block marker payloads) is shifted by the
+module's offset.
+
+**Signalling across the boundary** is composition data, because a module's `next` is a
+module-local index:
+
+```ron
+signal_links: [(("example:modul_west", 0), ("example:modul_ost", 0))],
+```
+
+sets the first signal's `next` to the second — the last signal of one module then
+announces the first signal of the next, in the same update like any other chain.
+
+**Timetables and scenarios address positions module-locally.** A `module` field on the
+timetable (or per stop), and on the scenario (or per event), makes every index in it
+mean "of that module"; the runtime resolves them against the composition:
+
+```ron
+// timetable/*.ron — edge 0 *of Modul Ost*, wherever the composition puts it.
+(
+    number: "RB 42",
+    module: Some("example:modul_ost"),
+    stops: [(name: "Ostheim", edge: EdgeId(0), s: 1700.0, arrival: 240.0, departure: 300.0)],
+)
+```
+
+A stop or event with its own `module:` overrides the file default — that is how one
+timetable strings stops across many modules. Without any `module`, indices are those of
+the (composed) line itself, as before.
+
+**Several versions of one module** — other epochs, other equipment, a rebuilt station —
+are simply several module files (`bahnhof_1975.ron`, `bahnhof_2020.ron`); a composition
+picks one by name, so the same neighbouring modules combine with either. A scenario can
+name its line or composition itself (`line: Some("example:gesamtstrecke")`), which is how
+a timetable chains modules; `--line` on the command line wins.
+
+`mods/example/lines/modul_west.ron`, `modul_ost.ron` and
+`compositions/gesamtstrecke.ron` are a working pair to copy from;
+`scenarios/modulfahrt.ron` plus `timetable/modulfahrt.ron` run across the seam with
+module-local references (`cargo run -p app -- --scenario example:modulfahrt`).
+
 `scenarios/*.ron` is a `Scenario` — triggers and actions, see the README section on scenarios.
-Start one with `--scenario example:probefahrt`. A modded scenario brings no timetable of its
-own, so the scoring counts its own points only.
+Start one with `--scenario example:probefahrt`.
+
+A scenario gets stop scoring by referencing a timetable: `timetable: Some("<mod>:<name>")`
+points at a `timetable/*.ron` of the mod (train number, category, stops with position,
+arrival and departure — `mods/example/timetable/probefahrt.ron` is a complete one). With it
+the scoring counts position error and delay per stop on top of the scenario's own points;
+without one, only the scenario points count. `kind` decides what the times mean:
+`Scenario` (the default) counts seconds from the start of the run and the timetable runs
+once; `Daily` reads them as seconds since midnight and wraps around every 24 h — the
+looping all-day timetable, which an AI train follows indefinitely.
 
 ### Line and scenario hooks `on_load(ctx)` / `on_frame(ctx)`
 

@@ -1,6 +1,6 @@
 //! Acceptance M4: AI runs to the timetable, stops at the signal and at the platform.
 
-use ai_driver::{AiDriver, DriverState, ScheduledStop, Timetable};
+use ai_driver::{AiDriver, DriverState, ScheduledStop, Timetable, TimetableKind};
 use content::musterbahn;
 use content::vehicles::{br101, passenger_coach};
 use sim_core::Sim;
@@ -32,6 +32,8 @@ fn timetable_to_platform() -> Timetable {
     Timetable {
         number: "RE 4711".into(),
         category: "RE".into(),
+        kind: TimetableKind::Scenario,
+        module: None,
         stops: vec![ScheduledStop {
             name: "Musterstadt".into(),
             edge: EdgeId(2),
@@ -39,6 +41,7 @@ fn timetable_to_platform() -> Timetable {
             arrival: 600.0,
             departure: 660.0,
             platform: "2".into(),
+            module: None,
         }],
     }
 }

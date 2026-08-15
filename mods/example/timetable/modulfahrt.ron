@@ -1,0 +1,19 @@
+// The timetable of the module run. `module` makes the stops' `edge` indices local to
+// that module; a single stop may override it with its own `module:` — that is how one
+// timetable strings stops across many modules.
+(
+    number: "RB 42",
+    category: "RB",
+    kind: Scenario,
+    module: Some("example:modul_ost"),
+    stops: [
+        (
+            name: "Ostheim",
+            edge: EdgeId(0),
+            s: 1700.0,
+            arrival: 240.0,
+            departure: 300.0,
+            platform: "1",
+        ),
+    ],
+)

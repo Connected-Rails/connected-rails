@@ -6,13 +6,14 @@
 mod audio;
 mod cab;
 mod displays;
+mod menu;
 mod models;
 mod mods_ui;
 mod render;
 mod streaming;
 mod ui;
 
-use ai_driver::{AiDriver, ScheduledStop, Timetable};
+use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::audio::{DefaultSpatialScale, SpatialScale};
@@ -29,6 +30,15 @@ use sim_core::Sim;
 use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
 use world_coords::RenderOrigin;
+
+/// Menu first, the world only on starting the run — that is what lets a mod toggled on
+/// the menu apply without restarting the process.
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GameState {
+    #[default]
+    Menu,
+    Driving,
+}
 
 /// The running simulation.
 #[derive(Resource)]
@@ -82,6 +92,18 @@ fn main() {
     let frame_limit = flag("--frames")
         .and_then(|n| n.parse::<u32>().ok())
         .or_else(|| shot.as_ref().map(|_| 60));
+    // Any run flag skips the menu — the documented CLI and CI invocations stay
+    // non-interactive.
+    let run_flags = [
+        "--line",
+        "--loco",
+        "--scenario",
+        "--camera",
+        "--dgm",
+        "--frames",
+        "--screenshot",
+    ];
+    let autostart = args.iter().any(|a| run_flags.contains(&a.as_str()));
 
     let mut app = App::new();
     // Models, textures and sounds of a mod come from its own directory: `mods://<mod>/…`.
@@ -108,13 +130,28 @@ fn main() {
     .init_resource::<ui::CameraState>()
     .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
+    .init_resource::<menu::MenuState>()
     // HTML cab screens hold a boa script context, which is `!Send` — a non-send
     // resource keeps them on the main thread, where the display chain runs anyway.
     .init_non_send::<displays::HtmlGauges>()
-    .add_systems(Startup, setup)
+    // Mods before menu and world — both read the resource. Inserted while the app is
+    // built: the initial state transition runs before every startup schedule, so a
+    // loading system would come too late for `setup`.
+    .insert_resource(Mods(ModRuntime::load("mods")))
+    .insert_state(if autostart {
+        GameState::Driving
+    } else {
+        GameState::Menu
+    })
+    .add_systems(Startup, log_mods)
+    .add_systems(OnEnter(GameState::Menu), menu::spawn_menu)
+    .add_systems(Update, menu::menu.run_if(in_state(GameState::Menu)))
     // The sound table and the display cameras need the trains, which `setup` only
-    // creates when its commands are applied — that is after `Startup`.
-    .add_systems(PostStartup, (audio::setup_audio, displays::setup_displays))
+    // creates when its commands are applied — the chain inserts that sync point.
+    .add_systems(
+        OnEnter(GameState::Driving),
+        (setup, audio::setup_audio, displays::setup_displays).chain(),
+    )
     .add_systems(
         Update,
         (
@@ -133,7 +170,8 @@ fn main() {
             audio::update_audio,
             mods_ui::mod_manager,
         )
-            .chain(),
+            .chain()
+            .run_if(in_state(GameState::Driving)),
     )
     // Vehicle models from mods: bind glTF nodes, switch LODs, move parts (plan ch. 15.3).
     .add_systems(
@@ -147,7 +185,8 @@ fn main() {
             displays::bind_display_nodes,
             cab::update_highlight,
         )
-            .after(sync_vehicles),
+            .after(sync_vehicles)
+            .run_if(in_state(GameState::Driving)),
     );
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
@@ -186,37 +225,71 @@ fn exit_after_frames(
     }
 }
 
+/// Logs what the mod loading found — the loading itself happens while the app is built.
+fn log_mods(mods: Res<Mods>) {
+    let mods = &mods.0;
+    for warning in mods.log() {
+        warn!("mod: {warning}");
+    }
+    info!(
+        "Mods: {} of {} enabled ({} vehicles, {} lines, {} compositions, {} scenarios, {} timetables, {} signal types, {} scripts)",
+        mods.mods.manifests.iter().filter(|m| m.enabled).count(),
+        mods.mods.manifests.len(),
+        mods.mods.vehicles.len(),
+        mods.mods.lines.len(),
+        mods.mods.compositions.len(),
+        mods.mods.scenarios.len(),
+        mods.mods.timetables.len(),
+        mods.mods.signal_types.len(),
+        mods.mods.scripts.len()
+    );
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<AssetServer>,
+    mut mods: ResMut<Mods>,
+    mut manager: ResMut<mods_ui::ModManager>,
 ) {
-    // Mods first — line, vehicles and signal types may come from them (plan ch. 19).
-    let mut mods = ModRuntime::load("mods");
-    for warning in mods.log() {
-        warn!("mod: {warning}");
+    // A mod was toggled on the menu: reload, so the world is built from the set on disk.
+    if manager.restart_needed {
+        mods.0 = ModRuntime::load("mods");
+        for warning in mods.0.log() {
+            warn!("mod: {warning}");
+        }
+        manager.restart_needed = false;
     }
-    info!(
-        "Mods: {} of {} enabled ({} vehicles, {} lines, {} scenarios, {} signal types, {} scripts)",
-        mods.mods.manifests.iter().filter(|m| m.enabled).count(),
-        mods.mods.manifests.len(),
-        mods.mods.vehicles.len(),
-        mods.mods.lines.len(),
-        mods.mods.scenarios.len(),
-        mods.mods.signal_types.len(),
-        mods.mods.scripts.len()
-    );
+    let mods = &mut mods.0;
 
-    // Build line and simulation. `--line <mod>:<name>` takes a line from a mod.
-    let modded = arg("--line").and_then(|id| match mods.mods.lines.get(&id) {
-        Some(line) => Some(line.clone()),
-        None => {
-            warn!("line {id} not found — using the example line");
+    // Build line and simulation. `--line <mod>:<name>` takes a line or a composition of
+    // modules from a mod; a scenario may name its line itself, `--line` wins.
+    let scenario_id = arg("--scenario");
+    let line_ref = arg("--line").or_else(|| {
+        scenario_id
+            .as_ref()
+            .and_then(|id| mods.mods.scenarios.get(id))
+            .and_then(|s| s.line.clone())
+    });
+    let resolved = line_ref.and_then(|id| match mods.mods.resolve_line(&id) {
+        Ok(composed) => {
+            for note in &composed.notes {
+                info!("{id}: {note}");
+            }
+            Some(composed)
+        }
+        Err(e) => {
+            warn!("line {id}: {e} — using the example line");
             None
         }
     });
-    let line_source = modded.clone().unwrap_or_else(musterbahn);
+    let modded = resolved.is_some();
+    let module_offsets = resolved
+        .as_ref()
+        .map(|c| c.offsets.clone())
+        .unwrap_or_default();
+    let line_source = resolved.map(|c| c.line).unwrap_or_else(musterbahn);
     let mut line = line_source.compile().expect("line compiles");
     for warning in mods
         .mods
@@ -242,7 +315,7 @@ fn setup(
     // Second train, timetable and scenario belong to the example line — a modded line
     // brings its own scenario or none at all.
     let mut drivers = Vec::new();
-    if modded.is_none() {
+    if !modded {
         let ai_train = spawn_train(
             &mut sim,
             TrackPosition::new(EdgeId(1), 400.0, 1),
@@ -254,6 +327,8 @@ fn setup(
             AiDriver::new(Timetable {
                 number: "RB 20".into(),
                 category: "RB".into(),
+                kind: TimetableKind::Scenario,
+                module: None,
                 stops: vec![ScheduledStop {
                     name: "Musterstadt".into(),
                     edge: EdgeId(2),
@@ -261,6 +336,7 @@ fn setup(
                     arrival: 300.0,
                     departure: 360.0,
                     platform: "1".into(),
+                    module: None,
                 }],
             }),
         ));
@@ -271,22 +347,39 @@ fn setup(
         sim.set_scenario(scenario, re_4711());
     }
 
-    // `--scenario <mod>:<name>` runs a scenario out of a mod. It brings no timetable of its
-    // own — ponytail: scoring then counts the scenario points only, add timetables to mods
-    // when a mod actually wants stop scoring.
-    if let Some(id) = arg("--scenario") {
+    // `--scenario <mod>:<name>` runs a scenario out of a mod. A `timetable/*.ron` the
+    // scenario references adds stop scoring; without one only the scenario points count.
+    if let Some(id) = scenario_id {
         match mods.mods.scenarios.get(&id) {
             Some(scenario) => {
                 let mut scenario = scenario.clone();
                 scenario.player_train = player;
-                let number = scenario.name.clone();
-                sim.set_scenario(
-                    scenario,
-                    sim_core::timetable::Timetable {
-                        number,
+                for warning in mod_runtime::qualify_scenario(&mut scenario, &module_offsets) {
+                    warn!("scenario {id}: {warning}");
+                }
+                let timetable = scenario
+                    .timetable
+                    .as_deref()
+                    .and_then(|name| {
+                        let timetable = mods.mods.timetables.get(name).cloned();
+                        if timetable.is_none() {
+                            warn!("scenario {id}: timetable {name:?} not found");
+                        }
+                        timetable
+                    })
+                    .map(|mut timetable| {
+                        for warning in
+                            mod_runtime::qualify_timetable(&mut timetable, &module_offsets)
+                        {
+                            warn!("scenario {id}: {warning}");
+                        }
+                        timetable
+                    })
+                    .unwrap_or_else(|| sim_core::timetable::Timetable {
+                        number: scenario.name.clone(),
                         ..default()
-                    },
-                );
+                    });
+                sim.set_scenario(scenario, timetable);
             }
             None => warn!("scenario {id} not found"),
         }
@@ -309,27 +402,33 @@ fn setup(
 
     // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
     // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
-    // terrain than fits in memory at once.
-    let source = std::env::args()
-        .skip_while(|a| a != "--dgm")
-        .nth(1)
-        .and_then(|dir| match TerrainSource::from_dir(&dir, dgm_zone()) {
+    // terrain than fits in memory at once. `--dgm` may be repeated for a line across a
+    // UTM zone boundary; the n-th `--epsg` belongs to the n-th `--dgm` (the last one
+    // carries on when there are fewer).
+    let zones = args_all("--epsg");
+    let mut sources = Vec::new();
+    for (i, dir) in args_all("--dgm").iter().enumerate() {
+        let zone = zones
+            .get(i)
+            .or_else(|| zones.last())
+            .and_then(|v| v.parse().ok())
+            .and_then(world_coords::geo::utm_zone_from_epsg)
+            .unwrap_or(32);
+        match TerrainSource::from_dir(dir, zone) {
             Ok(s) => {
-                info!("DGM: {} tiles from {dir}", s.tile_count());
-                Some(s)
+                info!("DGM: {} tiles from {dir} (zone {zone})", s.tile_count());
+                sources.push(s);
             }
-            Err(e) => {
-                warn!("DGM {dir} not readable: {e}");
-                None
-            }
-        });
+            Err(e) => warn!("DGM {dir} not readable: {e}"),
+        }
+    }
     let terrain_options = TerrainOptions {
         zone: dgm_zone(),
         fallback_height: 100.0,
         ..default()
     };
     let streamer = streaming::TerrainStreamer::new(
-        TerrainBuilder::new(&sim.net, source, terrain_options),
+        TerrainBuilder::new(&sim.net, sources, terrain_options),
         render::terrain_materials(&mut materials),
         LOAD_RADIUS,
     );
@@ -416,7 +515,6 @@ fn setup(
     commands.insert_resource(Origin(origin));
     commands.insert_resource(PlayerTrain(player));
     commands.insert_resource(AiDrivers(drivers));
-    commands.insert_resource(Mods(mods));
     commands.insert_resource(SimResource(sim));
 }
 
@@ -467,6 +565,15 @@ fn lod_range(lod: u8) -> f32 {
 /// Value of a command line option (`--name <value>`).
 fn arg(name: &str) -> Option<String> {
     std::env::args().skip_while(|a| a != name).nth(1)
+}
+
+/// Every value of a repeatable command line option, in order.
+fn args_all(name: &str) -> Vec<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.windows(2)
+        .filter(|w| w[0] == name)
+        .map(|w| w[1].clone())
+        .collect()
 }
 
 /// Asset source for `mods://` — the `mods/` directory next to the game, the same one the

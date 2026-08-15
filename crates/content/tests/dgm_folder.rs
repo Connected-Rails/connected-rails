@@ -106,7 +106,7 @@ fn terrain_from_the_directory() {
     use world_coords::geo;
 
     let dir = fixture("terrain");
-    let mut source = TerrainSource::from_dir(&dir, 32).expect("directory readable");
+    let mut sources = [TerrainSource::from_dir(&dir, 32).expect("directory readable")];
 
     // Lay a track right across the tile area.
     let (lat, lon) = geo::from_utm(600_200.0, 5_760_500.0, 32);
@@ -126,7 +126,7 @@ fn terrain_from_the_directory() {
         radius: 300.0,
         ..Default::default()
     };
-    let (tiles, stats) = build(&net, Some(&mut source), &options);
+    let (tiles, stats) = build(&net, &mut sources, &options);
 
     assert!(stats.tiles > 0);
     assert!(stats.triangles > 1000);
@@ -135,7 +135,7 @@ fn terrain_from_the_directory() {
     let covered = 1.0 - stats.missing as f64 / stats.vertices as f64;
     assert!(covered > 0.6, "only {:.0} % from the DGM", covered * 100.0);
     assert!(
-        stats.tile_loads <= source.tile_count(),
+        stats.tile_loads <= sources[0].tile_count(),
         "each DGM tile loaded at most once per cache pass"
     );
     // All mesh data is finite and lies close to the anchor.

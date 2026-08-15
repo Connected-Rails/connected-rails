@@ -483,6 +483,7 @@ mod tests {
                         reason: "script".into(),
                     }],
                     once: true,
+                    module: None,
                 }],
                 ..Default::default()
             },

@@ -224,6 +224,11 @@ pub struct VehicleSpec {
     /// run-time option.
     #[serde(default)]
     pub safety: SafetyEquipment,
+    /// AFB fitted (plan 9.4) — a target speed controller on the power controller,
+    /// not a train protection system. Under LZB guidance the LZB's v-soll caps
+    /// the dial, so the train runs down the braking curve by itself.
+    #[serde(default)]
+    pub afb: bool,
     /// Door control the vehicle brings along; the leading vehicle determines the one the
     /// train runs with ([`crate::doors`]).
     #[serde(default)]
@@ -318,6 +323,7 @@ impl Default for VehicleSpec {
             tilt_angle_deg: 0.0,
             passenger_doors: false,
             safety: SafetyEquipment::None,
+            afb: false,
             doors: DoorSystem::None,
             hunting: 0.0,
             script: None,

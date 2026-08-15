@@ -73,6 +73,8 @@ pub fn br101() -> VehicleSpec {
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::O,
         },
+        // AFB-capable lever — under LZB guidance the loco runs the braking curve itself.
+        afb: true,
         // Door blocking of the hauled IC coaches, operated from the loco.
         doors: DoorSystem::Tb0,
         hunting: 0.0,
@@ -143,6 +145,8 @@ pub fn br110() -> VehicleSpec {
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::O,
         },
+        // The tap-changer loco predates the AFB.
+        afb: false,
         doors: DoorSystem::Tb0,
         hunting: 0.0,
         script: None,
@@ -255,6 +259,7 @@ pub fn br218() -> VehicleSpec {
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::M,
         },
+        afb: false,
         doors: DoorSystem::Tb0,
         hunting: 0.0,
         script: None,
@@ -297,6 +302,7 @@ pub fn passenger_coach() -> VehicleSpec {
         passenger_doors: true,
         // A hauled coach carries no train protection and no door control of its own.
         safety: SafetyEquipment::None,
+        afb: false,
         doors: DoorSystem::None,
         hunting: 0.0,
         script: None,
@@ -343,6 +349,7 @@ pub fn freight_wagon() -> VehicleSpec {
         tilt_angle_deg: 0.0,
         passenger_doors: false,
         safety: SafetyEquipment::None,
+        afb: false,
         doors: DoorSystem::None,
         hunting: 0.0,
         script: None,
@@ -469,6 +476,8 @@ pub fn railcar() -> VehicleSpec {
             sifa: Some(SifaKind::TimeDistance),
             train_type: TrainType::M,
         },
+        // Modern railcar: the target speed controller is part of the drive electronics.
+        afb: true,
         doors: DoorSystem::Tav,
         hunting: 0.0,
         script: None,

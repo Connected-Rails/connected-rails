@@ -139,6 +139,8 @@ sifa-time-distance = Zeit-Weg
 eq-lzb = LZB 80/I 80
 eq-lzb-on-board = an Bord
 eq-lzb-hint = führt nur auf Strecken mit Linienleiter
+eq-afb = AFB vorhanden
+eq-afb-hint = Automatische Fahr- und Bremssteuerung: hält die im Führerstand eingestellte Zielgeschwindigkeit; unter LZB-Führung begrenzt deren v-Soll
 eq-passenger-doors = Fahrgasttüren
 eq-passenger-doors-hint = diese Türen folgen der Türsteuerung des Zuges
 eq-doors = Türsteuerung
@@ -581,6 +583,7 @@ group-errors = Fehler
 hud-speed = v = { $speed } km/h   zul. { $limit } km/h   Weg { $distance } m   { $time }
 hud-brakes = HL { $pipe } bar   C { $cylinder } bar   R { $auxiliary } bar   HB { $main } bar   Zusatz { $direct } bar   Luft { $air } Nl
 hud-traction = Fahrschalter { $throttle }   Zugkraft { $tractive } kN   Bremskraft { $braking } kN   Bremse { $valve }
+hud-afb = AFB { $state }   Ziel { $target } km/h
 hud-electrics = Batterie { $battery }   Bügel { $pantograph } %   Hauptschalter { $switch }   Fahrdraht { $voltage } V   Federspeicher { $parking }
 hud-tap = Fahrstufe { $step }/{ $steps }   Motorstrom { $current } A   Feld { $field } %   E-Bremse { $force } kN
 hud-diesel = Motor { $rpm } 1/min   Füllung { $fill } %   Wandler { $circuit }   ν { $nu }   Retarder { $retarder } %
@@ -599,7 +602,7 @@ hud-scenario-failed = Szenario gescheitert
 hud-outcome = { $result }: { $reason }
 hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
 hud-control = { $name }: { $value } %
-hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer
+hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer  6 AFB  7/8 AFB-Ziel
 hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera  F9 Mods
 
 ## Hauptmenü

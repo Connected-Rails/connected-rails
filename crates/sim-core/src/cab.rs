@@ -343,6 +343,81 @@ fn axis_to_valve(axis: f64) -> DriverBrakeValve {
     }
 }
 
+/// Proportional band of the AFB [km/h]: full power that far below the target,
+/// full dynamic brake that far above it. The air brake blends in over the same
+/// width beyond the dynamic band, up to a full service application.
+const AFB_BAND: f64 = 10.0;
+
+/// What the AFB commands for one step: the power controller, and the driver's
+/// brake valve wherever the dynamic brake alone is not enough.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AfbCommand {
+    pub throttle: f64,
+    pub valve: DriverBrakeValve,
+}
+
+/// AFB (plan 9.4): target speed controller of the occupied vehicle. Returns
+/// what replaces the driver's levers for this step, or `None` while the AFB is
+/// off, not fitted, or the reverser stands in neutral. Under LZB guidance the
+/// LZB's v-soll caps the dial, so the train follows the braking curve on its
+/// own; forced braking still wins downstream, exactly as it does against the
+/// driver's lever.
+///
+/// The brake blending works as it does at the prototype: the dynamic brake is
+/// preferential, and the air brake supplements it once the speed excess runs
+/// past the dynamic band — immediately on a train whose drive has no dynamic
+/// brake. A brake application by the driver overrides the AFB: its traction is
+/// cut, and the commanded valve never brakes less than the driver's own lever.
+pub fn afb_control(train: &Train, cab: &CabInputs) -> Option<AfbCommand> {
+    let seat = train.vehicles.get(train.cab)?;
+    if !seat.spec.afb || !cab.afb || cab.reverser == 0 {
+        return None;
+    }
+    let v_soll = train.vehicles.iter().find_map(|v| v.safety.lzb_v_soll());
+    let target = v_soll.map_or(cab.afb_target, |v| cab.afb_target.min(v));
+    let error = target - train.speed_kmh().abs();
+    let driver_brakes = matches!(
+        cab.brake_valve,
+        DriverBrakeValve::Service(_) | DriverBrakeValve::Emergency
+    );
+    let throttle = if driver_brakes {
+        (error / AFB_BAND).clamp(-1.0, 0.0)
+    } else {
+        (error / AFB_BAND).clamp(-1.0, 1.0)
+    };
+    let dynamic_band = if train.vehicles.iter().any(|v| {
+        v.spec
+            .traction
+            .as_ref()
+            .is_some_and(|t| t.has_dynamic_brake())
+    }) {
+        AFB_BAND
+    } else {
+        0.0
+    };
+    let excess = -error - dynamic_band;
+    let valve = if excess > 0.0 {
+        let drop = (excess / AFB_BAND).clamp(0.0, 1.0) * FULL_SERVICE_DROP;
+        max_by_braking(cab.brake_valve, DriverBrakeValve::Service(drop))
+    } else {
+        cab.brake_valve
+    };
+    Some(AfbCommand { throttle, valve })
+}
+
+/// The valve command that brakes harder: the AFB never releases a brake the
+/// driver applied, and its own demand wins over a released lever.
+fn max_by_braking(a: DriverBrakeValve, b: DriverBrakeValve) -> DriverBrakeValve {
+    let rank = |v: DriverBrakeValve| match v {
+        DriverBrakeValve::Fill => -1.0,
+        DriverBrakeValve::Release => 0.0,
+        DriverBrakeValve::Lap => 0.1,
+        DriverBrakeValve::Service(d) => 1.0 + d,
+        DriverBrakeValve::Emergency => f64::INFINITY,
+    };
+    if rank(b) > rank(a) { b } else { a }
+}
+
 /// AFB scale: the running-gear limit of the occupied vehicle, or 160 km/h
 /// when the spec does not state one.
 fn afb_scale(train: &Train) -> f64 {
@@ -681,6 +756,145 @@ mod tests {
         assert_eq!(cab.reverser, 0);
         CabControl::BrakeValve.set(&mut train, &mut cab, VALVE_RELEASE + 0.01);
         assert_eq!(cab.brake_valve, DriverBrakeValve::Release);
+    }
+
+    #[test]
+    fn afb_holds_the_dial_speed() {
+        let mut train = train();
+        train.vehicles[0].spec.afb = true;
+        let mut cab = CabInputs {
+            afb: true,
+            afb_target: 100.0,
+            reverser: 1,
+            ..CabInputs::default()
+        };
+        // Standing well below the dial: full power.
+        assert_eq!(afb_control(&train, &cab).unwrap().throttle, 1.0);
+        // Above the dial: dynamic brake.
+        train.vehicles[0].v = 110.0 / 3.6;
+        assert!(afb_control(&train, &cab).unwrap().throttle < 0.0);
+        // Off, reverser in neutral, or not fitted: the driver's levers stay in charge.
+        cab.afb = false;
+        assert_eq!(afb_control(&train, &cab), None);
+        cab.afb = true;
+        cab.reverser = 0;
+        assert_eq!(afb_control(&train, &cab), None);
+        cab.reverser = 1;
+        train.vehicles[0].spec.afb = false;
+        assert_eq!(afb_control(&train, &cab), None);
+    }
+
+    #[test]
+    fn afb_blends_the_air_brake_in() {
+        let mut train = train();
+        train.vehicles[0].spec.afb = true;
+        // Give the drive a dynamic brake, so the air brake is the supplement.
+        if let Some(crate::drive::TractionSpec::Curve { brake, .. }) =
+            &mut train.vehicles[0].spec.traction
+        {
+            *brake = vec![(0.0, 100_000.0)];
+        }
+        let mut cab = CabInputs {
+            afb: true,
+            afb_target: 100.0,
+            reverser: 1,
+            ..CabInputs::default()
+        };
+        // Inside the dynamic band the air stays out of it.
+        train.vehicles[0].v = 105.0 / 3.6;
+        assert_eq!(afb_control(&train, &cab).unwrap().valve, cab.brake_valve);
+        // Past the band the air brake supplements the saturated dynamic brake.
+        train.vehicles[0].v = 115.0 / 3.6;
+        let cmd = afb_control(&train, &cab).unwrap();
+        assert_eq!(cmd.throttle, -1.0);
+        assert_eq!(cmd.valve, DriverBrakeValve::Service(0.75));
+        // Far past it: a full service application, never an emergency one.
+        train.vehicles[0].v = 140.0 / 3.6;
+        assert_eq!(
+            afb_control(&train, &cab).unwrap().valve,
+            DriverBrakeValve::Service(FULL_SERVICE_DROP)
+        );
+        // A deeper application by the driver is never released, and it cuts the
+        // AFB's traction.
+        cab.brake_valve = DriverBrakeValve::Service(1.2);
+        train.vehicles[0].v = 115.0 / 3.6;
+        assert_eq!(
+            afb_control(&train, &cab).unwrap().valve,
+            DriverBrakeValve::Service(1.2)
+        );
+        train.vehicles[0].v = 0.0;
+        let cmd = afb_control(&train, &cab).unwrap();
+        assert_eq!(cmd.throttle, 0.0);
+        assert_eq!(cmd.valve, DriverBrakeValve::Service(1.2));
+        // Without a dynamic brake the air brake steps in right at the target.
+        if let Some(crate::drive::TractionSpec::Curve { brake, .. }) =
+            &mut train.vehicles[0].spec.traction
+        {
+            *brake = Vec::new();
+        }
+        cab.brake_valve = DriverBrakeValve::Release;
+        train.vehicles[0].v = 105.0 / 3.6;
+        assert_eq!(
+            afb_control(&train, &cab).unwrap().valve,
+            DriverBrakeValve::Service(0.75)
+        );
+    }
+
+    #[test]
+    fn lzb_v_soll_caps_the_afb_dial() {
+        use crate::safety::de::lzb::{Lzb80, LzbTelegram};
+        use crate::safety::{
+            SafetySystems, SafetyTrainState, TracksideEvent, TrainProtectionSystem,
+        };
+        use track_model::DeviceKind;
+
+        // Drive an LZB into guidance: telegram received, takeover acknowledged.
+        let mut lzb = Lzb80::new();
+        let telegram = LzbTelegram {
+            permitted_speed: 60.0,
+            target_speed: 60.0,
+            target_distance: 12_000.0,
+            end_of_authority: false,
+            length: 1000.0,
+            block_mode: Default::default(),
+            cir_elke: false,
+        };
+        let state = SafetyTrainState::default();
+        let event = TracksideEvent {
+            device: DeviceKind::LineConductor,
+            payload: ron::to_string(&telegram).unwrap(),
+            s_offset: 0.0,
+            active: true,
+        };
+        lzb.update(0.1, &state, &CabInputs::default(), &[event]);
+        let takeover = CabInputs {
+            lzb_takeover: true,
+            ..CabInputs::default()
+        };
+        lzb.update(0.1, &state, &takeover, &[]);
+        assert!(lzb.is_guiding());
+
+        let mut train = train();
+        train.vehicles[0].spec.afb = true;
+        train.vehicles[0].safety = SafetySystems::De(crate::safety::de::DeSafety {
+            sifa: None,
+            pzb: None,
+            lzb: Some(lzb),
+        });
+        let cab = CabInputs {
+            afb: true,
+            afb_target: 160.0,
+            reverser: 1,
+            ..CabInputs::default()
+        };
+        // Rolling at the LZB's v-soll: the dial says 160, the LZB says 60 — no power.
+        train.vehicles[0].v = 60.0 / 3.6;
+        assert!(afb_control(&train, &cab).unwrap().throttle <= 0.0);
+        // Well above it: full braking, air brake included.
+        train.vehicles[0].v = 90.0 / 3.6;
+        let cmd = afb_control(&train, &cab).unwrap();
+        assert_eq!(cmd.throttle, -1.0);
+        assert_eq!(cmd.valve, DriverBrakeValve::Service(FULL_SERVICE_DROP));
     }
 
     #[test]

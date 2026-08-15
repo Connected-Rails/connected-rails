@@ -161,8 +161,15 @@ impl Sim {
     }
 
     fn step_train(&mut self, index: usize, dt: f64) {
-        let cab = self.controls[index];
+        let mut cab = self.controls[index];
         let action = self.runtime[index].protection.action;
+
+        // AFB (plan 9.4): the controller replaces power controller and brake valve for
+        // this step; the driver's levers themselves stay where they were left.
+        if let Some(afb) = cab::afb_control(&self.trains[index], &cab) {
+            cab.throttle = afb.throttle;
+            cab.brake_valve = afb.valve;
+        }
 
         // 0. Doors — traction interlock and door loop act on this step already.
         let doors = doors::step(&mut self.trains[index], &cab, dt);

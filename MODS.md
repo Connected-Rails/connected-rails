@@ -466,10 +466,11 @@ scheme as a model) or one of the sources the app generates at start-up: `synth:r
 `synth:traction`, `synth:air`, `synth:compressor`, `synth:horn`, `synth:buzzer`,
 `synth:squeal`, `synth:joint`, `synth:contactor`.
 
-`positional: true` places the sound on the vehicle: it is attenuated by distance and
-Doppler-shifted, which is what makes another train audible as it passes. Sounds of the
+`positional: true` places the sound on the vehicle: it is attenuated by distance,
+Doppler-shifted — which is what makes another train audible as it passes — and muffled
+by a lowpass while the camera sits in the cab, the cab wall. Sounds of the
 driver's desk — buzzer, Sifa — set it to `false` so they stay at a constant place when the
-camera goes outside.
+camera goes outside, and they are never filtered: they are in the cab with the listener.
 
 Triggers:
 

@@ -82,6 +82,10 @@ As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and 
   the one noise that does not follow from the vehicle state, come out of a distance interval.
   Entries marked `positional` are placed on the vehicle — distance attenuation and Doppler,
   so **other trains are audible**; the buzzer and the rest of the desk stay unplaced.
+  While the camera sits in the cab, placed sounds pass a one-pole lowpass — the **cab
+  wall**; Bevy's audio has no filter graph, so the filter sits in the audio decoder
+  (`audio::Exterior`), its cutoff steered by the camera mode over an atomic. The outside
+  cameras hear the full spectrum, the desk sounds are never filtered.
   A vehicle without a table of its own runs on the generated default (`sound::default_table`):
   rolling, traction split into an electric and a diesel entry, air, compressor, horn, buzzer,
   rail joints and tap changer contactors. Their samples are **generated at startup**, a few
@@ -302,9 +306,9 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   semitone rather than pitching one loop across the range — and the table format here does
   exactly that, several entries with overlapping curves. What is missing is somebody's
   recordings, and those go in a mod, not in this repository.
-- **No interior/exterior filter** (plan 13 asks for a lowpass in the cab): a placed sound is
-  attenuated and Doppler-shifted, but the cab wall does not muffle it. Bevy's audio has no
-  filter graph, so this needs a decoder wrapper rather than a parameter.
+- **The cab wall is one lowpass with one cutoff** for every vehicle; a per-vehicle
+  insulation value moves into `VehicleSpec` when someone records real cabs and can hear
+  the difference.
 - **Geoid undulation** as a constant offset per line.
 - **Device payload** as RON *text* instead of `ron::Value` (Value loses unit enum variants).
 - **No CRS framework:** UTM 32/33 directly as a Snyder series in `world-coords::geo` instead of
@@ -369,7 +373,7 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 7. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
 8. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
-   interval, and a lowpass for the cab, belong in the same pass.
+   interval belong in the same pass.
 9. **Day/night and weather rendering (M6)** — the cab is interactive now; what M6 still
    misses is the world outside the windscreen: sun position from time and place, rain/fog
    affecting visibility, night lighting (signals, instruments, headlights). Detailed cab

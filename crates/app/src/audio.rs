@@ -18,15 +18,27 @@
 //! WAV buffer at start-up, addressed as `synth:<name>`. So the repository carries no binary
 //! samples, and a mod that brings its own files takes exactly the same path — only the
 //! `file` of the entry changes.
+//!
+//! One more thing lives here because Bevy's audio has no filter graph: the **cab wall**.
+//! Entries marked `positional` play through [`Exterior`], whose decoder runs a one-pole
+//! lowpass; while the camera sits in the cab its cutoff drops to [`CAB_CUTOFF`], on the
+//! outside cameras it opens fully. The desk sounds stay plain — they are in the cab with
+//! the listener.
 
 use crate::render::VehicleView;
-use crate::{PlayerTrain, SimResource, models, ui};
-use bevy::audio::{AudioSinkPlayback, SpatialAudioSink, SpatialListener, Volume};
+use crate::{PlayerTrain, SimResource, ui};
+use bevy::audio::{
+    AudioSinkPlayback, ChannelCount, Decodable, Sample, SampleRate, Source, SpatialAudioSink,
+    SpatialListener, Volume,
+};
 use bevy::prelude::*;
 use sim_core::sound::{SoundSpec, SoundState, default_table};
 use sim_core::train::VehicleSpec;
 use std::collections::HashMap;
 use std::f32::consts::TAU;
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use std::time::Duration;
 
 /// Sample rate of the generated sources [Hz]. Enough for engine hum and hiss, and every
 /// buffer stays under 50 kB.
@@ -34,6 +46,103 @@ const RATE: u32 = 22_050;
 
 /// Gap between the ears of the listener [m] — the stereo base of the cab.
 const EAR_GAP: f32 = 0.3;
+
+/// Cutoff of the cab wall [Hz] while the camera sits inside.
+///
+/// ponytail: one figure for every cab; a per-vehicle insulation value moves into
+/// `VehicleSpec` when someone records real cabs and can hear the difference.
+const CAB_CUTOFF: f32 = 800.0;
+
+/// The cutoff every [`Muffled`] decoder currently applies, as `f32` bits — written by
+/// [`update_audio`] from the camera mode, read on the audio thread. Infinity is the
+/// pass-through: its coefficient comes out as exactly 1, so the filter copies its input.
+static CUTOFF: AtomicU32 = AtomicU32::new(f32::INFINITY.to_bits());
+
+/// A sound placed outside the cab: the same bytes as [`AudioSource`], decoded through the
+/// cab-wall lowpass. Bevy's audio has no filter graph, so the muffling sits in the decoder
+/// rather than on the sink — registered as a playable source in `main`.
+#[derive(Asset, TypePath)]
+pub struct Exterior(AudioSource);
+
+impl Decodable for Exterior {
+    type Decoder = Muffled<<AudioSource as Decodable>::Decoder>;
+
+    fn decoder(&self) -> Self::Decoder {
+        Muffled::new(self.0.decoder())
+    }
+}
+
+/// One-pole lowpass over an inner decoder: `y += a·(x − y)` with
+/// `a = 1 − e^(−2π·fc/fs)`, one filter memory per channel.
+pub struct Muffled<S> {
+    inner: S,
+    /// The previous output per channel — the samples interleave.
+    state: Vec<f32>,
+    channel: usize,
+    /// Last value read from [`CUTOFF`]; the coefficient is recomputed only when it moves.
+    bits: u32,
+    a: f32,
+}
+
+impl<S: Source> Muffled<S> {
+    fn new(inner: S) -> Self {
+        let channels = inner.channels().get() as usize;
+        Self {
+            inner,
+            state: vec![0.0; channels],
+            channel: 0,
+            // NaN bits, which CUTOFF never holds — the first sample computes the coefficient.
+            bits: u32::MAX,
+            a: 1.0,
+        }
+    }
+}
+
+impl<S: Source> Iterator for Muffled<S> {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Sample> {
+        let x = self.inner.next()?;
+        let bits = CUTOFF.load(Relaxed);
+        if bits != self.bits {
+            self.bits = bits;
+            let rate = self.inner.sample_rate().get() as f32;
+            self.a = 1.0 - (-TAU * f32::from_bits(bits) / rate).exp();
+        }
+        let channel = self.channel;
+        self.channel = (channel + 1) % self.state.len();
+        let y = &mut self.state[channel];
+        *y += self.a * (x - *y);
+        // Flush denormals: a filter memory decaying into silence must not slow the
+        // audio thread to a crawl on the way down.
+        if y.abs() < 1e-9 {
+            *y = 0.0;
+        }
+        Some(*y)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<S: Source> Source for Muffled<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+
+    fn channels(&self) -> ChannelCount {
+        self.inner.channels()
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+}
 
 /// Which entry of which vehicle a sink plays.
 #[derive(Component, Clone, Copy, Debug)]
@@ -47,7 +156,8 @@ pub struct Sound {
 /// The sources behind the tables, by the `file` of the entry.
 #[derive(Resource)]
 pub struct Sounds {
-    sources: HashMap<String, Handle<AudioSource>>,
+    /// The same bytes twice: heard plain at the desk, or through the cab wall when placed.
+    sources: HashMap<String, (Handle<AudioSource>, Handle<Exterior>)>,
     /// The table a vehicle without one of its own runs on.
     default: Vec<SoundSpec>,
     /// View entity of every vehicle — what a placed sound hangs off. Vehicles are spawned
@@ -79,7 +189,7 @@ impl Sounds {
 pub fn setup_audio(
     mut commands: Commands,
     mut assets: ResMut<Assets<AudioSource>>,
-    server: Res<AssetServer>,
+    mut exteriors: ResMut<Assets<Exterior>>,
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
     views: Query<(Entity, &VehicleView)>,
@@ -113,18 +223,30 @@ pub fn setup_audio(
         }
     }
     for file in wanted {
-        // `synth:<name>` is generated here, everything else is a sample out of a mod.
-        let handle = match file.strip_prefix("synth:") {
+        // `synth:<name>` is generated here, everything else is a sample out of a mod's
+        // directory — read directly from where `mods://` is rooted (`mod_asset_source`):
+        // the WAV loader would only wrap the same bytes, and the cab-wall variant needs
+        // them in hand rather than behind an asynchronous handle.
+        let source = match file.strip_prefix("synth:") {
             Some(name) => match synth(name) {
-                Some(source) => assets.add(source),
+                Some(source) => source,
                 None => {
                     warn!("sound: unknown generated source {file}");
                     continue;
                 }
             },
-            None => server.load(models::asset_path(&file)),
+            None => match std::fs::read(Path::new("mods").join(&file)) {
+                Ok(bytes) => AudioSource {
+                    bytes: bytes.into(),
+                },
+                Err(error) => {
+                    warn!("sound: cannot read mods/{file}: {error}");
+                    continue;
+                }
+            },
         };
-        bank.sources.insert(file, handle);
+        let exterior = exteriors.add(Exterior(source.clone()));
+        bank.sources.insert(file, (assets.add(source), exterior));
     }
 
     let (mut loops, mut triggered) = (0, 0);
@@ -136,7 +258,7 @@ pub fn setup_audio(
                     continue;
                 }
                 loops += 1;
-                let Some(handle) = bank.sources.get(&entry.file) else {
+                let Some((plain, exterior)) = bank.sources.get(&entry.file) else {
                     continue;
                 };
                 let marker = Sound {
@@ -149,19 +271,22 @@ pub fn setup_audio(
                     ..PlaybackSettings::LOOP
                 }
                 .with_volume(Volume::SILENT);
-                let bundle = (AudioPlayer::new(handle.clone()), settings, marker);
                 match bank.emitters.get(&(t, v)) {
                     // Placed in the world: the sink rides along on the vehicle, so distance
-                    // attenuation and Doppler fall out of its transform.
+                    // attenuation and Doppler fall out of its transform — and the cab wall
+                    // sits in its decoder.
                     Some(parent) if entry.positional => {
-                        commands
-                            .entity(*parent)
-                            .with_child((bundle, Transform::default()));
+                        commands.entity(*parent).with_child((
+                            AudioPlayer(exterior.clone()),
+                            settings,
+                            marker,
+                            Transform::default(),
+                        ));
                     }
-                    // Not placed: a cab sound. Only the train being driven has a cab that
-                    // anyone is sitting in.
+                    // Not placed: a cab sound, heard unfiltered. Only the train being
+                    // driven has a cab that anyone is sitting in.
                     _ if t == player.0 && !entry.positional => {
-                        commands.spawn(bundle);
+                        commands.spawn((AudioPlayer(plain.clone()), settings, marker));
                     }
                     _ => {}
                 }
@@ -176,11 +301,13 @@ pub fn setup_audio(
 }
 
 /// Follows the curves of every loop and fires the triggered entries.
+#[allow(clippy::too_many_arguments)]
 pub fn update_audio(
     mut commands: Commands,
     sim: Res<SimResource>,
     bank: Res<Sounds>,
     time: Res<Time>,
+    camera: Res<ui::CameraState>,
     // The state of the previous frame: triggers need an edge, air a difference.
     mut previous: Local<HashMap<(usize, usize), SoundState>>,
     mut plain: Query<(&Sound, &mut AudioSink)>,
@@ -188,6 +315,13 @@ pub fn update_audio(
 ) {
     let dt = time.delta_secs_f64().clamp(1e-3, 0.25);
     let sim = &sim.0;
+
+    // The cab wall: in the cab the placed sounds are muffled, outside the filter opens.
+    let cutoff = match camera.mode {
+        ui::CameraMode::Cab => CAB_CUTOFF,
+        _ => f32::INFINITY,
+    };
+    CUTOFF.store(cutoff.to_bits(), Relaxed);
 
     // One reading per vehicle — every entry of that vehicle is evaluated against it.
     let mut states: HashMap<(usize, usize), SoundState> = HashMap::new();
@@ -234,7 +368,7 @@ pub fn update_audio(
             if !entry.fires(state, before) {
                 continue;
             }
-            let Some(handle) = bank.sources.get(&entry.file) else {
+            let Some((plain, exterior)) = bank.sources.get(&entry.file) else {
                 continue;
             };
             let (volume, pitch) = entry.level(state);
@@ -244,15 +378,16 @@ pub fn update_audio(
             }
             .with_volume(Volume::Linear(volume as f32))
             .with_speed(pitch as f32);
-            let bundle = (AudioPlayer::new(handle.clone()), settings);
             match bank.emitters.get(&(t, v)) {
                 Some(parent) if entry.positional => {
-                    commands
-                        .entity(*parent)
-                        .with_child((bundle, Transform::default()));
+                    commands.entity(*parent).with_child((
+                        AudioPlayer(exterior.clone()),
+                        settings,
+                        Transform::default(),
+                    ));
                 }
                 _ => {
-                    commands.spawn(bundle);
+                    commands.spawn((AudioPlayer(plain.clone()), settings));
                 }
             }
         }
@@ -434,6 +569,27 @@ mod tests {
             assert!(synth(name).is_some(), "{name}");
         }
         assert!(synth("nonexistent").is_none());
+    }
+
+    /// The cab wall: with the cutoff open the filter is a wire, in the cab it takes the
+    /// treble out and leaves the bass alone. No other test touches [`CUTOFF`], so the
+    /// global is safe to set here.
+    #[test]
+    fn the_cab_wall_muffles_treble_only() {
+        let rms = |frequency: f32, cutoff: f32| -> f32 {
+            CUTOFF.store(cutoff.to_bits(), Relaxed);
+            let source = generate(0.5, |t| (t * frequency * TAU).sin());
+            // Skip the settling of the filter, measure the rest.
+            let samples: Vec<f32> = Muffled::new(source.decoder()).skip(2000).collect();
+            (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+        };
+        // Open (outside camera): both bands at the ~0.707 of a full-scale sine.
+        assert!(rms(100.0, f32::INFINITY) > 0.65);
+        assert!(rms(4000.0, f32::INFINITY) > 0.65);
+        // In the cab: the bass stays, the treble goes.
+        assert!(rms(100.0, CAB_CUTOFF) > 0.6);
+        assert!(rms(4000.0, CAB_CUTOFF) < 0.25);
+        CUTOFF.store(f32::INFINITY.to_bits(), Relaxed);
     }
 
     #[test]

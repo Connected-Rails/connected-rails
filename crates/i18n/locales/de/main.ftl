@@ -463,6 +463,7 @@ snd-quantity-doors = Türen
 snd-quantity-alert = Zugsicherung meldet
 snd-quantity-horn = Signalhorn
 snd-quantity-roughness = Gleisrauigkeit
+snd-quantity-rain = Regen
 
 ## Vehicle editor — cab
 ##

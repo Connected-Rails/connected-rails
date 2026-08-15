@@ -463,6 +463,7 @@ snd-quantity-doors = Doors
 snd-quantity-horn = Horn
 snd-quantity-alert = Train protection alert
 snd-quantity-roughness = Track roughness
+snd-quantity-rain = Rain
 
 ## Vehicle editor — cab
 ##

@@ -63,6 +63,15 @@ struct Headlight {
     reverse: bool,
 }
 
+/// Red tail lamp (Zg 101) at one end of a train. `update_headlights` shows the
+/// pair on the end the train runs *away* from while the light switch is on —
+/// emissive lenses, so bloom does the glowing after dark.
+#[derive(Component)]
+struct TailLamp {
+    train: usize,
+    reverse: bool,
+}
+
 /// Cab light of the player's leading vehicle (`CabInputs::cab_light`).
 #[derive(Component)]
 struct CabLamp;
@@ -549,6 +558,15 @@ fn setup(
         perceptual_roughness: 0.6,
         ..default()
     });
+    // Zg 101: two red lamps on the current rear end (`update_headlights`).
+    // ponytail: emissive spheres at the placeholder body's face — modelled
+    // vehicles get real lenses once their glTF carries them as content.
+    let tail_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.02, 0.02),
+        emissive: LinearRgba::rgb(6.0, 0.08, 0.08),
+        ..default()
+    });
+    let tail_mesh = meshes.add(Sphere::new(0.09));
     for train in std::iter::once(player).chain(drivers.iter().map(|(t, _)| *t)) {
         let last = sim.trains[train].vehicles.len() - 1;
         for (i, v) in sim.trains[train].vehicles.iter().enumerate() {
@@ -576,10 +594,9 @@ fn setup(
                     ))
                     .id()
             };
-            // Headlight cones at both ends of the train; the one facing the
-            // direction of travel is lit by darkness and the cab's light switch
-            // (`update_headlights`). ponytail: white cones only — red tail
-            // lamps (Zg 101) are per-vehicle model/content work.
+            // Headlight cones and red tail lamps (Zg 101) at both ends of the
+            // train; `update_headlights` lights the cones on the end facing the
+            // direction of travel and the tail lamps on the other one.
             let mut cones = Vec::new();
             if i == 0 {
                 cones.push((-(v.spec.length as f32) / 2.0, false));
@@ -605,6 +622,15 @@ fn setup(
                         Transform::from_xyz(0.0, -0.6, end)
                             .looking_to(Vec3::new(0.0, -0.06, dir).normalize(), Vec3::Y),
                     ));
+                    for x in [-1.0, 1.0] {
+                        parent.spawn((
+                            TailLamp { train, reverse },
+                            Mesh3d(tail_mesh.clone()),
+                            MeshMaterial3d(tail_material.clone()),
+                            Transform::from_xyz(x, -0.6, end),
+                            Visibility::Hidden,
+                        ));
+                    }
                 });
             }
             // Cab light behind the front window of the player's leading vehicle.
@@ -949,11 +975,13 @@ fn update_daylight(
 
 /// Headlights follow the light switch, the direction of travel and the darkness:
 /// full beam at night on the end the train runs towards, off in daylight (M6).
+/// The red tail lamps (Zg 101) mark the opposite end, by day as by night.
 /// The cab lamp follows its own switch alone.
 fn update_headlights(
     daylight: Res<Daylight>,
     sim: Res<SimResource>,
     mut heads: Query<(&Headlight, &mut SpotLight)>,
+    mut tails: Query<(&TailLamp, &mut Visibility)>,
     mut cab_lamp: Query<&mut PointLight, With<CabLamp>>,
     player: Res<PlayerTrain>,
 ) {
@@ -965,6 +993,15 @@ fn update_headlights(
         // ponytail: like the moon above, lit artistically bright — the night
         // scene has no auto-exposure to lift a physical beam out of the black.
         light.intensity = if on { 2_000_000_000.0 * night } else { 0.0 };
+    }
+    for (tail, mut vis) in &mut tails {
+        let cab = &sim.0.controls[tail.train];
+        let backwards = cab.reverser < 0;
+        *vis = if cab.headlights && tail.reverse != backwards {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
     }
     let on = sim.0.controls[player.0].cab_light;
     for mut lamp in &mut cab_lamp {
@@ -1035,19 +1072,33 @@ fn fall_offset(time: f64, speed: f32) -> f32 {
     ((time * f64::from(speed)) % f64::from(PRECIP_PERIOD)) as f32
 }
 
-/// Keeps the precipitation column on the camera, lets it fall, and shows the
-/// field the current weather asks for.
-// ponytail: the field follows the camera in x/z, so streaks stay vertical even
-// at speed — a slant from the relative wind is a transform shear away if anyone
-// misses it.
+/// Streak slant cap: relative wind beyond this multiple of the fall speed tilts
+/// the column no further (~68°) — laid flat, it would stop covering the camera.
+const MAX_SLANT: f32 = 2.5;
+
+/// Tilts the fall axis into the relative wind: streaks lean against the
+/// direction of travel by `atan(v / fall speed)`, capped at [`MAX_SLANT`].
+fn fall_rotation(vel: Vec3, fall_speed: f32) -> Quat {
+    let wind = (-vel).clamp_length_max(fall_speed * MAX_SLANT);
+    Quat::from_rotation_arc(Vec3::NEG_Y, (wind + Vec3::NEG_Y * fall_speed).normalize())
+}
+
+/// Keeps the precipitation column on the camera, lets it fall along an axis
+/// slanted by the relative wind, and shows the field the current weather asks
+/// for. The wind is the player train's speed — the outside cameras ride along,
+/// so the same slant is right for them.
 fn update_precipitation(
     sim: Res<SimResource>,
+    player: Res<PlayerTrain>,
+    origin: Res<Origin>,
     camera: Query<&Transform, With<ui::CabCamera>>,
     mut fields: Query<(&Precipitation, &mut Transform, &mut Visibility), Without<ui::CabCamera>>,
 ) {
     let Ok(cam) = camera.single() else {
         return;
     };
+    let vehicle = &sim.0.trains[player.0].vehicles[0];
+    let vel = origin.0.dir_to_render(vehicle.pos.pose(&sim.0.net).tangent) * vehicle.v as f32;
     for (field, mut tf, mut visibility) in &mut fields {
         let wanted = match sim.0.weather {
             Weather::Rain => !field.snow,
@@ -1059,11 +1110,15 @@ fn update_precipitation(
         } else {
             Visibility::Hidden
         };
-        tf.translation = Vec3::new(
-            cam.translation.x,
-            cam.translation.y - PRECIP_PERIOD - fall_offset(sim.0.time, field.speed),
-            cam.translation.z,
-        );
+        let rot = fall_rotation(vel, field.speed);
+        tf.rotation = rot;
+        tf.translation = cam.translation
+            + rot
+                * Vec3::new(
+                    0.0,
+                    -PRECIP_PERIOD - fall_offset(sim.0.time, field.speed),
+                    0.0,
+                );
     }
 }
 
@@ -1077,5 +1132,21 @@ mod tests {
             let o = fall_offset(t, 9.0);
             assert!((0.0..PRECIP_PERIOD).contains(&o), "offset {o} at t={t}");
         }
+    }
+
+    #[test]
+    fn fall_rotation_leans_against_travel_and_caps() {
+        // At rest the streaks stay vertical.
+        let dir = fall_rotation(Vec3::ZERO, 9.0) * Vec3::NEG_Y;
+        assert!(dir.angle_between(Vec3::NEG_Y) < 1e-4);
+        // 20 m/s forward (−z): streaks lean backwards by atan(20/9).
+        let dir = fall_rotation(Vec3::new(0.0, 0.0, -20.0), 9.0) * Vec3::NEG_Y;
+        assert!((dir.z / -dir.y - 20.0 / 9.0).abs() < 1e-3, "slant {dir}");
+        // Far above the cap the slant ratio stays at MAX_SLANT.
+        let dir = fall_rotation(Vec3::new(0.0, 0.0, -100.0), 9.0) * Vec3::NEG_Y;
+        assert!(
+            (dir.z / -dir.y - MAX_SLANT).abs() < 1e-3,
+            "capped slant {dir}"
+        );
     }
 }

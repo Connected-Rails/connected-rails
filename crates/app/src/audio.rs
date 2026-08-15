@@ -33,7 +33,7 @@ use bevy::audio::{
 };
 use bevy::prelude::*;
 use sim_core::sound::{SoundSpec, SoundState, default_table};
-use sim_core::train::VehicleSpec;
+use sim_core::train::{VehicleSpec, Weather};
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::path::Path;
@@ -333,12 +333,13 @@ pub fn update_audio(
                 continue;
             }
             let mut state = SoundState::sample(vehicle, &cab, alert, previous.get(&(t, v)), dt);
-            // The sampler deliberately sees no track — the roughness of the
-            // type under the vehicle is filled in here, where the net lives.
+            // The sampler deliberately sees no track and no weather — both are
+            // filled in here, where net and world state live.
             state.roughness = sim
                 .net
                 .track_type_at(vehicle.pos.edge, vehicle.pos.s)
                 .roughness;
+            state.rain = f64::from(sim.weather == Weather::Rain);
             states.insert((t, v), state);
         }
     }

@@ -76,6 +76,10 @@ pub enum Quantity {
     /// rail (see `TrackType::roughness`). The app fills it from the track;
     /// jointed or worn track sits above 1, slab track below.
     Roughness,
+    /// Rain falling on the vehicle (0/1). Filled in by the app like
+    /// `Roughness` — the weather lives outside the vehicle state. A rain
+    /// loop conditions or scales its volume on it.
+    Rain,
     /// Position of a cab control, normalised 0 … 1 over its travel exactly as
     /// the 3D cab reads it ([`CabControl::get`]) — detents sit at the same
     /// values, so a threshold between two of them catches the click. This is
@@ -87,7 +91,7 @@ pub enum Quantity {
 impl Quantity {
     /// Every plain quantity, in the order the editor lists them. The editor
     /// appends `Control(…)` for each [`CabControl::ALL`] entry itself.
-    pub const ALL: [Quantity; 20] = [
+    pub const ALL: [Quantity; 21] = [
         Quantity::Speed,
         Quantity::Distance,
         Quantity::EngineRpm,
@@ -108,6 +112,7 @@ impl Quantity {
         Quantity::Horn,
         Quantity::Alert,
         Quantity::Roughness,
+        Quantity::Rain,
     ];
 
     /// i18n key of the label — `snd-quantity-speed` and so on.
@@ -133,6 +138,7 @@ impl Quantity {
             Quantity::Horn => "snd-quantity-horn",
             Quantity::Alert => "snd-quantity-alert",
             Quantity::Roughness => "snd-quantity-roughness",
+            Quantity::Rain => "snd-quantity-rain",
             // The control labels the cab editor already has.
             Quantity::Control(control) => control.key(),
         }
@@ -190,6 +196,9 @@ pub struct SoundState {
     /// the sampler deliberately does not see.
     #[serde(default = "neutral_roughness")]
     pub roughness: f64,
+    /// Rain on the vehicle (0/1), filled in by the app like `roughness`.
+    #[serde(default)]
+    pub rain: f64,
 }
 
 fn neutral_roughness() -> f64 {
@@ -228,6 +237,7 @@ impl Default for SoundState {
             train_type: 0.0,
             afb_target: 0.0,
             roughness: neutral_roughness(),
+            rain: 0.0,
         }
     }
 }
@@ -255,6 +265,7 @@ impl SoundState {
             Quantity::Horn => self.horn,
             Quantity::Alert => self.alert,
             Quantity::Roughness => self.roughness,
+            Quantity::Rain => self.rain,
             Quantity::Control(control) => match control {
                 CabControl::AfbTarget => self.afb_target,
                 CabControl::Battery => self.battery,
@@ -329,6 +340,7 @@ impl SoundState {
                 (cab.afb_target / v_max).clamp(0.0, 1.0)
             },
             roughness: neutral_roughness(),
+            rain: 0.0,
         }
     }
 }

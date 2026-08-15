@@ -103,6 +103,10 @@ pub struct SignalSource {
     /// table instead of the built-in logic. Resolved by the mod runtime (plan ch. 19).
     #[serde(default)]
     pub signal_type: Option<String>,
+    /// 3D model override (`"<mod>:<name>"` below `signal_models/`) — wins over the
+    /// signal type's default model.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 fn default_system() -> SignalSystem {

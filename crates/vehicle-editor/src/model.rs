@@ -48,11 +48,7 @@ pub fn inspect(gltf: &bevy::gltf::Gltf, nodes: &Assets<GltfNode>) -> Vec<Node> {
     list
 }
 
-/// `body_LOD2` → `Some(2)`.
-pub fn lod_level(name: &str) -> Option<u8> {
-    let (_, tail) = name.rsplit_once("_LOD")?;
-    tail.parse().ok()
-}
+pub use sim_core::train::lod_level;
 
 /// The levels of detail present in the file, with default distances.
 pub fn detect_lods(nodes: &[Node]) -> Vec<Lod> {

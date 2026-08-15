@@ -10,6 +10,7 @@ mod menu;
 mod models;
 mod mods_ui;
 mod render;
+mod signals;
 mod streaming;
 mod ui;
 
@@ -18,6 +19,7 @@ use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::audio::{AddAudioSource, DefaultSpatialScale, SpatialScale};
 use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
@@ -43,6 +45,15 @@ pub enum GameState {
 /// The running simulation.
 #[derive(Resource)]
 pub struct SimResource(pub Sim);
+
+/// Daylight factor of this frame, 0 (night) … 1 (full day) — written by
+/// `update_daylight`, read by everything that switches with darkness.
+#[derive(Resource, Default)]
+pub struct Daylight(pub f32);
+
+/// Head light cone on the player's leading vehicle (M6 night lighting).
+#[derive(Component)]
+struct Headlight;
 
 /// The one directional light that is the sun (`update_daylight`).
 #[derive(Component)]
@@ -138,6 +149,7 @@ fn main() {
         require_markers: true,
         ..default()
     })
+    .init_resource::<Daylight>()
     .init_resource::<ui::CameraState>()
     .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
@@ -175,6 +187,7 @@ fn main() {
             rebase_origin,
             sync_vehicles,
             update_daylight,
+            update_headlights,
             ui::camera_control,
             streaming::stream_terrain,
             terrain_visibility,
@@ -196,6 +209,12 @@ fn main() {
             models::animate_digits,
             displays::bind_display_nodes,
             cab::update_highlight,
+            signals::mount_parts,
+            signals::bind_lamps,
+            signals::update_lamps,
+            signals::animate_motions,
+            signals::update_signal_lods,
+            signals::update_placeholders,
         )
             .after(sync_vehicles)
             .run_if(in_state(GameState::Driving)),
@@ -412,6 +431,32 @@ fn setup(
         &origin,
     );
 
+    // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
+    // type's default; a signal without either gets the placeholder mast.
+    let signal_models: Vec<Option<sim_core::interlock::SignalModel>> = line_source
+        .signals
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let name = mods.mods.signal_model_name(&line_source, i)?;
+            let model = mods.mods.signal_models.get(name).cloned();
+            if model.is_none() {
+                warn!("signal {i}: unknown signal model {name:?}");
+            }
+            model
+        })
+        .collect();
+    signals::spawn_signals(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &assets,
+        &sim,
+        &origin,
+        &signal_models,
+    );
+    commands.insert_resource(signals::SignalModels(signal_models));
+
     // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
     // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
     // terrain than fits in memory at once. `--dgm` may be repeated for a line across a
@@ -461,24 +506,51 @@ fn setup(
             let view = VehicleView { train, vehicle: i };
             // A vehicle with a model gets its glTF; everything else stays a body
             // (plan ch. 15.3).
-            if let Some(model) = v.spec.model.as_ref().filter(|m| !m.file.is_empty()) {
+            let entity = if let Some(model) = v.spec.model.as_ref().filter(|m| !m.file.is_empty()) {
                 let entity = commands
                     .spawn((Transform::default(), Visibility::default(), view))
                     .id();
                 models::spawn(&mut commands, &assets, entity, &view, &model.file);
-                continue;
+                entity
+            } else {
+                let mesh = meshes.add(Cuboid::new(3.0, 3.8, v.spec.length as f32));
+                commands
+                    .spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(if v.is_powered() {
+                            body.clone()
+                        } else {
+                            coach.clone()
+                        }),
+                        Transform::default(),
+                        view,
+                    ))
+                    .id()
+            };
+            // Headlight cone on the leading vehicle, lit by darkness (M6).
+            // ponytail: always the -Z end — a proper Spitzensignal that follows
+            // the direction of travel and a cab switch needs a light control in
+            // `sim-core` first.
+            if i == 0 {
+                let front = -(v.spec.length as f32) / 2.0;
+                commands.entity(entity).with_children(|parent| {
+                    parent.spawn((
+                        Headlight,
+                        SpotLight {
+                            color: Color::srgb(1.0, 0.95, 0.85),
+                            intensity: 0.0,
+                            range: 300.0,
+                            inner_angle: 0.18,
+                            outer_angle: 0.32,
+                            ..default()
+                        },
+                        // The vehicle origin sits 2.2 m above the rail; the lamp
+                        // below it at the front, aimed a touch onto the track.
+                        Transform::from_xyz(0.0, -0.6, front)
+                            .looking_to(Vec3::new(0.0, -0.06, -1.0).normalize(), Vec3::Y),
+                    ));
+                });
             }
-            let mesh = meshes.add(Cuboid::new(3.0, 3.8, v.spec.length as f32));
-            commands.spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(if v.is_powered() {
-                    body.clone()
-                } else {
-                    coach.clone()
-                }),
-                Transform::default(),
-                view,
-            ));
         }
     }
 
@@ -503,6 +575,9 @@ fn setup(
     ));
     commands.spawn((
         Camera3d::default(),
+        // HDR + bloom: emissive lamp lenses glow at night (M6 night lighting).
+        bevy::camera::Hdr,
+        Bloom::NATURAL,
         AmbientLight {
             color: Color::srgb(0.7, 0.8, 1.0),
             brightness: 250.0,
@@ -692,6 +767,7 @@ fn update_daylight(
     sim: Res<SimResource>,
     origin: Res<Origin>,
     mut clear: ResMut<ClearColor>,
+    mut daylight: ResMut<Daylight>,
     mut sun: BodyLight<Sun, Moon>,
     mut moon: BodyLight<Moon, Sun>,
     mut ambient: Query<&mut AmbientLight, With<ui::CabCamera>>,
@@ -709,6 +785,7 @@ fn update_daylight(
     let e = el.to_degrees() as f32;
     // Daylight factor: ramps up through civil twilight, 1 in full daylight.
     let day = ((e + 6.0) / 12.0).clamp(0.0, 1.0);
+    daylight.0 = day;
 
     if let Ok((mut tf, mut light)) = sun.single_mut() {
         *tf = Transform::from_rotation(look_at_body(az, el));
@@ -746,6 +823,16 @@ fn update_daylight(
     let dawn = (1.0 - (e / 10.0).abs()).clamp(0.0, 0.6);
     let sky = lerp3(sky, (0.83, 0.52, 0.32), dawn);
     clear.0 = Color::srgb(sky.0, sky.1, sky.2);
+}
+
+/// Headlights follow the darkness: full beam at night, off in daylight (M6).
+fn update_headlights(daylight: Res<Daylight>, mut lights: Query<&mut SpotLight, With<Headlight>>) {
+    let night = 1.0 - daylight.0;
+    for mut light in lights.iter_mut() {
+        // ponytail: like the moon above, lit artistically bright — the night
+        // scene has no auto-exposure to lift a physical beam out of the black.
+        light.intensity = 2_000_000_000.0 * night;
+    }
 }
 
 /// Rotation of a directional light shining *from* azimuth/elevation onto the scene.

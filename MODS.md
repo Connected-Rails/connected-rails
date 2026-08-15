@@ -23,6 +23,7 @@ mods/<id>/mod.ron           manifest
          /scenarios/*.ron   Scenario
          /timetable/*.ron   Timetable — referenced by a scenario for stop scoring
          /signals/*.ron     SignalType
+         /signal_models/*.ron SignalModel — glTF parts on mount points, lamp bindings
          /scripts/*.lua     behaviour
          /assets/…          models, textures, sounds — as `mods://<id>/assets/…`
 ```
@@ -38,7 +39,7 @@ becomes `example:br101_afb`. Two mods may therefore use the same file names.
     name: "Example Mod",
     version: "0.1.0",
     author: "TrainSim-DE",
-    description: "Reference mod: a vehicle with an AFB script, two signal types and a line.",
+    description: "Reference mod: a vehicle with an AFB script, two signal types with a 3D signal model, and a line.",
     depends: [],
     enabled: true,
 )
@@ -599,6 +600,72 @@ A line references the type by name:
 ```ron
 signals: [(kind: Main, system: Ks, device: 1, guarded: [0], signal_type: Some("example:ks_main"))],
 ```
+
+### Signal models
+
+A signal type maps situations to lamp images; a **signal model** gives them geometry.
+Models are assemblies after the Zusi pattern: shared glTF parts — mast, screen,
+indicator — chained by **mount points**, so a screen drawn once hangs on a mast here
+and under a bridge there. `signal_models/*.ron`:
+
+```ron
+(
+    parts: [
+        (file: "example/assets/sig_mast.gltf"),                              // root
+        (file: "example/assets/sig_schirm_ks.gltf", mount: Some((0, "mp_schirm"))),
+        (file: "example/assets/sig_zs3.gltf", mount: Some((1, "mp_top"))),
+    ],
+    lamps: [
+        (lamp: "red", part: 1, node: "lamp_red"),
+        (lamp: "zs3_4", part: 2, node: "zs3_4"),
+    ],
+)
+```
+
+A part without `mount` stands at the device position; every other part hangs off a
+named node of another part. `lamps` binds the free-form lamp-image strings of the
+signal type to glTF nodes: the node is **visible while its string is in the current
+lamp image** and hidden otherwise — a Zs3 digit is a lamp like any other, and a
+script's `lamps` (the Zs1 below) lights them the same way.
+
+**Moving parts — semaphore signals.** `motions` binds a lamp-image string to a node
+that *travels* instead of switching: while the string is in the lamp image the node
+moves to full travel, without it back to rest, linearly over `seconds` — a quick
+aspect change swings a semaphore arm through its real intermediate positions. The
+strings name the moved elements, so an aspect that moves two arms lists two of them
+(`signals/hv_form.ron` + `signal_models/form_hp.ron`):
+
+```ron
+motions: [
+    (lamp: "fluegel1", node: "fluegel1",
+     motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 45.0), seconds: 1.8),
+    (lamp: "fluegel2", node: "fluegel2",
+     motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 135.0), seconds: 1.8),
+]
+```
+
+`motion` takes the same `Rotate`/`Translate`/`Visibility` as vehicle parts; one
+binding per node. Rest pose (travel 0) is the stop position.
+
+**Levels of detail.** An optional `lods` table switches nodes named
+`<name>_LOD<level>` by camera distance, exactly like vehicles: coarsest last,
+beyond the last distance the LOD nodes disappear; nodes without the suffix are
+every level's furniture. Empty = the whole assembly at every distance.
+
+```ron
+lods: [(level: 0, distance: 200.0), (level: 1, distance: 2500.0)]
+```
+
+Which model a signal wears: `model: Some("<mod>:<name>")` on the signal type is the
+default; `model` on the signal placement in the line overrides it per signal. A
+signal without either gets a placeholder mast whose light follows the aspect.
+
+Model conventions: origin at the foot on rail-top height, +Y up, the face towards
+the approaching driver looks along **+Z**. Mount points are empty nodes named
+`mp_*`; lamp nodes conventionally `lamp_<image>` (their material carries the lit
+look, e.g. an emissive factor — switching is pure visibility). The
+**signal editor** (`trainsim-signal-editor`) assembles parts, binds lamps with
+suggestions from these names, and lights any lamp image in its preview.
 
 ### Aspect hook `aspect(ctx)`
 

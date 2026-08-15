@@ -26,8 +26,8 @@ off — a toggle there takes effect when the run starts. Any run flag (`--line`,
 `--scenario`, `--frames`, `--screenshot`, …) skips the menu, so the invocations above stay
 non-interactive.
 
-For a faster edit-compile-run loop, add `--features dev` to any of the three binaries
-(`app`, `route-editor`, `vehicle-editor`). It links Bevy as a shared library, which cuts the
+For a faster edit-compile-run loop, add `--features dev` to any of the four binaries
+(`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
 relink after a code change. The first build with the flag recompiles Bevy, and the resulting
 binary needs the Bevy DLL next to it — so use it for development only, never for a release.
 Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`).
@@ -39,7 +39,7 @@ anything also depends on the line — the LZB needs a conductor cable, the PZB n
 Switching the battery off and on again (`1`) restarts the function test of every system on
 board.
 
-`--screenshot` is available in both editors as well; `--frames N` sets after how many frames
+`--screenshot` is available in the editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).
 
 ## Mods
@@ -197,6 +197,7 @@ alignment from the OSM points.
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down view with aerial imagery overlay (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
+| `signal-editor` | Signal editor: modular signal models — glTF parts on mount points, lamp bindings (ch. 15) |
 
 `sim-core` is a pure Rust library with a fixed time step (200 Hz). The Bevy app ticks it and
 mirrors the state into ECS components — simulation logic does not belong there.
@@ -264,16 +265,18 @@ cargo run -p app -- --dgm ./dgm1_west --epsg 25832 --dgm ./dgm1_ost --epsg 25833
 
 ## Editors
 
-There are **two separate programs**, because the two jobs have nothing to do with each
-other: a route is geodata, a vehicle is a model with a data sheet.
+There are **three separate programs**, because the jobs have nothing to do with each
+other: a route is geodata, a vehicle is a model with a data sheet, a signal model is
+an assembly of shared parts.
 
 | Program | Purpose |
 |---|---|
 | `cargo run -p route-editor` | line: track, equipment, aerial imagery overlay |
 | `cargo run -p vehicle-editor` | vehicle: base data, glTF model, LOD, moving parts |
+| `cargo run -p signal-editor` | signal model: glTF parts on mount points, lamp bindings, lamp test |
 
-Both are desktop applications, not game screens: menu bar, docked panels, the operating
-system's own file dialogs. `--frames N` and `--screenshot file.png` work in both.
+All are desktop applications, not game screens: menu bar, docked panels, the operating
+system's own file dialogs. `--frames N` and `--screenshot file.png` work in all of them.
 
 ## Language
 

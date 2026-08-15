@@ -13,6 +13,7 @@ members = [
     "crates/imagery",
     "crates/route-editor",
     "crates/vehicle-editor",
+    "crates/signal-editor",
     "crates/editor-ui",
 ]
 

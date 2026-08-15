@@ -1,0 +1,24 @@
+[package]
+name = "signal-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "trainsim-signal-editor"
+path = "src/main.rs"
+
+[dependencies]
+i18n = { workspace = true }
+editor-ui = { workspace = true }
+sim-core = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+bevy = { workspace = true }
+bevy_egui = { workspace = true }
+rfd = { workspace = true }
+
+[features]
+# Links Bevy as a shared library instead of statically: much faster relinks.
+# Local development only, the resulting binary needs the Bevy DLL next to it.
+dev = ["bevy/dynamic_linking"]

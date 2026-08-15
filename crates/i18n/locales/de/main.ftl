@@ -532,6 +532,36 @@ disp-html = HTML-Datei
 disp-html-hint = Pfad unterhalb von mods/ — der Bildschirm wird aus dieser HTML/CSS/JS-Seite gezeichnet statt aus Widgets oder dem Skript-Hook
 disp-widgets = { $count } Widgets — werden in der Fahrzeugdatei gepflegt
 
+## Signaleditor
+##
+## Ein Signalmodell ist eine Baugruppe nach dem Zusi-Muster: geteilte
+## glTF-Bauteile (Mast, Schirm, Anzeiger), verkettet über Montagepunkte —
+## leere Knoten namens mp_* — plus die Bindung der Lampenbild-Strings des
+## Signaltyps an Knoten.
+
+window-signal-editor = TrainSim-DE — Signaleditor
+window-signal-editor-named = { $name } — TrainSim-DE Signaleditor
+window-signal-editor-unsaved = • { $name } — TrainSim-DE Signaleditor
+heading-signal-model = Signalmodell
+filter-signal-model-ron = Signalmodell (RON)
+status-new-signal-model = Neues Signalmodell
+group-signal-parts = Bauteile
+group-signal-lamps = Lampen
+group-signal-motions = Bewegungen
+group-signal-test = Lampentest
+action-add-part = Bauteil hinzufügen…
+action-add-lamp = Lampe hinzufügen
+action-add-motion = Bewegung hinzufügen
+action-lamps-off = Alle aus
+sig-seconds-hint = Stellzeit des vollen Wegs [s] — 0 schaltet sofort
+sig-mount = Montage
+sig-mount-root = Am Signalstandort
+sig-mount-node = Montagepunkt
+sig-lamp = Lampenbild
+sig-node = Knoten
+sig-test-empty = Erst Lampen binden — der Test schaltet sie dann ohne Simulator.
+help-signal-conventions = Ursprung am Fuß, +Y oben, Front zum Triebfahrzeugführer = +Z · Montagepunkte sind leere Knoten „mp_…“
+
 ## Streckeneditor
 
 action-open-line = Strecke öffnen…

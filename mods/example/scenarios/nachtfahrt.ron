@@ -1,0 +1,20 @@
+// Night run on the example line — the M6 night lighting on show: the sky and
+// lighting follow the scenario clock, the signal lamps glow, the leading
+// vehicle's headlight cone follows the darkness.
+//
+// Run it with:
+//   cargo run -p app -- --scenario example:nachtfahrt --camera outside
+(
+    name: "Nachtfahrt",
+    description: "The example line shortly before midnight: signal lamps and headlights.",
+    start: (year: 2026, month: 8, day: 15, hour: 23, minute: 30, utc_offset: 2.0),
+    player_train: 0,
+    events: [
+        (
+            name: "welcome",
+            trigger: Time(2.0),
+            actions: [Message("Night run: proceed to the main signal at km 2.0.")],
+        ),
+    ],
+    line: Some("example:beispielstrecke"),
+)

@@ -1,0 +1,19 @@
+// H/V semaphore (Form) main signal: no lamps at all — the aspect moves arms.
+//
+// The lamp-image strings of the signal type name the *moved elements*
+// ("fluegel1", "fluegel2"), and each motion binds one of them: while the
+// string is in the current lamp image the node travels to 1 at its travel
+// time, without it back to 0 — Hp2 simply lists both strings.
+(
+    parts: [
+        (file: "example/assets/sig_form_hp.gltf"),
+    ],
+    motions: [
+        // Upper arm: horizontal at stop, 45° up for proceed.
+        (lamp: "fluegel1", node: "fluegel1",
+         motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 45.0), seconds: 1.8),
+        // Lower arm: hangs along the mast, swings up parallel for slow speed.
+        (lamp: "fluegel2", node: "fluegel2",
+         motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 135.0), seconds: 1.8),
+    ],
+)

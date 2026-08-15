@@ -21,4 +21,6 @@
         ),
     ],
     script: Some("example:zs1"),
+    // Same assembly as ks_main — the parts are shared files, the model just lists them.
+    model: Some("example:ks_mast"),
 )

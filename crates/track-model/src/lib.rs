@@ -8,6 +8,8 @@ pub mod geometry;
 pub mod network;
 pub mod position;
 pub mod profile;
+pub mod track_object;
+pub mod track_type;
 
 pub use device::{DeviceId, DeviceKind, Facing, TracksideDevice};
 pub use geometry::Segment;
@@ -17,3 +19,5 @@ pub use network::{
 };
 pub use position::{AdvanceError, PassedDevice, TrackPosition};
 pub use profile::StepProfile;
+pub use track_object::TrackObject;
+pub use track_type::TrackType;

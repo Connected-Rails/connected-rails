@@ -5580,6 +5580,7 @@ dependencies = [
  "imagery",
  "rfd",
  "ron",
+ "serde",
  "sim-core",
  "track-model",
  "world-coords",

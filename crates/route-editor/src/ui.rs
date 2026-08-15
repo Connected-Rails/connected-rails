@@ -5,10 +5,11 @@
 
 use crate::overlay::Overlay;
 use crate::tools::{self, EditorState, Selection, Tool};
-use crate::{Focus, History, Line, Request, focus_degrees};
+use crate::{Focus, Ghost, History, Line, Request, TrackObjects, TrackTypes, focus_degrees};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use content::LineSource;
+use content::route::{BoundarySource, NodeSource, RuleIssue};
 use editor_ui::{colors, space};
 use i18n::t;
 use imagery::ZoomMode;
@@ -16,6 +17,7 @@ use sim_core::interlock::BlockMarkerPayload;
 use sim_core::safety::de::{LzbSection, MagnetFrequency, MagnetPayload};
 use std::path::{Path, PathBuf};
 use track_model::{DeviceKind, Facing};
+use world_coords::EcefPos;
 
 const SHORTCUT_NEW: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N);
@@ -44,6 +46,9 @@ pub fn draw(
     mut line: ResMut<Line>,
     mut history: ResMut<History>,
     mut state: ResMut<EditorState>,
+    mut ghost: ResMut<Ghost>,
+    types: Res<TrackTypes>,
+    objects: Res<TrackObjects>,
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
     windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
@@ -82,7 +87,10 @@ pub fn draw(
         &mut root,
         &mut line,
         &mut state,
-        &overlay,
+        &mut ghost,
+        &types,
+        &objects,
+        &mut overlay,
         &mut request,
         &mut focus,
         &mut active,
@@ -164,12 +172,14 @@ fn undo(line: &mut Line, history: &mut History, state: &mut EditorState) {
     history.undo(line);
     state.selection = Selection::None;
     state.drawing = None;
+    state.drag = None;
 }
 
 fn redo(line: &mut Line, history: &mut History, state: &mut EditorState) {
     history.redo(line);
     state.selection = Selection::None;
     state.drawing = None;
+    state.drag = None;
 }
 
 /// The owner of every native dialog. Without one, Windows is free to open the
@@ -341,6 +351,7 @@ fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
         nodes: vec![],
         edges: vec![],
         devices: vec![],
+        objects: vec![],
         sections: vec![],
         signals: vec![],
         routes: vec![],
@@ -485,7 +496,14 @@ fn status_bar(
             ui.horizontal(|ui| {
                 // While a track is being drawn, the drawing is the status.
                 let status = match &state.drawing {
-                    Some(drawing) => t!("draw-active", segments = drawing.segments.len()),
+                    Some(drawing) => t!(
+                        if drawing.branch_of.is_some() {
+                            "draw-branch"
+                        } else {
+                            "draw-active"
+                        },
+                        segments = drawing.segments.len()
+                    ),
                     None if overlay.status.is_empty() => t!("status-ready"),
                     None => overlay.status.clone(),
                 };
@@ -518,9 +536,11 @@ fn status_bar(
 /// key of the title. The jump bar sits above the scroll area and has to name
 /// them before the first one has been laid out. Editing first, template
 /// configuration after, diagnostics last.
-const SECTIONS: [(&str, &str); 4] = [
+const SECTIONS: [(&str, &str); 6] = [
     ("tools", "heading-tools"),
     ("selection", "heading-selection"),
+    ("module", "heading-module"),
+    ("checks", "heading-checks"),
     ("imagery", "heading-imagery"),
     ("cache", "heading-cache"),
 ];
@@ -551,7 +571,10 @@ fn left_panel(
     root: &mut egui::Ui,
     line: &mut Line,
     state: &mut EditorState,
-    overlay: &Overlay,
+    ghost: &mut Ghost,
+    types: &TrackTypes,
+    objects: &TrackObjects,
+    overlay: &mut Overlay,
     request: &mut Request,
     focus: &mut Focus,
     active: &mut Option<&'static str>,
@@ -618,6 +641,18 @@ fn left_panel(
                                 });
                             });
                         }
+                        if state.tool == Tool::PlaceObject {
+                            ui.add_space(space::XS);
+                            if objects.map.is_empty() {
+                                ui.small(t!("status-no-objects"));
+                            } else {
+                                editor_ui::form_grid("place-object").show(ui, |ui| {
+                                    row(ui, "obj-kind", |ui| {
+                                        object_combo(ui, "place-object-kind", objects, state);
+                                    });
+                                });
+                            }
+                        }
                         if let Some(drawing) = &state.drawing {
                             ui.add_space(space::XS);
                             ui.small(t!("draw-active", segments = drawing.segments.len()));
@@ -631,9 +666,17 @@ fn left_panel(
                         "selection",
                         "heading-selection",
                         |ui| {
-                            selection_panel(ui, line, state, focus);
+                            selection_panel(ui, line, state, types, focus);
                         },
                     );
+
+                    nav_section(ui, jump, &mut current, "module", "heading-module", |ui| {
+                        module_section(ui, line, state, ghost, overlay, focus);
+                    });
+
+                    nav_section(ui, jump, &mut current, "checks", "heading-checks", |ui| {
+                        checks_section(ui, line, state, focus);
+                    });
 
                     nav_section(ui, jump, &mut current, "imagery", "heading-imagery", |ui| {
                         imagery_section(ui, overlay, request);
@@ -647,12 +690,33 @@ fn left_panel(
         });
 }
 
+/// Picker of the Place-object tool: every installed `objects/*.ron`.
+fn object_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, state: &mut EditorState) {
+    let current = state
+        .object
+        .clone()
+        .or_else(|| objects.map.keys().next().cloned())
+        .unwrap_or_default();
+    egui::ComboBox::from_id_salt(id)
+        .width(space::FIELD)
+        .selected_text(current.clone())
+        .show_ui(ui, |ui| {
+            for name in objects.map.keys() {
+                if ui.selectable_label(&current == name, name).clicked() {
+                    state.object = Some(name.clone());
+                }
+            }
+        });
+}
+
 fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
     ui.horizontal_wrapped(|ui| {
         for (tool, key) in [
             (Tool::Select, "tool-select"),
             (Tool::DrawTrack, "tool-draw"),
             (Tool::PlaceDevice, "tool-device"),
+            (Tool::PlaceSwitch, "tool-switch"),
+            (Tool::PlaceObject, "tool-object"),
         ] {
             let mut chip = ui.selectable_label(state.tool == tool, t!(key));
             if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
@@ -666,7 +730,13 @@ fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
     });
 }
 
-fn selection_panel(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, focus: &mut Focus) {
+fn selection_panel(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    types: &TrackTypes,
+    focus: &mut Focus,
+) {
     match state.selection {
         Selection::None => {
             ui.small(t!("sel-none"));
@@ -689,6 +759,13 @@ fn selection_panel(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, 
                 .filter(|d| d.edge as usize == i)
                 .count();
             ui.small(t!("sel-edge-devices", devices = devices));
+            // Where the geometry can be edited, say how; where it cannot, why.
+            ui.small(if tools::support_points(line, i).is_empty() {
+                t!("sel-edge-fixed")
+            } else {
+                t!("sel-edge-handles")
+            });
+            track_type_rows(ui, line, i, length, types);
             ui.add_space(space::XS);
             ui.horizontal(|ui| {
                 if ui.button(t!("action-center")).clicked()
@@ -751,6 +828,167 @@ fn selection_panel(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, 
                 }
             });
         }
+        Selection::Object(i) => {
+            let Some(object) = line.source.objects.get(i) else {
+                return;
+            };
+            let edge_length = line
+                .net
+                .edges()
+                .get(object.edge as usize)
+                .map(|e| e.length())
+                .unwrap_or(f64::MAX);
+            let position = tools::object_pos(&line.net, object);
+            ui.label(t!("sel-object-summary", index = i, edge = object.edge));
+            let object = &mut line.source.objects[i];
+            ui.label(
+                egui::RichText::new(object.object.clone())
+                    .monospace()
+                    .color(colors::TEXT_SECONDARY),
+            );
+            editor_ui::form_grid("sel-object").show(ui, |ui| {
+                row(ui, "obj-s", |ui| {
+                    editor_ui::field(ui, &mut object.s, 1.0, 0.0..=edge_length, "m");
+                });
+                row(ui, "obj-lateral", |ui| {
+                    editor_ui::field(ui, &mut object.lateral_offset, 0.1, -50.0..=50.0, "m");
+                });
+                row(ui, "obj-yaw", |ui| {
+                    editor_ui::field(ui, &mut object.yaw_deg, 1.0, -360.0..=360.0, "°");
+                });
+                row(ui, "obj-height", |ui| {
+                    editor_ui::field(ui, &mut object.height, 0.1, -10.0..=50.0, "m");
+                });
+            });
+            repeat_rows(ui, line, state, i, edge_length);
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked()
+                    && let Some(p) = position
+                {
+                    focus.position = p;
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
+        }
+    }
+}
+
+/// Repeats the selected object along its edge — the Zusi editor function
+/// "insert one every x metres", as a row of stamped, individually editable
+/// instances rather than a construct of its own in the file.
+fn repeat_rows(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    index: usize,
+    edge_length: f64,
+) {
+    editor_ui::subheading(ui, t!("obj-repeat"));
+    let mut interval = state.repeat_interval.unwrap_or(65.0);
+    let mut until = state.repeat_until.unwrap_or(edge_length).min(edge_length);
+    editor_ui::form_grid("obj-repeat").show(ui, |ui| {
+        row(ui, "obj-repeat-interval", |ui| {
+            if editor_ui::field(ui, &mut interval, 1.0, 1.0..=5000.0, "m").changed() {
+                state.repeat_interval = Some(interval);
+            }
+        });
+        row(ui, "obj-repeat-until", |ui| {
+            if editor_ui::field(ui, &mut until, 10.0, 0.0..=edge_length, "m").changed() {
+                state.repeat_until = Some(until);
+            }
+        });
+    });
+    let start = line.source.objects[index].s;
+    let count = tools::repeat_positions(start, interval, until.min(edge_length)).len();
+    let button = ui.add_enabled(count > 0, egui::Button::new(t!("action-repeat-object")));
+    let button = button.on_hover_text(t!("obj-repeat-hint", count = count));
+    let button = button.on_disabled_hover_text(t!("obj-repeat-empty"));
+    if button.clicked() {
+        tools::repeat_object(line, index, interval, until);
+    }
+}
+
+/// Superstructure sections of the selected track: `(s, type)` rows over the
+/// arc length — the map tints the ribbon per section in the same colors.
+fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, types: &TrackTypes) {
+    editor_ui::subheading(ui, t!("sel-track-type"));
+    // Section tints, resolved against the compiled net before the source is
+    // borrowed mutably; one frame behind after an edit, like the jump bar.
+    let swatches: Vec<egui::Color32> = line.source.edges[i]
+        .track_type
+        .iter()
+        .map(|(_, name)| {
+            let index = match name.as_str() {
+                "default" => Some(0),
+                _ => line.net.types().iter().position(|t| &t.name == name),
+            };
+            crate::type_color32(index.unwrap_or(0) as u32)
+        })
+        .collect();
+    let known: Vec<String> = types.map.keys().cloned().collect();
+    let edge = &mut line.source.edges[i];
+    if edge.track_type.is_empty() {
+        ui.small(t!("sel-track-type-none"));
+    }
+    let mut remove = None;
+    editor_ui::form_grid(&format!("edge-types-{i}"))
+        .num_columns(4)
+        .show(ui, |ui| {
+            for (k, step) in edge.track_type.iter_mut().enumerate() {
+                ui.label(egui::RichText::new("■").color(swatches[k]));
+                editor_ui::field(ui, &mut step.0, 10.0, 0.0..=length, "m")
+                    .on_hover_text(t!("sel-track-type-from"));
+                let unknown = step.1 != "default" && !types.map.contains_key(&step.1);
+                let label = if step.1 == "default" {
+                    t!("track-type-default")
+                } else {
+                    step.1.clone()
+                };
+                let mut text = egui::RichText::new(label);
+                if unknown {
+                    // A name no installed mod answers — visible before the run.
+                    text = text.color(colors::ERROR);
+                }
+                egui::ComboBox::from_id_salt(("edge-type", i, k))
+                    .width(space::FIELD)
+                    .selected_text(text)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(step.1 == "default", t!("track-type-default"))
+                            .clicked()
+                        {
+                            step.1 = "default".into();
+                        }
+                        for name in &known {
+                            if ui.selectable_label(&step.1 == name, name).clicked() {
+                                step.1 = name.clone();
+                            }
+                        }
+                    });
+                if ui.small_button("×").clicked() {
+                    remove = Some(k);
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(k) = remove {
+        edge.track_type.remove(k);
+    }
+    if ui
+        .small_button(t!("action-add-type-section"))
+        .on_hover_text(t!("sel-track-type-hint"))
+        .clicked()
+    {
+        let s = edge
+            .track_type
+            .last()
+            .map(|(s, _)| (s + 100.0).min(length))
+            .unwrap_or(0.0);
+        let name = known.first().cloned().unwrap_or_else(|| "default".into());
+        edge.track_type.push((s, name));
     }
 }
 
@@ -801,6 +1039,262 @@ fn payload_presets(ui: &mut egui::Ui, device: &mut content::route::DeviceSource)
             }
         }
     });
+}
+
+/// Module tooling: the line's boundaries (named buffer nodes another module
+/// may attach to) and the neighbour module drawn as a ghost.
+fn module_section(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    ghost: &mut Ghost,
+    overlay: &mut Overlay,
+    focus: &mut Focus,
+) {
+    editor_ui::subheading(ui, t!("module-boundaries"));
+    if line.source.boundaries.is_empty() {
+        ui.small(t!("boundary-none"));
+    } else {
+        let mut remove = None;
+        let mut center = None;
+        editor_ui::form_grid("boundaries")
+            .num_columns(4)
+            .show(ui, |ui| {
+                for (i, boundary) in line.source.boundaries.iter_mut().enumerate() {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut boundary.name).desired_width(space::FIELD),
+                    );
+                    ui.label(
+                        egui::RichText::new(t!("boundary-node", node = boundary.node))
+                            .color(colors::TEXT_SECONDARY),
+                    );
+                    if ui.small_button(t!("action-center")).clicked() {
+                        center = Some(boundary.node);
+                    }
+                    if ui.small_button("×").clicked() {
+                        remove = Some(i);
+                    }
+                    ui.end_row();
+                }
+            });
+        if let Some(node) = center
+            && let Some(p) = tools::node_pos(&line.source, &line.net, node)
+        {
+            focus.position = p;
+        }
+        if let Some(i) = remove {
+            line.source.boundaries.remove(i);
+        }
+    }
+    // Boundaries live on the open ends of the selected track.
+    if let Selection::Edge(i) = state.selection
+        && let Some(edge) = line.source.edges.get(i)
+    {
+        let (from, to) = (edge.from, edge.to);
+        ui.add_space(space::XS);
+        ui.horizontal_wrapped(|ui| {
+            for (node, key) in [
+                (from, "action-add-boundary-start"),
+                (to, "action-add-boundary-end"),
+            ] {
+                let is_buffer = matches!(
+                    line.source.nodes.get(node as usize),
+                    Some(NodeSource::Buffer)
+                );
+                let taken = line.source.boundaries.iter().any(|b| b.node == node);
+                let button = ui.add_enabled(is_buffer && !taken, egui::Button::new(t!(key)));
+                let button = button.on_disabled_hover_text(t!(if taken {
+                    "boundary-taken"
+                } else {
+                    "boundary-needs-buffer"
+                }));
+                if button.clicked() {
+                    line.source.boundaries.push(BoundarySource {
+                        name: format!("b{node}"),
+                        node,
+                    });
+                }
+            }
+        });
+    } else {
+        ui.small(t!("boundary-select-edge"));
+    }
+
+    ui.add_space(space::S);
+    editor_ui::subheading(ui, t!("module-ghost"));
+    if let Some(hint) = i18n::maybe("module-ghost-hint") {
+        ui.small(hint);
+    }
+    ui.horizontal(|ui| {
+        if ui.button(t!("action-load-ghost")).clicked() {
+            load_ghost(ghost, state, overlay);
+        }
+        if ghost.net.is_some() && ui.button(t!("action-clear-ghost")).clicked() {
+            ghost.path = None;
+            ghost.net = None;
+            ghost.boundaries.clear();
+            ghost.respawn = true;
+        }
+    });
+    if let Some(path) = &ghost.path {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(path)
+                    .small()
+                    .color(colors::TEXT_SECONDARY),
+            )
+            .truncate(),
+        );
+        ui.small(t!("ghost-boundaries", count = ghost.boundaries.len()));
+    }
+}
+
+/// Loads another module read-only: its track becomes the grey ghost, its
+/// boundaries become snap targets for the drawing tools.
+fn load_ghost(ghost: &mut Ghost, state: &EditorState, overlay: &mut Overlay) {
+    let Some(path) = file_dialog(state)
+        .add_filter(t!("filter-line-ron"), &["ron"])
+        .pick_file()
+    else {
+        return;
+    };
+    let parsed = std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| LineSource::from_ron(&text).map_err(|e| e.to_string()))
+        .and_then(|source| match source.compile() {
+            Ok(compiled) => Ok((source, compiled)),
+            Err(e) => Err(format!("{e:?}")),
+        });
+    match parsed {
+        Ok((source, compiled)) => {
+            ghost.boundaries = source
+                .boundaries
+                .iter()
+                .filter_map(|b| {
+                    Some((
+                        b.name.clone(),
+                        tools::node_pos(&source, &compiled.net, b.node)?,
+                    ))
+                })
+                .collect();
+            ghost.net = Some(compiled.net);
+            ghost.path = Some(path.display().to_string());
+            ghost.respawn = true;
+            overlay.status = t!(
+                "status-ghost-loaded",
+                file = path.display(),
+                boundaries = ghost.boundaries.len()
+            );
+        }
+        Err(e) => report_failure(
+            state,
+            overlay,
+            t!("status-error", file = path.display(), error = e),
+        ),
+    }
+}
+
+/// What the issue is about, for the center button: a world position to jump to
+/// and the selection that puts its fields on screen.
+fn issue_target(line: &Line, issue: &RuleIssue) -> (Option<EcefPos>, Selection) {
+    let device_target = |device: u32| {
+        let position = line
+            .source
+            .devices
+            .get(device as usize)
+            .and_then(|d| tools::device_pos(&line.net, d));
+        (position, Selection::Device(device as usize))
+    };
+    match issue {
+        RuleIssue::DeviceOffEdge { device }
+        | RuleIssue::MagnetPayloadInvalid { device }
+        | RuleIssue::BlockMarkerPayloadInvalid { device } => device_target(*device),
+        RuleIssue::DistantWithout1000Hz { signal }
+        | RuleIssue::MainWithout2000Hz { signal }
+        | RuleIssue::DistantWithoutNext { signal }
+        | RuleIssue::SignalDeviceMismatch { signal } => {
+            match line.source.signals.get(*signal as usize) {
+                Some(s) => device_target(s.device),
+                None => (None, Selection::None),
+            }
+        }
+        RuleIssue::BoundaryInvalid { boundary } => (
+            line.source
+                .boundaries
+                .get(*boundary as usize)
+                .and_then(|b| tools::node_pos(&line.source, &line.net, b.node)),
+            Selection::None,
+        ),
+        RuleIssue::UnknownTrackType { edge } | RuleIssue::LzbTypeWithoutConductor { edge } => (
+            line.net
+                .edges()
+                .get(*edge as usize)
+                .map(|e| e.eval(e.length() / 2.0).pos),
+            Selection::Edge(*edge as usize),
+        ),
+        RuleIssue::ObjectOffEdge { object } | RuleIssue::UnknownObject { object } => (
+            line.source
+                .objects
+                .get(*object as usize)
+                .and_then(|o| tools::object_pos(&line.net, o)),
+            Selection::Object(*object as usize),
+        ),
+    }
+}
+
+fn issue_text(issue: &RuleIssue) -> String {
+    match issue {
+        RuleIssue::DeviceOffEdge { device } => t!("check-device-off-edge", device = device),
+        RuleIssue::MagnetPayloadInvalid { device } => t!("check-magnet-payload", device = device),
+        RuleIssue::BlockMarkerPayloadInvalid { device } => {
+            t!("check-blockmarker-payload", device = device)
+        }
+        RuleIssue::DistantWithout1000Hz { signal } => {
+            t!("check-distant-no-1000hz", signal = signal)
+        }
+        RuleIssue::MainWithout2000Hz { signal } => t!("check-main-no-2000hz", signal = signal),
+        RuleIssue::DistantWithoutNext { signal } => t!("check-distant-no-next", signal = signal),
+        RuleIssue::SignalDeviceMismatch { signal } => t!("check-signal-device", signal = signal),
+        RuleIssue::BoundaryInvalid { boundary } => {
+            t!("check-boundary-invalid", boundary = boundary)
+        }
+        RuleIssue::UnknownTrackType { edge } => t!("check-unknown-track-type", edge = edge),
+        RuleIssue::LzbTypeWithoutConductor { edge } => t!("check-lzb-no-conductor", edge = edge),
+        RuleIssue::ObjectOffEdge { object } => t!("check-object-off-edge", object = object),
+        RuleIssue::UnknownObject { object } => t!("check-unknown-object", object = object),
+    }
+}
+
+/// Findings of the rule check, refreshed with every rebuild — each one jumps
+/// to the thing it is about.
+fn checks_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, focus: &mut Focus) {
+    if line.issues.is_empty() {
+        ui.small(t!("check-ok"));
+        return;
+    }
+    let issues = line.issues.clone();
+    for issue in &issues {
+        ui.horizontal(|ui| {
+            let (position, selection) = issue_target(line, issue);
+            if ui
+                .add_enabled(
+                    position.is_some(),
+                    egui::Button::new(t!("action-center")).small(),
+                )
+                .clicked()
+            {
+                if let Some(p) = position {
+                    focus.position = p;
+                }
+                if selection != Selection::None {
+                    state.selection = selection;
+                }
+            }
+            ui.add(
+                egui::Label::new(egui::RichText::new(issue_text(issue)).color(colors::WARN)).wrap(),
+            );
+        });
+    }
 }
 
 /// The aerial imagery template, editable in place. Edits go through

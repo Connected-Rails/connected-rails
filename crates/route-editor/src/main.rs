@@ -18,12 +18,13 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use content::LineSource;
+use content::route::RuleIssue;
 use glam::DVec3;
 use i18n::t;
 use imagery::{ImageryConfig, ZoomMode};
 use overlay::{Overlay, OverlayTile};
 use tools::EditorState;
-use track_model::{DeviceKind, TrackNetwork};
+use track_model::{DeviceKind, TrackEdge, TrackNetwork};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
 /// Geographic position of a world point in **degrees** — `geo::from_ecef` returns radians,
@@ -56,7 +57,119 @@ pub struct Line {
     pub needs_rebuild: bool,
     /// Move the view to the line's middle on the next rebuild (after Open).
     pub recenter: bool,
+    /// Findings of the rule check, refreshed with every rebuild.
+    pub issues: Vec<RuleIssue>,
 }
+
+/// A neighbour module drawn as a non-editable ghost, so the builder hits its
+/// agreed boundary coordinates (plan ch. 15, module tooling).
+#[derive(Resource, Default)]
+pub struct Ghost {
+    pub path: Option<String>,
+    pub net: Option<TrackNetwork>,
+    /// Boundary name → world position; drawing clicks snap onto these.
+    pub boundaries: Vec<(String, EcefPos)>,
+    /// Respawn the ghost track next frame (after load or clear).
+    pub respawn: bool,
+}
+
+/// Track ribbon of the ghost module — survives document rebuilds.
+#[derive(Component)]
+struct GhostTrack;
+
+/// Track types of every installed mod (`mods/*/track_types/*.ron`) — the type
+/// combo, the section tints and the rule check read from here.
+///
+/// ponytail: a flat scan with the manifest only supplying the id — the editor
+/// shows every installed type, enabled or not; the mod runtime's
+/// dependency-ordered loader matters for the simulator, not for a picker.
+#[derive(Resource, Default)]
+pub struct TrackTypes {
+    pub map: std::collections::BTreeMap<String, track_model::TrackType>,
+}
+
+/// Scenery objects of every installed mod (`mods/*/objects/*.ron`) — the
+/// object tool's picker and the placement defaults it stamps.
+#[derive(Resource, Default)]
+pub struct TrackObjects {
+    pub map: std::collections::BTreeMap<String, track_model::TrackObject>,
+}
+
+/// Reads `mods/*/<subdir>/*.ron`, keyed `"<mod id>:<file stem>"`.
+fn load_mod_ron<T>(
+    root: &std::path::Path,
+    subdir: &str,
+    parse: fn(&str) -> Result<T, ron::error::SpannedError>,
+) -> std::collections::BTreeMap<String, T> {
+    #[derive(serde::Deserialize)]
+    struct ManifestId {
+        id: String,
+    }
+    let mut map = std::collections::BTreeMap::new();
+    let Ok(mods) = std::fs::read_dir(root) else {
+        return map;
+    };
+    for dir in mods.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+        let Some(id) = std::fs::read_to_string(dir.join("mod.ron"))
+            .ok()
+            .and_then(|text| ron::from_str::<ManifestId>(&text).ok())
+            .map(|m| m.id)
+        else {
+            continue;
+        };
+        let Ok(files) = std::fs::read_dir(dir.join(subdir)) else {
+            continue;
+        };
+        for file in files.flatten().map(|e| e.path()) {
+            if file.extension().and_then(|e| e.to_str()) != Some("ron") {
+                continue;
+            }
+            let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            match std::fs::read_to_string(&file)
+                .map_err(|e| e.to_string())
+                .and_then(|t| parse(&t).map_err(|e| e.to_string()))
+            {
+                Ok(value) => {
+                    map.insert(format!("{id}:{stem}"), value);
+                }
+                Err(e) => warn!("{}: {e}", file.display()),
+            }
+        }
+    }
+    map
+}
+
+/// Editor tint of track type `index`: schematic colors that stay legible on
+/// aerial imagery — the type's own `color` is the simulator's ballast grey,
+/// which would vanish over a dark field. Index 0 keeps the classic orange.
+pub fn type_color(index: u32) -> Color {
+    if index == 0 {
+        return Color::srgb(0.95, 0.35, 0.15);
+    }
+    match (index - 1) % 5 {
+        0 => Color::srgb(0.30, 0.62, 0.95),
+        1 => Color::srgb(0.35, 0.80, 0.45),
+        2 => Color::srgb(0.80, 0.45, 0.95),
+        3 => Color::srgb(0.95, 0.80, 0.25),
+        _ => Color::srgb(0.25, 0.82, 0.78),
+    }
+}
+
+/// The same palette for egui (panel swatches).
+pub fn type_color32(index: u32) -> bevy_egui::egui::Color32 {
+    let [r, g, b, _] = type_color(index).to_srgba().to_u8_array();
+    bevy_egui::egui::Color32::from_rgb(r, g, b)
+}
+
+/// The document's own world-anchored entities: what a rebuild despawns —
+/// overlay tiles and the ghost stay.
+type DocumentAnchored = (
+    With<WorldAnchored>,
+    Without<OverlayTile>,
+    Without<GhostTrack>,
+);
 
 const UNDO_DEPTH: usize = 64;
 
@@ -191,6 +304,7 @@ fn main() {
     .insert_resource(LinePath(line_path))
     .init_resource::<Request>()
     .init_resource::<EditorState>()
+    .init_resource::<Ghost>()
     .add_systems(Startup, setup)
     .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
@@ -200,6 +314,7 @@ fn main() {
             tools::tool_input,
             track_changes,
             rebuild,
+            spawn_ghost,
             overlay_control,
             overlay::update,
             rebase_origin,
@@ -298,6 +413,13 @@ fn setup(mut commands: Commands, config_path: Res<ConfigPath>, line_path: Res<Li
         height: 900.0,
     });
     commands.insert_resource(Origin(origin));
+    let mods_dir = std::path::Path::new("mods");
+    commands.insert_resource(TrackTypes {
+        map: load_mod_ron(mods_dir, "track_types", track_model::TrackType::from_ron),
+    });
+    commands.insert_resource(TrackObjects {
+        map: load_mod_ron(mods_dir, "objects", track_model::TrackObject::from_ron),
+    });
     commands.insert_resource(History::new(source.clone()));
     // Track and markers are spawned by `rebuild` on the first frame.
     commands.insert_resource(Line {
@@ -307,6 +429,7 @@ fn setup(mut commands: Commands, config_path: Res<ConfigPath>, line_path: Res<Li
         dirty: false,
         needs_rebuild: true,
         recenter: false,
+        issues: Vec::new(),
     });
 }
 
@@ -346,7 +469,9 @@ fn rebuild(
     mut origin: ResMut<Origin>,
     mut focus: ResMut<Focus>,
     mut overlay: ResMut<Overlay>,
-    old: Query<Entity, (With<WorldAnchored>, Without<OverlayTile>)>,
+    types: Res<TrackTypes>,
+    objects: Res<TrackObjects>,
+    old: Query<Entity, DocumentAnchored>,
 ) {
     if !line.needs_rebuild {
         return;
@@ -359,6 +484,7 @@ fn rebuild(
             return;
         }
     }
+    line.issues = line.source.check(&types.map, &objects.map);
     for entity in old.iter() {
         commands.entity(entity).despawn();
     }
@@ -388,7 +514,46 @@ fn rebuild(
     );
 }
 
-/// Track ribbon as a dark quad — reference for the position in the aerial imagery.
+/// Track ribbon mesh of one edge between `s0` and `s1` in its anchor frame,
+/// `lift` metres above the plane.
+fn ribbon_mesh(edge: &TrackEdge, lift: f64, s0: f64, s1: f64) -> Mesh {
+    let frame = EnuFrame::at(edge.anchor);
+    let steps = (((s1 - s0) / 5.0).ceil() as usize).max(2);
+    let mut positions = Vec::with_capacity((steps + 1) * 2);
+    for i in 0..=steps {
+        let s = s0 + (s1 - s0) * i as f64 / steps as f64;
+        let pose = edge.eval(s);
+        let center = frame.to_local(pose.pos);
+        let tangent = frame.dir_to_local(pose.tangent);
+        let up = frame.dir_to_local(pose.up);
+        let right = tangent.cross(up).normalize_or_zero() * 1.5;
+        for side in [-1.0, 1.0] {
+            let p = center + right * side + DVec3::new(0.0, 0.0, lift);
+            positions.push([p.x as f32, p.z as f32, -p.y as f32]);
+        }
+    }
+    let mut indices = Vec::new();
+    for row in 0..steps {
+        let a = (row * 2) as u32;
+        // Counter-clockwise seen from above — a clockwise strip is a
+        // backface to the top-down camera and is culled.
+        indices.extend_from_slice(&[a, a + 1, a + 2, a + 2, a + 1, a + 3]);
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    let count = positions.len();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; count]);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]; count]);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// Track ribbon as a colored quad — reference for the position in the aerial
+/// imagery, tinted per track-type section ([`type_color`]).
 fn spawn_track(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -396,54 +561,71 @@ fn spawn_track(
     net: &TrackNetwork,
     origin: &RenderOrigin,
 ) {
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.35, 0.15),
-        unlit: true,
-        ..default()
-    });
+    let type_materials: Vec<Handle<StandardMaterial>> = (0..net.types().len() as u32)
+        .map(|index| {
+            materials.add(StandardMaterial {
+                base_color: type_color(index),
+                unlit: true,
+                ..default()
+            })
+        })
+        .collect();
 
     for edge in net.edges() {
         let frame = EnuFrame::at(edge.anchor);
-        let steps = ((edge.length() / 5.0).ceil() as usize).max(2);
-        let mut positions = Vec::with_capacity((steps + 1) * 2);
-        for i in 0..=steps {
-            let s = edge.length() * i as f64 / steps as f64;
-            let pose = edge.eval(s);
-            let center = frame.to_local(pose.pos);
-            let tangent = frame.dir_to_local(pose.tangent);
-            let up = frame.dir_to_local(pose.up);
-            let right = tangent.cross(up).normalize_or_zero() * 1.5;
-            for side in [-1.0, 1.0] {
-                let p = center + right * side + DVec3::new(0.0, 0.0, 0.4);
-                positions.push([p.x as f32, p.z as f32, -p.y as f32]);
-            }
-        }
-        let mut indices = Vec::new();
-        for row in 0..steps {
-            let a = (row * 2) as u32;
-            // Counter-clockwise seen from above — a clockwise strip is a
-            // backface to the top-down camera and is culled.
-            indices.extend_from_slice(&[a, a + 1, a + 2, a + 2, a + 1, a + 3]);
-        }
-
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        );
-        let count = positions.len();
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; count]);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]; count]);
-        mesh.insert_indices(Indices::U32(indices));
-
         let (translation, rotation) = origin.frame_transform(&frame);
+        for (s0, s1, index) in edge.track_type_runs() {
+            let material = type_materials
+                .get(index as usize)
+                .unwrap_or(&type_materials[0]);
+            commands.spawn((
+                Mesh3d(meshes.add(ribbon_mesh(edge, 0.4, s0, s1))),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(translation).with_rotation(rotation),
+                WorldAnchored {
+                    anchor: edge.anchor,
+                },
+            ));
+        }
+    }
+}
+
+/// (Re)spawns the ghost module's track after a load or clear. Grey and a
+/// little lower than the edited line, so the line wins where they overlap.
+fn spawn_ghost(
+    mut ghost: ResMut<Ghost>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    origin: Res<Origin>,
+    old: Query<Entity, With<GhostTrack>>,
+) {
+    if !ghost.respawn {
+        return;
+    }
+    ghost.respawn = false;
+    for entity in old.iter() {
+        commands.entity(entity).despawn();
+    }
+    let Some(net) = &ghost.net else {
+        return;
+    };
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.55, 0.57, 0.62),
+        unlit: true,
+        ..default()
+    });
+    for edge in net.edges() {
+        let frame = EnuFrame::at(edge.anchor);
+        let (translation, rotation) = origin.0.frame_transform(&frame);
         commands.spawn((
-            Mesh3d(meshes.add(mesh)),
+            Mesh3d(meshes.add(ribbon_mesh(edge, 0.25, 0.0, edge.length()))),
             MeshMaterial3d(material.clone()),
             Transform::from_translation(translation).with_rotation(rotation),
             WorldAnchored {
                 anchor: edge.anchor,
             },
+            GhostTrack,
         ));
     }
 }
@@ -472,6 +654,26 @@ fn spawn_markers(
                 unlit: true,
                 ..default()
             })),
+            Transform::from_translation(translation).with_rotation(rotation),
+            WorldAnchored { anchor: pos },
+            DeviceMarker,
+        ));
+    }
+    // Scenery objects: one olive marker each — furniture, not equipment.
+    let object_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.72, 0.68, 0.40),
+        unlit: true,
+        ..default()
+    });
+    for object in &source.objects {
+        let Some(pos) = tools::object_pos(net, object) else {
+            continue;
+        };
+        let frame = EnuFrame::at(pos);
+        let (translation, rotation) = origin.frame_transform(&frame);
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(object_material.clone()),
             Transform::from_translation(translation).with_rotation(rotation),
             WorldAnchored { anchor: pos },
             DeviceMarker,
@@ -868,6 +1070,7 @@ mod tests {
             dirty: false,
             needs_rebuild: false,
             recenter: false,
+            issues: Vec::new(),
         };
         let mut history = History::new(source.clone());
 

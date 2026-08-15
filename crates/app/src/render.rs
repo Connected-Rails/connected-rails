@@ -1,10 +1,11 @@
 //! Procedural track rendering and floating-origin synchronisation (plan ch. 4, 12).
 
 use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use glam::DVec3;
-use track_model::{EdgeId, TrackNetwork};
+use track_model::{TrackEdge, TrackNetwork};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 /// Reference point of the rendering as a Bevy resource.
@@ -40,19 +41,44 @@ const BALLAST_HALF: f64 = 2.6;
 /// Sample spacing along the edge [m].
 const SAMPLE: f64 = 4.0;
 
-/// Builds meshes for all edges of the network and spawns them.
+/// Builds meshes for all edges of the network and spawns them. The ballast
+/// bed takes its material from the edge's track type — color, and the type's
+/// texture where one is named (`mods://…`, tiled along the track); the type
+/// sections of one edge become separate meshes at the type boundaries.
 pub fn spawn_track(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    assets: &AssetServer,
     net: &TrackNetwork,
     origin: &RenderOrigin,
 ) {
-    let ballast_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.32, 0.30, 0.28),
-        perceptual_roughness: 1.0,
-        ..default()
-    });
+    let ballast_materials: Vec<Handle<StandardMaterial>> = net
+        .types()
+        .iter()
+        .map(|ty| {
+            let texture = ty.texture.as_ref().map(|file| {
+                assets
+                    .load_builder()
+                    .with_settings(|settings: &mut ImageLoaderSettings| {
+                        // The ballast tiles along the track — clamped edges
+                        // would smear the last texel over kilometres.
+                        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                            address_mode_u: ImageAddressMode::Repeat,
+                            address_mode_v: ImageAddressMode::Repeat,
+                            ..default()
+                        });
+                    })
+                    .load(crate::models::asset_path(file))
+            });
+            materials.add(StandardMaterial {
+                base_color: Color::srgb(ty.color.0, ty.color.1, ty.color.2),
+                base_color_texture: texture,
+                perceptual_roughness: 1.0,
+                ..default()
+            })
+        })
+        .collect();
     let rail_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.45, 0.45, 0.48),
         metallic: 0.8,
@@ -65,11 +91,18 @@ pub fn spawn_track(
         let frame = EnuFrame::at(anchor);
         let (translation, rotation) = origin.frame_transform(&frame);
 
-        let (ballast, rails) = build_edge_meshes(net, edge.id, &frame);
-        for (mesh, material) in [
-            (ballast, ballast_material.clone()),
-            (rails, rail_material.clone()),
-        ] {
+        let mut parts: Vec<(Mesh, Handle<StandardMaterial>)> = edge
+            .track_type_runs()
+            .into_iter()
+            .map(|(s0, s1, index)| {
+                let material = ballast_materials
+                    .get(index as usize)
+                    .unwrap_or(&ballast_materials[0]);
+                (build_ballast(edge, &frame, s0, s1), material.clone())
+            })
+            .collect();
+        parts.push((build_rails(edge, &frame), rail_material.clone()));
+        for (mesh, material) in parts {
             commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(material),
@@ -80,27 +113,40 @@ pub fn spawn_track(
     }
 }
 
-/// Creates ballast bed and rails of an edge in the ENU frame `frame`.
-fn build_edge_meshes(net: &TrackNetwork, edge: EdgeId, frame: &EnuFrame) -> (Mesh, Mesh) {
-    let e = net.edge(edge);
-    let steps = ((e.length() / SAMPLE).ceil() as usize).max(1);
+/// Cross section of the track at `s`: centre, right and up in `frame`.
+fn cross_section(e: &TrackEdge, frame: &EnuFrame, s: f64) -> (DVec3, DVec3, DVec3) {
+    let pose = e.eval(s);
+    let center = frame.to_local(pose.pos);
+    let tangent = frame.dir_to_local(pose.tangent);
+    let up = frame.dir_to_local(pose.up);
+    let right = tangent.cross(up).normalize();
+    (center, right, up)
+}
 
-    let mut ballast = RibbonBuilder::default();
-    let mut rails = RibbonBuilder::default();
-
+/// Ballast bed of the edge between `s0` and `s1`, 30 cm below the rail head.
+fn build_ballast(e: &TrackEdge, frame: &EnuFrame, s0: f64, s1: f64) -> Mesh {
+    let steps = (((s1 - s0) / SAMPLE).ceil() as usize).max(1);
+    let mut ballast = RibbonBuilder {
+        // The texture continues across a type boundary instead of restarting.
+        uv_row_offset: (s0 / SAMPLE) as f32,
+        ..default()
+    };
     for i in 0..=steps {
-        let s = e.length() * i as f64 / steps as f64;
-        let pose = e.eval(s);
-        let center = frame.to_local(pose.pos);
-        let tangent = frame.dir_to_local(pose.tangent);
-        let up = frame.dir_to_local(pose.up);
-        let right = tangent.cross(up).normalize();
-
-        // Ballast bed, 30 cm below the rail head.
+        let s = s0 + (s1 - s0) * i as f64 / steps as f64;
+        let (center, right, up) = cross_section(e, frame, s);
         let bed = center - up * 0.3;
         ballast.push_pair(bed - right * BALLAST_HALF, bed + right * BALLAST_HALF);
+    }
+    ballast.build()
+}
 
-        // Two rails as narrow ribbons.
+/// Two rails as narrow ribbons over the whole edge.
+fn build_rails(e: &TrackEdge, frame: &EnuFrame) -> Mesh {
+    let steps = ((e.length() / SAMPLE).ceil() as usize).max(1);
+    let mut rails = RibbonBuilder::default();
+    for i in 0..=steps {
+        let s = e.length() * i as f64 / steps as f64;
+        let (center, right, _) = cross_section(e, frame, s);
         let half = GAUGE / 2.0;
         rails.push_quad(
             center - right * (half + 0.04),
@@ -109,8 +155,7 @@ fn build_edge_meshes(net: &TrackNetwork, edge: EdgeId, frame: &EnuFrame) -> (Mes
             center + right * (half + 0.04),
         );
     }
-
-    (ballast.build(), rails.build_pairs())
+    rails.build_pairs()
 }
 
 /// Collects a ribbon from point pairs and builds a triangle mesh from it.
@@ -119,6 +164,9 @@ struct RibbonBuilder {
     positions: Vec<[f32; 3]>,
     /// Points per cross section (2 for one ribbon, 4 for two rails).
     stride: usize,
+    /// Added to the UV row index — a mesh that starts mid-edge keeps the
+    /// texture phase of the whole edge.
+    uv_row_offset: f32,
 }
 
 impl RibbonBuilder {
@@ -159,7 +207,12 @@ impl RibbonBuilder {
         }
         let normals = vec![[0.0f32, 1.0, 0.0]; self.positions.len()];
         let uvs: Vec<[f32; 2]> = (0..self.positions.len())
-            .map(|i| [(i % stride) as f32, (i / stride) as f32 * 0.5])
+            .map(|i| {
+                [
+                    (i % stride) as f32,
+                    ((i / stride) as f32 + self.uv_row_offset) * 0.5,
+                ]
+            })
             .collect();
 
         let mut mesh = Mesh::new(

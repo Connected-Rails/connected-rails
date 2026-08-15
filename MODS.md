@@ -426,7 +426,12 @@ has three parts:
 - **Conditions** — state predicates. All of them have to hold, otherwise the sound stays
   silent. Brake squeal is a condition, not an event.
 - **Dependencies** — curves with support points that map a quantity onto volume and
-  playback speed.
+  playback speed. `factors` is a list of further curves multiplied into the volume — a
+  second quantity scaling an entry whose volume already follows a first one. The default
+  rolling entry uses it for the track: `factors: [(quantity: Roughness, points: [(0.5,
+  0.75), (2.0, 1.4)])]` — the `Roughness` quantity is the `roughness` of the track type
+  under the vehicle (see Track types), so jointed superstructure is audibly louder than
+  welded rail.
 
 ```ron
 sounds: [
@@ -713,7 +718,14 @@ one the OSM/DGM importer writes, so `cargo run -p content --bin import-line` pro
 can drop into a mod unchanged. `mods/example/lines/beispielstrecke.ron` is a short hand-written
 example.
 
-Start it with `cargo run -p app -- --line example:beispielstrecke`.
+The **route editor** (`trainsim-route-editor`) edits a line over aerial imagery: draw tracks
+arc-to-point, place devices, place switches (a click splits the track, the branch is drawn like
+a track and the turnout is wired automatically), and bend existing track by dragging the round
+support-point handles of a selected edge. A *Checks* panel lists wiring that compiles but fails
+on the line — a distant signal without its 1000 Hz magnet, a device beyond its track, a
+boundary on a node that is no buffer.
+
+Start a line with `cargo run -p app -- --line example:beispielstrecke`.
 
 A `LineConductor` device marks a line conductor section — the cable, not what it transmits:
 
@@ -742,6 +754,74 @@ a line with block markers of its own divides the authority itself, a line withou
 the main signals as the only boundaries, and the signals stay binding together with their PZB
 magnets.
 
+### Track types
+
+A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
+built like, not where it runs:
+
+```ron
+(
+    name: "Hauptbahn",
+    texture: Some("example/assets/ballast.png"),  // ballast texture, tiled along the track
+    color: (0.32, 0.30, 0.28),   // untextured fallback; the route editor tints sections its own way
+    roughness: 1.0,              // scales the rolling noise; jointed track > 1, slab track < 1
+    max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
+    lzb: false,                  // true: a line conductor belongs on this track (rule check)
+)
+```
+
+A line assigns types per edge as steps over the arc length, so one edge changes its
+superstructure section by section; the reserved name `"default"` returns to the built-in
+default type:
+
+```ron
+track_type: [(0.0, "example:hauptbahn"), (3000.0, "example:altbau")],
+```
+
+`max_speed` merges into the speed profile every consumer already reads (AI, LZB, HUD,
+scoring); `roughness` reaches the sound table as the `Roughness` quantity (the default
+rolling entry carries a volume factor on it, see Sounds). The route editor edits the
+sections in the selection panel (a color chip per section, the map tints the track ribbon
+to match) and its rule check flags names no installed mod has, and LZB types on a line
+that places no line conductor.
+
+### Track objects
+
+A **track object** (`objects/*.ron`) is a 3D object placed *relative to the track* —
+catenary masts, kilometre boards, platform lamps. The object carries the pose its author
+meant, so the editor's object tool drops it correctly with one click:
+
+```ron
+(
+    name: "Mast",
+    model: "example/assets/mast.gltf",  // glTF below mods/, like vehicle models
+    lateral_offset: -3.5,  // m, positive = right of increasing arc length
+    yaw_deg: 0.0,          // about up, clockwise from above; 0 = front along the track
+    height: 0.0,           // m above the railhead
+)
+```
+
+A line places instances under `objects:`; each placement stores concrete values (stamped
+from the object's defaults, editable per instance), so the file stands on its own:
+
+```ron
+objects: [
+    (object: "example:mast", edge: 0, s: 500.0, lateral_offset: -3.5),
+],
+```
+
+The simulator spawns the glTF at the track pose plus offset, rotation and height,
+floating-origin safe like the signal models; an unknown object name gets a placeholder
+block and a warning. In the route editor the **object tool** (key 5) picks an object kind
+and drops it on the nearest track; the selection panel edits position, lateral offset,
+rotation and height, and the rule check flags placements outside their track or naming an
+object no installed mod has. **Repeat in a row** stamps copies of the selected instance
+along its track — spacing (default 65 m, the standard catenary span) and end position,
+each copy carrying the instance's own offset and rotation and staying individually
+editable, so a mast that collides with a tree is simply moved. Nothing in the simulation
+reads objects — they are the line's furniture, and deleting or splitting tracks carries
+them along like devices.
+
 ### Modules and compositions
 
 A big line is built from **modules**, after the Zusi 3 model: a module is an ordinary
@@ -767,6 +847,11 @@ themselves. Building a module transition therefore means nothing more than start
 module's edge at the agreed coordinates of the neighbour's boundary — no wiring, no
 extra file. `connections: [(("<mod>:<module>", "<boundary>"), (…, …))]` states a pairing
 explicitly for the rare case where positions alone cannot decide.
+
+The route editor's *Module* panel places boundaries (select a track, add one at an open
+end) and loads the neighbour module as a grey **ghost**: its track is drawn read-only and
+its boundary circles are snap targets, so drawing clicks near them land exactly on the
+agreed coordinates.
 
 **UTM zones cannot shift a transition.** Module anchors are geodetic (`lat`/`lon`) and
 compile into ECEF, one global frame for the whole world — there are no per-zone planar

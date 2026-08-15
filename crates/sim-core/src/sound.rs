@@ -72,6 +72,10 @@ pub enum Quantity {
     Horn,
     /// The train protection demands an operation (0/1).
     Alert,
+    /// Roughness of the track type under the vehicle, 1.0 = welded main-line
+    /// rail (see `TrackType::roughness`). The app fills it from the track;
+    /// jointed or worn track sits above 1, slab track below.
+    Roughness,
     /// Position of a cab control, normalised 0 … 1 over its travel exactly as
     /// the 3D cab reads it ([`CabControl::get`]) — detents sit at the same
     /// values, so a threshold between two of them catches the click. This is
@@ -83,7 +87,7 @@ pub enum Quantity {
 impl Quantity {
     /// Every plain quantity, in the order the editor lists them. The editor
     /// appends `Control(…)` for each [`CabControl::ALL`] entry itself.
-    pub const ALL: [Quantity; 19] = [
+    pub const ALL: [Quantity; 20] = [
         Quantity::Speed,
         Quantity::Distance,
         Quantity::EngineRpm,
@@ -103,6 +107,7 @@ impl Quantity {
         Quantity::Doors,
         Quantity::Horn,
         Quantity::Alert,
+        Quantity::Roughness,
     ];
 
     /// i18n key of the label — `snd-quantity-speed` and so on.
@@ -127,6 +132,7 @@ impl Quantity {
             Quantity::Doors => "snd-quantity-doors",
             Quantity::Horn => "snd-quantity-horn",
             Quantity::Alert => "snd-quantity-alert",
+            Quantity::Roughness => "snd-quantity-roughness",
             // The control labels the cab editor already has.
             Quantity::Control(control) => control.key(),
         }
@@ -137,7 +143,7 @@ impl Quantity {
 ///
 /// Built once per frame per vehicle; the previous one is kept so that triggers have an edge
 /// to detect and `AirFlow` a difference to form.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SoundState {
     pub speed: f64,
     pub distance: f64,
@@ -179,6 +185,51 @@ pub struct SoundState {
     /// AFB target 0 … 1 over the vehicle's `v_max`.
     #[serde(default)]
     pub afb_target: f64,
+    /// Track roughness under the vehicle, neutral 1.0. [`Self::sample`] sets
+    /// the neutral value; the app overwrites it from the track network, which
+    /// the sampler deliberately does not see.
+    #[serde(default = "neutral_roughness")]
+    pub roughness: f64,
+}
+
+fn neutral_roughness() -> f64 {
+    1.0
+}
+
+/// All quantities at rest — except the roughness, whose neutral value is 1.0:
+/// a state without track information must not read as unnaturally smooth rail.
+impl Default for SoundState {
+    fn default() -> Self {
+        Self {
+            speed: 0.0,
+            distance: 0.0,
+            engine_rpm: 0.0,
+            tap_changer_step: 0.0,
+            circuit: 0.0,
+            tractive_effort: 0.0,
+            brake_effort: 0.0,
+            brake_pipe: 0.0,
+            brake_cylinder: 0.0,
+            main_reservoir: 0.0,
+            air_flow: 0.0,
+            slip: 0.0,
+            throttle: 0.0,
+            pantograph: 0.0,
+            main_switch: 0.0,
+            compressor: 0.0,
+            doors: 0.0,
+            horn: 0.0,
+            alert: 0.0,
+            cab: CabInputs::default(),
+            battery: 0.0,
+            pantograph_switch: 0.0,
+            main_switch_position: 0.0,
+            compressor_switch: 0.0,
+            train_type: 0.0,
+            afb_target: 0.0,
+            roughness: neutral_roughness(),
+        }
+    }
 }
 
 impl SoundState {
@@ -203,6 +254,7 @@ impl SoundState {
             Quantity::Doors => self.doors,
             Quantity::Horn => self.horn,
             Quantity::Alert => self.alert,
+            Quantity::Roughness => self.roughness,
             Quantity::Control(control) => match control {
                 CabControl::AfbTarget => self.afb_target,
                 CabControl::Battery => self.battery,
@@ -276,6 +328,7 @@ impl SoundState {
                 };
                 (cab.afb_target / v_max).clamp(0.0, 1.0)
             },
+            roughness: neutral_roughness(),
         }
     }
 }
@@ -406,6 +459,12 @@ pub struct SoundSpec {
     /// Volume 0 … 1; without a curve the sound plays at full volume.
     #[serde(default)]
     pub volume: Option<Curve>,
+    /// Multiplied into the volume, one factor per curve — how a second
+    /// quantity scales an entry whose volume already follows a first one:
+    /// the rolling noise follows the speed and is scaled by the track
+    /// roughness. Empty means no scaling.
+    #[serde(default)]
+    pub factors: Vec<Curve>,
     /// Playback speed; without a curve the sample plays at its own pitch.
     #[serde(default)]
     pub pitch: Option<Curve>,
@@ -436,13 +495,9 @@ impl SoundSpec {
         if !self.conditions.iter().all(|c| c.holds(state)) {
             return (0.0, pitch);
         }
-        let volume = self
-            .volume
-            .as_ref()
-            .map(|c| c.eval(state))
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0);
-        (volume, pitch)
+        let volume = self.volume.as_ref().map(|c| c.eval(state)).unwrap_or(1.0)
+            * self.factors.iter().map(|c| c.eval(state)).product::<f64>();
+        (volume.clamp(0.0, 1.0), pitch)
     }
 
     /// `true` when the entry has to be started in this frame — trigger fired and every
@@ -464,14 +519,17 @@ pub fn default_table() -> Vec<SoundSpec> {
         trigger: Trigger::Loop,
         conditions: Vec::new(),
         volume: Some(volume),
+        factors: Vec::new(),
         pitch: None,
         positional: true,
     };
     vec![
         // Rolling noise: louder and higher with speed, capped so a fast train does not
-        // drown out everything else.
+        // drown out everything else. The track type scales it — rough or jointed
+        // superstructure is audibly louder than welded main-line rail.
         SoundSpec {
             pitch: Some(Curve::ramp(Quantity::Speed, 0.0, 0.7, 200.0, 1.7)),
+            factors: vec![Curve::ramp(Quantity::Roughness, 0.5, 0.75, 2.0, 1.4)],
             ..entry(
                 "rolling",
                 "synth:rolling",
@@ -547,6 +605,7 @@ pub fn default_table() -> Vec<SoundSpec> {
                 max: f64::INFINITY,
             }],
             volume: Some(Curve::ramp(Quantity::Speed, 3.0, 0.12, 120.0, 0.35)),
+            factors: vec![Curve::ramp(Quantity::Roughness, 0.5, 0.75, 2.0, 1.4)],
             pitch: Some(Curve::ramp(Quantity::Speed, 3.0, 0.8, 160.0, 1.4)),
             positional: true,
         },
@@ -561,6 +620,7 @@ pub fn default_table() -> Vec<SoundSpec> {
             },
             conditions: Vec::new(),
             volume: Some(Curve::ramp(Quantity::TapChangerStep, 0.0, 0.4, 1.0, 0.4)),
+            factors: Vec::new(),
             pitch: None,
             positional: true,
         },
@@ -617,6 +677,7 @@ mod tests {
                 max: 25.0,
             }],
             volume: Some(Curve::ramp(Quantity::Speed, 0.0, 0.5, 100.0, 0.5)),
+            factors: Vec::new(),
             pitch: Some(Curve::ramp(Quantity::Speed, 0.0, 1.0, 100.0, 2.0)),
             positional: true,
         };
@@ -757,6 +818,26 @@ mod tests {
         assert!(toggle.fires(&idle, &on), "switching off clicks too");
     }
 
+    /// A factor curve scales the volume multiplicatively — the track's
+    /// roughness makes the same rolling entry louder or quieter.
+    #[test]
+    fn factors_scale_the_volume() {
+        let rolling = default_table()
+            .into_iter()
+            .find(|e| e.name == "rolling")
+            .expect("rolling entry exists");
+        let mut smooth = state(60.0);
+        smooth.roughness = 0.5;
+        let mut rough = state(60.0);
+        rough.roughness = 2.0;
+        let neutral = state(60.0); // Default roughness is the neutral 1.0.
+        let base = rolling.level(&neutral).0;
+        assert!(rolling.level(&smooth).0 < base);
+        assert!(rolling.level(&rough).0 > base);
+        // The factor scales, the pitch stays the speed's business.
+        assert_eq!(rolling.level(&rough).1, rolling.level(&neutral).1);
+    }
+
     /// Playback speed stays inside a range a speaker can render.
     #[test]
     fn the_pitch_is_bounded() {
@@ -766,6 +847,7 @@ mod tests {
             trigger: Trigger::Loop,
             conditions: Vec::new(),
             volume: None,
+            factors: Vec::new(),
             pitch: Some(Curve::ramp(Quantity::Speed, 0.0, -5.0, 100.0, 99.0)),
             positional: false,
         };

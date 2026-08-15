@@ -77,6 +77,7 @@ pub fn panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
                 &mut entry.volume,
                 0.0..=1.0,
             );
+            factors(ui, i, &mut entry.factors);
             curve(
                 ui,
                 ("pitch", i),
@@ -100,6 +101,7 @@ fn blank() -> SoundSpec {
         trigger: Trigger::Loop,
         conditions: Vec::new(),
         volume: None,
+        factors: Vec::new(),
         pitch: None,
         positional: true,
     }
@@ -257,6 +259,46 @@ fn conditions(ui: &mut egui::Ui, id: usize, list: &mut Vec<Condition>) {
             min: 0.0,
             max: 200.0,
         });
+    }
+}
+
+/// Multiplicative volume factors — a second quantity scaling an entry whose
+/// volume already follows a first one, like the track roughness on the
+/// rolling noise.
+fn factors(ui: &mut egui::Ui, id: usize, list: &mut Vec<Curve>) {
+    editor_ui::subheading(ui, t!("snd-factors"));
+    let mut remove = None;
+    for (i, factor) in list.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            quantity_combo(ui, ("factor", id, i), &mut factor.quantity);
+            if ui.small_button("×").clicked() {
+                remove = Some(i);
+            }
+        });
+        editor_ui::curve_editor(
+            ui,
+            &editor_ui::CurveSpec {
+                id: egui::Id::new(("snd-factor", id, i)),
+                title: t!("snd-factors"),
+                x_unit: "",
+                y_unit: "",
+                x_speed: 0.5,
+                y_speed: 0.01,
+                x_range: -10_000.0..=10_000.0,
+                y_range: 0.0..=4.0,
+            },
+            &mut factor.points,
+        );
+    }
+    if let Some(i) = remove {
+        list.remove(i);
+    }
+    if ui
+        .small_button(t!("action-add-factor"))
+        .on_hover_text(t!("snd-factors-hint"))
+        .clicked()
+    {
+        list.push(Curve::ramp(Quantity::Roughness, 0.5, 0.75, 2.0, 1.4));
     }
 }
 

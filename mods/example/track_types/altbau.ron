@@ -1,0 +1,9 @@
+// Older jointed superstructure: audibly rougher, same 120 km/h the example
+// line runs anyway — the type change is heard, not braked for.
+(
+    name: "Altbau (verlascht)",
+    color: (0.38, 0.33, 0.26),
+    roughness: 1.4,
+    max_speed: 120.0,
+    lzb: false,
+)

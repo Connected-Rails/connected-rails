@@ -3,6 +3,7 @@
 use crate::device::{DeviceId, TracksideDevice};
 use crate::geometry::{Segment, eval_chain};
 use crate::profile::StepProfile;
+use crate::track_type::TrackType;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use world_coords::{EcefPos, EnuFrame};
@@ -189,10 +190,17 @@ pub struct TrackEdge {
     pub cant: StepProfile<f64>,
     /// Permitted speed [km/h] over `s`.
     pub speed: StepProfile<f64>,
+    /// Track type over `s` — indices into [`TrackNetwork::types`], 0 = default.
+    #[serde(default = "default_track_type")]
+    pub track_type: StepProfile<u32>,
     #[serde(skip)]
     frame: Option<EnuFrame>,
     #[serde(skip)]
     length: f64,
+}
+
+fn default_track_type() -> StepProfile<u32> {
+    StepProfile::constant(0)
 }
 
 impl TrackEdge {
@@ -214,6 +222,7 @@ impl TrackEdge {
             grade: StepProfile::constant(0.0),
             cant: StepProfile::constant(0.0),
             speed: StepProfile::constant(160.0),
+            track_type: default_track_type(),
             frame: None,
             length: 0.0,
         };
@@ -234,6 +243,36 @@ impl TrackEdge {
     pub fn with_speed(mut self, speed: StepProfile<f64>) -> Self {
         self.speed = speed;
         self
+    }
+
+    pub fn with_track_type(mut self, track_type: StepProfile<u32>) -> Self {
+        self.track_type = track_type;
+        self
+    }
+
+    /// Sections of this edge by track type: `(s from, s to, type index)`,
+    /// clamped to the edge, consecutive equal types merged — what a renderer
+    /// splits its meshes at.
+    pub fn track_type_runs(&self) -> Vec<(f64, f64, u32)> {
+        let steps = self.track_type.steps();
+        let mut runs: Vec<(f64, f64, u32)> = Vec::with_capacity(steps.len());
+        for (i, (s, index)) in steps.iter().enumerate() {
+            // The first entry also applies before its own `s` (StepProfile).
+            let start = if i == 0 {
+                0.0
+            } else {
+                s.clamp(0.0, self.length())
+            };
+            let end = steps
+                .get(i + 1)
+                .map_or(self.length(), |(next, _)| next.clamp(0.0, self.length()));
+            match runs.last_mut() {
+                Some(last) if last.2 == *index => last.1 = end,
+                _ if end > start => runs.push((start, end, *index)),
+                _ => {}
+            }
+        }
+        runs
     }
 
     /// Recompute derived data (frame, length) — call after loading.
@@ -286,19 +325,103 @@ impl TrackEdge {
 }
 
 /// The complete track network.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackNetwork {
     edges: Vec<TrackEdge>,
     nodes: Vec<TrackNode>,
     devices: Vec<TracksideDevice>,
+    /// Track types the edges' [`TrackEdge::track_type`] profiles index into;
+    /// index 0 is always the default type. Saves from before track types
+    /// deserialize into the default table.
+    #[serde(default = "default_types")]
+    types: Vec<TrackType>,
     /// Per edge, the device IDs sorted by `s`.
     #[serde(skip)]
     devices_by_edge: Vec<Vec<DeviceId>>,
 }
 
+fn default_types() -> Vec<TrackType> {
+    vec![TrackType::default()]
+}
+
+impl Default for TrackNetwork {
+    fn default() -> Self {
+        Self {
+            edges: Vec::new(),
+            nodes: Vec::new(),
+            devices: Vec::new(),
+            types: default_types(),
+            devices_by_edge: Vec::new(),
+        }
+    }
+}
+
 impl TrackNetwork {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The track-type table; [`TrackEdge::track_type`] indexes into it.
+    pub fn types(&self) -> &[TrackType] {
+        &self.types
+    }
+
+    /// Replaces the track-type table. Index 0 should stay a default type;
+    /// the compiler and [`Self::apply_track_types`] keep that invariant.
+    pub fn set_types(&mut self, types: Vec<TrackType>) {
+        self.types = if types.is_empty() {
+            default_types()
+        } else {
+            types
+        };
+    }
+
+    /// Track type in force at `(edge, s)`.
+    pub fn track_type_at(&self, edge: EdgeId, s: f64) -> &TrackType {
+        let index = self.edges[edge.index()].track_type.at(s) as usize;
+        &self.types[index.min(self.types.len() - 1)]
+    }
+
+    /// Resolves the type table against a registry (`"<mod>:<name>"` → spec)
+    /// and caps every edge's speed profile with its types' `max_speed` — the
+    /// superstructure limit becomes part of the one profile every consumer
+    /// (AI, LZB, HUD, scoring) already reads. Index 0, the default type, is
+    /// never looked up. Returns a warning per unresolved name.
+    pub fn apply_track_types(
+        &mut self,
+        resolve: impl Fn(&str) -> Option<TrackType>,
+    ) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for ty in self.types.iter_mut().skip(1) {
+            match resolve(&ty.name) {
+                Some(mut spec) => {
+                    // The registry key is the addressable name; keep it.
+                    spec.name = ty.name.clone();
+                    *ty = spec;
+                }
+                None => warnings.push(format!(
+                    "track type {:?} unknown — default properties used",
+                    ty.name
+                )),
+            }
+        }
+        for edge in &mut self.edges {
+            let caps: Vec<(f64, f64)> = edge
+                .track_type
+                .steps()
+                .iter()
+                .map(|(s, index)| {
+                    let index = (*index as usize).min(self.types.len() - 1);
+                    (*s, self.types[index].max_speed)
+                })
+                .collect();
+            // Nothing to cap: every type on this edge is at the never-caps default.
+            if caps.iter().all(|(_, v)| *v >= 999.0) {
+                continue;
+            }
+            edge.speed = edge.speed.min_merge(&StepProfile::new(caps));
+        }
+        warnings
     }
 
     pub fn add_node(&mut self, kind: NodeKind) -> NodeId {
@@ -523,6 +646,58 @@ mod tests {
         let h1 = world_coords::geo::from_ecef(edge.eval(1000.0).pos).2;
         assert!((h1 - h0 - 10.0).abs() < 0.01, "{}", h1 - h0);
         assert!(edge.eval(500.0).tangent.dot(edge.eval(0.0).up) > 0.0);
+    }
+
+    /// Resolving types caps the speed profile where the type is assigned and
+    /// leaves it alone where the type never caps.
+    #[test]
+    fn track_types_cap_the_speed_profile() {
+        let mut net = TrackNetwork::new();
+        let a = net.add_node(NodeKind::Buffer);
+        let b = net.add_node(NodeKind::Buffer);
+        let anchor = to_ecef_deg(52.0, 10.0, 100.0);
+        net.add_edge(
+            TrackEdge::new(
+                EdgeId(0),
+                a,
+                b,
+                anchor,
+                0.0,
+                vec![Segment::straight(3000.0)],
+            )
+            .with_speed(StepProfile::new(vec![(0.0, 160.0), (2500.0, 60.0)]))
+            // Default up to km 1, then a branch-line type.
+            .with_track_type(StepProfile::new(vec![(0.0, 0), (1000.0, 1)])),
+        );
+        net.set_types(vec![
+            TrackType::default(),
+            TrackType::placeholder("test:nebenbahn"),
+        ]);
+
+        let warnings = net.apply_track_types(|name| {
+            (name == "test:nebenbahn").then(|| TrackType {
+                max_speed: 80.0,
+                roughness: 1.4,
+                ..TrackType::default()
+            })
+        });
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let edge = net.edge(EdgeId(0));
+        assert_eq!(edge.speed.at(500.0), 160.0, "default type never caps");
+        assert_eq!(edge.speed.at(1500.0), 80.0, "superstructure caps the line");
+        assert_eq!(edge.speed.at(2600.0), 60.0, "the lower line speed survives");
+        assert_eq!(net.track_type_at(EdgeId(0), 1500.0).roughness, 1.4);
+        assert_eq!(net.track_type_at(EdgeId(0), 500.0).roughness, 1.0);
+
+        // An unknown name keeps its placeholder and warns.
+        net.set_types(vec![
+            TrackType::default(),
+            TrackType::placeholder("test:fehlt"),
+        ]);
+        let warnings = net.apply_track_types(|_| None);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("test:fehlt"));
     }
 
     #[test]

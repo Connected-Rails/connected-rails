@@ -1,0 +1,16 @@
+// A track type describes the superstructure — what the track is built like,
+// not where it runs. Lines assign it per edge, section by section:
+//   track_type: [(0.0, "example:hauptbahn"), (3000.0, "example:altbau")],
+//
+// `max_speed` caps the line's speed profile wherever the type is assigned,
+// `roughness` scales the rolling noise (1.0 = welded main-line rail),
+// `texture` (mods://<mod>/assets/…) skins the ballast bed in the simulator,
+// `color` is the untextured fallback and the route editor's section tint,
+// `lzb: true` makes the editor's rule check demand a line conductor device.
+(
+    name: "Hauptbahn",
+    color: (0.32, 0.30, 0.28),
+    roughness: 1.0,
+    max_speed: 250.0,
+    lzb: false,
+)

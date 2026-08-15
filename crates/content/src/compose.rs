@@ -124,6 +124,7 @@ impl Composition {
             nodes: Vec::new(),
             edges: Vec::new(),
             devices: Vec::new(),
+            objects: Vec::new(),
             sections: Vec::new(),
             signals: Vec::new(),
             routes: Vec::new(),
@@ -344,6 +345,12 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
         d.payload = shift_payload(&d.kind, &d.payload, off);
         merged.devices.push(d);
     }
+    // Scenery objects only know their edge; nothing references them by index.
+    for o in &module.objects {
+        let mut o = o.clone();
+        o.edge += off.edges;
+        merged.objects.push(o);
+    }
     for s in &module.sections {
         let mut s = s.clone();
         for e in &mut s.edges {
@@ -440,6 +447,7 @@ mod tests {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![(0.0, 120.0)],
+                track_type: vec![],
             }],
             devices: vec![
                 DeviceSource {
@@ -459,6 +467,7 @@ mod tests {
                     payload: ron::to_string(&MagnetPayload::hz2000(0)).unwrap(),
                 },
             ],
+            objects: vec![],
             sections: vec![SectionSource { edges: vec![0] }],
             signals: vec![SignalSource {
                 kind: SignalKind::Main,

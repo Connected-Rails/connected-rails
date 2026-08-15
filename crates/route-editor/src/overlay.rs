@@ -207,7 +207,9 @@ fn spawn_tile(
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; 4]);
-    mesh.insert_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]));
+    // Counter-clockwise seen from above — the editor camera looks straight
+    // down, and a clockwise quad is a backface to it (culled: black viewport).
+    mesh.insert_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]));
 
     let texture = images.add(Image::new(
         Extent3d {

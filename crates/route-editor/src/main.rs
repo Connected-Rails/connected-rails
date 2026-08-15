@@ -1,13 +1,15 @@
-//! TrainSim-DE editor — top-down view of a line with aerial imagery overlay.
+//! TrainSim-DE route editor — top-down view of a line with aerial imagery overlay,
+//! track drawing and device placement (plan ch. 15, editor v1).
 //!
 //! ```text
-//! train-sim-editor [line.ron] [--imagery <config.ron>] [--frames N]
+//! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N]
 //! ```
 //!
 //! Without a line file the example line is loaded. The overlay configuration is created
 //! on first start and can be reloaded at runtime (F5).
 
 mod overlay;
+mod tools;
 mod ui;
 
 use bevy::asset::RenderAssetUsages;
@@ -20,7 +22,8 @@ use glam::DVec3;
 use i18n::t;
 use imagery::{ImageryConfig, ZoomMode};
 use overlay::{Overlay, OverlayTile};
-use track_model::TrackNetwork;
+use tools::EditorState;
+use track_model::{DeviceKind, TrackNetwork};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
 /// Geographic position of a world point in **degrees** — `geo::from_ecef` returns radians,
@@ -42,19 +45,81 @@ pub struct Focus {
     pub height: f64,
 }
 
-/// The loaded track network.
+/// The document: the line in source form, its compilation, and the save state.
 #[derive(Resource)]
 pub struct Line {
+    pub source: LineSource,
     pub net: TrackNetwork,
-    pub name: String,
     pub path: Option<String>,
+    pub dirty: bool,
+    /// Recompile the source and respawn track and markers next frame.
+    pub needs_rebuild: bool,
+    /// Move the view to the line's middle on the next rebuild (after Open).
+    pub recenter: bool,
 }
 
-/// World-anchored objects (track) — to be followed up on a rebase.
+const UNDO_DEPTH: usize = 64;
+
+/// Undo history of the document — one snapshot of the source per interaction.
+#[derive(Resource)]
+pub struct History {
+    pub undo: Vec<LineSource>,
+    pub redo: Vec<LineSource>,
+    /// The source as it looked after the last frame — the diff detector.
+    last: LineSource,
+    /// Whether the source changed in the previous frame, too: a drag mutates
+    /// it every frame and must still cost one step.
+    changing: bool,
+}
+
+impl History {
+    pub fn new(source: LineSource) -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last: source,
+            changing: false,
+        }
+    }
+
+    /// A new document (Open, New) starts its own history.
+    pub fn reset(&mut self, source: &LineSource) {
+        self.undo.clear();
+        self.redo.clear();
+        self.last = source.clone();
+        self.changing = false;
+    }
+
+    pub fn undo(&mut self, line: &mut Line) {
+        if let Some(state) = self.undo.pop() {
+            self.redo.push(std::mem::replace(&mut line.source, state));
+            self.last = line.source.clone();
+            self.changing = false;
+            line.dirty = true;
+            line.needs_rebuild = true;
+        }
+    }
+
+    pub fn redo(&mut self, line: &mut Line) {
+        if let Some(state) = self.redo.pop() {
+            self.undo.push(std::mem::replace(&mut line.source, state));
+            self.last = line.source.clone();
+            self.changing = false;
+            line.dirty = true;
+            line.needs_rebuild = true;
+        }
+    }
+}
+
+/// World-anchored objects (track, device markers) — re-aligned on a rebase.
 #[derive(Component)]
 struct WorldAnchored {
     anchor: EcefPos,
 }
+
+/// Device marker quad — scaled with the view height so it stays clickable.
+#[derive(Component)]
+struct DeviceMarker;
 
 /// Path of the overlay configuration.
 #[derive(Resource)]
@@ -67,11 +132,10 @@ struct FrameLimit(u32);
 #[derive(Resource)]
 struct ShotPath(String);
 
-/// What the menu has asked for — applied by `overlay_control` through the same code paths
-/// as the keyboard shortcuts.
+/// What the menu and the panel have asked for — applied by `overlay_control`
+/// through the same code paths as the keyboard shortcuts.
 #[derive(Resource, Default)]
 pub struct Request {
-    pub open_line: Option<std::path::PathBuf>,
     pub toggle_overlay: bool,
     pub cycle_provider: bool,
     pub toggle_offline: bool,
@@ -79,6 +143,9 @@ pub struct Request {
     pub retry_failed: bool,
     pub load_config: bool,
     pub save_config: bool,
+    /// Configuration edited in the panel; the flag says whether the tiles
+    /// must be rebuilt (provider, opacity or offset changed).
+    pub config: Option<(ImageryConfig, bool)>,
 }
 
 fn main() {
@@ -106,6 +173,9 @@ fn main() {
             title: t!("window-route-editor"),
             ..default()
         }),
+        // The close button must pass through `confirm_close`, or it is the one
+        // route that still throws unsaved work away.
+        close_when_requested: false,
         ..default()
     }))
     .add_plugins(EguiPlugin::default())
@@ -120,16 +190,23 @@ fn main() {
     .insert_resource(ConfigPath(config_path))
     .insert_resource(LinePath(line_path))
     .init_resource::<Request>()
+    .init_resource::<EditorState>()
     .add_systems(Startup, setup)
     .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
         Update,
         (
             camera_control,
+            tools::tool_input,
+            track_changes,
+            rebuild,
             overlay_control,
-            open_line,
             overlay::update,
             rebase_origin,
+            tools::draw_gizmos,
+            scale_markers,
+            update_title,
+            confirm_close,
         )
             .chain(),
     );
@@ -146,39 +223,33 @@ fn main() {
 #[derive(Resource)]
 struct LinePath(Option<String>);
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    config_path: Res<ConfigPath>,
-    line_path: Res<LinePath>,
-) {
+fn setup(mut commands: Commands, config_path: Res<ConfigPath>, line_path: Res<LinePath>) {
     // Load the line.
-    let (source, name, path) = match &line_path.0 {
+    let (source, path) = match &line_path.0 {
         Some(path) => match std::fs::read_to_string(path).map(|t| LineSource::from_ron(&t)) {
-            Ok(Ok(source)) => {
-                let name = source.name.clone();
-                (source, name, Some(path.clone()))
-            }
+            Ok(Ok(source)) => (source, Some(path.clone())),
             _ => {
                 warn!("{path} not readable — example line loaded");
-                (content::musterbahn(), "Musterbahn".into(), None)
+                (content::musterbahn(), None)
             }
         },
-        None => (content::musterbahn(), "Musterbahn".into(), None),
+        None => (content::musterbahn(), None),
     };
-    let compiled = source.compile().expect("line compiles");
-    let net = compiled.net;
+    let net = match source.compile() {
+        Ok(compiled) => compiled.net,
+        Err(e) => {
+            warn!("line does not compile ({e:?}) — example line loaded");
+            content::musterbahn().compile().expect("compiles").net
+        }
+    };
 
-    // View point at the middle of the line.
-    let first = net.edges()[0].eval(0.0).pos;
-    let middle = &net.edges()[net.edges().len() / 2];
-    let focus_position = middle.eval(middle.length() / 2.0).pos;
+    // View point at the middle of the line; an empty line starts over the example area.
+    let focus_position = match net.edges().get(net.edges().len() / 2) {
+        Some(middle) => middle.eval(middle.length() / 2.0).pos,
+        None => geo::to_ecef_deg(52.0, 10.0, 146.0),
+    };
     let base_height = geo::from_ecef(focus_position).2;
     let origin = RenderOrigin::new(focus_position);
-    let _ = first;
-
-    spawn_track(&mut commands, &mut meshes, &mut materials, &net, &origin);
 
     // Load (or create) the overlay configuration.
     let (config, message) = ImageryConfig::load_or_create(&config_path.0);
@@ -227,54 +298,94 @@ fn setup(
         height: 900.0,
     });
     commands.insert_resource(Origin(origin));
-    commands.insert_resource(Line { net, name, path });
+    commands.insert_resource(History::new(source.clone()));
+    // Track and markers are spawned by `rebuild` on the first frame.
+    commands.insert_resource(Line {
+        source,
+        net,
+        path,
+        dirty: false,
+        needs_rebuild: true,
+        recenter: false,
+    });
 }
 
-/// Loads a different line at runtime (menu → File → Open line…).
-// Rebuilding the line touches the whole world state; a system with that many parameters is
-// normal in Bevy.
+/// One undo step per interaction: whoever mutated `Line::source` this frame —
+/// a tool click or a panel drag — is picked up here by comparison, so the
+/// mutation sites stay plain writes.
+fn track_changes(mut line: ResMut<Line>, mut history: ResMut<History>) {
+    record_change(&mut line, &mut history);
+}
+
+fn record_change(line: &mut Line, history: &mut History) {
+    if line.source == history.last {
+        history.changing = false;
+        return;
+    }
+    if !history.changing {
+        if history.undo.len() == UNDO_DEPTH {
+            history.undo.remove(0);
+        }
+        let last = history.last.clone();
+        history.undo.push(last);
+        history.redo.clear();
+    }
+    history.changing = true;
+    history.last = line.source.clone();
+    line.dirty = true;
+    line.needs_rebuild = true;
+}
+
+/// Recompiles the source and respawns track and markers after every edit.
 #[allow(clippy::too_many_arguments)]
-fn open_line(
-    mut request: ResMut<Request>,
+fn rebuild(
+    mut line: ResMut<Line>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut line: ResMut<Line>,
     mut origin: ResMut<Origin>,
     mut focus: ResMut<Focus>,
     mut overlay: ResMut<Overlay>,
-    track: Query<Entity, (With<WorldAnchored>, Without<OverlayTile>)>,
+    old: Query<Entity, (With<WorldAnchored>, Without<OverlayTile>)>,
 ) {
-    let Some(path) = request.open_line.take() else {
+    if !line.needs_rebuild {
         return;
-    };
-    let source = match std::fs::read_to_string(&path).map(|t| LineSource::from_ron(&t)) {
-        Ok(Ok(source)) => source,
-        _ => {
-            overlay.status = t!("status-not-readable", file = path.display());
+    }
+    line.needs_rebuild = false;
+    match line.source.compile() {
+        Ok(compiled) => line.net = compiled.net,
+        Err(e) => {
+            overlay.status = t!("status-compile-error", error = format!("{e:?}"));
             return;
         }
-    };
-    let Ok(compiled) = source.compile() else {
-        overlay.status = t!("status-not-compiling", file = path.display());
-        return;
-    };
-
-    for entity in track.iter() {
+    }
+    for entity in old.iter() {
         commands.entity(entity).despawn();
     }
-    overlay.clear(&mut commands);
-
-    let net = compiled.net;
-    let middle = &net.edges()[net.edges().len() / 2];
-    focus.position = middle.eval(middle.length() / 2.0).pos;
-    origin.0 = RenderOrigin::new(focus.position);
-    spawn_track(&mut commands, &mut meshes, &mut materials, &net, &origin.0);
-
-    overlay.status = t!("status-loaded", file = path.display());
-    line.name = source.name.clone();
-    line.path = Some(path.display().to_string());
-    line.net = net;
+    if line.recenter {
+        line.recenter = false;
+        let edges = line.net.edges();
+        if let Some(middle) = edges.get(edges.len() / 2) {
+            focus.position = middle.eval(middle.length() / 2.0).pos;
+            origin.0 = RenderOrigin::new(focus.position);
+            overlay.clear(&mut commands);
+        }
+    }
+    spawn_track(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &line.net,
+        &origin.0,
+    );
+    spawn_markers(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &line.source,
+        &line.net,
+        &origin.0,
+    );
 }
 
 /// Track ribbon as a dark quad — reference for the position in the aerial imagery.
@@ -310,7 +421,9 @@ fn spawn_track(
         let mut indices = Vec::new();
         for row in 0..steps {
             let a = (row * 2) as u32;
-            indices.extend_from_slice(&[a, a + 2, a + 1, a + 1, a + 2, a + 3]);
+            // Counter-clockwise seen from above — a clockwise strip is a
+            // backface to the top-down camera and is culled.
+            indices.extend_from_slice(&[a, a + 1, a + 2, a + 2, a + 1, a + 3]);
         }
 
         let mut mesh = Mesh::new(
@@ -335,39 +448,130 @@ fn spawn_track(
     }
 }
 
-/// Move the view point and change the height.
+/// One colored quad per trackside device, lifted above the ribbon.
+fn spawn_markers(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    source: &LineSource,
+    net: &TrackNetwork,
+    origin: &RenderOrigin,
+) {
+    let mesh = meshes
+        .add(Mesh::from(Plane3d::default().mesh().size(2.0, 2.0)).translated_by(Vec3::Y * 0.8));
+    for device in &source.devices {
+        let Some(pos) = tools::device_pos(net, device) else {
+            continue;
+        };
+        let frame = EnuFrame::at(pos);
+        let (translation, rotation) = origin.frame_transform(&frame);
+        commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: marker_color(&device.kind),
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_translation(translation).with_rotation(rotation),
+            WorldAnchored { anchor: pos },
+            DeviceMarker,
+        ));
+    }
+}
+
+/// Marker colors per device kind — legend colors, not simulation state.
+fn marker_color(kind: &DeviceKind) -> Color {
+    match kind {
+        DeviceKind::Signal => Color::srgb(0.90, 0.22, 0.22),
+        DeviceKind::Magnet => Color::srgb(0.95, 0.60, 0.12),
+        DeviceKind::LineConductor => Color::srgb(0.65, 0.40, 0.95),
+        DeviceKind::Balise => Color::srgb(0.20, 0.80, 0.85),
+        DeviceKind::SpeedBoard => Color::srgb(0.95, 0.85, 0.25),
+        DeviceKind::Platform => Color::srgb(0.30, 0.55, 0.95),
+        DeviceKind::StopBoard => Color::srgb(0.92, 0.92, 0.92),
+        DeviceKind::BlockMarker => Color::srgb(0.25, 0.80, 0.55),
+        DeviceKind::NeutralSection => Color::srgb(0.85, 0.30, 0.75),
+        DeviceKind::Other(_) => Color::srgb(0.60, 0.62, 0.68),
+    }
+}
+
+/// Keeps device markers a few pixels big at any height.
+fn scale_markers(focus: Res<Focus>, mut markers: Query<&mut Transform, With<DeviceMarker>>) {
+    let scale = ((focus.height / 250.0) as f32).clamp(1.0, 40.0);
+    for mut transform in markers.iter_mut() {
+        transform.scale = Vec3::splat(scale);
+    }
+}
+
+/// Move the view point and change the height — keyboard as before, plus the
+/// map conventions every modder expects: wheel zooms, middle button drags.
+#[allow(clippy::too_many_arguments)]
 fn camera_control(
     keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    mut motion: MessageReader<bevy::input::mouse::MouseMotion>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     time: Res<Time>,
     origin: Res<Origin>,
+    mut state: ResMut<EditorState>,
     mut focus: ResMut<Focus>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs_f64();
-    // Movement scales with the height: far up, panning is generous.
-    let speed = focus.height * 0.8 * dt;
     let frame = EnuFrame::at(focus.position);
-    let mut shift = DVec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-        shift += frame.north * speed;
+    // While a text field has focus, WASD is typing, not panning.
+    if !state.typing {
+        // Movement scales with the height: far up, panning is generous.
+        let speed = focus.height * 0.8 * dt;
+        let mut shift = DVec3::ZERO;
+        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+            shift += frame.north * speed;
+        }
+        if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+            shift -= frame.north * speed;
+        }
+        if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+            shift -= frame.east * speed;
+        }
+        if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+            shift += frame.east * speed;
+        }
+        if shift != DVec3::ZERO {
+            focus.position = EcefPos(focus.position.0 + shift);
+            state.map_used = true;
+        }
+        if keys.pressed(KeyCode::PageUp) || keys.pressed(KeyCode::NumpadSubtract) {
+            focus.height = (focus.height * (1.0 + dt)).min(20_000.0);
+        }
+        if keys.pressed(KeyCode::PageDown) || keys.pressed(KeyCode::NumpadAdd) {
+            focus.height = (focus.height * (1.0 - dt)).max(60.0);
+        }
     }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-        shift -= frame.north * speed;
+
+    // Mouse input only inside the viewport rect the panels leave free — the
+    // hand-built panel layout is invisible to egui's own hit test, so the
+    // check is ours (see `EditorState::viewport`).
+    let over_map = windows
+        .single()
+        .ok()
+        .and_then(|w| w.cursor_position())
+        .is_some_and(|p| state.viewport.contains(p));
+    let scroll: f32 = wheel.read().map(|w| w.y).sum();
+    if over_map && scroll != 0.0 {
+        focus.height = (focus.height * (1.0 - scroll as f64 * 0.15)).clamp(60.0, 20_000.0);
+        state.map_used = true;
     }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
-        shift -= frame.east * speed;
-    }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
-        shift += frame.east * speed;
-    }
-    if shift != DVec3::ZERO {
-        focus.position = EcefPos(focus.position.0 + shift);
-    }
-    if keys.pressed(KeyCode::PageUp) || keys.pressed(KeyCode::NumpadSubtract) {
-        focus.height = (focus.height * (1.0 + dt)).min(20_000.0);
-    }
-    if keys.pressed(KeyCode::PageDown) || keys.pressed(KeyCode::NumpadAdd) {
-        focus.height = (focus.height * (1.0 - dt)).max(60.0);
+    let drag: Vec2 = motion.read().map(|m| m.delta).sum();
+    if over_map && buttons.pressed(MouseButton::Middle) && drag != Vec2::ZERO {
+        // Metres per pixel on the focus plane (45° vertical fov), so the map
+        // sticks to the cursor while it is dragged.
+        let metres_per_px = focus.height * 2.0 * (std::f64::consts::FRAC_PI_8).tan()
+            / (state.viewport.height().max(1.0) as f64);
+        let shift = frame.east * (drag.x as f64 * metres_per_px)
+            - frame.north * (drag.y as f64 * metres_per_px);
+        focus.position = EcefPos(focus.position.0 - shift);
+        state.map_used = true;
     }
 
     let Ok(mut transform) = camera.single_mut() else {
@@ -388,15 +592,20 @@ fn overlay_control(
     mut overlay: ResMut<Overlay>,
     mut request: ResMut<Request>,
     config_path: Res<ConfigPath>,
+    state: Res<EditorState>,
     focus: Res<Focus>,
 ) {
     let mut config = overlay.config().clone();
     let mut changed = false;
     let mut rebuild = false;
 
-    // Menu entries take the same paths as the keys.
+    // Menu entries and panel widgets take the same paths as the keys.
     let menu = std::mem::take(&mut *request);
-    request.open_line = menu.open_line;
+    if let Some((edited, rebuild_tiles)) = menu.config {
+        config = edited;
+        changed = true;
+        rebuild |= rebuild_tiles;
+    }
     if menu.toggle_overlay {
         config.enabled = !config.enabled;
         changed = true;
@@ -429,6 +638,18 @@ fn overlay_control(
         let (loaded, message) = ImageryConfig::load_or_create(&config_path.0);
         overlay.status = message.unwrap_or_else(|| t!("status-loaded", file = config_path.0));
         overlay.apply(&mut commands, loaded);
+        return;
+    }
+
+    // The letter keys are overlay shortcuts only while no text field is typed in.
+    if state.typing {
+        if changed {
+            if rebuild {
+                overlay.apply(&mut commands, config);
+            } else {
+                overlay.source.set_config(config);
+            }
+        }
         return;
     }
 
@@ -544,6 +765,42 @@ fn rebase_origin(
     overlay::resync(&origin.0, &mut tiles);
 }
 
+/// The window title names the document, plus the unsaved marker.
+fn update_title(
+    line: Res<Line>,
+    mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+) {
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let key = if line.dirty {
+        "window-route-editor-unsaved"
+    } else {
+        "window-route-editor-named"
+    };
+    let title = t!(key, name = line.source.name);
+    if window.title != title {
+        window.title = title;
+    }
+}
+
+/// The window's close button goes through the discard guard like Quit does.
+fn confirm_close(
+    mut requests: MessageReader<bevy::window::WindowCloseRequested>,
+    mut line: ResMut<Line>,
+    mut state: ResMut<EditorState>,
+    mut overlay: ResMut<Overlay>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if requests.read().next().is_none() {
+        return;
+    }
+    requests.clear();
+    if ui::confirm_discard(&mut line, &mut state, &mut overlay) {
+        exit.write(AppExit::Success);
+    }
+}
+
 /// Exits the editor after the given number of frames — with `--screenshot` the window is
 /// captured beforehand.
 fn exit_after_frames(
@@ -598,5 +855,30 @@ mod tests {
         let middle = &compiled.net.edges()[compiled.net.edges().len() / 2];
         let (lat, lon) = focus_degrees(middle.eval(middle.length() / 2.0).pos);
         assert!((51.0..53.0).contains(&lat) && (9.0..11.0).contains(&lon));
+    }
+
+    /// The undo history records one step per mutation and survives a round trip.
+    #[test]
+    fn undo_round_trips_an_edit() {
+        let source = content::musterbahn();
+        let mut line = Line {
+            source: source.clone(),
+            net: source.compile().unwrap().net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            recenter: false,
+        };
+        let mut history = History::new(source.clone());
+
+        // An edit, picked up by the diff detector.
+        line.source.devices.pop();
+        record_change(&mut line, &mut history);
+        assert!(line.dirty && history.undo.len() == 1);
+
+        history.undo(&mut line);
+        assert_eq!(line.source, source);
+        history.redo(&mut line);
+        assert_eq!(line.source.devices.len(), source.devices.len() - 1);
     }
 }

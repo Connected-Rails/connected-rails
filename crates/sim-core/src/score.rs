@@ -152,7 +152,9 @@ impl ScoreKeeper {
         self.stops.push(StopReport {
             name: stop.name.clone(),
             position_error: error,
-            delay: self.timetable.delay(sim.time, stop.arrival),
+            delay: self
+                .timetable
+                .delay(sim.time, sim.start.seconds(), stop.arrival),
         });
         self.next_stop += 1;
         if self.timetable.kind == TimetableKind::Daily {

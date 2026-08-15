@@ -397,7 +397,9 @@ fn sim_frame(sim: &Sim, train: &Train, cab: &CabInputs) -> SimFrame {
         }
     }
     SimFrame {
-        time: sim.time,
+        // Wall clock: a display clock shows the time of day; blink phases only care
+        // about the fractional part and survive the offset.
+        time: sim.clock(),
         numbers,
         lamps,
         buttons: cab.display_buttons,

@@ -761,6 +761,18 @@ without one, only the scenario points count. `kind` decides what the times mean:
 once; `Daily` reads them as seconds since midnight and wraps around every 24 h — the
 looping all-day timetable, which an AI train follows indefinitely.
 
+Where midnight lies — and where the sun stands — comes from the scenario's start clock:
+
+```ron
+start: (year: 2026, month: 8, day: 15, hour: 6, minute: 45, utc_offset: 2.0),
+```
+
+Date and local time at the start of the run; `utc_offset` is the local clock's offset
+from UT in hours (Germany: 1 in winter, 2 in summer). It drives the sun and moon over
+the georeferenced line and anchors `Daily` timetables; `Scenario` timetables and event
+triggers stay relative to the start of the run. Without the field, a run begins at
+midsummer noon.
+
 ### Line and scenario hooks `on_load(ctx)` / `on_frame(ctx)`
 
 Both a `LineSource` and a `Scenario` may name a `script`. `on_load` runs once when the run

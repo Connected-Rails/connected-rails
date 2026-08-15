@@ -29,6 +29,7 @@ pub fn re_4711() -> Timetable {
 pub fn to_musterstadt() -> Scenario {
     Scenario {
         name: "Regionalbahn nach Musterstadt".into(),
+        start: Default::default(),
         description: "RE 4711 von Musterbach nach Musterstadt, 7 km. \
              Das Blocksignal bei km 2,0 zeigt zunächst Halt — der Vorausfahrende räumt gleich."
             .into(),

@@ -578,7 +578,7 @@ group-errors = Fehler
 
 ## Simulator-Anzeige
 
-hud-speed = v = { $speed } km/h   zul. { $limit } km/h   Weg { $distance } m   t = { $time } s
+hud-speed = v = { $speed } km/h   zul. { $limit } km/h   Weg { $distance } m   { $time }
 hud-brakes = HL { $pipe } bar   C { $cylinder } bar   R { $auxiliary } bar   HB { $main } bar   Zusatz { $direct } bar   Luft { $air } Nl
 hud-traction = Fahrschalter { $throttle }   Zugkraft { $tractive } kN   Bremskraft { $braking } kN   Bremse { $valve }
 hud-electrics = Batterie { $battery }   Bügel { $pantograph } %   Hauptschalter { $switch }   Fahrdraht { $voltage } V   Federspeicher { $parking }

@@ -29,7 +29,7 @@ use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
 use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::{EdgeId, TrackPosition};
-use world_coords::RenderOrigin;
+use world_coords::{RenderOrigin, sun};
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
 /// the menu apply without restarting the process.
@@ -43,6 +43,14 @@ pub enum GameState {
 /// The running simulation.
 #[derive(Resource)]
 pub struct SimResource(pub Sim);
+
+/// The one directional light that is the sun (`update_daylight`).
+#[derive(Component)]
+struct Sun;
+
+/// Second, dim directional light for moonlit nights.
+#[derive(Component)]
+struct Moon;
 
 /// Which train is driven by the player.
 #[derive(Resource)]
@@ -163,6 +171,7 @@ fn main() {
             displays::update_displays,
             rebase_origin,
             sync_vehicles,
+            update_daylight,
             ui::camera_control,
             streaming::stream_terrain,
             terrain_visibility,
@@ -470,14 +479,24 @@ fn setup(
         }
     }
 
-    // Sun and sky light.
+    // Sun, moon and sky follow the scenario clock (`update_daylight`).
     commands.spawn((
+        Sun,
         DirectionalLight {
             illuminance: 20_000.0,
             shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_xyz(200.0, 400.0, 200.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    commands.spawn((
+        Moon,
+        DirectionalLight {
+            illuminance: 0.0,
+            color: Color::srgb(0.75, 0.82, 1.0),
+            ..default()
+        },
+        Transform::default(),
     ));
     commands.spawn((
         Camera3d::default(),
@@ -654,4 +673,91 @@ fn sync_vehicles(
         transform.translation = origin.0.to_render(pose.pos) + up * 2.2;
         transform.rotation = origin.0.look_rotation(pose.tangent, pose.up);
     }
+}
+
+/// Transform and light of one celestial body, disjoint from the other one.
+type BodyLight<'w, 's, B, Other> = Query<
+    'w,
+    's,
+    (&'static mut Transform, &'static mut DirectionalLight),
+    (With<B>, Without<Other>),
+>;
+
+/// Sun and moon follow the wall clock (plan ch. 14): position from date, time and the
+/// georeferenced location, light and sky colour from the sun's elevation.
+fn update_daylight(
+    sim: Res<SimResource>,
+    origin: Res<Origin>,
+    mut clear: ResMut<ClearColor>,
+    mut sun: BodyLight<Sun, Moon>,
+    mut moon: BodyLight<Moon, Sun>,
+    mut ambient: Query<&mut AmbientLight, With<ui::CabCamera>>,
+) {
+    let (lat, lon, _) = world_coords::geo::from_ecef(origin.0.position());
+    let start = sim.0.start;
+    let jd = sun::julian_date(
+        start.year,
+        start.month,
+        start.day,
+        start.seconds_ut() + sim.0.time,
+    );
+
+    let (az, el) = sun::sun_position(jd, lat, lon);
+    let e = el.to_degrees() as f32;
+    // Daylight factor: ramps up through civil twilight, 1 in full daylight.
+    let day = ((e + 6.0) / 12.0).clamp(0.0, 1.0);
+
+    if let Ok((mut tf, mut light)) = sun.single_mut() {
+        *tf = Transform::from_rotation(look_at_body(az, el));
+        light.illuminance = 20_000.0 * el.sin().max(0.0) as f32;
+        light.shadow_maps_enabled = e > 0.0;
+        let c = lerp3(
+            (1.0, 0.60, 0.30),
+            (1.0, 1.0, 1.0),
+            (e / 15.0).clamp(0.0, 1.0),
+        );
+        light.color = Color::srgb(c.0, c.1, c.2);
+    }
+
+    let (maz, mel, phase) = sun::moon_position(jd, lat, lon);
+    let moonlight = if mel > 0.0 {
+        phase as f32 * (1.0 - day)
+    } else {
+        0.0
+    };
+    if let Ok((mut tf, mut light)) = moon.single_mut() {
+        *tf = Transform::from_rotation(look_at_body(maz, mel));
+        // ponytail: a real full moon is ~0.25 lx and invisible without auto-exposure —
+        // the night is lit artistically bright instead.
+        light.illuminance = 40.0 * moonlight;
+    }
+
+    for mut a in &mut ambient {
+        a.brightness = 6.0 + 244.0 * day + 10.0 * moonlight;
+        let c = lerp3((0.45, 0.55, 0.85), (0.7, 0.8, 1.0), day);
+        a.color = Color::srgb(c.0, c.1, c.2);
+    }
+
+    // Sky: night ↔ day, with a warm band while the sun crosses the horizon.
+    let sky = lerp3((0.01, 0.02, 0.05), (0.55, 0.68, 0.82), day);
+    let dawn = (1.0 - (e / 10.0).abs()).clamp(0.0, 0.6);
+    let sky = lerp3(sky, (0.83, 0.52, 0.32), dawn);
+    clear.0 = Color::srgb(sky.0, sky.1, sky.2);
+}
+
+/// Rotation of a directional light shining *from* azimuth/elevation onto the scene.
+/// The render space is ENU-aligned: +X east, +Y up, −Z north.
+fn look_at_body(azimuth: f64, elevation: f64) -> Quat {
+    let (sa, ca) = azimuth.sin_cos();
+    let (se, ce) = elevation.sin_cos();
+    let to_body = Vec3::new((ce * sa) as f32, se as f32, (-ce * ca) as f32);
+    Transform::default().looking_to(-to_body, Vec3::Y).rotation
+}
+
+fn lerp3(a: (f32, f32, f32), b: (f32, f32, f32), t: f32) -> (f32, f32, f32) {
+    (
+        a.0 + (b.0 - a.0) * t,
+        a.1 + (b.1 - a.1) * t,
+        a.2 + (b.2 - a.2) * t,
+    )
 }

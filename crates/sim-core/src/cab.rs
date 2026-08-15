@@ -81,9 +81,20 @@ pub struct CabInputs {
     /// Wiper switch: 0 off, 1 interval, 2 slow, 3 fast.
     #[serde(default)]
     pub wipers: u8,
+    /// Headlights (Spitzensignal) on. Defaults to on — the AI never touches the
+    /// switch, and a train without lights at night would be an operating error.
+    #[serde(default = "on")]
+    pub headlights: bool,
+    /// Cab light on.
+    #[serde(default)]
+    pub cab_light: bool,
     /// Softkeys next to the cab displays, read by the `display(ctx)` script hook.
     #[serde(default)]
     pub display_buttons: [bool; 8],
+}
+
+fn on() -> bool {
+    true
 }
 
 impl Default for CabInputs {
@@ -112,6 +123,8 @@ impl Default for CabInputs {
             afb: false,
             afb_target: 0.0,
             wipers: 0,
+            headlights: true,
+            cab_light: false,
             display_buttons: [false; 8],
         }
     }
@@ -296,6 +309,10 @@ pub enum CabControl {
     TrainType,
     /// Wiper switch: off – interval – slow – fast.
     Wipers,
+    /// Headlights (Spitzensignal) on/off.
+    Headlights,
+    /// Cab light on/off.
+    CabLight,
     /// Softkey next to a cab display (0 … 7) — the `display(ctx)` script hook
     /// reads it, which is how a screen gets nested menus.
     Display(u8),
@@ -430,7 +447,7 @@ fn afb_scale(train: &Train) -> f64 {
 }
 
 impl CabControl {
-    pub const ALL: [CabControl; 36] = [
+    pub const ALL: [CabControl; 38] = [
         CabControl::Throttle,
         CabControl::Reverser,
         CabControl::BrakeValve,
@@ -459,6 +476,8 @@ impl CabControl {
         CabControl::Compressor,
         CabControl::TrainType,
         CabControl::Wipers,
+        CabControl::Headlights,
+        CabControl::CabLight,
         CabControl::Display(0),
         CabControl::Display(1),
         CabControl::Display(2),
@@ -500,6 +519,8 @@ impl CabControl {
             CabControl::Compressor => "cab-input-compressor",
             CabControl::TrainType => "cab-input-train-type",
             CabControl::Wipers => "cab-input-wipers",
+            CabControl::Headlights => "cab-input-headlights",
+            CabControl::CabLight => "cab-input-cab-light",
             CabControl::Display(n) => match n {
                 0 => "cab-input-display-1",
                 1 => "cab-input-display-2",
@@ -583,6 +604,8 @@ impl CabControl {
             CabControl::EpBrake => f64::from(cab.ep_brake),
             CabControl::Afb => f64::from(cab.afb),
             CabControl::Wipers => f64::from(cab.wipers.min(3)) / 3.0,
+            CabControl::Headlights => f64::from(cab.headlights),
+            CabControl::CabLight => f64::from(cab.cab_light),
             CabControl::Display(n) => f64::from(cab.display_buttons[usize::from(n) % 8]),
             CabControl::AfbTarget
             | CabControl::Battery
@@ -661,6 +684,8 @@ impl CabControl {
             CabControl::EpBrake => cab.ep_brake = on,
             CabControl::Afb => cab.afb = on,
             CabControl::Wipers => cab.wipers = (value * 3.0).round() as u8,
+            CabControl::Headlights => cab.headlights = on,
+            CabControl::CabLight => cab.cab_light = on,
             CabControl::Display(n) => cab.display_buttons[usize::from(n) % 8] = on,
             CabControl::Battery => {
                 for v in train.vehicles.iter_mut().filter(|v| v.is_powered()) {

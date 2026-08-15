@@ -507,6 +507,8 @@ cab-input-main-switch = Main switch
 cab-input-compressor = Compressor
 cab-input-train-type = Train type switch
 cab-input-wipers = Wiper switch
+cab-input-headlights = Headlights
+cab-input-cab-light = Cab light
 cab-input-display-1 = Display button 1
 cab-input-display-2 = Display button 2
 cab-input-display-3 = Display button 3
@@ -679,7 +681,7 @@ hud-scenario-failed = Scenario failed
 hud-outcome = { $result }: { $reason }
 hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
 hud-control = { $name }: { $value } %
-hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper  6 AFB  7/8 AFB target
+hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper  9/0 lights  6 AFB  7/8 AFB target
 hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera  F9 mods
 
 ## Main menu

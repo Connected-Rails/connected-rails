@@ -151,6 +151,14 @@ pub fn player_input(
         cab.wipers = (cab.wipers + 1) % 4;
     }
 
+    // Lights: 9 headlights (Spitzensignal), 0 cab light.
+    if keys.just_pressed(KeyCode::Digit9) {
+        cab.headlights = !cab.headlights;
+    }
+    if keys.just_pressed(KeyCode::Digit0) {
+        cab.cab_light = !cab.cab_light;
+    }
+
     // AFB: 6 on/off, 7/8 dial the target speed in 10 km/h steps.
     if keys.just_pressed(KeyCode::Digit6) {
         cab.afb = !cab.afb;

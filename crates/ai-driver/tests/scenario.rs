@@ -5,7 +5,7 @@ use content::vehicles::{br101, passenger_coach};
 use content::{musterbahn, re_4711, to_musterstadt};
 use sim_core::Sim;
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
-use sim_core::train::{RailCondition, Train, Vehicle};
+use sim_core::train::{RailCondition, Train, Vehicle, Weather};
 use track_model::{EdgeId, TrackPosition};
 
 fn scenario_sim(start: TrackPosition) -> (Sim, usize) {
@@ -65,7 +65,17 @@ fn events_fire_one_after_another() {
         (rain - block - 30.0).abs() < 0.5,
         "delay observed: {block} → {rain}"
     );
-    assert_eq!(sim.trains[t].rail, RailCondition::Wet, "weather applied");
+    // `SetWeather(Rain)` sets the world's weather and the rail condition it implies.
+    assert_eq!(sim.weather, Weather::Rain, "weather applied");
+    assert_eq!(
+        sim.trains[t].rail,
+        RailCondition::Wet,
+        "rail follows the weather"
+    );
+    assert!(
+        sim.weather.visibility().is_some(),
+        "rain pulls visibility in"
+    );
 }
 
 #[test]

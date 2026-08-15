@@ -1,0 +1,28 @@
+// Rain run on the example line — the M6 weather rendering on show: an overcast
+// sky, rain streaks around the camera, and the wet rail the weather implies.
+// After a while the rain gives way to fog, which pulls the visibility in.
+//
+// Run it with:
+//   cargo run -p app -- --scenario example:regenfahrt --camera outside
+(
+    name: "Regenfahrt",
+    description: "The example line in the rain; fog closes in later.",
+    start: (year: 2026, month: 8, day: 15, hour: 6, minute: 45, utc_offset: 2.0),
+    player_train: 0,
+    events: [
+        (
+            name: "rain",
+            trigger: Time(0.0),
+            actions: [SetWeather(Rain)],
+        ),
+        (
+            name: "fog",
+            trigger: Time(45.0),
+            actions: [
+                SetWeather(Fog),
+                Message("Fog — visibility down to a few hundred metres."),
+            ],
+        ),
+    ],
+    line: Some("example:beispielstrecke"),
+)

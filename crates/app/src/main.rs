@@ -18,6 +18,8 @@ use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::audio::{AddAudioSource, DefaultSpatialScale, SpatialScale};
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -29,7 +31,7 @@ use content::{musterbahn, re_4711, to_musterstadt};
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
-use sim_core::train::{Train, Vehicle, VehicleSpec};
+use sim_core::train::{Train, Vehicle, VehicleSpec, Weather};
 use track_model::{EdgeId, TrackPosition};
 use world_coords::{RenderOrigin, sun};
 
@@ -51,9 +53,36 @@ pub struct SimResource(pub Sim);
 #[derive(Resource, Default)]
 pub struct Daylight(pub f32);
 
-/// Head light cone on the player's leading vehicle (M6 night lighting).
+/// Headlight cone at one end of a train (M6 night lighting). `reverse` marks the
+/// cone on the rear end; `update_headlights` lights the one facing the direction
+/// of travel while the cab's light switch is on.
 #[derive(Component)]
-struct Headlight;
+struct Headlight {
+    train: usize,
+    reverse: bool,
+}
+
+/// Cab light of the player's leading vehicle (`CabInputs::cab_light`).
+#[derive(Component)]
+struct CabLamp;
+
+/// Precipitation field around the camera: one static mesh of crossed quads,
+/// moved downwards and wrapped every [`PRECIP_PERIOD`] metres (`update_precipitation`).
+#[derive(Component)]
+struct Precipitation {
+    snow: bool,
+    /// Fall speed [m/s].
+    speed: f32,
+}
+
+/// Height of one repetition of the precipitation mesh [m]. The mesh repeats its
+/// particles three times in y, so wrapping the fall offset keeps the camera
+/// covered by at least ±one period.
+const PRECIP_PERIOD: f32 = 24.0;
+
+/// Sight distance that stands in for "clear" [m] — far beyond the camera's far
+/// plane, so the fog is invisible without a weather that pulls it in.
+const CLEAR_VISIBILITY: f32 = 100_000.0;
 
 /// The one directional light that is the sun (`update_daylight`).
 #[derive(Component)]
@@ -189,6 +218,7 @@ fn main() {
             update_daylight,
             update_headlights,
             ui::camera_control,
+            update_precipitation,
             streaming::stream_terrain,
             terrain_visibility,
             ui::update_hud,
@@ -502,6 +532,7 @@ fn setup(
         ..default()
     });
     for train in std::iter::once(player).chain(drivers.iter().map(|(t, _)| *t)) {
+        let last = sim.trains[train].vehicles.len() - 1;
         for (i, v) in sim.trains[train].vehicles.iter().enumerate() {
             let view = VehicleView { train, vehicle: i };
             // A vehicle with a model gets its glTF; everything else stays a body
@@ -527,15 +558,22 @@ fn setup(
                     ))
                     .id()
             };
-            // Headlight cone on the leading vehicle, lit by darkness (M6).
-            // ponytail: always the -Z end — a proper Spitzensignal that follows
-            // the direction of travel and a cab switch needs a light control in
-            // `sim-core` first.
+            // Headlight cones at both ends of the train; the one facing the
+            // direction of travel is lit by darkness and the cab's light switch
+            // (`update_headlights`). ponytail: white cones only — red tail
+            // lamps (Zg 101) are per-vehicle model/content work.
+            let mut cones = Vec::new();
             if i == 0 {
-                let front = -(v.spec.length as f32) / 2.0;
+                cones.push((-(v.spec.length as f32) / 2.0, false));
+            }
+            if i == last {
+                cones.push(((v.spec.length as f32) / 2.0, true));
+            }
+            for (end, reverse) in cones {
+                let dir = if reverse { 1.0 } else { -1.0 };
                 commands.entity(entity).with_children(|parent| {
                     parent.spawn((
-                        Headlight,
+                        Headlight { train, reverse },
                         SpotLight {
                             color: Color::srgb(1.0, 0.95, 0.85),
                             intensity: 0.0,
@@ -545,9 +583,24 @@ fn setup(
                             ..default()
                         },
                         // The vehicle origin sits 2.2 m above the rail; the lamp
-                        // below it at the front, aimed a touch onto the track.
-                        Transform::from_xyz(0.0, -0.6, front)
-                            .looking_to(Vec3::new(0.0, -0.06, -1.0).normalize(), Vec3::Y),
+                        // below it at the end, aimed a touch onto the track.
+                        Transform::from_xyz(0.0, -0.6, end)
+                            .looking_to(Vec3::new(0.0, -0.06, dir).normalize(), Vec3::Y),
+                    ));
+                });
+            }
+            // Cab light behind the front window of the player's leading vehicle.
+            if train == player && i == 0 {
+                commands.entity(entity).with_children(|parent| {
+                    parent.spawn((
+                        CabLamp,
+                        PointLight {
+                            color: Color::srgb(1.0, 0.9, 0.75),
+                            intensity: 0.0,
+                            range: 4.0,
+                            ..default()
+                        },
+                        Transform::from_xyz(0.0, 0.4, -(v.spec.length as f32) / 2.0 + 1.8),
                     ));
                 });
             }
@@ -587,10 +640,39 @@ fn setup(
             far: 20_000.0,
             ..default()
         }),
+        // Weather visibility (M6): `update_daylight` pulls the falloff in and
+        // keeps the fog colour on the sky colour.
+        DistanceFog {
+            falloff: FogFalloff::from_visibility(CLEAR_VISIBILITY),
+            ..default()
+        },
         Transform::default(),
         MeshPickingCamera,
         ui::CabCamera,
     ));
+
+    // Rain and snow: a particle column of crossed quads that follows the camera
+    // and scrolls downwards (`update_precipitation`). Both fields exist from the
+    // start; the scenario's weather decides which one is visible.
+    let precip_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.75, 0.78, 0.82, 0.5),
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        double_sided: true,
+        perceptual_roughness: 1.0,
+        ..default()
+    });
+    let rain = meshes.add(precipitation_mesh(2000, 0.025, 0.4, 11));
+    let snow = meshes.add(precipitation_mesh(1500, 0.06, 0.06, 12));
+    for (mesh, snow, speed) in [(rain, false, 9.0), (snow, true, 1.4)] {
+        commands.spawn((
+            Precipitation { snow, speed },
+            Mesh3d(mesh),
+            MeshMaterial3d(precip_material.clone()),
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+    }
 
     ui::spawn_hud(&mut commands);
     mods_ui::spawn_panel(&mut commands);
@@ -762,7 +844,10 @@ type BodyLight<'w, 's, B, Other> = Query<
 >;
 
 /// Sun and moon follow the wall clock (plan ch. 14): position from date, time and the
-/// georeferenced location, light and sky colour from the sun's elevation.
+/// georeferenced location, light and sky colour from the sun's elevation; the weather
+/// dims the sun, greys the sky and pulls the distance fog in (M6).
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
+#[allow(clippy::too_many_arguments)]
 fn update_daylight(
     sim: Res<SimResource>,
     origin: Res<Origin>,
@@ -771,6 +856,7 @@ fn update_daylight(
     mut sun: BodyLight<Sun, Moon>,
     mut moon: BodyLight<Moon, Sun>,
     mut ambient: Query<&mut AmbientLight, With<ui::CabCamera>>,
+    mut fog: Query<&mut DistanceFog, With<ui::CabCamera>>,
 ) {
     let (lat, lon, _) = world_coords::geo::from_ecef(origin.0.position());
     let start = sim.0.start;
@@ -787,10 +873,20 @@ fn update_daylight(
     let day = ((e + 6.0) / 12.0).clamp(0.0, 1.0);
     daylight.0 = day;
 
+    // Weather (M6): an overcast sky dims the sun and greys the sky; the
+    // visibility pulls the camera's distance fog in.
+    let weather = sim.0.weather;
+    let overcast: f32 = match weather {
+        Weather::Clear => 0.0,
+        Weather::Rain => 0.8,
+        Weather::Snow => 0.6,
+        Weather::Fog => 0.7,
+    };
+
     if let Ok((mut tf, mut light)) = sun.single_mut() {
         *tf = Transform::from_rotation(look_at_body(az, el));
-        light.illuminance = 20_000.0 * el.sin().max(0.0) as f32;
-        light.shadow_maps_enabled = e > 0.0;
+        light.illuminance = 20_000.0 * (1.0 - 0.85 * overcast) * el.sin().max(0.0) as f32;
+        light.shadow_maps_enabled = e > 0.0 && overcast < 0.5;
         let c = lerp3(
             (1.0, 0.60, 0.30),
             (1.0, 1.0, 1.0),
@@ -818,20 +914,43 @@ fn update_daylight(
         a.color = Color::srgb(c.0, c.1, c.2);
     }
 
-    // Sky: night ↔ day, with a warm band while the sun crosses the horizon.
+    // Sky: night ↔ day, with a warm band while the sun crosses the horizon;
+    // overcast weather greys it all out (at night it stays dark).
     let sky = lerp3((0.01, 0.02, 0.05), (0.55, 0.68, 0.82), day);
     let dawn = (1.0 - (e / 10.0).abs()).clamp(0.0, 0.6);
     let sky = lerp3(sky, (0.83, 0.52, 0.32), dawn);
+    let sky = lerp3(sky, (0.56, 0.58, 0.61), overcast * day);
     clear.0 = Color::srgb(sky.0, sky.1, sky.2);
+
+    for mut fog in &mut fog {
+        fog.color = clear.0;
+        let visibility = weather.visibility().map_or(CLEAR_VISIBILITY, |v| v as f32);
+        fog.falloff = FogFalloff::from_visibility(visibility);
+    }
 }
 
-/// Headlights follow the darkness: full beam at night, off in daylight (M6).
-fn update_headlights(daylight: Res<Daylight>, mut lights: Query<&mut SpotLight, With<Headlight>>) {
+/// Headlights follow the light switch, the direction of travel and the darkness:
+/// full beam at night on the end the train runs towards, off in daylight (M6).
+/// The cab lamp follows its own switch alone.
+fn update_headlights(
+    daylight: Res<Daylight>,
+    sim: Res<SimResource>,
+    mut heads: Query<(&Headlight, &mut SpotLight)>,
+    mut cab_lamp: Query<&mut PointLight, With<CabLamp>>,
+    player: Res<PlayerTrain>,
+) {
     let night = 1.0 - daylight.0;
-    for mut light in lights.iter_mut() {
+    for (head, mut light) in heads.iter_mut() {
+        let cab = &sim.0.controls[head.train];
+        let backwards = cab.reverser < 0;
+        let on = cab.headlights && head.reverse == backwards;
         // ponytail: like the moon above, lit artistically bright — the night
         // scene has no auto-exposure to lift a physical beam out of the black.
-        light.intensity = 2_000_000_000.0 * night;
+        light.intensity = if on { 2_000_000_000.0 * night } else { 0.0 };
+    }
+    let on = sim.0.controls[player.0].cab_light;
+    for mut lamp in &mut cab_lamp {
+        lamp.intensity = if on { 60_000.0 } else { 0.0 };
     }
 }
 
@@ -850,4 +969,95 @@ fn lerp3(a: (f32, f32, f32), b: (f32, f32, f32), t: f32) -> (f32, f32, f32) {
         a.1 + (b.1 - a.1) * t,
         a.2 + (b.2 - a.2) * t,
     )
+}
+
+/// Particle field for rain or snow: `count` crossed quad pairs of `w` × `h` metres
+/// in a 36 × 36 m column, repeated three times in y with period [`PRECIP_PERIOD`]
+/// so the fall offset can wrap seamlessly (`update_precipitation`).
+fn precipitation_mesh(count: usize, w: f32, h: f32, seed: u64) -> Mesh {
+    let mut rng = sim_core::rng::Rng::new(seed);
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+    for _ in 0..count {
+        let x = rng.range(-18.0, 18.0) as f32;
+        let z = rng.range(-18.0, 18.0) as f32;
+        let y = rng.range(0.0, f64::from(PRECIP_PERIOD)) as f32;
+        for k in 0..3 {
+            let y = y + k as f32 * PRECIP_PERIOD;
+            // Two quads crossed at right angles, so the particle is visible
+            // from every side without billboarding.
+            for (dx, dz, normal) in [
+                (w / 2.0, 0.0, [0.0, 0.0, 1.0]),
+                (0.0, w / 2.0, [1.0, 0.0, 0.0]),
+            ] {
+                let base = positions.len() as u32;
+                positions.extend([
+                    [x - dx, y, z - dz],
+                    [x + dx, y, z + dz],
+                    [x + dx, y + h, z + dz],
+                    [x - dx, y + h, z - dz],
+                ]);
+                normals.extend([normal; 4]);
+                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
+    mesh.try_insert_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .expect("positions fit");
+    mesh.try_insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .expect("normals fit");
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// Downward scroll of the precipitation field, wrapped to one mesh period.
+fn fall_offset(time: f64, speed: f32) -> f32 {
+    ((time * f64::from(speed)) % f64::from(PRECIP_PERIOD)) as f32
+}
+
+/// Keeps the precipitation column on the camera, lets it fall, and shows the
+/// field the current weather asks for.
+// ponytail: the field follows the camera in x/z, so streaks stay vertical even
+// at speed — a slant from the relative wind is a transform shear away if anyone
+// misses it.
+fn update_precipitation(
+    sim: Res<SimResource>,
+    camera: Query<&Transform, With<ui::CabCamera>>,
+    mut fields: Query<(&Precipitation, &mut Transform, &mut Visibility), Without<ui::CabCamera>>,
+) {
+    let Ok(cam) = camera.single() else {
+        return;
+    };
+    for (field, mut tf, mut visibility) in &mut fields {
+        let wanted = match sim.0.weather {
+            Weather::Rain => !field.snow,
+            Weather::Snow => field.snow,
+            Weather::Clear | Weather::Fog => false,
+        };
+        *visibility = if wanted {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        tf.translation = Vec3::new(
+            cam.translation.x,
+            cam.translation.y - PRECIP_PERIOD - fall_offset(sim.0.time, field.speed),
+            cam.translation.z,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fall_offset_wraps_within_one_period() {
+        for t in [0.0, 1.7, 100.0, 86_400.0] {
+            let o = fall_offset(t, 9.0);
+            assert!((0.0..PRECIP_PERIOD).contains(&o), "offset {o} at t={t}");
+        }
+    }
 }

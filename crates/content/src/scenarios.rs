@@ -2,7 +2,7 @@
 
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
 use sim_core::timetable::{ScheduledStop, Timetable, TimetableKind};
-use sim_core::train::RailCondition;
+use sim_core::train::Weather;
 use track_model::EdgeId;
 
 /// Timetable of the scenario "Regionalbahn nach Musterstadt".
@@ -64,7 +64,7 @@ pub fn to_musterstadt() -> Scenario {
                     delay: 30.0,
                 },
                 actions: vec![
-                    Action::SetRail(RailCondition::Wet),
+                    Action::SetWeather(Weather::Rain),
                     Action::Message("Regen setzt ein — Bremswege werden länger.".into()),
                 ],
                 once: true,

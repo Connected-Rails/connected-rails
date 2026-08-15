@@ -73,6 +73,9 @@ pub struct Sim {
     /// Scoring of the player train's run (plan 11).
     #[serde(default)]
     pub score: score::ScoreKeeper,
+    /// Weather — set by scenario actions, rendered by the app (plan ch. 14).
+    #[serde(default)]
+    pub weather: train::Weather,
     accumulator: f64,
 }
 
@@ -94,6 +97,7 @@ impl Sim {
             rng: rng::Rng::new(seed),
             scenario: scenario::ScenarioRuntime::default(),
             score: score::ScoreKeeper::default(),
+            weather: train::Weather::default(),
             accumulator: 0.0,
         }
     }

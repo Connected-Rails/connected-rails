@@ -435,7 +435,7 @@ A scenario is a RON file of events — triggers plus actions:
         (name: "abfahrt", trigger: Time(5.0),
          actions: [Announcement("RE 4711, Abfahrt frei.")]),
         (name: "regen", trigger: After(event: "abfahrt", delay: 60.0),
-         actions: [SetRail(Wet), Message("Regen setzt ein.")]),
+         actions: [SetWeather(Rain), Message("Regen setzt ein.")]),
         (name: "ziel", trigger: TrainStopped(train: 0, edge: (2), s: 2600.0, radius: 50.0),
          actions: [Finish(success: true, reason: "Musterstadt erreicht")]),
     ],
@@ -450,6 +450,10 @@ in the mod) — without one, only the scenario's own points count. A timetable i
 seconds since midnight, wrapping around every 24 h). `start:` sets date and local time
 of the run (default: midsummer noon) — it anchors `Daily` timetables and puts the sun
 and moon where they belong for the georeferenced line, season included.
+`SetWeather(Clear | Rain | Snow | Fog)` changes the weather: sky, visibility and
+precipitation in the renderer, plus the rail condition the weather implies (rain wets
+the rail, snow makes it slippery). `SetRail(Dry | Wet | Slippery)` sets the rail alone
+— leaves and frost have no weather to come from.
 
 ## Contributing
 

@@ -6,7 +6,7 @@
 
 use crate::Sim;
 use crate::interlock::{RouteId, SignalId};
-use crate::train::RailCondition;
+use crate::train::{RailCondition, Weather};
 use serde::{Deserialize, Serialize};
 use track_model::{EdgeId, NodeId, SwitchPosition};
 
@@ -55,7 +55,10 @@ pub enum Action {
     },
     RequestRoute(RouteId),
     ReleaseRoute(RouteId),
-    /// Change of weather — acts on the driving dynamics via the adhesion.
+    /// Change of weather — sky, visibility and precipitation in the renderer, plus
+    /// the rail condition the weather implies on every train.
+    SetWeather(Weather),
+    /// Rail condition alone (leaves, frost) — the sky stays as it is.
     SetRail(RailCondition),
     /// Award or deduct points.
     Score {
@@ -373,6 +376,12 @@ fn apply(action: &Action, sim: &mut Sim) {
                 let mut interlock = std::mem::take(&mut sim.interlock);
                 interlock.release_route(*route, &mut sim.net);
                 sim.interlock = interlock;
+            }
+        }
+        Action::SetWeather(weather) => {
+            sim.weather = *weather;
+            for train in &mut sim.trains {
+                train.rail = weather.rail();
             }
         }
         Action::SetRail(condition) => {

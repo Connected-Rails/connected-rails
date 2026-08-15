@@ -1,0 +1,117 @@
+<style>
+  #screen { display: flex; flex-direction: column; width: 100%; height: 100%;
+            background-color: #0c0a03; color: #f5b942; font-size: 10px; }
+  .bar { display: flex; flex-direction: row; justify-content: space-between;
+         align-items: center; background-color: #241a06; padding: 3px 6px; }
+  .title { font-size: 12px; }
+  .clock { display: flex; flex-direction: row; gap: 4px; }
+  .dim { color: #a07818; }
+  .table { display: flex; flex-direction: column; flex-grow: 1; padding: 2px 0px; }
+  .row { display: flex; flex-direction: row; gap: 8px; padding: 1px 6px; }
+  .km { width: 36px; text-align: right; }
+  .name { flex-grow: 1; }
+  .vmax { width: 28px; text-align: right; }
+  .current { background-color: #f5b942; color: #140e02; }
+  .speed { display: flex; flex-direction: row; gap: 4px; align-items: center;
+           padding: 2px 6px; }
+  .grow { flex-grow: 1; }
+  .tag { background-color: #2f6fd0; color: white; padding: 0px 4px; }
+  #nextstop { padding: 1px 6px; color: #a07818; }
+</style>
+
+<div id="screen">
+  <div class="bar">
+    <span class="title">EBuLa</span>
+    <span class="clock"><span data-bind="time" data-format="%.0f">0</span><span class="dim">s</span></span>
+  </div>
+  <div class="table">
+    <div class="row dim">
+      <span class="km">km</span><span class="name">Betriebsstelle</span><span class="vmax">v</span>
+    </div>
+    <div id="row0" class="row current">
+      <span class="km">101.2</span><span class="name">Leinfeld</span><span class="vmax">160</span>
+    </div>
+    <div id="row1" class="row">
+      <span class="km">108.7</span><span class="name">Brunnenthal</span><span class="vmax">200</span>
+    </div>
+    <div id="row2" class="row">
+      <span class="km">117.3</span><span class="name">Neustadt (W)</span><span class="vmax">120</span>
+    </div>
+    <div id="row3" class="row">
+      <span class="km">124.9</span><span class="name">Falkenberg Nord</span><span class="vmax">200</span>
+    </div>
+    <div id="row4" class="row">
+      <span class="km">133.4</span><span class="name">Lindach</span><span class="vmax">230</span>
+    </div>
+    <div id="row5" class="row">
+      <span class="km">141.8</span><span class="name">Steinheim Hbf</span><span class="vmax">80</span>
+    </div>
+  </div>
+  <div class="speed">
+    <span class="dim">v</span>
+    <span data-bind="v_kmh" data-format="%.0f">0</span>
+    <span class="dim">km/h</span>
+    <span class="grow"></span>
+    <span class="tag" data-show="lamp.lzb_ue">LZB</span>
+  </div>
+  <div id="nextstop">Naechster Halt Leinfeld</div>
+  <div class="bar">
+    <span>3 ZURUECK</span>
+    <span>4 WEITER</span>
+  </div>
+</div>
+
+<script>
+// EBuLa-flavoured demo page for the "ebula" cab display of the BR 101.
+// It exercises the three pillars of the HTML display path: flexbox layout
+// (header/table/footer), live bindings without script (the clock, the speed
+// value, the LZB tag via data-show), and the script API (softkeys move the
+// timetable highlight, onFrame derives a "next stop" line).
+//
+// On-screen strings are German like the Lua MFA's labels, transliterated to
+// ASCII (ZURUECK, Naechster) because the display font covers ASCII only.
+//
+// The timetable data is mirrored from the static rows above so the script
+// stays inside the documented DOM surface (getElementById, classList,
+// textContent) and needs no attribute parsing.
+var stops = [
+  { km: 101.2, name: "Leinfeld" },
+  { km: 108.7, name: "Brunnenthal" },
+  { km: 117.3, name: "Neustadt (W)" },
+  { km: 124.9, name: "Falkenberg Nord" },
+  { km: 133.4, name: "Lindach" },
+  { km: 141.8, name: "Steinheim Hbf" },
+];
+var current = 0;
+var trainKm = stops[0].km - 6.0; // demo position a few km before the first stop
+var lastTime = -1;
+
+function highlight(next) {
+  document.getElementById("row" + current).classList.remove("current");
+  current = (next + stops.length) % stops.length; // wrap around at both ends
+  document.getElementById("row" + current).classList.add("current");
+}
+
+// The cab softkeys bound to Display(2)/Display(3) arrive here as the 1-based
+// indices 3 and 4 (matching the "3"/"4" caps in the footer); only the press
+// edge moves the highlight, the release is ignored.
+onButton(function (index, pressed) {
+  if (!pressed) return;
+  if (index === 3) highlight(current - 1); // ZURUECK
+  if (index === 4) highlight(current + 1); // WEITER
+});
+
+// Integrate the driving speed into the demo train position and keep the
+// "Naechster Halt ... in X km" line current.
+onFrame(function () {
+  var t = sim.time;
+  if (lastTime >= 0 && t > lastTime) {
+    trainKm += sim.v_kmh * (t - lastTime) / 3600.0;
+  }
+  lastTime = t;
+  var dist = stops[current].km - trainKm;
+  if (dist < 0) dist = 0;
+  document.getElementById("nextstop").textContent =
+    "Naechster Halt " + stops[current].name + " in " + dist.toFixed(1) + " km";
+});
+</script>

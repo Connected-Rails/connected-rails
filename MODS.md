@@ -241,13 +241,164 @@ The simulator spawns the model in place of the placeholder body, shows the level
 whose distance the vehicle is within, and moves the bound parts. Which functions have a
 value today: `pantograph`, `door_left`, `door_right`, `gauge:speed`, `gauge:brake_pipe`,
 `gauge:cylinder`, `gauge:main_reservoir`, `gauge:tractive_effort`, `switch:throttle`,
-`switch:reverser`, `switch:direct_brake`, `lamp:main_switch`, `lamp:sanding`. Everything
-else stays in its rest position until `sim-core` models the state (destination displays,
-marker lights).
+`switch:reverser`, `switch:direct_brake`, `lamp:main_switch`, `lamp:sanding`, and
+`lamp:<indicator>` for every indicator of the fitted train protection — the names the HUD
+prints: `lamp:pzb_1000hz`, `lamp:pzb_500hz`, `lamp:pzb_befehl`, `lamp:sifa`, `lamp:lzb_ue`,
+`lamp:lzb_g`, `lamp:lzb_ende`, `lamp:lzb_b`, `lamp:lzb_v40`, `lamp:lzb_stoerung`, …
+(a blinking indicator blinks at 1 Hz). Likewise `gauge:<indicator>` for the numeric ones —
+`gauge:mfa_v_soll` and `gauge:mfa_v_ziel` are normalised by the vehicle's `v_max` (a second
+pointer on the speedometer dial is exactly how the MFA shows the target), and
+`gauge:mfa_zielentfernung` by 4000 m for an LED-bar style distance display. `wiper` sweeps
+a windscreen wiper according to the wiper switch. `digit:<indicator>:<place>` turns a node
+into one digit of a numeric display: its children are named `0` … `9` and the matching one
+is shown (`place` 0 = ones; leading zeros stay blank, an absent indicator goes dark).
+Everything else stays in its rest position until `sim-core` models the state (destination
+displays, marker lights).
 
 ```bash
 cargo run -p app -- --loco example:br101_afb --camera outside
 ```
+
+### Interactive 3D cab
+
+The `cab:` block inside `model:` makes the cab operable with the mouse (plan ch. 12).
+It has two parts: the driver's **eye point** in model space (X right, Y above the rail
+head, −Z ahead — where the cab camera sits) and the **controls**, each binding a glTF
+node to a simulation input:
+
+```ron
+cab: Some((
+    eye: (-0.55, 2.55, -6.5),
+    controls: [
+        (node: "cab_throttle", input: Throttle,
+         motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 60.0)),
+        (node: "cab_sifa", input: Sifa,
+         motion: Translate(axis: (0.0, -1.0, 0.0), metres: 0.015)),
+    ],
+))
+```
+
+`input` is one of a closed list (the vehicle editor offers them in a dropdown):
+`Throttle`, `Reverser`, `BrakeValve`, `DirectBrake`, `AfbTarget`, `Sifa`,
+`PzbAcknowledge`, `PzbExempt`, `PzbOverride`, `LzbTakeover`, `LzbEnd`, `LzbTest`, `Horn`,
+`Sanding`, `BrakeRelease`, `EngineStart`, `DoorReleaseLeft`, `DoorReleaseRight`,
+`DoorClose`, `ParkingBrake`, `EpBrake`, `Afb`, `Battery`, `Pantograph`, `MainSwitch`,
+`Compressor`, `TrainType`, `Wipers` (off – interval – slow – fast), and `Display(0)` …
+`Display(7)` — softkeys for the [cab displays](#displays), read by the `display(ctx)`
+script hook.
+
+How a control answers the mouse follows from the input, nothing is configured:
+
+- **Push buttons** (Sifa, PZB/LZB buttons, horn, sanding, …) are held while the mouse
+  button is down and spring back on release.
+- **Switches** (battery, pantograph, main switch, reverser, train type switch, …) cycle
+  to their next position on click and step without wrap on the scroll wheel.
+- **Levers and valves** (power controller, brake valves, AFB target) follow a drag along
+  their on-screen direction of travel and step finely on the scroll wheel. The driver's
+  brake valve runs fill – release – lap – service range – emergency over its travel.
+
+`motion` is the same type the moving parts use and describes the node's travel between
+input 0 and 1. The whole subtree of the node takes the mouse; the hovered control glows
+and the HUD names it with its position. Everything also stays operable from the keyboard —
+the two write the same inputs. The camera looks out of `eye` (F1), pans with the arrow
+keys and looks around while the right mouse button is held.
+
+### Displays
+
+A screen in the cab is a texture the app renders onto a glTF node — the same idea as
+TSW's render targets or MSFS's instrument webviews, only that the content is described
+in the vehicle file or drawn by the vehicle's Lua script:
+
+```ron
+displays: [
+    (name: "brake", node: "screen_brake", width: 192, height: 128, widgets: [
+        Label(x: 8.0, y: 6.0, size: 14.0, text: "HL"),
+        Value(x: 60.0, y: 6.0, size: 14.0, source: Quantity(BrakePipe),
+              decimals: 2, unit: "bar"),
+        Bar(x: 8.0, y: 30.0, w: 140.0, h: 10.0, source: Quantity(BrakePipe), max: 6.0),
+    ]),
+    (name: "mfa", node: "screen_mfa", width: 256, height: 160),
+]
+```
+
+Content, in order of what is easiest:
+
+1. **Widgets** — no code. `Label` (fixed text), `Value` (a number with `decimals`,
+   `scale` and `unit`) and `Bar` (fills towards `max`). `source` is either
+   `Quantity(<sound quantity>)` — everything the sound table can hear, including
+   `Control(…)` positions — or `Indicator("<name>")`, a numeric indicator of the train
+   protection (`mfa_v_soll`, `mfa_v_ziel`, `mfa_zielentfernung`, …). Coordinates are
+   pixels from the top left; colors linear RGBA 0…1, default white.
+2. **The `display(ctx)` script hook** — for real logic: pages, nested menus, EBuLa-like
+   screens. The vehicle's behaviour script (the one that already has `update(ctx)`) adds
+   a `display` function; it is called per screen with `ctx.display` set to the name and
+   answers with a draw list. Returning `nil` hands the screen back to its widget list —
+   so a script can drive one screen and leave the others declarative.
+3. **An HTML page** — for screens with real layout. `html: Some("<mod>/displays/<file>.html")`
+   on the display draws it from a single HTML file with `<style>` and `<script>`, the way
+   MSFS instruments are written — only rendered in-engine (own DOM, flexbox layout,
+   embedded ECMAScript), not by a browser: no extra process, layout and repaint run only
+   when the DOM actually changed, unchanged screens cost nothing. When `html` is set it
+   drives the screen alone; widgets and the Lua hook are ignored for it.
+
+```lua
+display = function(ctx)
+    if ctx.display ~= "mfa" then return nil end
+    return {
+        { kind = "clear", color = {0.02, 0.03, 0.02} },
+        { kind = "text", x = 128, y = 10, size = 28, align = "center",
+          text = string.format("%.0f km/h", ctx.v_kmh) },
+        { kind = "rect", x = 8, y = 50, w = 240, h = 2 },
+        { kind = "line", x1 = 8, y1 = 120, x2 = 248, y2 = 120, width = 1 },
+    }
+end
+```
+
+Draw kinds: `clear` (background), `rect` (`filled` defaults to true), `line`, `text`
+(`align` left/center/right). At most 512 commands per frame, text capped at 128
+characters; a malformed entry is skipped and reported once in the mod log. `ctx`
+carries the display name and size, the driving values `update(ctx)` gets (v_kmh,
+brake_pipe, line_voltage, …), `value.<indicator>` / `lamp.<indicator>` for everything
+the train protection shows, and `buttons[1]`…`buttons[8]` — the held state of the
+`Display(0)`…`Display(7)` cab controls. Bind those to nodes next to the screen and a
+click in the 3D cab walks the script's menu; edge detection is the script's job (keep
+the previous state in a local).
+
+The screen glows (emissive), so it stays readable in a dark cab. A display whose name
+no script answers and whose widget list is empty stays dark.
+
+#### HTML displays
+
+The page is ordinary HTML with one `<style>` and one `<script>` block; the supported
+subset is deliberately small and fully listed here. **HTML**: any tags (only their style
+matters), `id`, `class`, `style`, text. **Live values without script**:
+`data-bind="v_kmh"` replaces the element's text every tick, `data-format` shapes it
+(printf subset `%d`, `%s`, `%.Nf`); `data-show="lamp.lzb_ue"` hides the element while
+the value is 0/false. Field names: the driving values of the Lua ctx (`v_kmh`,
+`brake_pipe`, `line_voltage`, …), `value.<indicator>` and `lamp.<indicator>`, `time`.
+
+**CSS**: selectors `tag`, `.class`, `#id`, compounds and comma lists; properties
+`display` (flex/block/none), `flex-direction`, `justify-content`, `align-items`,
+`flex-grow`, `gap`, `width`/`height` (px/%), `padding`/`margin`, `position: absolute`
+with `left/top/right/bottom`, `background-color`, `color`, `font-size`, `text-align`,
+`border: <N>px solid <color>`, `visibility: hidden`, `opacity`. Colors as `#hex`,
+`rgb()`/`rgba()` or the usual named handful. Text is measured in the app's monospaced
+display font, so layout is deterministic.
+
+**Script API** (the whole surface): `document.getElementById`, on elements
+`textContent`, `getAttribute`/`setAttribute`, `classList.add/remove/toggle/contains`,
+`style.setProperty`, `hidden`; the global `sim` with every field as a property plus
+`sim.button(1..8)`; `onFrame(fn)` per tick and `onButton(fn(index, pressed))` on every
+softkey edge — the same `Display(0…7)` cab controls the Lua hook reads, so clickable
+3D softkeys drive the page. A handler that throws is disabled and reported once in the
+mod log; the screen keeps its last good picture. Pages tick at ~30 Hz (button edges
+immediately); `mods/example/displays/ebula.html` is a complete page to start from.
+
+Which path for which screen: **widgets** for values, bars and labels (no code at all);
+**Lua** when the logic already lives in the vehicle script and the drawing is simple;
+**HTML** when the screen needs layout — headers, tables, pages, wrapped text. All three
+end in the same renderer and the same texture; they differ only in how the picture is
+described.
 
 Modelling rules that matter for the simulation:
 
@@ -327,8 +478,19 @@ Triggers:
 Quantities: `Speed` [km/h], `Distance` [m], `EngineRpm` [1/min], `TapChangerStep`,
 `Circuit`, `TractiveEffort` [kN], `BrakeEffort` [kN], `BrakePipe` [bar],
 `BrakeCylinder` [bar], `AirFlow` [bar/s], `Slip` [m/s], `Throttle`, `Pantograph`,
-`MainSwitch`, `Compressor`, `Doors`, `Horn`, `Alert`. Curves interpolate linearly between
-their support points and hold the last value beyond the ends.
+`MainSwitch`, `Compressor`, `Doors`, `Horn`, `Alert`, and `Control(<input>)` — the
+position of a cab control, normalised 0 … 1 over its travel, for every input the
+[3D cab](#interactive-3d-cab) can bind (`Control(Sifa)`, `Control(BrakeValve)`,
+`Control(Battery)`, …). Curves interpolate linearly between their support points and hold
+the last value beyond the ends.
+
+`Control` is how a lever or switch gets its operating sound, and it fires no matter
+whether mouse, keyboard, AFB or a script moved it: `Rises`/`Falls` around a threshold for
+one edge, `Every` with the detent spacing for every notch passed — `Every(quantity:
+Control(Battery), interval: 1.0)` clicks a two-position switch on both edges with one
+entry, `Every(quantity: Control(Reverser), interval: 0.5)` on each of the three reverser
+positions. The example vehicle carries a block of these. (The driver's brake valve usually
+needs no click — its `AirFlow` hiss follows from the pressures by itself.)
 
 A table stated here **replaces** the generated default completely, so it has to carry
 everything the vehicle is to make. A vehicle without a table runs on the generated loops if

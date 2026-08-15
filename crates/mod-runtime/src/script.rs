@@ -250,6 +250,77 @@ impl ModRuntime {
         }
     }
 
+    /// `display(ctx)` — draw list of one cab screen (plan ch. 12). The script
+    /// of the leading vehicle answers for every display of the train; `None`
+    /// (no script, no hook, no table) leaves the screen to its widget list.
+    ///
+    /// `ctx` carries the display's name and size, the eight softkeys
+    /// ([`sim_core::cab::CabControl::Display`]) as `buttons[1..8]`, the same
+    /// driving values as `update(ctx)`, and two tables `lamp`/`value` with
+    /// every indicator of the train protection — everything the MFA shows.
+    pub fn vehicle_display(
+        &mut self,
+        sim: &Sim,
+        train: usize,
+        display: &sim_core::cab::DisplaySpec,
+    ) -> Option<Vec<crate::display::DrawCmd>> {
+        let script = sim
+            .trains
+            .get(train)?
+            .vehicles
+            .iter()
+            .find_map(|v| v.spec.script.clone())?;
+        let cab = sim.controls.get(train)?;
+        let head = &sim.trains[train].vehicles[0];
+        let ctx = self.scripts.context();
+        let _ = ctx.set("display", display.name.as_str());
+        let _ = ctx.set("width", display.width);
+        let _ = ctx.set("height", display.height);
+        let _ = ctx.set("time", sim.time);
+        let _ = ctx.set("v_kmh", sim.trains[train].speed_kmh());
+        let _ = ctx.set("speed_limit_kmh", head.pos.speed_limit(&sim.net));
+        let _ = ctx.set("throttle", cab.throttle);
+        let _ = ctx.set("reverser", cab.reverser);
+        let _ = ctx.set("afb", cab.afb);
+        let _ = ctx.set("afb_target", cab.afb_target);
+        let _ = ctx.set("brake_pipe", head.brake.pipe);
+        let _ = ctx.set("brake_cylinder", head.brake.cylinder);
+        let _ = ctx.set("main_reservoir", head.brake.main_reservoir);
+        let _ = ctx.set("line_voltage", head.traction.line_voltage);
+        let _ = ctx.set("tractive_effort", head.tractive_effort);
+        let buttons = self.scripts.context();
+        for (i, pressed) in cab.display_buttons.iter().enumerate() {
+            let _ = buttons.set(i + 1, *pressed);
+        }
+        let _ = ctx.set("buttons", buttons);
+        // Indicators of the train protection: lamps as booleans, displays as
+        // numbers — `value.mfa_v_soll`, `lamp.pzb_1000hz`, …
+        let lamp = self.scripts.context();
+        let value = self.scripts.context();
+        for indicator in head.safety.indicators() {
+            match indicator.value {
+                Some(v) => {
+                    let _ = value.set(indicator.name, v);
+                }
+                None => {
+                    let _ = lamp.set(
+                        indicator.name,
+                        indicator.lamp != sim_core::safety::LampState::Off,
+                    );
+                }
+            }
+        }
+        let _ = ctx.set("lamp", lamp);
+        let _ = ctx.set("value", value);
+
+        let out = self.scripts.call(&script, "display", ctx)?;
+        let (commands, complaint) = crate::display::parse_draw_list(&out);
+        if let Some(complaint) = complaint {
+            self.scripts.error(format!("{script}.display: {complaint}"));
+        }
+        Some(commands)
+    }
+
     /// `on_load(ctx)` / `on_frame(ctx)` of the line and the scenario (plan 19.7).
     ///
     /// The script decides *when*, the RON says *what*: `fire` names events of the scenario
@@ -586,6 +657,45 @@ mod tests {
         );
         rt.post_step(&mut sim, 0.1);
         assert!(rt.log().is_empty(), "log: {:?}", rt.log());
+    }
+
+    /// The display hook: draw list parsed, junk skipped, caps enforced.
+    #[test]
+    fn a_display_script_returns_a_draw_list() {
+        use crate::display::{DrawCmd, TextAlign};
+
+        let mut scripts = Scripts::new(&BTreeMap::from([(
+            "test:screen".to_string(),
+            "return { display = function(ctx) return { \
+                 { kind = 'clear', color = {0, 0, 0} }, \
+                 { kind = 'text', x = 10, y = 4, text = 'ZE ' .. ctx.width, size = 20, align = 'center' }, \
+                 { kind = 'rect', x = 0/0, y = 1, w = 2, h = 3 }, \
+                 { kind = 'blob' }, \
+             } end }"
+                .to_string(),
+        )]));
+        let ctx = scripts.context();
+        ctx.set("width", 256).unwrap();
+        let out = scripts.call("test:screen", "display", ctx).unwrap();
+        let (commands, complaint) = crate::display::parse_draw_list(&out);
+        assert_eq!(
+            commands,
+            vec![
+                DrawCmd::Clear {
+                    color: [0.0, 0.0, 0.0, 1.0]
+                },
+                DrawCmd::Text {
+                    x: 10.0,
+                    y: 4.0,
+                    text: "ZE 256".into(),
+                    size: 20.0,
+                    color: [1.0; 4],
+                    align: TextAlign::Center
+                },
+            ],
+            "NaN rect and unknown kind are dropped"
+        );
+        assert!(complaint.unwrap().contains("blob"));
     }
 
     #[test]

@@ -11,6 +11,8 @@
 //! Models live in a mod and are addressed relative to the `mods/` directory
 //! (`<mod>/assets/<file>.gltf`) — exactly as the simulator loads them later.
 
+mod cab;
+mod displays;
 mod model;
 mod powertrain;
 mod settings;
@@ -83,6 +85,9 @@ pub struct Editor {
     pub preview_lod: u8,
     /// Substring the node list is narrowed to; empty shows all of them.
     pub node_filter: String,
+    /// Preview values of the cab controls (index into `CabSpec::controls`).
+    /// Transient viewport state like `preview_lod` — neither saved nor undoable.
+    pub cab_test: std::collections::HashMap<usize, f32>,
     /// States to go back to, oldest first.
     pub undo: Vec<VehicleSpec>,
     /// States undone, to go forward to again.
@@ -119,6 +124,7 @@ impl Default for Editor {
             show_grid: settings.show_grid,
             preview_lod: 0,
             node_filter: String::new(),
+            cab_test: std::collections::HashMap::new(),
             undo: Vec::new(),
             redo: Vec::new(),
             changing: false,
@@ -146,6 +152,7 @@ impl Editor {
                 self.nodes.clear();
                 self.gltf = None;
                 self.loaded_file.clear();
+                self.cab_test.clear();
                 self.forget_history();
                 if let Some(path) = &self.path {
                     self.settings.remember(&path.clone());
@@ -356,6 +363,8 @@ fn main() {
             orbit_camera,
             update_reference,
             apply_preview_lod,
+            preview_cab_test,
+            eye_gizmo,
             confirm_close,
             update_title,
             ground_grid,
@@ -537,6 +546,71 @@ fn ground_grid(editor: Res<Editor>, mut gizmos: Gizmos) {
             Color::srgb(0.26, 0.28, 0.31),
         )
         .outer_edges();
+}
+
+/// Moves the cab control nodes to their test-slider values, so a binding can be
+/// checked without starting the simulator. Base transforms are remembered on
+/// first touch; a slider back at 0 puts the node back on them.
+fn preview_cab_test(
+    editor: Res<Editor>,
+    instances: Query<Entity, With<ModelInstance>>,
+    children: Query<&Children>,
+    mut named: Query<(&Name, &mut Transform)>,
+    mut bases: Local<std::collections::HashMap<Entity, Transform>>,
+) {
+    let Some(cab) = editor.spec.model.as_ref().and_then(|m| m.cab.as_ref()) else {
+        return;
+    };
+    if editor.cab_test.is_empty() {
+        return;
+    }
+    for root in instances.iter() {
+        let mut stack = vec![root];
+        while let Some(entity) = stack.pop() {
+            if let Ok(kids) = children.get(entity) {
+                stack.extend(kids.iter());
+            }
+            let Ok((name, mut transform)) = named.get_mut(entity) else {
+                continue;
+            };
+            for (i, control) in cab.controls.iter().enumerate() {
+                if control.node != name.as_str() {
+                    continue;
+                }
+                let value = editor.cab_test.get(&i).copied().unwrap_or(0.0);
+                let base = *bases.entry(entity).or_insert(*transform);
+                *transform = base * motion_transform(&control.motion, value);
+            }
+        }
+    }
+}
+
+/// Transform a [`sim_core::train::Motion`] produces at `value` — the editor's
+/// copy of the mapping the app applies at runtime.
+fn motion_transform(motion: &sim_core::train::Motion, value: f32) -> Transform {
+    use sim_core::train::Motion;
+    match *motion {
+        Motion::Visibility => Transform::IDENTITY,
+        Motion::Rotate { axis, degrees } => Transform::from_rotation(Quat::from_axis_angle(
+            Vec3::from(axis).normalize_or_zero(),
+            (degrees * value).to_radians(),
+        )),
+        Motion::Translate { axis, metres } => {
+            Transform::from_translation(Vec3::from(axis) * metres * value)
+        }
+    }
+}
+
+/// Marks the driver's eye point in the viewport: a small sphere plus a stub of
+/// viewing direction (−Z, ahead), in the accent colour.
+fn eye_gizmo(editor: Res<Editor>, mut gizmos: Gizmos) {
+    let Some(cab) = editor.spec.model.as_ref().and_then(|m| m.cab.as_ref()) else {
+        return;
+    };
+    let eye = Vec3::from(cab.eye);
+    let accent = Color::srgb(0.36, 0.61, 0.96);
+    gizmos.sphere(Isometry3d::from_translation(eye), 0.12, accent);
+    gizmos.arrow(eye, eye + Vec3::NEG_Z * 0.8, accent);
 }
 
 /// Orbit with the right mouse button, zoom with the wheel — usual DCC controls.

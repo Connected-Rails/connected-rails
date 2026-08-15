@@ -4,6 +4,8 @@
 //! Simulation logic does **not** belong here.
 
 mod audio;
+mod cab;
+mod displays;
 mod models;
 mod mods_ui;
 mod render;
@@ -14,6 +16,7 @@ use ai_driver::{AiDriver, ScheduledStop, Timetable};
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::audio::{DefaultSpatialScale, SpatialScale};
+use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
@@ -95,19 +98,32 @@ fn main() {
     // Spatial audio is measured in metres here, and a train is heard hundreds of them
     // away — at the default scale of 1 everything but the cab would be inaudible.
     .insert_resource(DefaultSpatialScale(SpatialScale::new(0.02)))
+    // Mouse picking for the 3D cab: only marked control meshes catch the ray —
+    // without the marker requirement every terrain tile would compete for it.
+    .add_plugins(MeshPickingPlugin)
+    .insert_resource(MeshPickingSettings {
+        require_markers: true,
+        ..default()
+    })
     .init_resource::<ui::CameraState>()
+    .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
+    // HTML cab screens hold a boa script context, which is `!Send` — a non-send
+    // resource keeps them on the main thread, where the display chain runs anyway.
+    .init_non_send::<displays::HtmlGauges>()
     .add_systems(Startup, setup)
-    // The sound table needs the trains and their view entities, which `setup` only
+    // The sound table and the display cameras need the trains, which `setup` only
     // creates when its commands are applied — that is after `Startup`.
-    .add_systems(PostStartup, audio::setup_audio)
+    .add_systems(PostStartup, (audio::setup_audio, displays::setup_displays))
     .add_systems(
         Update,
         (
             ui::player_input,
+            cab::apply_mouse,
             drive_ai,
             step_simulation,
             run_mod_scripts,
+            displays::update_displays,
             rebase_origin,
             sync_vehicles,
             ui::camera_control,
@@ -126,6 +142,10 @@ fn main() {
             models::bind_nodes,
             models::update_lod,
             models::animate_parts,
+            models::animate_controls,
+            models::animate_digits,
+            displays::bind_display_nodes,
+            cab::update_highlight,
         )
             .after(sync_vehicles),
     );
@@ -372,6 +392,7 @@ fn setup(
             ..default()
         }),
         Transform::default(),
+        MeshPickingCamera,
         ui::CabCamera,
     ));
 

@@ -22,7 +22,7 @@
 //! does not follow from the vehicle state at all has to come from outside — rail joints,
 //! which belong to the track, not to the train.
 
-use crate::cab::CabInputs;
+use crate::cab::{CabControl, CabInputs};
 use crate::train::Vehicle;
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +52,8 @@ pub enum Quantity {
     BrakePipe,
     /// Brake cylinder [bar], automatic plus direct brake.
     BrakeCylinder,
+    /// Main reservoir [bar].
+    MainReservoir,
     /// Pressure change in pipe and cylinder [bar/s], absolute — air is heard when it moves.
     AirFlow,
     /// Slip speed of the driven axles [m/s].
@@ -70,11 +72,18 @@ pub enum Quantity {
     Horn,
     /// The train protection demands an operation (0/1).
     Alert,
+    /// Position of a cab control, normalised 0 … 1 over its travel exactly as
+    /// the 3D cab reads it ([`CabControl::get`]) — detents sit at the same
+    /// values, so a threshold between two of them catches the click. This is
+    /// how a lever or switch gets an operating sound: `Rises`/`Falls` for one
+    /// edge, `Every` with the detent spacing for every notch passed.
+    Control(CabControl),
 }
 
 impl Quantity {
-    /// Every quantity, in the order the editor lists them.
-    pub const ALL: [Quantity; 18] = [
+    /// Every plain quantity, in the order the editor lists them. The editor
+    /// appends `Control(…)` for each [`CabControl::ALL`] entry itself.
+    pub const ALL: [Quantity; 19] = [
         Quantity::Speed,
         Quantity::Distance,
         Quantity::EngineRpm,
@@ -84,6 +93,7 @@ impl Quantity {
         Quantity::BrakeEffort,
         Quantity::BrakePipe,
         Quantity::BrakeCylinder,
+        Quantity::MainReservoir,
         Quantity::AirFlow,
         Quantity::Slip,
         Quantity::Throttle,
@@ -107,6 +117,7 @@ impl Quantity {
             Quantity::BrakeEffort => "snd-quantity-brake-effort",
             Quantity::BrakePipe => "snd-quantity-brake-pipe",
             Quantity::BrakeCylinder => "snd-quantity-brake-cylinder",
+            Quantity::MainReservoir => "snd-quantity-main-reservoir",
             Quantity::AirFlow => "snd-quantity-air-flow",
             Quantity::Slip => "snd-quantity-slip",
             Quantity::Throttle => "snd-quantity-throttle",
@@ -116,6 +127,8 @@ impl Quantity {
             Quantity::Doors => "snd-quantity-doors",
             Quantity::Horn => "snd-quantity-horn",
             Quantity::Alert => "snd-quantity-alert",
+            // The control labels the cab editor already has.
+            Quantity::Control(control) => control.key(),
         }
     }
 }
@@ -135,6 +148,8 @@ pub struct SoundState {
     pub brake_effort: f64,
     pub brake_pipe: f64,
     pub brake_cylinder: f64,
+    #[serde(default)]
+    pub main_reservoir: f64,
     pub air_flow: f64,
     pub slip: f64,
     pub throttle: f64,
@@ -144,6 +159,26 @@ pub struct SoundState {
     pub doors: f64,
     pub horn: f64,
     pub alert: f64,
+    /// The cab inputs as the driver set them — [`Quantity::Control`] reads the
+    /// pure-cab controls straight from here.
+    #[serde(default)]
+    pub cab: CabInputs,
+    /// Positions of the vehicle-level switches, normalised like
+    /// [`CabControl::get`]. `compressor` above is "delivering", this is the
+    /// switch — an operating click must not wait for the pressure governor.
+    #[serde(default)]
+    pub battery: f64,
+    #[serde(default)]
+    pub pantograph_switch: f64,
+    #[serde(default)]
+    pub main_switch_position: f64,
+    #[serde(default)]
+    pub compressor_switch: f64,
+    #[serde(default)]
+    pub train_type: f64,
+    /// AFB target 0 … 1 over the vehicle's `v_max`.
+    #[serde(default)]
+    pub afb_target: f64,
 }
 
 impl SoundState {
@@ -158,6 +193,7 @@ impl SoundState {
             Quantity::BrakeEffort => self.brake_effort,
             Quantity::BrakePipe => self.brake_pipe,
             Quantity::BrakeCylinder => self.brake_cylinder,
+            Quantity::MainReservoir => self.main_reservoir,
             Quantity::AirFlow => self.air_flow,
             Quantity::Slip => self.slip,
             Quantity::Throttle => self.throttle,
@@ -167,6 +203,15 @@ impl SoundState {
             Quantity::Doors => self.doors,
             Quantity::Horn => self.horn,
             Quantity::Alert => self.alert,
+            Quantity::Control(control) => match control {
+                CabControl::AfbTarget => self.afb_target,
+                CabControl::Battery => self.battery,
+                CabControl::Pantograph => self.pantograph_switch,
+                CabControl::MainSwitch => self.main_switch_position,
+                CabControl::Compressor => self.compressor_switch,
+                CabControl::TrainType => self.train_type,
+                other => other.get_inputs(&self.cab).unwrap_or(0.0),
+            },
         }
     }
 
@@ -200,6 +245,7 @@ impl SoundState {
             brake_effort: vehicle.brake_effort.abs() / 1000.0,
             brake_pipe: pipe,
             brake_cylinder: cylinder,
+            main_reservoir: vehicle.brake.main_reservoir,
             air_flow,
             slip: vehicle.slip.abs(),
             throttle: cab.throttle,
@@ -209,6 +255,27 @@ impl SoundState {
             doors: vehicle.doors.left.travel.max(vehicle.doors.right.travel),
             horn: f64::from(cab.horn),
             alert: f64::from(alert),
+            cab: *cab,
+            battery: f64::from(vehicle.traction.battery),
+            pantograph_switch: f64::from(vehicle.traction.pantograph_command),
+            main_switch_position: f64::from(vehicle.traction.main_switch_command),
+            compressor_switch: f64::from(vehicle.traction.compressor),
+            train_type: {
+                use crate::safety::de::TrainType;
+                match vehicle.safety.train_type() {
+                    Some(TrainType::O) | None => 0.0,
+                    Some(TrainType::M) => 0.5,
+                    Some(TrainType::U) => 1.0,
+                }
+            },
+            afb_target: {
+                let v_max = if vehicle.spec.v_max > 0.0 {
+                    vehicle.spec.v_max
+                } else {
+                    160.0
+                };
+                (cab.afb_target / v_max).clamp(0.0, 1.0)
+            },
         }
     }
 }
@@ -662,6 +729,32 @@ mod tests {
         };
         assert!(electric.level(&electric_loco).0 > 0.0);
         assert_eq!(diesel.level(&electric_loco).0, 0.0);
+    }
+
+    /// A cab control is a sound quantity: the button edge fires a trigger, and
+    /// a two-position switch clicks on both edges through `Every`.
+    #[test]
+    fn cab_controls_fire_sound_triggers() {
+        let idle = SoundState::default();
+        let mut pressed = SoundState::default();
+        pressed.cab.sifa = true;
+        let press = Trigger::Rises {
+            quantity: Quantity::Control(CabControl::Sifa),
+            threshold: 0.5,
+        };
+        assert!(press.fires(&pressed, &idle));
+        assert!(!press.fires(&pressed, &pressed), "no edge, no click");
+
+        let on = SoundState {
+            battery: 1.0,
+            ..SoundState::default()
+        };
+        let toggle = Trigger::Every {
+            quantity: Quantity::Control(CabControl::Battery),
+            interval: 1.0,
+        };
+        assert!(toggle.fires(&on, &idle), "switching on clicks");
+        assert!(toggle.fires(&idle, &on), "switching off clicks too");
     }
 
     /// Playback speed stays inside a range a speaker can render.

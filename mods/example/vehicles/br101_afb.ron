@@ -157,6 +157,98 @@
             pitch: Some((quantity: Speed, points: [(3.0, 0.8), (160.0, 1.4)])),
             positional: true,
         ),
+        // Operating clicks of the cab controls (M6): `Control(...)` is the lever's
+        // normalised position, so the edge fires no matter whether mouse, keyboard
+        // or a script moved it. `Every` with the detent spacing clicks a switch on
+        // both edges with one entry; a single-point curve is a constant volume.
+        // Not positional — the driver's own hand is always at the same distance.
+        (
+            name: "sifa-button",
+            file: "synth:contactor",
+            trigger: Rises(quantity: Control(Sifa), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.25)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 1.8)])),
+            positional: false,
+        ),
+        (
+            name: "reverser-notch",
+            file: "synth:contactor",
+            trigger: Every(quantity: Control(Reverser), interval: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 1.4)])),
+            positional: false,
+        ),
+        (
+            name: "battery-switch",
+            file: "synth:contactor",
+            trigger: Every(quantity: Control(Battery), interval: 1.0),
+            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            positional: false,
+        ),
+        (
+            name: "pantograph-switch",
+            file: "synth:contactor",
+            trigger: Every(quantity: Control(Pantograph), interval: 1.0),
+            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            positional: false,
+        ),
+        (
+            name: "main-switch-switch",
+            file: "synth:contactor",
+            trigger: Every(quantity: Control(MainSwitch), interval: 1.0),
+            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            positional: false,
+        ),
+        (
+            name: "compressor-switch",
+            file: "synth:contactor",
+            trigger: Every(quantity: Control(Compressor), interval: 1.0),
+            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            positional: false,
+        ),
+        // Wiper switch: four positions 1/3 apart on the normalised travel, so
+        // `Every` at that spacing clicks on each detent passed.
+        (
+            name: "wiper-switch",
+            file: "synth:contactor",
+            trigger: Every(quantity: Control(Wipers), interval: 0.3333333),
+            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            positional: false,
+        ),
+        // Display softkeys: a short high click on the press edge only.
+        (
+            name: "display-key",
+            file: "synth:contactor",
+            trigger: Rises(quantity: Control(Display(0)), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            positional: false,
+        ),
+        (
+            name: "display-key-2",
+            file: "synth:contactor",
+            trigger: Rises(quantity: Control(Display(1)), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            positional: false,
+        ),
+        // EBuLa softkeys: the same click as the MFA keys.
+        (
+            name: "display-key-3",
+            file: "synth:contactor",
+            trigger: Rises(quantity: Control(Display(2)), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            positional: false,
+        ),
+        (
+            name: "display-key-4",
+            file: "synth:contactor",
+            trigger: Rises(quantity: Control(Display(3)), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            positional: false,
+        ),
     ],
     // Model, relative to the mods directory. `_LOD0`/`_LOD1` come from the node names,
     // the pantograph from the Blender custom property `ts_function` in the glTF `extras`.
@@ -171,6 +263,95 @@
              motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 45.0)),
             (node: "pant_rear", function: "pantograph",
              motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 45.0)),
+            (node: "gauge_speed", function: "gauge:speed",
+             motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: -240.0)),
+            (node: "lamp_1000hz", function: "lamp:pzb_1000hz", motion: Visibility),
+            // Wiper sweep about the windscreen normal — the -Z front face is
+            // raked by 0.55 m per metre of height, so its outward normal is
+            // normalize((0, 0.55, -1)).
+            (node: "wiper_left", function: "wiper",
+             motion: Rotate(axis: (0.0, 0.481919, -0.876216), degrees: 75.0)),
+            // Second needle on the speedometer dial: AFB/LZB target speed,
+            // same sweep as the speed needle (both normalised by v_max).
+            (node: "gauge_v_soll", function: "gauge:mfa_v_soll",
+             motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: -240.0)),
+            // LZB target distance: a bright bar sliding up its slot, plus a
+            // four-digit counter (place 0 = ones). Each digit node shows the
+            // child "0"-"9" that matches the digit of the indicator value.
+            (node: "gauge_distance_bar", function: "gauge:mfa_zielentfernung",
+             motion: Translate(axis: (0.0, 1.0, 0.0), metres: 0.12)),
+            (node: "digit_dist_0", function: "digit:mfa_zielentfernung:0", motion: Visibility),
+            (node: "digit_dist_1", function: "digit:mfa_zielentfernung:1", motion: Visibility),
+            (node: "digit_dist_2", function: "digit:mfa_zielentfernung:2", motion: Visibility),
+            (node: "digit_dist_3", function: "digit:mfa_zielentfernung:3", motion: Visibility),
+        ],
+        // Interactive 3D cab (M6): the driver's eye in model space and the
+        // controls the mouse can grab. Which gesture a control answers to
+        // follows from its input — buttons hold, switches cycle, levers drag.
+        cab: Some((
+            eye: (-0.55, 2.55, -6.5),
+            controls: [
+                (node: "cab_throttle", input: Throttle,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 60.0)),
+                (node: "cab_brake", input: BrakeValve,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 60.0)),
+                (node: "cab_reverser", input: Reverser,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 40.0)),
+                (node: "cab_sifa", input: Sifa,
+                 motion: Translate(axis: (0.0, -1.0, 0.0), metres: 0.015)),
+                (node: "cab_battery", input: Battery,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 50.0)),
+                (node: "cab_pantograph", input: Pantograph,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 50.0)),
+                (node: "cab_main_switch", input: MainSwitch,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 50.0)),
+                (node: "cab_compressor", input: Compressor,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 50.0)),
+                (node: "cab_wipers", input: Wipers,
+                 motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 60.0)),
+                // Softkeys of the MFA screen; the display(ctx) hook in
+                // scripts/afb.lua reads them as ctx.buttons[1] and [2].
+                (node: "cab_disp_1", input: Display(0),
+                 motion: Translate(axis: (0.0, -1.0, 0.0), metres: 0.01)),
+                (node: "cab_disp_2", input: Display(1),
+                 motion: Translate(axis: (0.0, -1.0, 0.0), metres: 0.01)),
+                // Softkeys of the EBuLa screen; its HTML page receives them
+                // through onButton as the 1-based indices 3 and 4.
+                (node: "cab_disp_3", input: Display(2),
+                 motion: Translate(axis: (0.0, -1.0, 0.0), metres: 0.01)),
+                (node: "cab_disp_4", input: Display(3),
+                 motion: Translate(axis: (0.0, -1.0, 0.0), metres: 0.01)),
+            ],
+        )),
+        // Screens rendered to texture, showing all three content paths: "mfa"
+        // is drawn by the display(ctx) hook in scripts/afb.lua (menu pages,
+        // softkeys); "brake" carries no code at all — the script returns nil
+        // for it, so its widget list below renders instead; "ebula" is an
+        // HTML page (layout, bindings and script in one file below mods/).
+        displays: [
+            (name: "mfa", node: "screen_mfa", width: 256, height: 160),
+            (name: "ebula", node: "screen_ebula", width: 256, height: 192,
+             html: Some("example/displays/ebula.html")),
+            (
+                name: "brake",
+                node: "screen_brake",
+                width: 160,
+                height: 120,
+                widgets: [
+                    Label(x: 8.0, y: 8.0, size: 12.0, text: "HL"),
+                    Value(x: 44.0, y: 8.0, size: 12.0, source: Quantity(BrakePipe),
+                          decimals: 2, unit: "bar", color: (1.0, 0.75, 0.2, 1.0)),
+                    Label(x: 8.0, y: 30.0, size: 12.0, text: "C"),
+                    Value(x: 44.0, y: 30.0, size: 12.0, source: Quantity(BrakeCylinder),
+                          decimals: 2, unit: "bar", color: (1.0, 0.75, 0.2, 1.0)),
+                    Label(x: 8.0, y: 52.0, size: 12.0, text: "HB"),
+                    Value(x: 44.0, y: 52.0, size: 12.0, source: Quantity(MainReservoir),
+                          decimals: 2, unit: "bar", color: (1.0, 0.75, 0.2, 1.0)),
+                    // Brake pipe against its 5-bar regime, green on dark.
+                    Bar(x: 8.0, y: 96.0, w: 144.0, h: 12.0, source: Quantity(BrakePipe),
+                        max: 6.0, color: (0.3, 0.9, 0.4, 1.0)),
+                ],
+            ),
         ],
     )),
 )

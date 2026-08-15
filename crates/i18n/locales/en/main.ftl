@@ -170,7 +170,7 @@ action-take-suggestions = Take over all suggestions
 action-take-suggestions-hint = binds { $count } nodes that are not bound yet
 action-take-suggestions-none = every suggested node is bound already
 part-function-placeholder = function
-part-function-hint = What the node represents. Known forms: door_<name> · pantograph · switch:<name> · gauge:<name> · lamp:<name> · wheel — own names are allowed, the app maps the ones it knows.
+part-function-hint = What the node represents. Known forms: door_<name> · pantograph · switch:<name> · gauge:<name or indicator> · lamp:<name or indicator> · digit:<indicator>:<place> · wiper · wheel — own names are allowed, the app maps the ones it knows.
 part-amount-hint = full travel of the movement — from function value 0 to 1
 group-nodes = Nodes in the file
 node-bind-hint = bind as a moving part
@@ -445,6 +445,7 @@ snd-quantity-tractive-effort = Tractive effort [kN]
 snd-quantity-brake-effort = Brake force [kN]
 snd-quantity-brake-pipe = Brake pipe [bar]
 snd-quantity-brake-cylinder = Brake cylinder [bar]
+snd-quantity-main-reservoir = Main reservoir [bar]
 snd-quantity-air-flow = Air flow [bar/s]
 snd-quantity-slip = Slip speed [m/s]
 snd-quantity-throttle = Power controller
@@ -454,6 +455,80 @@ snd-quantity-compressor = Compressor
 snd-quantity-doors = Doors
 snd-quantity-horn = Horn
 snd-quantity-alert = Train protection alert
+
+## Vehicle editor — cab
+##
+## Interactive 3D cab: each control binds a glTF node to a simulation input;
+## the input decides whether it acts as a push button, a switch or a lever.
+## The cab-input-* names double as control labels in the simulator HUD.
+
+group-cab = Cab
+cab-none = No cab yet — the model gets an eye point and mouse-operable controls.
+action-add-cab = Add cab
+action-add-cab-hint = eye point plus mouse-operable controls
+action-add-control = Add control
+action-add-control-hint = binds a glTF node to a simulation input
+cab-eye = Eye point
+cab-eye-hint = m in model space: X right, Y above the rail head, −Z ahead
+cab-control-node = Node
+cab-control-input = Input
+cab-control-test = Test
+cab-control-test-hint = moves the node in the preview; not saved
+
+cab-input-throttle = Power controller
+cab-input-reverser = Reverser
+cab-input-brake-valve = Driver's brake valve
+cab-input-direct-brake = Direct brake
+cab-input-afb-target = AFB target speed
+cab-input-sifa = Sifa
+cab-input-pzb-acknowledge = PZB acknowledge
+cab-input-pzb-exempt = PZB free
+cab-input-pzb-override = PZB override
+cab-input-lzb-takeover = LZB takeover
+cab-input-lzb-end = LZB end
+cab-input-lzb-test = LZB test button
+cab-input-horn = Horn
+cab-input-sanding = Sanding
+cab-input-brake-release = Loco brake release
+cab-input-engine-start = Engine starter
+cab-input-door-release-left = Door release left
+cab-input-door-release-right = Door release right
+cab-input-door-close = Close doors
+cab-input-parking-brake = Parking brake
+cab-input-ep-brake = EP brake
+cab-input-afb = AFB
+cab-input-battery = Battery
+cab-input-pantograph = Pantograph
+cab-input-main-switch = Main switch
+cab-input-compressor = Compressor
+cab-input-train-type = Train type switch
+cab-input-wipers = Wiper switch
+cab-input-display-1 = Display button 1
+cab-input-display-2 = Display button 2
+cab-input-display-3 = Display button 3
+cab-input-display-4 = Display button 4
+cab-input-display-5 = Display button 5
+cab-input-display-6 = Display button 6
+cab-input-display-7 = Display button 7
+cab-input-display-8 = Display button 8
+
+## Vehicle editor — displays
+##
+## Screens in the cab, rendered to texture: a name the script hook answers to,
+## the glTF node that shows the texture, and its resolution. Content comes
+## from the widget list in the file or from the vehicle script's display(ctx).
+
+group-displays = Displays
+action-add-display = Add display
+action-add-display-hint = a screen rendered to texture on a glTF node — widgets or the display(ctx) script hook draw it
+disp-name = Name
+disp-name-hint = what the script hook is asked for (ctx.display)
+disp-node = Node
+disp-size = Resolution
+disp-size-hint = px — width × height of the rendered texture
+disp-html = HTML file
+disp-html-hint = path below mods/ — the screen is drawn from this HTML/CSS/JS page instead of widgets or the script hook
+disp-widgets = { $count } widgets — edited in the vehicle file
 
 ## Route editor
 
@@ -523,7 +598,8 @@ hud-scenario-passed = Scenario passed
 hud-scenario-failed = Scenario failed
 hud-outcome = { $result }: { $reason }
 hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
-hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake
+hud-control = { $name }: { $value } %
+hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper
 hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera  F9 mods
 
 ## Mod manager

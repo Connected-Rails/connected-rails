@@ -115,13 +115,22 @@ fn quantity_combo(
         .selected_text(t!(quantity.key()))
         .width(COMBO_W)
         .show_ui(ui, |ui| {
-            for option in Quantity::ALL {
+            let mut pick = |ui: &mut egui::Ui, option: Quantity| {
                 if ui
                     .selectable_label(*quantity == option, t!(option.key()))
                     .clicked()
                 {
                     *quantity = option;
                 }
+            };
+            for option in Quantity::ALL {
+                pick(ui, option);
+            }
+            // Below the physical quantities: the cab control positions,
+            // normalised 0…1 — what an operating click triggers on.
+            ui.separator();
+            for control in sim_core::cab::CabControl::ALL {
+                pick(ui, Quantity::Control(control));
             }
         });
 }

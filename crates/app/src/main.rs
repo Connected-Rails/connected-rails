@@ -10,6 +10,7 @@ mod menu;
 mod models;
 mod mods_ui;
 mod render;
+mod signals;
 mod streaming;
 mod ui;
 
@@ -196,6 +197,10 @@ fn main() {
             models::animate_digits,
             displays::bind_display_nodes,
             cab::update_highlight,
+            signals::mount_parts,
+            signals::bind_lamps,
+            signals::update_lamps,
+            signals::update_placeholders,
         )
             .after(sync_vehicles)
             .run_if(in_state(GameState::Driving)),
@@ -411,6 +416,32 @@ fn setup(
         &sim.net,
         &origin,
     );
+
+    // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
+    // type's default; a signal without either gets the placeholder mast.
+    let signal_models: Vec<Option<sim_core::interlock::SignalModel>> = line_source
+        .signals
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let name = mods.mods.signal_model_name(&line_source, i)?;
+            let model = mods.mods.signal_models.get(name).cloned();
+            if model.is_none() {
+                warn!("signal {i}: unknown signal model {name:?}");
+            }
+            model
+        })
+        .collect();
+    signals::spawn_signals(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &assets,
+        &sim,
+        &origin,
+        &signal_models,
+    );
+    commands.insert_resource(signals::SignalModels(signal_models));
 
     // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
     // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more

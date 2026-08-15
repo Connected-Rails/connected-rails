@@ -469,6 +469,7 @@ mod tests {
                 requires_route: false,
                 diverging_speed: None,
                 signal_type: None,
+                model: None,
             }],
             routes: vec![],
             boundaries: vec![

@@ -530,6 +530,32 @@ disp-html = HTML file
 disp-html-hint = path below mods/ — the screen is drawn from this HTML/CSS/JS page instead of widgets or the script hook
 disp-widgets = { $count } widgets — edited in the vehicle file
 
+## Signal editor
+##
+## A signal model is an assembly after the Zusi pattern: shared glTF parts
+## (mast, screen, indicator) chained by mount points — empty nodes named
+## mp_* — plus the binding of the signal type's lamp-image strings to nodes.
+
+window-signal-editor = TrainSim-DE — Signal editor
+window-signal-editor-named = { $name } — TrainSim-DE Signal editor
+window-signal-editor-unsaved = • { $name } — TrainSim-DE Signal editor
+heading-signal-model = Signal model
+filter-signal-model-ron = Signal model (RON)
+status-new-signal-model = New signal model
+group-signal-parts = Parts
+group-signal-lamps = Lamps
+group-signal-test = Lamp test
+action-add-part = Add part…
+action-add-lamp = Add lamp
+action-lamps-off = All off
+sig-mount = Mount
+sig-mount-root = At the signal position
+sig-mount-node = Mount point
+sig-lamp = Lamp image
+sig-node = Node
+sig-test-empty = Bind lamps first — the test then lights them without the simulator.
+help-signal-conventions = Origin at the foot, +Y up, front towards the driver = +Z · mount points are empty nodes “mp_…”
+
 ## Route editor
 
 action-open-line = Open line…

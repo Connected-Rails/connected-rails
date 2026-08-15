@@ -190,10 +190,54 @@ pub struct SignalType {
     /// the aspect. Evaluated by the mod runtime, not by `sim-core`.
     #[serde(default)]
     pub script: Option<String>,
+    /// Default 3D model, `"<mod>:<name>"` below `signal_models/`. A placement may
+    /// override it per signal (`SignalSource::model`).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 fn default_system() -> SignalSystem {
     SignalSystem::Ks
+}
+
+/// Modular 3D model of a signal: glTF parts chained by mount-point nodes, plus the
+/// binding of lamp-image strings to nodes (the vehicle path of ch. 15.3, applied to
+/// signals — after the Zusi pattern, where screens, masts and indicators are shared
+/// files linked together).
+///
+/// Comes from a mod (`signal_models/*.ron`). The renderer shows a bound node while
+/// its string is in the signal's current lamp image and hides it otherwise.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SignalModel {
+    /// A part without a `mount` stands at the device position itself; every other
+    /// part hangs off a named node of an earlier part.
+    pub parts: Vec<SignalPart>,
+    /// Which glTF node is which lamp-image string.
+    #[serde(default)]
+    pub lamps: Vec<LampBinding>,
+}
+
+/// One glTF file of a signal assembly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignalPart {
+    /// glTF below `mods/`, e.g. `"example/assets/sig_schirm_ks.gltf"`.
+    pub file: String,
+    /// `(part, node)`: the mount-point node of another part this one hangs off.
+    /// `None` puts the part at the device position.
+    #[serde(default)]
+    pub mount: Option<(u32, String)>,
+}
+
+/// Binds one lamp-image string to one glTF node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LampBinding {
+    /// Lamp-image string of the aspect rules, e.g. `"red"` or `"zs3_4"`.
+    pub lamp: String,
+    /// Part the node lives in.
+    #[serde(default)]
+    pub part: u32,
+    /// glTF node — visible while its string is in the signal's lamp image.
+    pub node: String,
 }
 
 /// Track clear detection section (axle counter section).
@@ -799,6 +843,7 @@ mod tests {
                 // No rule for an occupied section — the fallback is stop.
             ],
             script: None,
+            model: None,
         });
         let mut sig = Signal::new(SignalId(0), SignalKind::Main, DeviceId(0));
         sig.guarded = vec![sec];
@@ -851,6 +896,7 @@ mod tests {
                 lamps: vec!["green".into()],
             }],
             script: None,
+            model: None,
         });
         let ty_announce = il.add_type(SignalType {
             system: SignalSystem::Ks,
@@ -878,6 +924,7 @@ mod tests {
                 },
             ],
             script: None,
+            model: None,
         });
         // The announcing signal is stored *before* its follower, so storage order
         // would evaluate it first — the signalling order must not.

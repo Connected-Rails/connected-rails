@@ -14,6 +14,7 @@
 //!          /scenarios/*.ron   Scenario
 //!          /timetable/*.ron   Timetable (referenced by a scenario for stop scoring)
 //!          /signals/*.ron     SignalType (state machine, optional script hook)
+//!          /signal_models/*.ron SignalModel (glTF parts on mount points, lamp bindings)
 //!          /scripts/*.lua     behaviour scripts
 //!          /assets/…          models, textures, sounds (asset source `mods://`)
 //! ```
@@ -29,7 +30,7 @@ use content::compose::{Composed, ModuleOffsets};
 use content::route::LineSource;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use sim_core::interlock::{Interlock, SignalType};
+use sim_core::interlock::{Interlock, SignalModel, SignalType};
 use sim_core::scenario::{Action, Scenario, Trigger};
 use sim_core::timetable::Timetable;
 use sim_core::train::VehicleSpec;
@@ -113,6 +114,7 @@ pub struct Mods {
     pub scenarios: BTreeMap<String, Scenario>,
     pub timetables: BTreeMap<String, Timetable>,
     pub signal_types: BTreeMap<String, SignalType>,
+    pub signal_models: BTreeMap<String, SignalModel>,
     /// Lua sources, keyed `"<mod>:<file stem>"`.
     pub scripts: BTreeMap<String, String>,
     /// Everything that went wrong — displayed, never fatal (plan 19.3).
@@ -222,6 +224,12 @@ impl Mods {
             &mut self.signal_types,
             &mut self.warnings,
         );
+        read_ron(
+            &dir.join("signal_models"),
+            id,
+            &mut self.signal_models,
+            &mut self.warnings,
+        );
         for path in files(&dir.join("scripts"), "lua") {
             insert(path, id, &mut self.scripts, &mut self.warnings, |t| {
                 Ok(t.to_string())
@@ -273,6 +281,18 @@ impl Mods {
             }
         }
         warnings
+    }
+
+    /// Name of the 3D model of signal `index`: the placement's override wins over the
+    /// signal type's default. `None` — the signal has no model and stays a placeholder.
+    pub fn signal_model_name<'a>(&'a self, line: &'a LineSource, index: usize) -> Option<&'a str> {
+        let source = line.signals.get(index)?;
+        source.model.as_deref().or_else(|| {
+            self.signal_types
+                .get(source.signal_type.as_deref()?)?
+                .model
+                .as_deref()
+        })
     }
 }
 
@@ -422,6 +442,27 @@ mod tests {
         let timetable = &mods.timetables[name];
         assert!(!timetable.stops.is_empty());
         assert!(mods.compositions.contains_key("example:gesamtstrecke"));
+    }
+
+    /// A signal's 3D model: the placement's override wins over the type's default,
+    /// and the model file itself is loaded from `signal_models/`.
+    #[test]
+    fn signal_models_resolve_placement_over_type_default() {
+        let mods = example_mods();
+        let model = &mods.signal_models["example:ks_mast"];
+        assert_eq!(model.parts.len(), 3);
+        assert_eq!(model.parts[1].mount, Some((0, "mp_schirm".into())));
+        assert!(model.lamps.iter().any(|l| l.lamp == "zs3_4" && l.part == 2));
+
+        // The example line's signal takes the type's default model …
+        let line = &mods.lines["example:beispielstrecke"];
+        assert_eq!(mods.signal_model_name(line, 0), Some("example:ks_mast"));
+        // … and an override on the placement wins over it.
+        let mut line = line.clone();
+        line.signals[0].model = Some("example:other".into());
+        assert_eq!(mods.signal_model_name(&line, 0), Some("example:other"));
+        // Out of range or no type: no model.
+        assert_eq!(mods.signal_model_name(&line, 99), None);
     }
 
     /// The example composition merges its two modules into one line, connected by

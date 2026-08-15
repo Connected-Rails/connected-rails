@@ -1,0 +1,25 @@
+// Ks main signal on a standard mast — a modular assembly after the Zusi pattern:
+// shared glTF parts chained by mount-point nodes (`mp_*` empties in the file).
+// The screen and the Zs3 are their own files, so a bridge signal or a different
+// screen reuses them by listing them with another mount.
+//
+// `lamps` binds the free-form lamp-image strings of the signal type to glTF
+// nodes: the node is visible while its string is in the current lamp image.
+(
+    parts: [
+        // Part 0: the mast, at the device position itself.
+        (file: "example/assets/sig_mast.gltf"),
+        // Part 1: the Ks screen, hung onto the mast's mount point.
+        (file: "example/assets/sig_schirm_ks.gltf", mount: Some((0, "mp_schirm"))),
+        // Part 2: the Zs3 speed indicator on top of the screen.
+        (file: "example/assets/sig_zs3.gltf", mount: Some((1, "mp_top"))),
+    ],
+    lamps: [
+        (lamp: "red", part: 1, node: "lamp_red"),
+        (lamp: "green", part: 1, node: "lamp_green"),
+        (lamp: "yellow", part: 1, node: "lamp_yellow"),
+        // The substitute signal the zs1.lua script switches on.
+        (lamp: "zs1", part: 1, node: "lamp_zs1"),
+        (lamp: "zs3_4", part: 2, node: "zs3_4"),
+    ],
+)

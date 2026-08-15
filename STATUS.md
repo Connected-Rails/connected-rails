@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and fmt clean.
+As of 2026-08-15 · `cargo test --workspace`: **327 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,12 +11,12 @@ As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, but without lamp aspect rendering; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **partial** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** shows a line with an aerial imagery overlay but cannot edit it yet; the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **partial** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB missing**, MFA only as HUD text |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **partial** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; weather changes through scenario actions, terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; no recorded samples (the sources are generated), no weather **rendering**, no night lighting of signals/lamps, no vegetation/texturing |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
-| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
+| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
 ## What is in place
 
@@ -196,7 +196,7 @@ As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and 
   tiles, maximum age, offline mode). Fetching and decoding run on worker threads, the editor
   places the tiles georeferenced beneath the track ribbon.
   All of it controllable through a RON file, reloadable at runtime.
-- **Editors (ch. 15):** two separate programs with a desktop UI (menu bar, docked panels,
+- **Editors (ch. 15):** three separate programs with a desktop UI (menu bar, docked panels,
   native file dialogs): `route-editor` shows a line with an aerial imagery overlay and can
   load another one at runtime; `vehicle-editor` edits the vehicle base data (LÜP, gauge,
   v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
@@ -225,6 +225,19 @@ As of 2026-08-15 · `cargo test --workspace`: **318 tests green** · clippy and 
   the placeholder body; the level of detail follows the camera distance, and the bound parts
   follow the simulation (pantograph, gauges, switches, lamps). `--camera outside` starts on
   the external camera.
+- **Signal models (ch. 15.3, after the Zusi assembly pattern):** a `SignalModel`
+  (`signal_models/*.ron` in a mod) is a list of glTF **parts chained by mount points**
+  (empty nodes `mp_*`), so masts, screens and indicators are shared files, plus a binding
+  table lamp-image string → glTF node. The app spawns the assembly at the device pose
+  (plumb mast, front towards the approaching driver, floating-origin safe) and shows a
+  lamp node exactly while its string is in the signal's current lamp image — Zs3 digits
+  and the script-lit Zs1 included. The model comes from the signal type's `model` default
+  or a per-placement override; a signal without one gets a placeholder mast whose light
+  follows the aspect, so every line shows its signals. The **signal editor**
+  (`signal-editor`, third desktop program on `editor-ui`) assembles the parts, offers
+  mount points and lamp nodes from the loaded files (`mp_*`/`lamp_*` conventions,
+  suggestions included), guards against mount cycles, and lights any lamp image in its
+  preview without the simulator.
 - **Mod runtime (ch. 19):** `mods/<id>/` with manifest, vehicles, lines, compositions,
   scenarios, timetables, signal types
   and scripts; everything addressed as `"<mod>:<file>"`, loaded in dependency order, broken files
@@ -362,22 +375,19 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
    placing switches and signals, positioning platforms — the aerial image behind it is the
    template for that. Module tooling belongs in the same pass: placing boundaries,
    showing a neighbour module's edge as a ghost so the builder hits its coordinates.
-2. **Signal models**: the lamp images of a modded signal are strings without geometry —
-   signals are still drawn as plain devices. The same path as for vehicles (glTF plus a
-   binding table) is missing.
-3. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
-4. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
+2. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
+3. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node
    without any geometry.
-5. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
+4. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
    then the import directly yields an equipped line instead of a bare strand.
-6. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
+5. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
    (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
-7. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
-8. **Recorded samples for the sound table** — the mechanism is in place and positional; what
+6. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
+7. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
    interval belong in the same pass.
-9. **Weather rendering and night lighting (M6)** — sun and moon now follow the scenario
+8. **Weather rendering and night lighting (M6)** — sun and moon now follow the scenario
    clock over the georeferenced line; what M6 still misses is rain/fog affecting
-   visibility and night lighting (signals, instruments, headlights). Detailed cab
-   models are content work per vehicle, not engine work.
+   visibility and night lighting (signal lamps already render emissive; instruments,
+   headlights). Detailed cab models are content work per vehicle, not engine work.

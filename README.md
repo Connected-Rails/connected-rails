@@ -6,7 +6,8 @@ A **mod-first** German train simulator built on Bevy — implementation of [PLAN
 Current state and open points: [STATUS.md](STATUS.md).
 
 This project is designed from the ground up for modding — your own locomotives, your own
-signals, your own lines. See [Mods](#mods) for the guide.
+signals, your own lines. See [Mods](#mods) for the guide. The main menu offers a clickable
+interface to choose your line, vehicle and scenario from the loaded mods.
 
 ## Build and run
 
@@ -21,12 +22,11 @@ cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
-Without arguments the simulator starts on the main menu: "start driving" walks through
-line, vehicle and scenario — each list opening with the built-in default — and "mods"
-switches the installed mods on and off, which takes effect when the run starts. ↑/↓ or the
-mouse select, `Enter` or a left click confirms, `Esc` goes one page back. Any run flag
-(`--line`, `--loco`, `--scenario`, `--frames`, `--screenshot`, …) skips the menu and wins
-over what was picked there, so the invocations above stay non-interactive.
+Without arguments the simulator starts on the main menu: select line, vehicle and scenario from
+the loaded mods (keyboard ↑/↓, mouse click), or toggle mods on and off. `Enter` or a left click
+confirms, `Esc` goes back, `F9` opens the mod manager in-game. Any run flag (`--line`, `--loco`,
+`--scenario`, `--frames`, `--screenshot`, …) skips the menu entirely, so the invocations above stay
+non-interactive.
 
 For a faster edit-compile-run loop, add `--features dev` to any of the four binaries
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
@@ -220,12 +220,15 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `Space` | Sifa (driver's safety device) |
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
 | `N` / `M` / `B` | LZB takeover / end / function test |
-| `U` | Train type switch (Zugartschalter): O → M → U, at standstill |
+| `Y` | Wipers: off → interval → slow → fast (cycles) |
 | `H` | Horn |
-| `1`–`4` | Battery / pantograph / main switch / air compressor |
+| `1`–`4` | Battery / pantograph / main switch / compressor |
 | `5` | Start the diesel engine |
+| `6` / `7` / `8` | AFB on/off / dial down / dial up (in 10 km/h steps) |
+| `9` / `0` | Headlights / cab light |
+| `,` / `.` | Instrument backlighting dimmer down / up |
 | `F1`–`F3` | Camera: cab / external / lineside |
-| `F9` | Mod manager (↑/↓ select, `Enter` toggles — in-game only after a restart; on the main menu a toggle applies on start, and the rows are clickable there) |
+| `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 
 ## Example line

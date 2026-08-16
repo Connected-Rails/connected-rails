@@ -1,4 +1,4 @@
-//! Shared look and feel of the TrainSim-DE desktop editors.
+//! Shared look and feel of the Connected Rails desktop editors.
 //!
 //! One place defines the colors, typography and spacing of every editor
 //! window; both editors call [`apply`] once on their egui context and get the

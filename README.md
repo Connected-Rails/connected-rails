@@ -1,4 +1,4 @@
-# TrainSim-DE
+# Connected Rails
 
 [![CI](https://github.com/vanlueckn/open-train-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/vanlueckn/open-train-simulator/actions/workflows/ci.yml)
 

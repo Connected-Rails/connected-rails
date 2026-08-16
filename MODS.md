@@ -1,6 +1,6 @@
 # Modding guide
 
-TrainSim-DE is built for mods: your own locomotives, your own signals, your own lines.
+Connected Rails is built for mods: your own locomotives, your own signals, your own lines.
 `mods/example/` is a working reference — copying it is the fastest way to start.
 
 ## Data and behaviour are separate
@@ -38,7 +38,7 @@ becomes `example:br101_afb`. Two mods may therefore use the same file names.
     id: "example",
     name: "Example Mod",
     version: "0.1.0",
-    author: "TrainSim-DE",
+    author: "Connected Rails",
     description: "Reference mod: a vehicle with an AFB script, two signal types with a 3D signal model, and a line.",
     depends: [],
     enabled: true,
@@ -1154,7 +1154,7 @@ Loading warnings and script errors go to the log with a `mod:` prefix.
 
 ## Distribution
 
-Planned: `.trainsim` = a zip of the mod directory, unpacked to `<game>/mods/` by a mod manager.
+Planned: `.crails` = a zip of the mod directory, unpacked to `<game>/mods/` by a mod manager.
 For now, copy the directory into `mods/` by hand.
 
 ## Licensing your mod

@@ -1,4 +1,4 @@
-//! TrainSim-DE vehicle editor — vehicle data, glTF model, levels of detail, moving parts.
+//! Connected Rails vehicle editor — vehicle data, glTF model, levels of detail, moving parts.
 //!
 //! ```text
 //! trainsim-vehicle-editor [vehicle.ron] [--frames N] [--screenshot file.png]
@@ -661,7 +661,7 @@ fn orbit_camera(
 ///
 /// The title bar is the only part of the editor still readable from the task
 /// bar or the window switcher — with several vehicles open, a fixed
-/// "TrainSim-DE — Vehicle editor" on each of them tells you nothing.
+/// "Connected Rails — Vehicle editor" on each of them tells you nothing.
 fn update_title(
     editor: Res<Editor>,
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,

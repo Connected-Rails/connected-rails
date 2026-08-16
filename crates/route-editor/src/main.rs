@@ -1,4 +1,4 @@
-//! TrainSim-DE route editor — top-down view of a line with aerial imagery overlay,
+//! Connected Rails route editor — top-down view of a line with aerial imagery overlay,
 //! track drawing and device placement (plan ch. 15, editor v1).
 //!
 //! ```text

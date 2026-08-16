@@ -1,4 +1,4 @@
-# Development plan: German train simulator on Bevy (working title "TrainSim-DE")
+# Development plan: Connected Rails — a German train simulator on Bevy
 
 This plan is written as a complete set of working instructions for an executing AI / developer team.
 Reference feature scope: MaSzyna EU07 (https://github.com/MaSzyna-EU07/maszyna), transferred to Germany
@@ -610,7 +610,7 @@ return M
 - **`app`:** loads `mods/` at startup, `--line`/`--loco`/`--scenario <mod>:<name>` select
   content from a mod, one system per frame runs the hooks after `Sim::advance`, and F9 opens
   the mod manager (enable/disable, dependency check, loading warnings).
-- Still open: `.trainsim` = zip with an installer.
+- Still open: `.crails` = zip with an installer.
 
 ### 19.7a Line and scenario hooks
 
@@ -632,7 +632,7 @@ scenario to fire events in.
 
 ### 19.8 Distribution
 
-A `.trainsim` is a zip of the mod directory; the mod manager unpacks it to `<game>/mods/`.
+A `.crails` is a zip of the mod directory; the mod manager unpacks it to `<game>/mods/`.
 ---
 
 ## 20. Risks

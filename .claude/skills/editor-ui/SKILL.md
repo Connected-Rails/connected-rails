@@ -254,7 +254,7 @@ The vehicle editor's left panel is the reference implementation
 - **The editor remembers what the user would otherwise redo by hand**
   (`settings.rs`): the recent vehicles, the language and view toggles picked
   under View, the window size and the panel widths, in
-  `%APPDATA%\TrainSim-DE\` or
+  `%APPDATA%\Connected Rails\` or
   `$XDG_CONFIG_HOME`. Deriving that path is eight lines of `env::var_os` — it
   does not need a crate. Settings are a convenience: a missing or unreadable
   file falls back to defaults silently, and a failed write never interrupts

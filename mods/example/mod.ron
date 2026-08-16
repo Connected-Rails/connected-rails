@@ -2,7 +2,7 @@
     id: "example",
     name: "Example Mod",
     version: "0.1.0",
-    author: "TrainSim-DE",
+    author: "Connected Rails",
     description: "Reference mod: a vehicle with an AFB script, two signal types with a 3D signal model, and a line.",
     depends: [],
     enabled: true,

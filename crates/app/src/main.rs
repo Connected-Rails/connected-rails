@@ -10,15 +10,11 @@ mod menu;
 mod models;
 mod mods_ui;
 mod render;
-mod scenery;
 mod signals;
 mod streaming;
 mod ui;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
-use bevy::asset::embedded_asset;
-use bevy::asset::io::AssetSourceBuilder;
-use bevy::asset::io::file::FileAssetReader;
 use bevy::audio::{AddAudioSource, DefaultSpatialScale, SpatialScale};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
@@ -167,7 +163,7 @@ fn main() {
     let mut app = App::new();
     // Models, textures and sounds of a mod come from its own directory: `mods://<mod>/…`.
     // Has to be registered before the asset plugin.
-    app.register_asset_source(models::SOURCE, mod_asset_source());
+    app.register_asset_source(world_render::MOD_SOURCE, world_render::mod_asset_source());
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: i18n::t!("window-simulator"),
@@ -175,9 +171,9 @@ fn main() {
         }),
         ..default()
     }))
-    // Terrain splatting (plan ch. 14): shader from the binary, material plugin
-    // for the extended terrain material.
-    .add_plugins(MaterialPlugin::<render::TerrainMaterial>::default())
+    // Terrain splatting (plan ch. 14): shader and material, shared with the
+    // route editor, which draws the same ground.
+    .add_plugins(world_render::WorldRenderPlugin)
     // Placed sounds play through the cab-wall lowpass, which lives in a decoder
     // (`audio::Exterior`) because Bevy's audio has no filter graph.
     .add_audio_source::<audio::Exterior>()
@@ -253,8 +249,8 @@ fn main() {
             models::animate_digits,
             displays::bind_display_nodes,
             cab::update_highlight,
-            signals::mount_parts,
-            signals::bind_lamps,
+            world_render::mount_parts,
+            world_render::bind_lamps,
             signals::update_lamps,
             signals::animate_motions,
             signals::update_signal_lods,
@@ -263,9 +259,6 @@ fn main() {
             .after(sync_vehicles)
             .run_if(in_state(GameState::Driving)),
     );
-    // The splat shader ships inside the binary — the registry only exists once
-    // the asset plugin has run.
-    embedded_asset!(app, "terrain_splat.wgsl");
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
@@ -540,7 +533,7 @@ fn setup(
         &origin,
     );
     // Scenery objects: the line's furniture, placed relative to the track.
-    scenery::spawn_objects(
+    world_render::spawn_objects(
         &mut commands,
         &mut meshes,
         &mut materials,
@@ -549,7 +542,7 @@ fn setup(
         &sim.net,
         &origin,
         &mods.mods.objects,
-        &mut terrain_builder,
+        Some(&mut terrain_builder),
     );
 
     // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
@@ -567,16 +560,30 @@ fn setup(
             model
         })
         .collect();
-    signals::spawn_signals(
+    let views: Vec<world_render::SignalView> = sim
+        .interlock
+        .signals
+        .iter()
+        .enumerate()
+        .map(|(i, s)| world_render::SignalView {
+            device: s.device,
+            kind: s.kind,
+            aspect: s.aspect,
+            model: signal_models.get(i).and_then(|m| m.as_ref()),
+        })
+        .collect();
+    let aspect_materials = world_render::spawn_signals(
         &mut commands,
         &mut meshes,
         &mut materials,
         &assets,
-        &sim,
+        &sim.net,
+        &views,
         &origin,
-        &signal_models,
     );
-    commands.insert_resource(signals::SignalModels(signal_models));
+    drop(views);
+    commands.insert_resource(aspect_materials);
+    commands.insert_resource(world_render::SignalModels(signal_models));
 
     // Vegetation: the line's tree objects resolved against the installed mods.
     let tree_catalog = render::tree_catalog(
@@ -843,13 +850,6 @@ fn args_all(name: &str) -> Vec<String> {
         .filter(|w| w[0] == name)
         .map(|w| w[1].clone())
         .collect()
-}
-
-/// Asset source for `mods://` — the `mods/` directory next to the game, the same one the
-/// mod runtime reads.
-fn mod_asset_source() -> AssetSourceBuilder {
-    let root = std::env::current_dir().unwrap_or_default().join("mods");
-    AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone())))
 }
 
 /// Places a train of one loco + coaches at the given position.

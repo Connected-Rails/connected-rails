@@ -19,6 +19,7 @@ mod-runtime = { workspace = true }
 # `!Send` — the app keeps them in a non-send resource (displays.rs).
 html-display = { path = "../html-display" }
 ai-driver = { workspace = true }
+world-render = { workspace = true }
 glam = { workspace = true }
 # `wav`: the sound loops are generated at startup as WAV buffers (ch. 13), so rodio has
 # to be able to decode them — Bevy only brings the ogg decoder by default.

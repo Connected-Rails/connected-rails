@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-16 · `cargo test --workspace`: **379 tests green** · clippy and fmt clean.
+As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -228,8 +228,9 @@ As of 2026-08-16 · `cargo test --workspace`: **379 tests green** · clippy and 
   CLI: `import-line`.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
-  at the track, view distance limit per LOD level in the app, built while driving (see
-  streaming above). **Texturing/vegetation:** every tile carries per-vertex splat
+  at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
+  of rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
+  level in the app, built while driving (see streaming above). **Texturing/vegetation:** every tile carries per-vertex splat
   weights (gravel on the strip the track flattens, rock on steep ground, grass
   elsewhere) and the line's trees — every tree an own `trees:` entry, its foot
   on the tile's height grid. Woods come out of the editor's forest brush and
@@ -345,9 +346,31 @@ As of 2026-08-16 · `cargo test --workspace`: **379 tests green** · clippy and 
   radius, and are prefiltered per tile in `TerrainEdits::in_rect`. They act on
   the ground **before** the cutting/embankment blend, so no stroke can lift the
   track out of its alignment (pinned by a test). The map draws each stroke's
-  true footprint — warm raising, cold lowering, grey levelling. What the editor
-  does not do is *show* the result: it looks straight down at the aerial
-  imagery, so the shaped terrain is only visible in the app.
+  true footprint — warm raising, cold lowering, grey levelling.
+  **The editor shows the world it builds** (`terrain.rs`, `signals.rs`): `T`
+  switches the map for the run's own picture — the same `TerrainBuilder`, mesh,
+  splat material and ground textures, the **track as ballast bed and rails**
+  skinned per track type, the line's **trees and scenery objects** as the mods'
+  glTF at the placement's own pose (placeholder trees for unnamed ones, objects
+  that ask for it on the terrain surface), and the **signal assemblies** on
+  their mount points. The shared `world-render` crate is that code, used by
+  both programs, so a stroke, a wood, a signal box or a signal mast is judged
+  where it is set instead of only in the run. Tiles are
+  built on the task pool around the view point (radius from the view height,
+  capped at 64 tiles); the standing builder takes an edit over without
+  re-indexing the DGM, and the old tile stays until its replacement arrives.
+  Terrain and aerial imagery are the same ground layer, so only one of them is
+  drawn: `T` (View ▸ Show terrain) switches, and a module that brings height
+  data starts on its terrain. The status bar reads out the **ground height
+  under the cursor** — brush strokes and cutting/embankment included —
+  whichever layer is shown. The hill shading comes from a directional light
+  from the north-west at 35°; the editing aids (device markers, gizmos) stay
+  unlit above the world. Trees hang on their terrain tile as in the run, so
+  they come and go with it. **Signals stand at stop**: the editor runs no
+  interlocking, so the lamp image is the one its type's rule table gives for an
+  untouched situation — what a line shows before the first route is set — and
+  the finest LOD is drawn whatever the view height, where the run would long
+  have switched the model off.
   **Reference markers** (`LineSource::markers`) are the drawing aids for a
   hand-built line: a labelled point in a freely named layer, set one per click
   with the marker tool (key 9) or imported from an Overpass extract
@@ -588,7 +611,8 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
    imagery and carries neither design elements nor a usable vertical alignment; over the
    imagery overlay the drawing tool gets closer with less effort. `import-line` stays as a
    starting strand and as a reference, but the pilot line comes out of the editor. What the
-   import owes the module is the **surroundings** (2) and the **terrain** (3).
+   import owes the module is the **surroundings** (2) and the elevation data the
+   terrain is built from (the DGM panel cuts it into the module).
 2. **OSM as scenery, layer by layer and opt-in.** "File ▸ Import forest…" is the pattern:
    pick an Overpass extract, get ordinary primitives that stay individually editable, use it
    or hand-place everything yourself. To be added the same way, in order of effort:
@@ -605,16 +629,12 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
    - **Reference markers are in place** (see the editor above) — level crossings, platforms,
      stations, kilometre marks and the rest come out of an Overpass extract into layers that
      hide and delete as a whole. What they still lack is DB InfraGO's kilometrage line and its
-     operational points (see 5); those come from CSV, not from Overpass, so the import needs a
+     operational points (see 4); those come from CSV, not from Overpass, so the import needs a
      second reader.
-3. **Show the terrain in the editor.** The DGM import (see above) has put the height data
-   inside the module; what is still missing is the editor *reading* it back: hill shading
-   or contours on the map, the ground height under the cursor, and with it a terrain brush
-   whose stroke is visible where it is stamped instead of only in the app.
-4. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
+3. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node
    without any geometry.
-5. **Better sources than OSM — evaluated on 2026-08-16; verdict: attributes yes, geometry no.**
+4. **Better sources than OSM — evaluated on 2026-08-16; verdict: attributes yes, geometry no.**
    - **DB InfraGO "Infrastrukturdaten"** (Mobilithek/GovData, CC BY 4.0, data status May 2026,
      27 MB of CSV plus a GeoPackage): `Streckennetz` gives, per directional track and km range,
      the VzG speed (`Geschwindigkeit`, `"120 km/h"`; some 3 % of the rows say `SKVerb`,
@@ -641,10 +661,10 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
      not the top of rail, and is wrong on every bridge, embankment and tunnel. DB's line
      geometry, coarse as it is, carries the kilometre marks and so makes the best reference
      layer while drawing (see 2).
-6. **Recorded samples for the sound table** — the mechanism is in place and positional; what
+5. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
    interval belong in the same pass.
-7. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
+6. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
    sky and rail; headlights follow switch and direction of travel, red tail lamps
    (Zg 101) mark the rear end, the cab light has its own switch, the precipitation
    streaks lean into the relative wind, and the sound table hears a `Rain` quantity.

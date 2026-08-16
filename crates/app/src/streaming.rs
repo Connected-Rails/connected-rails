@@ -191,6 +191,11 @@ pub fn stream_terrain(
             &tile,
             &origin.0,
         );
+        // The view distance is the streamer's business, not the tile's.
+        commands.entity(entity).insert(render::TerrainChunk {
+            radius: tile.radius,
+            lod: tile.lod,
+        });
         streamer.missing += stats.missing;
         streamer.tile_loads = stats.tile_loads;
         streamer.loaded.insert(

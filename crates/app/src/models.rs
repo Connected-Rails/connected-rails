@@ -16,13 +16,7 @@ use sim_core::train::{Motion, Vehicle};
 
 use crate::render;
 
-/// Asset source of the mods, registered in `main`: `mods://<mod>/assets/…`.
-pub const SOURCE: &str = "mods";
-
-/// Full asset path of a model file stated relative to the `mods/` directory.
-pub fn asset_path(file: &str) -> String {
-    format!("{SOURCE}://{file}")
-}
+pub use world_render::asset_path;
 
 /// Root of a spawned vehicle model.
 #[derive(Component)]

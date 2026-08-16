@@ -10,8 +10,9 @@
 //! * **tiles** (512 m by default) → frustum culling and view distance limit per tile,
 //! * **LOD by track distance** → 4 m at the track, 32 m at the edge of the corridor,
 //! * **skirts** at the tile borders → no cracks between different levels,
-//! * **cutting/embankment**: close to the track the terrain is pulled up to the rail
-//!   height, otherwise the alignment would sit inside the hill.
+//! * **cutting/embankment**: close to the track the terrain is pulled to the formation
+//!   (`rail_offset` below the top of rail), otherwise the alignment would sit inside
+//!   the hill — or the ballast bed inside its own ground.
 //!
 //! [`build`] creates the whole corridor at once (tests, tools). For a line of any real
 //! length the app uses [`TerrainBuilder`] instead and builds single tiles by key while
@@ -39,8 +40,15 @@ pub struct TerrainOptions {
     pub base_step: f64,
     /// Up to here the finest level applies [m].
     pub corridor: f64,
-    /// Up to here the terrain follows the rail height exactly [m].
+    /// Up to here the terrain follows the track exactly [m].
     pub flatten: f64,
+    /// How far the ground beside the track lies **below** the top of rail [m].
+    /// The track is drawn as a ballast bed 30 cm under the rail head, and
+    /// terrain pulled to rail height would bury it — the formation is lower
+    /// than the rail, on the line as much as in the model. The remaining
+    /// centimetres keep the bed off the ground plane, which would otherwise
+    /// z-fight with it.
+    pub rail_offset: f64,
     /// Up to here rail and terrain height are blended [m].
     pub blend: f64,
     /// Height of the skirt at the tile borders [m].
@@ -61,6 +69,7 @@ impl Default for TerrainOptions {
             base_step: 4.0,
             corridor: 96.0,
             flatten: 10.0,
+            rail_offset: 0.4,
             blend: 45.0,
             skirt: 8.0,
             fallback_height: 100.0,
@@ -561,6 +570,16 @@ impl TerrainBuilder {
         self
     }
 
+    /// Takes over an edited line — track geometry, vegetation and brush
+    /// strokes — while the elevation sources and their tile cache stay. The
+    /// route editor rebuilds after every edit; re-indexing the DGM each time
+    /// would read the delivery off disk again.
+    pub fn set_line(&mut self, net: &TrackNetwork, vegetation: Vegetation, edits: TerrainEdits) {
+        self.centerline = Centerline::build(net, &self.options);
+        self.vegetation = vegetation;
+        self.edits = edits;
+    }
+
     /// The 3D object names of the vegetation ([`Tree::object`] indexes them).
     pub fn tree_objects(&self) -> &[String] {
         self.vegetation.objects()
@@ -727,11 +746,13 @@ fn sample_height(
 
 /// Blends the DGM height towards the rail near the track (cutting/embankment).
 fn blend_height(near: Option<(f64, f64)>, ground: f64, options: &TerrainOptions) -> f64 {
+    // The formation carries the ballast bed, so it lies `rail_offset` below the
+    // top of rail — otherwise the track disappears into its own ground.
     match near {
-        Some((d, rail)) if d <= options.flatten => rail,
+        Some((d, rail)) if d <= options.flatten => rail - options.rail_offset,
         Some((d, rail)) if d <= options.blend => {
             let t = (d - options.flatten) / (options.blend - options.flatten);
-            rail * (1.0 - t) + ground * t
+            (rail - options.rail_offset) * (1.0 - t) + ground * t
         }
         _ => ground,
     }
@@ -777,7 +798,7 @@ fn build_tile(
             // after them, so no stroke can lift the track out of its alignment.
             let ground = edits.apply(p, ground);
 
-            // Cutting/embankment: exactly rail height at the track, then blend.
+            // Cutting/embankment: the formation at the track, then blend.
             let near = centerline.nearest(p);
             let height = blend_height(near, ground, options);
             heights.push(height);
@@ -791,7 +812,10 @@ fn build_tile(
     let mut splat = splat_weights(&heights, &track_dist, step, n, options);
     let trees = scatter_trees(min, &heights, step, n, &frame, options, vegetation);
 
-    // Regular triangulation.
+    // Regular triangulation. The winding faces **up**: +x is east and +z is
+    // south in render axes, so a→b→c (east, then north) is the order whose
+    // normal comes out of the ground — the other way round the whole surface
+    // is a backface and gets culled away (pinned by a test).
     let row = n + 1;
     let mut indices = Vec::with_capacity(n * n * 6);
     for iy in 0..n {
@@ -800,7 +824,7 @@ fn build_tile(
             let b = a + 1;
             let c = a + row as u32;
             let d = c + 1;
-            indices.extend_from_slice(&[a, c, b, b, c, d]);
+            indices.extend_from_slice(&[a, b, c, b, d, c]);
         }
     }
 
@@ -1109,9 +1133,10 @@ mod tests {
                     continue;
                 };
                 if d < options.flatten * 0.5 && height > 0.0 {
+                    let formation = rail - options.rail_offset;
                     assert!(
-                        (height - rail).abs() < 0.5,
-                        "at the track (d = {d:.1} m): {height:.2} instead of {rail:.2}"
+                        (height - formation).abs() < 0.05,
+                        "at the track (d = {d:.1} m): {height:.2} instead of {formation:.2}"
                     );
                     checked_rail += 1;
                 } else if d > options.blend * 2.0 && d < options.blend * 3.0 {
@@ -1215,11 +1240,47 @@ mod tests {
             at(&mut shaped, 200.0) - at(&mut plain, 200.0)
         );
         assert!((at(&mut shaped, 400.0) - at(&mut plain, 400.0)).abs() < 1e-6);
-        // On the track itself the height stays the rail's — the blend runs last.
+        // On the track itself the height stays the formation's — the blend runs last.
         let on_track = shaped.surface_height(start);
+        let formation = rail - options.rail_offset;
         assert!(
-            (on_track - rail).abs() < 0.5,
-            "track moved to {on_track:.2} instead of {rail:.2}"
+            (on_track - formation).abs() < 0.05,
+            "track moved to {on_track:.2} instead of {formation:.2}"
+        );
+    }
+
+    /// The route editor re-reads the edited line into the standing builder
+    /// after every stroke — the elevation sources stay where they are.
+    #[test]
+    fn set_line_takes_over_a_new_stroke() {
+        let net = test_net();
+        let options = options();
+        let (lat, lon, _) = geo::from_ecef(net.edges()[0].eval(0.0).pos);
+        let (lat, lon) = (lat.to_degrees(), lon.to_degrees());
+        let hill_lat = lat + 200.0 / 111_320.0;
+        let at = |b: &mut TerrainBuilder, north: f64| {
+            b.surface_height(geo::to_ecef_deg(lat + north / 111_320.0, lon, 0.0))
+        };
+
+        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options);
+        let before = at(&mut builder, 200.0);
+        builder.set_line(
+            &net,
+            Vegetation::default(),
+            TerrainEdits::from_parts(
+                &[TerrainEditSource {
+                    lat: hill_lat,
+                    lon,
+                    radius: 150.0,
+                    edit: TerrainEdit::Raise(20.0),
+                }],
+                options.zone,
+            ),
+        );
+        assert!(
+            (at(&mut builder, 200.0) - before - 20.0).abs() < 0.01,
+            "stroke not taken over: {before:.2} → {:.2}",
+            at(&mut builder, 200.0)
         );
     }
 
@@ -1443,6 +1504,27 @@ mod tests {
         assert!(point_in_polygon(DVec2::new(3.0, 1.0), &ring));
         assert!(!point_in_polygon(DVec2::new(3.0, 3.0), &ring), "the notch");
         assert!(!point_in_polygon(DVec2::new(5.0, 1.0), &ring));
+    }
+
+    /// Every triangle of the surface faces the sky. A tile wound the other way
+    /// round renders as a backface — the ground is then simply not there, in
+    /// the run as much as in the editor.
+    #[test]
+    fn the_surface_faces_upwards() {
+        let (tiles, _) = build(&test_net(), &mut [test_source()], &options());
+        let tile = &tiles[0];
+        let n = (options().tile_size / tile.step).round() as usize;
+        // The skirt hangs off the border and faces sideways on purpose.
+        let surface = n * n * 6;
+        for triangle in tile.indices[..surface].chunks(3) {
+            let p = |i: u32| {
+                let v = tile.positions[i as usize];
+                glam::Vec3::new(v[0], v[1], v[2])
+            };
+            let (a, b, c) = (p(triangle[0]), p(triangle[1]), p(triangle[2]));
+            let normal = (b - a).cross(c - a);
+            assert!(normal.y > 0.0, "triangle faces down: {normal:?}");
+        }
     }
 
     #[test]

@@ -74,11 +74,14 @@ pub fn update(
     mut overlay: ResMut<Overlay>,
     origin: Res<crate::Origin>,
     focus: Res<crate::Focus>,
+    terrain: Res<crate::terrain::TerrainView>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    if !overlay.config().enabled {
+    // Terrain and imagery are the same ground layer: the quads lie at the map
+    // plane the terrain runs through, so showing both would only z-fight.
+    if !overlay.config().enabled || terrain.enabled {
         if overlay.tiles_shown() > 0 {
             overlay.clear(&mut commands);
         }

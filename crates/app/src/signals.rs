@@ -15,7 +15,7 @@ use crate::{SimResource, models};
 use bevy::gltf::GltfAssetLabel;
 use bevy::prelude::*;
 use sim_core::Sim;
-use sim_core::interlock::{DistantAspect, MainAspect, SignalModel};
+use sim_core::interlock::{DistantAspect, MainAspect, SignalKind, SignalModel};
 use sim_core::train::{Motion, lod_level};
 use track_model::Facing;
 use world_coords::{EcefPos, RenderOrigin};
@@ -141,6 +141,8 @@ pub fn spawn_signals(
     let aspect_materials = AspectMaterials::new(materials);
     let mast_mesh = meshes.add(Cuboid::new(0.15, 4.0, 0.15));
     let head_mesh = meshes.add(Sphere::new(0.25));
+    // A track lock has no mast — it lies on the rail.
+    let shoe_mesh = meshes.add(Cuboid::new(0.6, 0.25, 1.2));
     let mast_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.55, 0.56, 0.58),
         perceptual_roughness: 0.7,
@@ -216,6 +218,18 @@ pub fn spawn_signals(
                         }
                     }
                 }
+            }
+            // A track lock without a model: the shoe itself, in the colour of
+            // its aspect (stop = laid on). A mast would be the wrong picture,
+            // and the shape is what a mod replaces with its own model.
+            None if signal.kind == SignalKind::TrackLock => {
+                commands.spawn((
+                    Mesh3d(shoe_mesh.clone()),
+                    MeshMaterial3d(aspect_materials.handle(&signal.aspect)),
+                    Transform::from_xyz(0.0, 0.2, 0.0),
+                    PlaceholderHead { signal: i },
+                    ChildOf(view),
+                ));
             }
             None => {
                 commands.spawn((

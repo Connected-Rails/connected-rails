@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use sim_core::interlock::{
-    BlockMarkerPayload, Interlock, Route as IlRoute, RouteId, Signal, SignalId, SignalKind,
-    SignalSystem,
+    BlockMarkerPayload, FlankGuard, Interlock, Route as IlRoute, RouteId, Signal, SignalId,
+    SignalKind, SignalSystem,
 };
 use sim_core::safety::de::{MagnetFrequency, MagnetPayload};
 use track_model::{
@@ -160,8 +160,20 @@ pub struct RouteSource {
     pub sections: Vec<u32>,
     #[serde(default)]
     pub overlap: Vec<u32>,
+    /// Flank protection of the route (Ril 819) — see [`FlankSource`].
+    #[serde(default)]
+    pub flank: Vec<FlankSource>,
     #[serde(default)]
     pub diverging: bool,
+}
+
+/// One flank protection measure in source form: a node index for a protecting
+/// turnout with the position it has to lie in, a signal index for a signal
+/// that has to stay at stop while the route is set.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum FlankSource {
+    Switch(u32, SwitchPosition),
+    Signal(u32),
 }
 
 /// A complete line in source form.
@@ -240,6 +252,9 @@ pub enum RuleIssue {
     ObjectOffEdge { object: u32 },
     /// Scenery object names an `objects/*.ron` no installed mod has.
     UnknownObject { object: u32 },
+    /// Flank protection of a route names a node that is no switch, or a
+    /// signal that does not exist.
+    FlankGuardInvalid { route: u32 },
 }
 
 /// Splits a segment chain at arc length `s`: the segment containing `s` is cut
@@ -273,6 +288,29 @@ fn split_segments(segments: &[Segment], s: f64) -> (Vec<Segment>, Vec<Segment>) 
 
 /// Step profile entries of a source edge (`(s, value)`).
 type Steps<T> = Vec<(f64, T)>;
+
+/// One way onwards from a node: the edge end the path continues over, and the
+/// switch position that continuation requires (`None` at a joint).
+type Continuation = ((u32, bool), Option<(u32, SwitchPosition)>);
+
+/// Regular overlap (Durchrutschweg) behind an exit signal [m], after the DB
+/// staircase: the length follows the speed at the end of the route, because
+/// the overlap is what a train overrunning at that speed needs to stop in.
+/// 200 m is the regular case of an entry route; shorter overlaps are what
+/// buys the lower entry speeds, and beyond 100 km/h it grows again.
+///
+/// ponytail: the four steps as the literature on German signalling states
+/// them (Ril 819 "Durchrutschwege bemessen" itself is not a public document,
+/// like the LZB brake tables). A line that knows better sets the length by
+/// hand in the editor; a full table would replace this one function.
+pub fn regular_overlap(speed_kmh: f64) -> f64 {
+    match speed_kmh {
+        v if v <= 30.0 => 50.0,
+        v if v <= 60.0 => 100.0,
+        v if v <= 100.0 => 200.0,
+        _ => 300.0,
+    }
+}
 
 /// Splits step profile entries at `s`; the second half starts with the value
 /// in force at the cut. Empty stays empty — the edge default applies as before.
@@ -463,9 +501,20 @@ impl LineSource {
         }
     }
 
+    /// Removes signal table entry `index`. The device stays where it is — it
+    /// simply carries no signal any more.
+    pub fn remove_signal(&mut self, index: usize) {
+        if index >= self.signals.len() {
+            return;
+        }
+        self.signals.remove(index);
+        self.drop_signal_refs(&[index as u32]);
+    }
+
     /// Removes the given signal indices from every cross reference: routes on
-    /// them disappear, `next` links onto them are cleared, the rest are
-    /// remapped. `self.signals` itself must already be filtered.
+    /// them disappear, `next` links onto them are cleared, magnets lose the
+    /// signal they were linked to, the rest are remapped. `self.signals`
+    /// itself must already be filtered.
     fn drop_signal_refs(&mut self, removed: &[u32]) {
         if removed.is_empty() {
             return;
@@ -477,12 +526,544 @@ impl LineSource {
         for s in &mut self.signals {
             s.next = s.next.and_then(map);
         }
+        // A magnet names its signal inside the payload text; left alone it
+        // would point at whatever moved into that slot.
+        for d in &mut self.devices {
+            if d.kind == DeviceKind::Magnet
+                && let Ok(mut p) = ron::from_str::<MagnetPayload>(&d.payload)
+                && let Some(signal) = p.signal
+            {
+                p.signal = map(signal);
+                d.payload = ron::to_string(&p).expect("serializable");
+            }
+        }
         self.routes
             .retain(|r| map(r.entry).is_some() && map(r.exit).is_some());
         for r in &mut self.routes {
             r.entry = map(r.entry).expect("kept routes reference kept signals");
             r.exit = map(r.exit).expect("kept routes reference kept signals");
+            // A protecting signal that is gone protects nothing; the rest move
+            // down with the table.
+            r.flank = r
+                .flank
+                .iter()
+                .filter_map(|g| match g {
+                    FlankSource::Signal(signal) => map(*signal).map(FlankSource::Signal),
+                    guard => Some(*guard),
+                })
+                .collect();
         }
+    }
+
+    /// Removes section `index`. Everything that addresses a section by index
+    /// follows: guarded lists, route sections and overlaps, and the block
+    /// marker payloads. A marker that pointed at the removed section loses its
+    /// payload rather than inheriting the next one — the rule check then says
+    /// so instead of the line silently marking the wrong block.
+    pub fn remove_section(&mut self, index: usize) {
+        if index >= self.sections.len() {
+            return;
+        }
+        self.sections.remove(index);
+        let removed = index as u32;
+        let map =
+            |old: u32| -> Option<u32> { (old != removed).then(|| old - u32::from(old > removed)) };
+        for s in &mut self.signals {
+            s.guarded = s.guarded.iter().filter_map(|g| map(*g)).collect();
+        }
+        for r in &mut self.routes {
+            r.sections = r.sections.iter().filter_map(|s| map(*s)).collect();
+            r.overlap = r.overlap.iter().filter_map(|s| map(*s)).collect();
+        }
+        for d in &mut self.devices {
+            if d.kind == DeviceKind::BlockMarker
+                && let Ok(p) = ron::from_str::<BlockMarkerPayload>(&d.payload)
+            {
+                d.payload = match map(p.section) {
+                    Some(section) => {
+                        ron::to_string(&BlockMarkerPayload { section }).expect("serializable")
+                    }
+                    None => String::new(),
+                };
+            }
+        }
+    }
+
+    /// Ends of node `node`, in the `(edge, at end)` form the switch fields use.
+    fn node_ends(&self, node: u32) -> Vec<(u32, bool)> {
+        let mut ends = Vec::new();
+        for (i, e) in self.edges.iter().enumerate() {
+            if e.from == node {
+                ends.push((i as u32, false));
+            }
+            if e.to == node {
+                ends.push((i as u32, true));
+            }
+        }
+        ends
+    }
+
+    /// Where a path continues beyond `node` when it arrives over `incoming`,
+    /// with the switch position each continuation requires.
+    ///
+    /// Unlike [`TrackNetwork::continuation`] this ignores the position the
+    /// switch happens to lie in: a route is what *makes* it lie somewhere.
+    fn continuations(&self, node: u32, incoming: (u32, bool)) -> Vec<Continuation> {
+        match self.nodes.get(node as usize) {
+            Some(NodeSource::Joint) => self
+                .node_ends(node)
+                .into_iter()
+                .filter(|end| *end != incoming)
+                .map(|end| (end, None))
+                .collect(),
+            Some(NodeSource::Switch {
+                root,
+                straight,
+                diverging,
+                ..
+            }) => {
+                if incoming == *root {
+                    // Facing move: either leg, each over its own position.
+                    vec![
+                        (*straight, Some((node, SwitchPosition::Straight))),
+                        (*diverging, Some((node, SwitchPosition::Diverging))),
+                    ]
+                } else if incoming == *straight {
+                    vec![(*root, Some((node, SwitchPosition::Straight)))]
+                } else if incoming == *diverging {
+                    vec![(*root, Some((node, SwitchPosition::Diverging)))]
+                } else {
+                    Vec::new()
+                }
+            }
+            // A buffer ends the path; an index out of range is no node at all.
+            _ => Vec::new(),
+        }
+    }
+
+    /// Length of an edge [m] — the source carries it as its segment chain.
+    fn edge_length(&self, edge: u32) -> f64 {
+        self.edges
+            .get(edge as usize)
+            .map(|e| e.segments.iter().map(|g| g.len).sum())
+            .unwrap_or(0.0)
+    }
+
+    /// Permitted speed at `(edge, s)` [km/h] out of the edge's step profile;
+    /// `None` where the edge states none (same rule as `StepProfile::new` —
+    /// the first entry also applies before its own `s`).
+    fn speed_at(&self, edge: u32, s: f64) -> Option<f64> {
+        let steps = &self.edges.get(edge as usize)?.speed;
+        steps
+            .iter()
+            .filter(|(x, _)| *x <= s)
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .or_else(|| steps.iter().min_by(|a, b| a.0.total_cmp(&b.0)))
+            .map(|(_, v)| *v)
+    }
+
+    /// The signal that would hold a flank movement coming over `end` — the
+    /// last one such a vehicle would have to pass before it reaches the node
+    /// that `end` hangs on.
+    fn guarding_signal(&self, end: (u32, bool)) -> Option<u32> {
+        let (edge, at_end) = end;
+        // A vehicle running towards that node runs towards this end.
+        let dir: i8 = if at_end { 1 } else { -1 };
+        self.signals
+            .iter()
+            .enumerate()
+            // Everything that can show stop by itself holds a flank — a
+            // track lock above all, which is what it is there for.
+            .filter(|(_, s)| s.kind.holds_a_flank())
+            .filter_map(|(i, s)| {
+                let device = self.devices.get(s.device as usize)?;
+                (device.edge == edge && device.facing.applies(dir))
+                    .then_some((i as u32, device.s * dir as f64))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    /// What protects a route against a movement coming out of `branch` — the
+    /// leg of a trailing turnout the route does not use (Ril 819): the first
+    /// signal that would hold such a movement, or the first turnout that can
+    /// be laid so it leads the movement away.
+    ///
+    /// `None` where nothing is needed or nothing is there: a leg that ends in
+    /// a buffer stop needs no guard, and one that opens into a turnout at its
+    /// root would need every leg beyond it protected — which is a station
+    /// layout the builder has to answer for, not the search.
+    fn flank_guard(&self, branch: (u32, bool)) -> Option<FlankSource> {
+        let mut current = branch;
+        // Eight edges is a long throat; beyond it the guard belongs elsewhere.
+        for _ in 0..8 {
+            if let Some(signal) = self.guarding_signal(current) {
+                return Some(FlankSource::Signal(signal));
+            }
+            let (edge, near) = current;
+            // The far end of that edge, where the next node sits.
+            let far = !near;
+            let source = self.edges.get(edge as usize)?;
+            let node = if far { source.to } else { source.from };
+            match self.nodes.get(node as usize)? {
+                NodeSource::Buffer => return None,
+                NodeSource::Joint => {
+                    current = *self.node_ends(node).iter().find(|e| **e != (edge, far))?
+                }
+                NodeSource::Switch {
+                    straight,
+                    diverging,
+                    ..
+                } => {
+                    let incoming = (edge, far);
+                    return if incoming == *straight {
+                        Some(FlankSource::Switch(node, SwitchPosition::Diverging))
+                    } else if incoming == *diverging {
+                        Some(FlankSource::Switch(node, SwitchPosition::Straight))
+                    } else {
+                        None // reached at the root — it leads into both legs
+                    };
+                }
+            }
+        }
+        None
+    }
+
+    /// Flank protection needed where a path passes `node` coming over
+    /// `incoming`: only a turnout run into trailing exposes the route, because
+    /// the leg it does not use joins the path there. A facing turnout guards
+    /// the route itself by lying in the position the route needs.
+    fn flank_at(&self, node: u32, incoming: (u32, bool), flank: &mut Vec<FlankSource>) {
+        let Some(NodeSource::Switch {
+            straight,
+            diverging,
+            ..
+        }) = self.nodes.get(node as usize)
+        else {
+            return;
+        };
+        let other = if incoming == *straight {
+            *diverging
+        } else if incoming == *diverging {
+            *straight
+        } else {
+            return; // facing move
+        };
+        if let Some(guard) = self.flank_guard(other)
+            && !flank.contains(&guard)
+        {
+            flank.push(guard);
+        }
+    }
+
+    /// The sections an overlap covers: on from `(edge, s)` in direction `dir`
+    /// for `length` metres, straight ahead wherever the track forks. Switches
+    /// on the way are appended to `switches`, because a route has to lock the
+    /// overlap's turnouts as well as its own.
+    ///
+    /// The walk stops at a buffer, at a switch the route already needs the
+    /// other way, and after 32 edges — an overlap that long is a wiring
+    /// mistake, not a D-way.
+    fn overlap_after(
+        &self,
+        edge: u32,
+        s: f64,
+        dir: i8,
+        length: f64,
+        switches: &mut Vec<(u32, SwitchPosition)>,
+        flank: &mut Vec<FlankSource>,
+    ) -> Vec<u32> {
+        // What is left of the exit signal's own edge behind it.
+        let mut remaining = length
+            - if dir > 0 {
+                self.edge_length(edge) - s
+            } else {
+                s
+            };
+        let mut current = (edge, dir);
+        let mut path = Vec::new();
+        for _ in 0..32 {
+            if remaining <= 0.0 {
+                break;
+            }
+            let (e, d) = current;
+            let Some(source) = self.edges.get(e as usize) else {
+                break;
+            };
+            let (node, at_end) = if d > 0 {
+                (source.to, true)
+            } else {
+                (source.from, false)
+            };
+            // The overlap is part of what the route protects, so a turnout it
+            // trails needs its flank guard just as one in the path does.
+            self.flank_at(node, (e, at_end), flank);
+            let mut options = self.continuations(node, (e, at_end));
+            // Straight on where there is a choice: an overlap is the plain
+            // continuation of the route, not a second diverging move.
+            let chosen = if options.len() == 1 {
+                options.pop()
+            } else {
+                options
+                    .into_iter()
+                    .find(|(_, sw)| matches!(sw, Some((_, SwitchPosition::Straight))))
+            };
+            let Some((next, switch)) = chosen else {
+                break;
+            };
+            if let Some((n, position)) = switch {
+                if switches.iter().any(|(m, p)| *m == n && *p != position) {
+                    break;
+                }
+                if !switches.contains(&(n, position)) {
+                    switches.push((n, position));
+                }
+            }
+            path.push(next.0);
+            remaining -= self.edge_length(next.0);
+            current = (next.0, if next.1 { -1 } else { 1 });
+        }
+        self.sections_over(&path)
+    }
+
+    /// The sections a path runs through, in the order it enters them.
+    fn sections_over(&self, path: &[u32]) -> Vec<u32> {
+        let mut out: Vec<u32> = Vec::new();
+        for edge in path {
+            for (i, section) in self.sections.iter().enumerate() {
+                if section.edges.contains(edge) && !out.contains(&(i as u32)) {
+                    out.push(i as u32);
+                }
+            }
+        }
+        out
+    }
+
+    /// The first signal on `edge` beyond `from_s` in direction `dir` that a
+    /// route can end at. A distant signal announces, it does not end a route.
+    fn next_target_signal(&self, edge: u32, from_s: f64, dir: i8) -> Option<u32> {
+        self.signals
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.kind.ends_a_route())
+            .filter_map(|(i, s)| {
+                let device = self.devices.get(s.device as usize)?;
+                let ahead = (device.s - from_s) * dir as f64;
+                (device.edge == edge && device.facing.applies(dir) && ahead > 0.0)
+                    .then_some((i as u32, ahead))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+    }
+
+    /// Every route that can start at signal `entry`: the search runs out over
+    /// the track graph and ends each branch at the next signal it can end at,
+    /// so a turnout ahead of the signal yields one route per leg. This is the
+    /// list a signal carries in the Zusi editor — what leaves here, and where
+    /// each of them ends.
+    ///
+    /// The routes themselves come out of [`route_between`], so sections,
+    /// switch positions and overlap follow the same rules.
+    pub fn routes_from(&self, entry: u32, overlap: Option<f64>) -> Vec<RouteSource> {
+        let Some(entry_signal) = self.signals.get(entry as usize) else {
+            return Vec::new();
+        };
+        // Routes start where a train move is authorised — not at a distant
+        // signal, which announces, nor at a track lock, which secures.
+        if !entry_signal.kind.ends_a_route() {
+            return Vec::new();
+        }
+        let Some(entry_device) = self.devices.get(entry_signal.device as usize) else {
+            return Vec::new();
+        };
+        let mut queue = std::collections::VecDeque::new();
+        let mut seen = std::collections::HashSet::new();
+        // A set: two legs may run into the same signal, and that is one route.
+        let mut targets = std::collections::BTreeSet::new();
+        for dir in [1i8, -1] {
+            if !entry_device.facing.applies(dir) || !seen.insert((entry_device.edge, dir)) {
+                continue;
+            }
+            match self.next_target_signal(entry_device.edge, entry_device.s, dir) {
+                Some(target) => {
+                    targets.insert(target);
+                }
+                None => queue.push_back((entry_device.edge, dir)),
+            }
+        }
+        while let Some((edge, dir)) = queue.pop_front() {
+            let Some(source) = self.edges.get(edge as usize) else {
+                continue;
+            };
+            let (node, at_end) = if dir > 0 {
+                (source.to, true)
+            } else {
+                (source.from, false)
+            };
+            for (next, _) in self.continuations(node, (edge, at_end)) {
+                let dir = if next.1 { -1 } else { 1 };
+                if !seen.insert((next.0, dir)) {
+                    continue;
+                }
+                // Entered at its near end, so the whole edge lies ahead.
+                let from = if dir > 0 {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                };
+                match self.next_target_signal(next.0, from, dir) {
+                    Some(target) => {
+                        targets.insert(target);
+                    }
+                    None => queue.push_back((next.0, dir)),
+                }
+            }
+        }
+        targets
+            .into_iter()
+            .filter_map(|target| self.route_between(entry, target, overlap))
+            .collect()
+    }
+
+    /// Fills a route in from the geometry: the shortest path across the track
+    /// graph from the entry signal to the exit signal, and out of it the
+    /// sections it runs through, the position every turnout on the way needs
+    /// and whether it leads over a diverging leg.
+    ///
+    /// The entry signal's own edge stays out of the sections — a route starts
+    /// at the signal, and the section in front of it is where the train
+    /// stands, which `Interlock::request_route` would find occupied.
+    ///
+    /// The **overlap** is walked on behind the exit signal, for `overlap`
+    /// metres or, with `None`, for the [`regular_overlap`] of the speed the
+    /// route ends at — the diverging speed of the entry signal where it leads
+    /// over a diverging leg, otherwise the permitted speed at the exit signal.
+    /// Its sections are the ones the route does not already lock, and the
+    /// turnouts inside it join `switches`.
+    ///
+    /// `None` when nothing connects the two — no path, or only paths that
+    /// would need one switch in both positions at once.
+    ///
+    /// ponytail: breadth-first over `(edge, direction)` with one visit per
+    /// state, so it returns the path over the fewest edges and nothing else.
+    /// Where a builder wants the long way round, the fields stay editable.
+    pub fn route_between(
+        &self,
+        entry: u32,
+        exit: u32,
+        overlap: Option<f64>,
+    ) -> Option<RouteSource> {
+        if entry == exit {
+            return None;
+        }
+        let entry_signal = self.signals.get(entry as usize)?;
+        let entry_device = self.devices.get(entry_signal.device as usize)?;
+        let exit_device = self
+            .devices
+            .get(self.signals.get(exit as usize)?.device as usize)?;
+
+        struct Step {
+            edge: u32,
+            dir: i8,
+            path: Vec<u32>,
+            switches: Vec<(u32, SwitchPosition)>,
+            flank: Vec<FlankSource>,
+        }
+        let mut queue = std::collections::VecDeque::new();
+        let mut seen = std::collections::HashSet::new();
+        for dir in [1i8, -1] {
+            if entry_device.facing.applies(dir) && seen.insert((entry_device.edge, dir)) {
+                queue.push_back(Step {
+                    edge: entry_device.edge,
+                    dir,
+                    path: Vec::new(),
+                    switches: Vec::new(),
+                    flank: Vec::new(),
+                });
+            }
+        }
+
+        while let Some(step) = queue.pop_front() {
+            // On the entry signal's own edge the exit has to lie ahead of it;
+            // every other edge is entered at its near end, so anything on it
+            // is ahead by construction.
+            if step.edge == exit_device.edge
+                && (!step.path.is_empty()
+                    || (exit_device.s - entry_device.s) * step.dir as f64 > 0.0)
+            {
+                let mut switches = step.switches;
+                let mut flank = step.flank;
+                let diverging = switches
+                    .iter()
+                    .any(|(_, p)| *p == SwitchPosition::Diverging);
+                let sections = self.sections_over(&step.path);
+                // The speed the route ends at decides the regular overlap: a
+                // diverging route is entered at the entry signal's Zs3 speed,
+                // a straight one at what the line permits at the exit signal.
+                let speed = if diverging {
+                    entry_signal.diverging_speed.unwrap_or(40.0)
+                } else {
+                    self.speed_at(exit_device.edge, exit_device.s)
+                        .unwrap_or(100.0)
+                };
+                let length = overlap.unwrap_or_else(|| regular_overlap(speed));
+                let overlap = self
+                    .overlap_after(
+                        exit_device.edge,
+                        exit_device.s,
+                        step.dir,
+                        length,
+                        &mut switches,
+                        &mut flank,
+                    )
+                    .into_iter()
+                    // What the route locks anyway needs no second entry.
+                    .filter(|s| !sections.contains(s))
+                    .collect();
+                return Some(RouteSource {
+                    entry,
+                    exit,
+                    diverging,
+                    switches,
+                    sections,
+                    overlap,
+                    flank,
+                });
+            }
+            let Some(edge) = self.edges.get(step.edge as usize) else {
+                continue;
+            };
+            let (node, at_end) = if step.dir > 0 {
+                (edge.to, true)
+            } else {
+                (edge.from, false)
+            };
+            let mut flank = step.flank.clone();
+            self.flank_at(node, (step.edge, at_end), &mut flank);
+            for (next, switch) in self.continuations(node, (step.edge, at_end)) {
+                if let Some((n, position)) = switch
+                    && step.switches.iter().any(|(m, p)| *m == n && *p != position)
+                {
+                    continue; // this path already fixed that switch the other way
+                }
+                let dir = if next.1 { -1 } else { 1 };
+                if !seen.insert((next.0, dir)) {
+                    continue;
+                }
+                let mut path = step.path.clone();
+                path.push(next.0);
+                let mut switches = step.switches.clone();
+                switches.extend(switch);
+                queue.push_back(Step {
+                    edge: next.0,
+                    dir,
+                    path,
+                    switches,
+                    flank: flank.clone(),
+                });
+            }
+        }
+        None
     }
 
     /// Geo anchor (point + compass heading) of the end of compiled edge `index` —
@@ -718,6 +1299,24 @@ impl LineSource {
             }
         }
 
+        // Flank protection: a guard that addresses nothing protects nothing.
+        for (i, r) in self.routes.iter().enumerate() {
+            let broken = r.flank.iter().any(|g| match g {
+                FlankSource::Switch(node, _) => !matches!(
+                    self.nodes.get(*node as usize),
+                    Some(NodeSource::Switch { .. })
+                ),
+                // A distant signal announces; it holds nothing at stop.
+                FlankSource::Signal(signal) => self
+                    .signals
+                    .get(*signal as usize)
+                    .is_none_or(|s| !s.kind.holds_a_flank()),
+            });
+            if broken {
+                issues.push(RuleIssue::FlankGuardInvalid { route: i as u32 });
+            }
+        }
+
         for (b, boundary) in self.boundaries.iter().enumerate() {
             match self.nodes.get(boundary.node as usize) {
                 Some(NodeSource::Buffer) => {}
@@ -936,6 +1535,18 @@ impl LineSource {
                 .iter()
                 .map(|s| sim_core::interlock::SectionId(*s))
                 .collect();
+            route.flank = r
+                .flank
+                .iter()
+                .map(|g| match g {
+                    FlankSource::Switch(node, position) => node_ids
+                        .get(*node as usize)
+                        .copied()
+                        .map(|id| FlankGuard::Switch(id, *position))
+                        .ok_or(CompileError::UnknownNode(*node)),
+                    FlankSource::Signal(signal) => Ok(FlankGuard::Signal(SignalId(*signal))),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             route.diverging = r.diverging;
             interlock.add_route(route);
         }
@@ -1009,6 +1620,414 @@ mod tests {
         assert_eq!(line.signals.len(), 1);
         assert_eq!(line.signals[0].kind, SignalKind::Distant);
         assert_eq!(line.signals[0].next, None);
+    }
+
+    /// Dropping a signal table entry leaves the mast standing and takes every
+    /// reference with it — the `next` link, the route, and the magnets that
+    /// named it in their payload text.
+    #[test]
+    fn removing_a_signal_entry_remaps_the_magnets() {
+        let mut line = musterbahn();
+        line.remove_signal(0); // the distant signal
+        line.compile().expect("still compiles");
+        assert_eq!(line.signals.len(), 1);
+        assert_eq!(line.signals[0].kind, SignalKind::Main);
+        assert_eq!(line.devices.len(), 9, "the device stays");
+
+        let signal_of = |device: usize| {
+            ron::from_str::<MagnetPayload>(&line.devices[device].payload)
+                .expect("magnet payload")
+                .signal
+        };
+        assert_eq!(signal_of(1), None, "1000 Hz lost its signal");
+        assert_eq!(signal_of(3), Some(0), "500 Hz follows the main signal down");
+        assert_eq!(signal_of(4), Some(0));
+        assert!(
+            line.check(&Default::default(), &Default::default())
+                .iter()
+                .all(|i| !matches!(i, RuleIssue::MagnetPayloadInvalid { .. }))
+        );
+    }
+
+    /// A section is addressed by index from three places at once; removing one
+    /// has to move all three, and a block marker left without its section says
+    /// so rather than marking the next one.
+    #[test]
+    fn removing_a_section_remaps_every_reference() {
+        let mut line = musterbahn();
+        line.remove_section(1);
+        line.compile().expect("still compiles");
+        assert_eq!(line.sections.len(), 2);
+        assert_eq!(line.signals[1].guarded, vec![1], "was [1, 2]");
+        assert_eq!(line.devices[7].payload, "", "marker was on the removed one");
+        assert_eq!(
+            ron::from_str::<BlockMarkerPayload>(&line.devices[8].payload)
+                .unwrap()
+                .section,
+            1,
+            "was section 2"
+        );
+    }
+
+    /// A straight run: the route from the main signal to a signal three
+    /// tracks along picks up the sections behind it — but not the one it
+    /// stands in, which is where the train waiting for the route is.
+    #[test]
+    fn a_route_collects_the_sections_behind_the_entry_signal() {
+        let mut line = musterbahn();
+        line.devices.push(DeviceSource {
+            kind: DeviceKind::Signal,
+            edge: 2,
+            s: 2800.0,
+            facing: Facing::Forward,
+            lateral_offset: 3.5,
+            payload: String::new(),
+        });
+        line.signals.push(SignalSource {
+            kind: SignalKind::Main,
+            system: SignalSystem::HV,
+            device: line.devices.len() as u32 - 1,
+            next: None,
+            guarded: vec![],
+            requires_route: false,
+            diverging_speed: None,
+            signal_type: None,
+            model: None,
+        });
+
+        // Signal 1 is the main signal at km 2.0 on edge 0, signal 2 the new one.
+        let route = line.route_between(1, 2, None).expect("a path exists");
+        assert_eq!(route.sections, vec![1, 2], "edge 0 stays out");
+        assert!(route.switches.is_empty());
+        assert!(!route.diverging);
+        // 160 km/h at the exit → a 300 m overlap, and 200 m of edge 2 are
+        // left behind the signal, so it stays inside the route's own section.
+        assert!(route.overlap.is_empty(), "the overlap runs on in section 2");
+
+        // Backwards there is no path: the signals only act forwards.
+        assert!(line.route_between(2, 1, None).is_none());
+    }
+
+    /// The overlap follows the rulebook staircase by default and can be
+    /// overridden; where it runs past the exit signal's own section, that
+    /// section joins the route as an overlap.
+    #[test]
+    fn the_overlap_follows_the_rulebook_and_the_override() {
+        assert_eq!(regular_overlap(25.0), 50.0);
+        assert_eq!(regular_overlap(60.0), 100.0);
+        assert_eq!(regular_overlap(100.0), 200.0);
+        assert_eq!(regular_overlap(160.0), 300.0);
+
+        let mut line = musterbahn();
+        // Exit signal 100 m before the end of edge 1 (the curve, 130 km/h),
+        // so the regular 300 m overlap runs on into edge 2.
+        line.devices.push(DeviceSource {
+            kind: DeviceKind::Signal,
+            edge: 1,
+            s: 900.0,
+            facing: Facing::Forward,
+            lateral_offset: 3.5,
+            payload: String::new(),
+        });
+        line.signals.push(SignalSource {
+            kind: SignalKind::Main,
+            system: SignalSystem::HV,
+            device: line.devices.len() as u32 - 1,
+            next: None,
+            guarded: vec![],
+            requires_route: false,
+            diverging_speed: None,
+            signal_type: None,
+            model: None,
+        });
+
+        let route = line.route_between(1, 2, None).expect("a path exists");
+        assert_eq!(route.sections, vec![1], "up to the exit signal");
+        assert_eq!(route.overlap, vec![2], "300 m reach into the next section");
+
+        // A shorter overlap by hand stays inside the exit signal's own edge.
+        let short = line.route_between(1, 2, Some(50.0)).expect("a path exists");
+        assert!(short.overlap.is_empty());
+    }
+
+    /// Over a turnout the search reports the position the leg needs, and a
+    /// route over the diverging leg marks itself as one.
+    #[test]
+    fn a_route_over_a_turnout_reports_its_position() {
+        let mut line = musterbahn();
+        let (joint, straight) = line.split_edge(0, 2500.0).expect("splits");
+        let buffer = line.nodes.len() as u32;
+        line.nodes.push(NodeSource::Buffer);
+        let branch = line.edges.len() as u32;
+        line.edges.push(EdgeSource {
+            from: joint,
+            to: buffer,
+            start: EdgeStart::Continue { edge: 0 },
+            segments: vec![Segment::straight(800.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+        });
+        line.nodes[joint as usize] = NodeSource::Switch {
+            root: (0, true),
+            straight: (straight, false),
+            diverging: (branch, false),
+            throw_time: 6.0,
+        };
+        line.sections.push(SectionSource {
+            edges: vec![branch],
+        });
+        let branch_section = line.sections.len() as u32 - 1;
+        // A signal on each leg: 2 on the branch, 3 on the straight one.
+        for (edge, s) in [(branch, 600.0), (straight, 400.0)] {
+            line.devices.push(DeviceSource {
+                kind: DeviceKind::Signal,
+                edge,
+                s,
+                facing: Facing::Forward,
+                lateral_offset: 3.5,
+                payload: String::new(),
+            });
+            line.signals.push(SignalSource {
+                kind: SignalKind::Main,
+                system: SignalSystem::HV,
+                device: line.devices.len() as u32 - 1,
+                next: None,
+                guarded: vec![],
+                requires_route: false,
+                diverging_speed: None,
+                signal_type: None,
+                model: None,
+            });
+        }
+        line.compile().expect("still compiles");
+
+        // Main signal (1) over the diverging leg to the branch signal (2).
+        // A diverging route without a Zs3 speed is entered at 40 km/h, so its
+        // overlap is the 100 m step — and 200 m of the branch are left.
+        let over_branch = line.route_between(1, 2, None).expect("a path exists");
+        assert_eq!(
+            over_branch.switches,
+            vec![(joint, SwitchPosition::Diverging)]
+        );
+        assert!(over_branch.diverging);
+        assert_eq!(over_branch.sections, vec![branch_section]);
+        assert!(over_branch.overlap.is_empty());
+
+        // The same entry signal to the signal on the straight leg: same
+        // turnout, other position, and no longer a diverging route. The
+        // second half stayed in section 0 when the edge was split.
+        let through = line.route_between(1, 3, None).expect("a path exists");
+        assert_eq!(through.switches, vec![(joint, SwitchPosition::Straight)]);
+        assert!(!through.diverging);
+        assert_eq!(through.sections, vec![0]);
+
+        // Both run into the turnout facing, so it guards them itself: the
+        // position the route needs is the one that leads a flank movement
+        // away (see `flank_protection_...` for the trailing case).
+        assert!(over_branch.flank.is_empty());
+        assert!(through.flank.is_empty());
+
+        // What the signal itself offers: one route per leg of the turnout,
+        // each ending at the next signal on that leg. The distant signal (0)
+        // is no target, and nothing runs from it either.
+        let offered = line.routes_from(1, None);
+        let mut exits: Vec<u32> = offered.iter().map(|r| r.exit).collect();
+        exits.sort_unstable();
+        assert_eq!(exits, vec![2, 3], "one route per leg");
+        assert_eq!(offered.iter().filter(|r| r.diverging).count(), 1);
+        assert!(line.routes_from(0, None).is_empty(), "distant signal");
+    }
+
+    /// Adds a signal on `(edge, s)` and returns its index in the table.
+    fn add_signal(line: &mut LineSource, edge: u32, s: f64, facing: Facing) -> u32 {
+        line.devices.push(DeviceSource {
+            kind: DeviceKind::Signal,
+            edge,
+            s,
+            facing,
+            lateral_offset: 3.5,
+            payload: String::new(),
+        });
+        line.signals.push(SignalSource {
+            kind: SignalKind::Main,
+            system: SignalSystem::HV,
+            device: line.devices.len() as u32 - 1,
+            next: None,
+            guarded: vec![],
+            requires_route: false,
+            diverging_speed: None,
+            signal_type: None,
+            model: None,
+        });
+        line.signals.len() as u32 - 1
+    }
+
+    /// Flank protection (Ril 819): where a route trails a turnout, the leg it
+    /// does not use joins the path there, and the search reports what holds a
+    /// movement off it — the signal covering that leg, or, without one, the
+    /// next turnout laid so it leads the movement away.
+    #[test]
+    fn flank_protection_comes_from_the_signal_or_the_turnout_beyond() {
+        let mut line = musterbahn();
+        let (joint, straight) = line.split_edge(0, 2500.0).expect("splits");
+        let buffer = line.nodes.len() as u32;
+        line.nodes.push(NodeSource::Buffer);
+        let branch = line.edges.len() as u32;
+        line.edges.push(EdgeSource {
+            from: joint,
+            to: buffer,
+            start: EdgeStart::Continue { edge: 0 },
+            segments: vec![Segment::straight(800.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+        });
+        line.nodes[joint as usize] = NodeSource::Switch {
+            root: (0, true),
+            straight: (straight, false),
+            diverging: (branch, false),
+            throw_time: 6.0,
+        };
+
+        // The route runs back towards the line: out of the straight leg, over
+        // the turnout it trails. The branch joins it there.
+        let entry = add_signal(&mut line, straight, 400.0, Facing::Backward);
+        let exit = add_signal(&mut line, 0, 1500.0, Facing::Backward);
+        // A signal covering the branch in the direction of the turnout.
+        let guard = add_signal(&mut line, branch, 200.0, Facing::Backward);
+        line.compile().expect("compiles");
+
+        let route = line
+            .route_between(entry, exit, Some(0.0))
+            .expect("a path exists");
+        assert_eq!(route.switches, vec![(joint, SwitchPosition::Straight)]);
+        assert_eq!(
+            route.flank,
+            vec![FlankSource::Signal(guard)],
+            "the signal on the branch holds the flank"
+        );
+
+        // Without that signal, the turnout the branch runs into takes over —
+        // laid to diverging it leads a movement away from the route.
+        line.remove_signal(guard as usize);
+        let far_root = line.edges.len() as u32;
+        for _ in 0..2 {
+            let end = line.nodes.len() as u32;
+            line.nodes.push(NodeSource::Buffer);
+            line.edges.push(EdgeSource {
+                from: buffer,
+                to: end,
+                start: EdgeStart::Continue { edge: branch },
+                segments: vec![Segment::straight(300.0)],
+                grade: vec![],
+                cant: vec![],
+                speed: vec![],
+                track_type: vec![],
+            });
+        }
+        line.nodes[buffer as usize] = NodeSource::Switch {
+            root: (far_root, false),
+            straight: (branch, true),
+            diverging: (far_root + 1, false),
+            throw_time: 6.0,
+        };
+        line.compile().expect("still compiles");
+
+        let route = line
+            .route_between(entry, exit, Some(0.0))
+            .expect("a path exists");
+        assert_eq!(
+            route.flank,
+            vec![FlankSource::Switch(buffer, SwitchPosition::Diverging)]
+        );
+        assert!(
+            line.check(&Default::default(), &Default::default())
+                .iter()
+                .all(|i| !matches!(i, RuleIssue::FlankGuardInvalid { .. })),
+            "a derived guard is a valid one"
+        );
+
+        // A guard that names a node which is no switch is a finding.
+        line.routes.push(RouteSource {
+            entry,
+            exit,
+            switches: vec![],
+            sections: vec![],
+            overlap: vec![],
+            flank: vec![FlankSource::Switch(1, SwitchPosition::Straight)],
+            diverging: false,
+        });
+        assert!(
+            line.check(&Default::default(), &Default::default())
+                .contains(&RuleIssue::FlankGuardInvalid { route: 0 })
+        );
+    }
+
+    /// A track lock is a signal with two states, so it falls out of the same
+    /// tables: it holds a flank, but no route ends at it and none starts
+    /// there — a train move is never authorised to a track lock.
+    #[test]
+    fn a_track_lock_guards_the_flank_but_ends_no_route() {
+        let mut line = musterbahn();
+        let (joint, straight) = line.split_edge(0, 2500.0).expect("splits");
+        let buffer = line.nodes.len() as u32;
+        line.nodes.push(NodeSource::Buffer);
+        let branch = line.edges.len() as u32;
+        line.edges.push(EdgeSource {
+            from: joint,
+            to: buffer,
+            start: EdgeStart::Continue { edge: 0 },
+            segments: vec![Segment::straight(800.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+        });
+        line.nodes[joint as usize] = NodeSource::Switch {
+            root: (0, true),
+            straight: (straight, false),
+            diverging: (branch, false),
+            throw_time: 6.0,
+        };
+        let entry = add_signal(&mut line, straight, 400.0, Facing::Backward);
+        let exit = add_signal(&mut line, 0, 1500.0, Facing::Backward);
+        // On the branch, close to the turnout, where a track lock belongs.
+        let lock = add_signal(&mut line, branch, 50.0, Facing::Backward);
+        line.signals[lock as usize].kind = SignalKind::TrackLock;
+        line.compile().expect("compiles");
+
+        let route = line
+            .route_between(entry, exit, Some(0.0))
+            .expect("a path exists");
+        assert_eq!(
+            route.flank,
+            vec![FlankSource::Signal(lock)],
+            "the track lock holds the flank"
+        );
+        // And it starts none of its own.
+        assert!(line.routes_from(lock, Some(0.0)).is_empty());
+
+        // Nor does a route end at one: a lock on the branch, in the running
+        // direction of the main signal (1), is no target — as a main signal
+        // in the same spot would be.
+        let ahead = add_signal(&mut line, branch, 500.0, Facing::Forward);
+        line.signals[ahead as usize].kind = SignalKind::TrackLock;
+        assert!(
+            line.routes_from(1, Some(0.0))
+                .iter()
+                .all(|r| r.exit != ahead),
+            "no route is offered to a track lock"
+        );
+        line.signals[ahead as usize].kind = SignalKind::Main;
+        assert!(
+            line.routes_from(1, Some(0.0))
+                .iter()
+                .any(|r| r.exit == ahead),
+            "the same signal as a main signal ends one"
+        );
     }
 
     /// Splitting must be invisible to the geometry: the cut is continuous,

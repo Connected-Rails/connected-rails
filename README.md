@@ -1,6 +1,6 @@
 # Connected Rails
 
-[![CI](https://github.com/vanlueckn/open-train-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/vanlueckn/open-train-simulator/actions/workflows/ci.yml)
+[![CI](https://github.com/Connected-Rails/connected-rails/actions/workflows/ci.yml/badge.svg)](https://github.com/Connected-Rails/connected-rails/actions/workflows/ci.yml)
 
 A **mod-first** German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
 Current state and open points: [STATUS.md](STATUS.md).
@@ -57,6 +57,10 @@ mods/<id>/mod.ron           id, name, version, author, depends, enabled
          /scenarios/*.ron   triggers and actions
          /timetable/*.ron   timetables (stop scoring, referenced by a scenario)
          /signals/*.ron     signal types (aspect table + optional script)
+         /signal_models/*.ron signal models: glTF parts on mount points, lamp bindings
+         /track_types/*.ron superstructure classes: texture, speed limit, roughness, LZB flag
+         /objects/*.ron     track objects: a 3D model plus its pose relative to the track
+         /displays/*.html   cab displays as an HTML/CSS/JS page
          /scripts/*.lua     behaviour
          /assets/…          models, textures, sounds — as `mods://<id>/assets/…`
 ```
@@ -193,11 +197,13 @@ alignment from the OSM points.
 | `sim-core` | Driving dynamics, air brake, electrics, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |
 | `content` | Vehicle database, line source format (RON) + compiler, scenarios, OSM/DGM importer (ch. 15) |
 | `mod-runtime` | Mod discovery, declarative content, Lua behaviour hooks (ch. 19) |
+| `html-display` | HTML/CSS/JS cab displays: parser, layout, script engine — in-engine, no browser (ch. 12) |
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
+| `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, track objects, floating-origin anchoring |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13); text in Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
-| `route-editor` | Route editor: top-down view with aerial imagery overlay (ch. 15) |
+| `route-editor` | Route editor: top-down view over aerial imagery — track, equipment, objects, vegetation, terrain (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
 | `signal-editor` | Signal editor: modular signal models — glTF parts on mount points, lamp bindings (ch. 15) |
 
@@ -221,6 +227,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
 | `N` / `M` / `B` | LZB takeover / end / function test |
 | `Y` | Wipers: off → interval → slow → fast (cycles) |
+| `U` | Train type switch (Zugartschalter): O → M → U, at standstill |
 | `H` | Horn |
 | `1`–`4` | Battery / pantograph / main switch / compressor |
 | `5` | Start the diesel engine |
@@ -441,7 +448,7 @@ A scenario is a RON file of events — triggers plus actions:
          actions: [Announcement("RE 4711, Abfahrt frei.")]),
         (name: "regen", trigger: After(event: "abfahrt", delay: 60.0),
          actions: [SetWeather(Rain), Message("Regen setzt ein.")]),
-        (name: "ziel", trigger: TrainStopped(train: 0, edge: (2), s: 2600.0, radius: 50.0),
+        (name: "ziel", trigger: TrainStopped(train: 0, edge: EdgeId(2), s: 2600.0, radius: 50.0),
          actions: [Finish(success: true, reason: "Musterstadt erreicht")]),
     ],
 )

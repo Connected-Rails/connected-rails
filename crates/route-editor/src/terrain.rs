@@ -139,8 +139,14 @@ pub fn update(
             .builder_lock()
             .map(|b| b.tree_objects().to_vec())
             .unwrap_or_default();
-        view.trees =
-            world_render::tree_catalog(&names, &objects.map, &assets, &mut meshes, &mut materials);
+        view.trees = world_render::tree_catalog(
+            &names,
+            &objects.map,
+            &assets,
+            &mut meshes,
+            &mut materials,
+            default(),
+        );
         view.generation += 1;
         view.empty.clear();
         // A module that carries its ground shows it; one without would only

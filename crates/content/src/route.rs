@@ -2398,6 +2398,8 @@ mod tests {
                 lateral_offset: -3.5,
                 yaw_deg: 0.0,
                 height: 0.0,
+                autumn_model: None,
+                winter_model: None,
             },
         );
         assert!(line.check(&types, &objects).is_empty());

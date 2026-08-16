@@ -102,9 +102,39 @@ pub struct ObjectSource {
     /// 0 = the model's front points along increasing arc length.
     #[serde(default)]
     pub yaw_deg: f64,
-    /// Height above the railhead [m].
+    /// Height above the railhead [m] — above the *terrain* instead when
+    /// `snap_to_terrain` is set.
     #[serde(default)]
     pub height: f64,
+    /// Put the object's base on the terrain surface instead of the rail plane;
+    /// `height` then measures from the ground. Resolved by the app, which has
+    /// the elevation data — the editor map is unaffected.
+    #[serde(default)]
+    pub snap_to_terrain: bool,
+}
+
+/// A single tree — geo-positioned, standing on the terrain (plan ch. 14
+/// "vegetation as streamed instances"). Placed one by one with the tree tool,
+/// or baked in rows by the forest brush and the forest import.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TreeSource {
+    /// 3D object from a mod (`objects/*.ron`, `"<mod>:<name>"`); empty means
+    /// the app's built-in placeholder tree.
+    #[serde(default)]
+    pub object: String,
+    /// Position [deg]; the height comes from the terrain.
+    pub lat: f64,
+    pub lon: f64,
+    /// Rotation about the up axis [deg], clockwise seen from above.
+    #[serde(default)]
+    pub yaw_deg: f64,
+    /// Uniform scale on the object's own size.
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+}
+
+fn default_scale() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -191,6 +221,12 @@ pub struct LineSource {
     /// them — they are the line's furniture.
     #[serde(default)]
     pub objects: Vec<ObjectSource>,
+    /// Trees (geo-positioned, height from the terrain) — placed one by one, or
+    /// baked in rows of thousands by the editor's forest brush and forest
+    /// import. Every tree is an ordinary entry, so every tree can be moved or
+    /// deleted on its own.
+    #[serde(default)]
+    pub trees: Vec<TreeSource>,
     #[serde(default)]
     pub sections: Vec<SectionSource>,
     #[serde(default)]
@@ -2141,6 +2177,7 @@ mod tests {
             ],
             devices: vec![],
             objects: vec![],
+            trees: vec![],
             sections: vec![],
             signals: vec![],
             routes: vec![],
@@ -2247,6 +2284,7 @@ mod tests {
             lateral_offset: -3.5,
             yaw_deg: 0.0,
             height: 0.0,
+            snap_to_terrain: false,
         };
         let mut line = musterbahn();
         line.objects = vec![mast(0, 500.0), mast(0, 2500.0), mast(1, 100.0)];

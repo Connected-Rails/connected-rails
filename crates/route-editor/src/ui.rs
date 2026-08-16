@@ -175,6 +175,7 @@ fn undo(line: &mut Line, history: &mut History, state: &mut EditorState) {
     state.selection = Selection::None;
     state.drawing = None;
     state.drag = None;
+    state.marked.clear();
 }
 
 fn redo(line: &mut Line, history: &mut History, state: &mut EditorState) {
@@ -182,6 +183,7 @@ fn redo(line: &mut Line, history: &mut History, state: &mut EditorState) {
     state.selection = Selection::None;
     state.drawing = None;
     state.drag = None;
+    state.marked.clear();
 }
 
 /// The owner of every native dialog. Without one, Windows is free to open the
@@ -346,6 +348,52 @@ fn open(line: &mut Line, history: &mut History, state: &mut EditorState, overlay
     }
 }
 
+/// File ▸ Import forest: reads an Overpass JSON extract and **bakes** its
+/// `landuse=forest` / `natural=wood` polygons into single trees — the same
+/// fill as the forest brush, so every imported tree is an ordinary [`content::
+/// TreeSource`] that can be moved or deleted like a hand-set one. An optional
+/// aid; whoever wants every tree hand-set simply never uses it. Species and
+/// density come from the vegetation tool options.
+fn import_forest(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay) {
+    let Some(path) = file_dialog(state)
+        .add_filter(t!("filter-overpass-json"), &["json"])
+        .pick_file()
+    else {
+        return;
+    };
+    let parsed = std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| content::import::parse_forests(&text).map_err(|e| e.to_string()));
+    match parsed {
+        Ok(polygons) if polygons.is_empty() => {
+            overlay.status = t!("status-forest-import-empty", file = path.display());
+        }
+        Ok(polygons) => {
+            let areas = polygons.len();
+            let objects: Vec<String> = state.tree_object.iter().cloned().collect();
+            let mut baked = 0;
+            for polygon in polygons {
+                let trees = content::terrain::fill_polygon(
+                    &polygon,
+                    &objects,
+                    state.forest_area.unwrap_or(500.0),
+                    line.source.trees.len() as u64,
+                    tools::utm_zone_of(polygon[0].1),
+                    |lat, lon| tools::clear_of_track(&line.net, lat, lon),
+                );
+                baked += trees.len();
+                line.source.trees.extend(trees);
+            }
+            overlay.status = t!("status-forest-imported", count = baked, areas = areas);
+        }
+        Err(e) => report_failure(
+            state,
+            overlay,
+            t!("status-error", file = path.display(), error = e),
+        ),
+    }
+}
+
 fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
     line.source = LineSource {
         name: "Line".into(),
@@ -354,6 +402,7 @@ fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
         edges: vec![],
         devices: vec![],
         objects: vec![],
+        trees: vec![],
         sections: vec![],
         signals: vec![],
         routes: vec![],
@@ -408,6 +457,11 @@ fn menu_bar(
                         save_as(line, state, overlay);
                     }
                     ui.separator();
+                    if ui.button(t!("action-import-forest")).clicked() {
+                        ui.close();
+                        import_forest(line, state, overlay);
+                    }
+                    ui.separator();
                     if ui.button(t!("action-load-imagery")).clicked() {
                         request.load_config = true;
                         ui.close();
@@ -442,12 +496,14 @@ fn menu_bar(
                         ui.close();
                     }
                     ui.separator();
+                    let has_target = state.selection != Selection::None || !state.marked.is_empty();
                     let delete_button = egui::Button::new(t!("action-delete"));
-                    if ui
-                        .add_enabled(state.selection != Selection::None, delete_button)
-                        .clicked()
-                    {
-                        tools::delete_selection(line, state);
+                    if ui.add_enabled(has_target, delete_button).clicked() {
+                        if state.marked.is_empty() {
+                            tools::delete_selection(line, state);
+                        } else {
+                            tools::delete_marked(line, state);
+                        }
                         ui.close();
                     }
                 });
@@ -681,9 +737,62 @@ fn left_panel(
                                 });
                             }
                         }
+                        if matches!(state.tool, Tool::PlaceTree | Tool::PlaceForest) {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("place-tree").show(ui, |ui| {
+                                row(ui, "veg-species", |ui| {
+                                    let mut species = state.tree_object.clone().unwrap_or_default();
+                                    species_combo(ui, "place-tree-kind", objects, &mut species);
+                                    state.tree_object = (!species.is_empty()).then_some(species);
+                                });
+                                if state.tool == Tool::PlaceForest {
+                                    row(ui, "forest-area", |ui| {
+                                        let mut area = state.forest_area.unwrap_or(500.0);
+                                        let field = editor_ui::field(
+                                            ui,
+                                            &mut area,
+                                            10.0,
+                                            10.0..=10_000.0,
+                                            "m²",
+                                        );
+                                        if field.changed() {
+                                            state.forest_area = Some(area);
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                        if state.tool == Tool::Brush {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("brush").show(ui, |ui| {
+                                row(ui, "brush-radius", |ui| {
+                                    let mut radius = state.brush_radius.unwrap_or(30.0);
+                                    if editor_ui::field(ui, &mut radius, 1.0, 2.0..=500.0, "m")
+                                        .changed()
+                                    {
+                                        state.brush_radius = Some(radius);
+                                    }
+                                });
+                            });
+                            ui.small(t!("brush-marked", count = state.marked.len()));
+                            ui.horizontal(|ui| {
+                                let delete = egui::Button::new(t!("action-delete-marked"));
+                                if ui.add_enabled(!state.marked.is_empty(), delete).clicked() {
+                                    tools::delete_marked(line, state);
+                                }
+                                let clear = egui::Button::new(t!("action-clear-marked"));
+                                if ui.add_enabled(!state.marked.is_empty(), clear).clicked() {
+                                    state.marked.clear();
+                                }
+                            });
+                        }
                         if let Some(drawing) = &state.drawing {
                             ui.add_space(space::XS);
                             ui.small(t!("draw-active", segments = drawing.segments.len()));
+                        }
+                        if !state.forest_points.is_empty() {
+                            ui.add_space(space::XS);
+                            ui.small(t!("forest-active", corners = state.forest_points.len()));
                         }
                     });
 
@@ -694,7 +803,7 @@ fn left_panel(
                         "selection",
                         "heading-selection",
                         |ui| {
-                            selection_panel(ui, line, state, types, focus, overlay);
+                            selection_panel(ui, line, state, types, objects, focus, overlay);
                         },
                     );
 
@@ -756,6 +865,9 @@ fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
             (Tool::PlaceDevice, "tool-device"),
             (Tool::PlaceSwitch, "tool-switch"),
             (Tool::PlaceObject, "tool-object"),
+            (Tool::PlaceTree, "tool-tree"),
+            (Tool::PlaceForest, "tool-forest"),
+            (Tool::Brush, "tool-brush"),
         ] {
             let mut chip = ui.selectable_label(state.tool == tool, t!(key));
             if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
@@ -764,9 +876,33 @@ fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
             if chip.clicked() && state.tool != tool {
                 state.tool = tool;
                 state.drawing = None;
+                state.forest_points.clear();
             }
         }
     });
+}
+
+/// Species picker of the vegetation tools and panels: the placeholder tree
+/// (empty string), or any installed `objects/*.ron`.
+fn species_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, value: &mut String) {
+    let placeholder = t!("veg-placeholder");
+    egui::ComboBox::from_id_salt(id)
+        .width(space::FIELD)
+        .selected_text(if value.is_empty() {
+            placeholder.clone()
+        } else {
+            value.clone()
+        })
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(value.is_empty(), placeholder).clicked() {
+                value.clear();
+            }
+            for name in objects.map.keys() {
+                if ui.selectable_label(value == name, name).clicked() {
+                    *value = name.clone();
+                }
+            }
+        });
 }
 
 fn selection_panel(
@@ -774,6 +910,7 @@ fn selection_panel(
     line: &mut Line,
     state: &mut EditorState,
     types: &TrackTypes,
+    objects: &TrackObjects,
     focus: &mut Focus,
     overlay: &mut Overlay,
 ) {
@@ -904,6 +1041,9 @@ fn selection_panel(
                 row(ui, "obj-height", |ui| {
                     editor_ui::field(ui, &mut object.height, 0.1, -10.0..=50.0, "m");
                 });
+                row(ui, "obj-snap", |ui| {
+                    ui.checkbox(&mut object.snap_to_terrain, "");
+                });
             });
             repeat_rows(ui, line, state, i, edge_length);
             ui.add_space(space::XS);
@@ -912,6 +1052,34 @@ fn selection_panel(
                     && let Some(p) = position
                 {
                     focus.position = p;
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
+        }
+        Selection::Tree(i) => {
+            let Some(tree) = line.source.trees.get(i) else {
+                return;
+            };
+            let position = tools::tree_pos(tree, focus);
+            ui.label(t!("sel-tree-summary", index = i));
+            let tree = &mut line.source.trees[i];
+            editor_ui::form_grid("sel-tree").show(ui, |ui| {
+                row(ui, "veg-species", |ui| {
+                    species_combo(ui, "sel-tree-species", objects, &mut tree.object);
+                });
+                row(ui, "tree-yaw", |ui| {
+                    editor_ui::field(ui, &mut tree.yaw_deg, 1.0, -360.0..=360.0, "°");
+                });
+                row(ui, "tree-scale", |ui| {
+                    editor_ui::field(ui, &mut tree.scale, 0.05, 0.2..=5.0, "");
+                });
+            });
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked() {
+                    focus.position = position;
                 }
                 if ui.button(t!("action-delete")).clicked() {
                     tools::delete_selection(line, state);

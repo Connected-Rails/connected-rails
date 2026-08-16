@@ -18,6 +18,7 @@
 //! driving (plan 4.3).
 
 use crate::import::dgm::TerrainSource;
+use crate::route::{LineSource, TreeSource};
 use glam::DVec2;
 use std::collections::HashMap;
 use track_model::TrackNetwork;
@@ -76,12 +77,32 @@ pub struct TerrainTile {
     /// Positions in render axes (x = east, y = up, z = −north), relative to the anchor.
     pub positions: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
+    /// Splat weights per vertex, summing to 1: grass, rock (steep ground) and
+    /// gravel (the strip beside the track). The renderer blends its ground
+    /// textures by them (plan ch. 14).
+    pub splat: Vec<[f32; 4]>,
+    /// Vegetation scattered on this tile — streamed instances (plan ch. 14).
+    pub trees: Vec<Tree>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
     pub lod: u8,
     /// Bounding radius around the anchor [m] — for view distance and culling.
     pub radius: f32,
+}
+
+/// One tree instance on a tile — a hand-placed [`TreeSource`] or one grown out
+/// of a [`ForestSource`] polygon, deterministic from tile position and seed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tree {
+    /// Foot point in render axes, relative to the tile anchor.
+    pub pos: [f32; 3],
+    /// Uniform scale on the object's own size.
+    pub scale: f32,
+    /// Rotation about up [rad].
+    pub rot: f32,
+    /// Index into [`Vegetation::objects`]; `None` is the renderer's placeholder tree.
+    pub object: Option<u16>,
 }
 
 impl TerrainTile {
@@ -199,6 +220,177 @@ fn key(p: DVec2, cell: f64) -> (i64, i64) {
     ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64)
 }
 
+/// SplitMix64 — deterministic scatter without a `rand` dependency.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in [0, 1).
+    fn f64(&mut self) -> f64 {
+        (self.next() >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// A tree of the line, converted to the UTM grid of the terrain.
+#[derive(Debug, Clone, Copy)]
+struct PlacedTree {
+    pos: DVec2,
+    rot: f32,
+    scale: f32,
+    object: Option<u16>,
+}
+
+/// The line's trees, prepared for tile builds: positions in UTM plus the
+/// catalog of 3D object names they reference.
+#[derive(Debug, Clone, Default)]
+pub struct Vegetation {
+    objects: Vec<String>,
+    trees: Vec<PlacedTree>,
+}
+
+impl Vegetation {
+    pub fn from_line(line: &LineSource, zone: u8) -> Self {
+        Self::from_parts(&line.trees, zone)
+    }
+
+    pub fn from_parts(trees: &[TreeSource], zone: u8) -> Self {
+        let mut objects = Vec::new();
+        let placed = trees
+            .iter()
+            .map(|t| {
+                let (e, n) = geo::to_utm(t.lat.to_radians(), t.lon.to_radians(), zone);
+                PlacedTree {
+                    pos: DVec2::new(e, n),
+                    // yaw is clockwise seen from above, the render rotation the
+                    // other way round — same convention as the scenery objects.
+                    rot: -t.yaw_deg.to_radians() as f32,
+                    scale: t.scale as f32,
+                    object: intern(&mut objects, &t.object),
+                }
+            })
+            .collect();
+        Self {
+            objects,
+            trees: placed,
+        }
+    }
+
+    /// The 3D object names (`"<mod>:<name>"`) that [`Tree::object`] indexes.
+    pub fn objects(&self) -> &[String] {
+        &self.objects
+    }
+}
+
+/// Keep this far from the track when baking a forest [m] — the blend zone of
+/// the default [`TerrainOptions`] plus a margin, so no tree stands on the
+/// embankment the terrain pulls up to rail height.
+pub const TREE_TRACK_CLEARANCE: f64 = 55.0;
+
+/// Fills a polygon (`(lat, lon)` [deg]) with trees — the editor's forest brush
+/// and forest import **bake** their strokes into single [`TreeSource`]s, so
+/// every tree of a wood stays individually movable and deletable. One tree per
+/// `area_per_tree` m², deterministic from `seed`; `keep` filters positions
+/// (the editor rejects points within [`TREE_TRACK_CLEARANCE`] of the track).
+pub fn fill_polygon(
+    polygon: &[(f64, f64)],
+    objects: &[String],
+    area_per_tree: f64,
+    seed: u64,
+    zone: u8,
+    mut keep: impl FnMut(f64, f64) -> bool,
+) -> Vec<TreeSource> {
+    if polygon.len() < 3 {
+        return Vec::new();
+    }
+    let ring: Vec<DVec2> = polygon
+        .iter()
+        .map(|(lat, lon)| {
+            let (e, n) = geo::to_utm(lat.to_radians(), lon.to_radians(), zone);
+            DVec2::new(e, n)
+        })
+        .collect();
+    let lo = ring.iter().copied().reduce(DVec2::min).unwrap();
+    let hi = ring.iter().copied().reduce(DVec2::max).unwrap();
+    // Below 10 m² per tree the fill is a wall of overlapping meshes — clamp
+    // rather than let a typo freeze the editor.
+    let area_per_tree = area_per_tree.max(10.0);
+    // Sampling the bounding box and rejecting outside the polygon yields one
+    // tree per `area_per_tree` inside it.
+    let attempts = ((hi.x - lo.x) * (hi.y - lo.y) / area_per_tree).ceil() as usize;
+    // ponytail: per-polygon ceiling — every baked tree is a file row and part
+    // of every undo snapshot; importing a whole state forest needs a compacter
+    // representation, not a bigger cap.
+    const BAKE_LIMIT: usize = 10_000;
+
+    let mut rng = Rng(seed ^ 0x666F_7265_7374);
+    let mut trees = Vec::new();
+    for _ in 0..attempts {
+        if trees.len() >= BAKE_LIMIT {
+            break;
+        }
+        let p = lo + DVec2::new(rng.f64(), rng.f64()) * (hi - lo);
+        // All random numbers are drawn before any rejection, so the stream —
+        // and with it every accepted tree — stays deterministic.
+        let scale = 0.7 + rng.f64() * 0.6;
+        let yaw = rng.f64() * 360.0;
+        let pick = rng.next();
+        if !point_in_polygon(p, &ring) {
+            continue;
+        }
+        let (lat, lon) = geo::from_utm(p.x, p.y, zone);
+        let (lat, lon) = (lat.to_degrees(), lon.to_degrees());
+        if !keep(lat, lon) {
+            continue;
+        }
+        let object = objects
+            .get((pick % objects.len().max(1) as u64) as usize)
+            .cloned()
+            .unwrap_or_default();
+        trees.push(TreeSource {
+            object,
+            lat,
+            lon,
+            yaw_deg: yaw,
+            scale,
+        });
+    }
+    trees
+}
+
+/// Index of `name` in the catalog, inserting it once; empty names are the placeholder.
+fn intern(objects: &mut Vec<String>, name: &str) -> Option<u16> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let index = objects.iter().position(|o| o == name).unwrap_or_else(|| {
+        objects.push(name.to_string());
+        objects.len() - 1
+    });
+    Some(index as u16)
+}
+
+/// Ray casting: is `p` inside the closed polygon?
+fn point_in_polygon(p: DVec2, polygon: &[DVec2]) -> bool {
+    let mut inside = false;
+    let mut j = polygon.len() - 1;
+    for i in 0..polygon.len() {
+        let (a, b) = (polygon[i], polygon[j]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
 /// Position of a terrain tile in the UTM tile grid.
 pub type TileKey = (i64, i64);
 
@@ -262,6 +454,7 @@ pub struct TerrainBuilder {
     centerline: Centerline,
     sources: Vec<TerrainSource>,
     options: TerrainOptions,
+    vegetation: Vegetation,
 }
 
 impl TerrainBuilder {
@@ -270,16 +463,48 @@ impl TerrainBuilder {
             centerline: Centerline::build(net, &options),
             sources,
             options,
+            vegetation: Vegetation::default(),
         }
+    }
+
+    /// Trees and forests of the line — tiles built afterwards carry them.
+    pub fn with_vegetation(mut self, vegetation: Vegetation) -> Self {
+        self.vegetation = vegetation;
+        self
+    }
+
+    /// The 3D object names of the vegetation ([`Tree::object`] indexes them).
+    pub fn tree_objects(&self) -> &[String] {
+        self.vegetation.objects()
     }
 
     pub fn options(&self) -> &TerrainOptions {
         &self.options
     }
 
+    /// Ellipsoidal height of the terrain surface at `pos` — the DGM blended
+    /// towards the rail near the track, exactly as the tile meshes are built.
+    /// For objects that snap to the terrain.
+    pub fn surface_height(&mut self, pos: EcefPos) -> f64 {
+        let (lat, lon, _) = geo::from_ecef(pos);
+        let (e, n) = geo::to_utm(lat, lon, self.options.zone);
+        let p = DVec2::new(e, n);
+        let ground = sample_height(&mut self.sources, p, lat, lon, self.options.zone)
+            .map(|h| h + self.options.geoid_offset)
+            .unwrap_or(self.options.fallback_height + self.options.geoid_offset);
+        blend_height(self.centerline.nearest(p), ground, &self.options)
+    }
+
     /// Builds a single tile; `None` if it lies outside the line corridor.
     pub fn build_key(&mut self, k: TileKey, stats: &mut TerrainStats) -> Option<TerrainTile> {
-        build_key(k, &self.centerline, &mut self.sources, &self.options, stats)
+        build_key(
+            k,
+            &self.centerline,
+            &mut self.sources,
+            &self.options,
+            &self.vegetation,
+            stats,
+        )
     }
 
     /// Every tile of the corridor, in a stable order.
@@ -317,6 +542,7 @@ fn build_key(
     centerline: &Centerline,
     sources: &mut [TerrainSource],
     options: &TerrainOptions,
+    vegetation: &Vegetation,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
     let min = tile_min(k, options.tile_size);
@@ -325,14 +551,17 @@ fn build_key(
         return None;
     }
     let (step, lod) = level_of_detail(distance, options);
-    let tile = build_tile(min, step, lod, centerline, sources, options, stats);
+    let tile = build_tile(
+        min, step, lod, centerline, sources, options, vegetation, stats,
+    );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
     stats.triangles += tile.triangles();
     Some(tile)
 }
 
-/// Builds the terrain around all tracks of the network.
+/// Builds the terrain around all tracks of the network — without vegetation
+/// (tests, tools); the app streams through [`TerrainBuilder`] instead.
 ///
 /// `sources` may be empty — then flat terrain at `fallback_height` is created, which
 /// is enough for test scenes and lines without a DGM. Several sources cover a line
@@ -349,10 +578,11 @@ pub fn build(
 
     let mut tiles = Vec::new();
     let mut stats = TerrainStats::default();
+    let vegetation = Vegetation::default();
 
     for k in corridor_keys(&centerline, options) {
         // Tiles that do not touch the corridor are dropped entirely.
-        if let Some(tile) = build_key(k, &centerline, sources, options, &mut stats) {
+        if let Some(tile) = build_key(k, &centerline, sources, options, &vegetation, &mut stats) {
             tiles.push(tile);
         }
     }
@@ -394,7 +624,20 @@ fn sample_height(
     })
 }
 
+/// Blends the DGM height towards the rail near the track (cutting/embankment).
+fn blend_height(near: Option<(f64, f64)>, ground: f64, options: &TerrainOptions) -> f64 {
+    match near {
+        Some((d, rail)) if d <= options.flatten => rail,
+        Some((d, rail)) if d <= options.blend => {
+            let t = (d - options.flatten) / (options.blend - options.flatten);
+            rail * (1.0 - t) + ground * t
+        }
+        _ => ground,
+    }
+}
+
 /// Builds a single tile.
+#[allow(clippy::too_many_arguments)]
 fn build_tile(
     min: DVec2,
     step: f64,
@@ -402,6 +645,7 @@ fn build_tile(
     centerline: &Centerline,
     sources: &mut [TerrainSource],
     options: &TerrainOptions,
+    vegetation: &Vegetation,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
     let n = (options.tile_size / step).round().max(1.0) as usize;
@@ -414,6 +658,7 @@ fn build_tile(
 
     let mut positions = Vec::with_capacity((n + 1) * (n + 1));
     let mut heights = Vec::with_capacity((n + 1) * (n + 1));
+    let mut track_dist = Vec::with_capacity((n + 1) * (n + 1));
 
     for iy in 0..=n {
         for ix in 0..=n {
@@ -427,20 +672,18 @@ fn build_tile(
                 });
 
             // Cutting/embankment: exactly rail height at the track, then blend.
-            let height = match centerline.nearest(p) {
-                Some((d, rail)) if d <= options.flatten => rail,
-                Some((d, rail)) if d <= options.blend => {
-                    let t = (d - options.flatten) / (options.blend - options.flatten);
-                    rail * (1.0 - t) + ground * t
-                }
-                _ => ground,
-            };
+            let near = centerline.nearest(p);
+            let height = blend_height(near, ground, options);
             heights.push(height);
+            track_dist.push(near.map_or(f64::INFINITY, |(d, _)| d));
 
             let world = geo::to_ecef(lat, lon, height);
             positions.push(to_render(frame.to_local(world)));
         }
     }
+
+    let mut splat = splat_weights(&heights, &track_dist, step, n, options);
+    let trees = scatter_trees(min, &heights, step, n, &frame, options, vegetation);
 
     // Regular triangulation.
     let row = n + 1;
@@ -460,6 +703,7 @@ fn build_tile(
     add_skirt(
         &mut positions,
         &mut indices,
+        &mut splat,
         &heights,
         min,
         step,
@@ -473,10 +717,95 @@ fn build_tile(
         anchor,
         positions,
         indices,
+        splat,
+        trees,
         step,
         lod,
         radius,
     }
+}
+
+/// Slope above which rock takes over from grass (rise per run, ≈ 27°).
+const ROCK_SLOPE: f64 = 0.5;
+/// Slope of pure rock (≈ 40°).
+const ROCK_FULL: f64 = 0.85;
+
+/// Splat weights per grid vertex: gravel on the strip the track flattens, rock
+/// where the ground is steep, grass elsewhere.
+fn splat_weights(
+    heights: &[f64],
+    track_dist: &[f64],
+    step: f64,
+    n: usize,
+    options: &TerrainOptions,
+) -> Vec<[f32; 4]> {
+    let row = n + 1;
+    let mut splat = Vec::with_capacity(heights.len());
+    for iy in 0..=n {
+        for ix in 0..=n {
+            // Central differences, clamped at the tile border.
+            let (x0, x1) = (ix.saturating_sub(1), (ix + 1).min(n));
+            let (y0, y1) = (iy.saturating_sub(1), (iy + 1).min(n));
+            let dx = (heights[iy * row + x1] - heights[iy * row + x0]) / ((x1 - x0) as f64 * step);
+            let dy = (heights[y1 * row + ix] - heights[y0 * row + ix]) / ((y1 - y0) as f64 * step);
+            let slope = (dx * dx + dy * dy).sqrt();
+
+            let rock = ((slope - ROCK_SLOPE) / (ROCK_FULL - ROCK_SLOPE)).clamp(0.0, 1.0);
+            let d = track_dist[iy * row + ix];
+            let gravel = ((options.blend - d) / (options.blend - options.flatten)).clamp(0.0, 1.0)
+                * (1.0 - rock);
+            let grass = 1.0 - rock - gravel;
+            splat.push([grass as f32, rock as f32, gravel as f32, 1.0]);
+        }
+    }
+    splat
+}
+
+/// Height of the tile's height grid at the UTM point `p` (bilinear).
+fn ground_at(p: DVec2, min: DVec2, heights: &[f64], step: f64, n: usize) -> f64 {
+    let row = n + 1;
+    let gx = ((p.x - min.x) / step).clamp(0.0, n as f64 - 1e-9);
+    let gy = ((p.y - min.y) / step).clamp(0.0, n as f64 - 1e-9);
+    let (ix, iy) = (gx as usize, gy as usize);
+    let (fx, fy) = (gx - ix as f64, gy - iy as f64);
+    heights[iy * row + ix] * (1.0 - fx) * (1.0 - fy)
+        + heights[iy * row + ix + 1] * fx * (1.0 - fy)
+        + heights[(iy + 1) * row + ix] * (1.0 - fx) * fy
+        + heights[(iy + 1) * row + ix + 1] * fx * fy
+}
+
+/// Places the line's trees on the tile, their feet on the height grid. Every
+/// tree stands where the file says — the forest fill already ran in the editor
+/// (see [`fill_polygon`]), so there is nothing to filter here.
+fn scatter_trees(
+    min: DVec2,
+    heights: &[f64],
+    step: f64,
+    n: usize,
+    frame: &EnuFrame,
+    options: &TerrainOptions,
+    vegetation: &Vegetation,
+) -> Vec<Tree> {
+    let tile_max = min + DVec2::splat(options.tile_size);
+    let mut trees = Vec::new();
+    for tree in &vegetation.trees {
+        let inside = tree.pos.x >= min.x
+            && tree.pos.x < tile_max.x
+            && tree.pos.y >= min.y
+            && tree.pos.y < tile_max.y;
+        if !inside {
+            continue;
+        }
+        let h = ground_at(tree.pos, min, heights, step, n);
+        let (lat, lon) = geo::from_utm(tree.pos.x, tree.pos.y, options.zone);
+        trees.push(Tree {
+            pos: to_render(frame.to_local(geo::to_ecef(lat, lon, h))),
+            scale: tree.scale,
+            rot: tree.rot,
+            object: tree.object,
+        });
+    }
+    trees
 }
 
 /// Attaches a vertical skirt to the tile border.
@@ -484,6 +813,7 @@ fn build_tile(
 fn add_skirt(
     positions: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
+    splat: &mut Vec<[f32; 4]>,
     heights: &[f64],
     min: DVec2,
     step: f64,
@@ -507,6 +837,8 @@ fn add_skirt(
         let (lat, lon) = geo::from_utm(p.x, p.y, options.zone);
         let world = geo::to_ecef(lat, lon, heights[index] - options.skirt);
         positions.push(to_render(frame.to_local(world)));
+        // The skirt continues the border vertex's ground cover downwards.
+        splat.push(splat[index]);
     }
 
     for i in 0..border.len() {
@@ -790,6 +1122,175 @@ mod tests {
         // …with one source per zone every support point has a height.
         let (_, both) = build(&net, &mut [west(), east()], &options());
         assert_eq!(both.missing, 0, "both zones together cover the corridor");
+    }
+
+    #[test]
+    fn splat_weights_follow_track_and_slope() {
+        let net = test_net();
+        let options = options();
+        let centerline = Centerline::build(&net, &options);
+        // A cliff: 1 m of height per metre east — everything off the flattened
+        // strip is steeper than `ROCK_FULL`.
+        let (e0, n0) = geo::to_utm(52.0f64.to_radians(), 10.0f64.to_radians(), 32);
+        let mut text = String::new();
+        for iy in -60..60 {
+            for ix in -20..80 {
+                let x = (e0 / 25.0).round() * 25.0 + ix as f64 * 25.0;
+                let y = (n0 / 25.0).round() * 25.0 + iy as f64 * 25.0;
+                text.push_str(&format!("{x} {y} {}\n", 100.0 + (x - e0)));
+            }
+        }
+        let cliff = TerrainSource::from_tile(HeightTile::parse_xyz(&text, 32).unwrap());
+        let (tiles, _) = build(&net, &mut [cliff], &options);
+
+        let mut gravel_near = 0;
+        let mut rock_far = 0;
+        for tile in &tiles {
+            let frame = EnuFrame::at(tile.anchor);
+            assert_eq!(tile.splat.len(), tile.positions.len());
+            let n = (options.tile_size / tile.step).round() as usize;
+            for (pos, w) in tile
+                .positions
+                .iter()
+                .zip(&tile.splat)
+                .take((n + 1) * (n + 1))
+            {
+                let sum = w[0] + w[1] + w[2];
+                assert!((sum - 1.0).abs() < 1e-3, "weights sum to {sum}");
+                let local = glam::DVec3::new(pos[0] as f64, -pos[2] as f64, pos[1] as f64);
+                let (lat, lon, _) = geo::from_ecef(frame.to_ecef(local));
+                let (e, n) = geo::to_utm(lat, lon, options.zone);
+                let Some((d, _)) = centerline.nearest(DVec2::new(e, n)) else {
+                    continue;
+                };
+                if d < options.flatten * 0.5 {
+                    assert!(w[2] > 0.9, "gravel at the track, got {w:?}");
+                    gravel_near += 1;
+                } else if d > options.blend * 2.0 && d < options.blend * 3.0 {
+                    assert!(w[1] > 0.9, "rock on the cliff, got {w:?} at d = {d:.0}");
+                    rock_far += 1;
+                }
+            }
+        }
+        assert!(
+            gravel_near > 10 && rock_far > 10,
+            "{gravel_near}/{rock_far} checked"
+        );
+    }
+
+    #[test]
+    fn placed_trees_land_on_their_tiles() {
+        let net = test_net();
+        let options = options();
+        // One oak 55 m north of the line, one baked wood 110–440 m north.
+        let mut trees = vec![crate::route::TreeSource {
+            object: "example:oak".into(),
+            lat: 52.0005,
+            lon: 10.002,
+            yaw_deg: 90.0,
+            scale: 1.2,
+        }];
+        trees.extend(fill_polygon(
+            &[
+                (52.001, 10.0),
+                (52.001, 10.01),
+                (52.004, 10.01),
+                (52.004, 10.0),
+            ],
+            &["example:fir".into()],
+            500.0,
+            7,
+            options.zone,
+            |_, _| true,
+        ));
+        let vegetation = Vegetation::from_parts(&trees, options.zone);
+        assert_eq!(vegetation.objects(), ["example:oak", "example:fir"]);
+
+        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options)
+            .with_vegetation(vegetation.clone());
+        let mut stats = TerrainStats::default();
+        let tiles: Vec<TerrainTile> = builder
+            .corridor_keys()
+            .into_iter()
+            .filter_map(|k| builder.build_key(k, &mut stats))
+            .collect();
+
+        // Every tree of the file stands on exactly one tile — the corridor
+        // covers the polygon, and no tile-level filter drops user content.
+        let spawned: usize = tiles.iter().map(|t| t.trees.len()).sum();
+        assert_eq!(spawned, trees.len(), "all trees spawn");
+        let oaks: Vec<&Tree> = tiles
+            .iter()
+            .flat_map(|t| &t.trees)
+            .filter(|t| t.object == Some(0))
+            .collect();
+        assert_eq!(oaks.len(), 1);
+        assert_eq!(oaks[0].scale, 1.2);
+
+        // Without vegetation no tile carries a tree.
+        let (bare, _) = build(&net, &mut [test_source()], &options);
+        assert!(bare.iter().all(|t| t.trees.is_empty()));
+    }
+
+    #[test]
+    fn fill_polygon_bakes_deterministic_editable_trees() {
+        let polygon = [
+            (52.001, 10.0),
+            (52.001, 10.01),
+            (52.004, 10.01),
+            (52.004, 10.0),
+        ];
+        let species = ["a:fir".to_string(), "a:beech".to_string()];
+        let bake = || fill_polygon(&polygon, &species, 500.0, 7, 32, |_, _| true);
+        let trees = bake();
+        assert_eq!(trees, bake(), "bake must be deterministic");
+
+        // Roughly one tree per 500 m² of the ~330 m × 685 m rectangle.
+        let expected = 330.0 * 685.0 / 500.0;
+        assert!(
+            (trees.len() as f64) > expected * 0.7 && (trees.len() as f64) < expected * 1.3,
+            "{} trees for ~{expected:.0} expected",
+            trees.len()
+        );
+        for tree in &trees {
+            assert!(
+                (52.001..=52.004).contains(&tree.lat) && (10.0..=10.01).contains(&tree.lon),
+                "tree outside the polygon at {:.4}, {:.4}",
+                tree.lat,
+                tree.lon
+            );
+            assert!(species.contains(&tree.object));
+        }
+        assert!(
+            trees.iter().any(|t| t.object == species[0])
+                && trees.iter().any(|t| t.object == species[1]),
+            "both species picked"
+        );
+
+        // The keep filter drops positions — the editor uses it for the track strip.
+        let kept = fill_polygon(&polygon, &species, 500.0, 7, 32, |lat, _| lat > 52.0025);
+        assert!(!kept.is_empty() && kept.len() < trees.len());
+        assert!(kept.iter().all(|t| t.lat > 52.0025));
+
+        // Degenerate input is empty, not a panic.
+        assert!(fill_polygon(&polygon[..2], &species, 500.0, 7, 32, |_, _| true).is_empty());
+    }
+
+    #[test]
+    fn point_in_polygon_handles_concave_rings() {
+        // L-shaped polygon.
+        let ring = [
+            DVec2::new(0.0, 0.0),
+            DVec2::new(4.0, 0.0),
+            DVec2::new(4.0, 2.0),
+            DVec2::new(2.0, 2.0),
+            DVec2::new(2.0, 4.0),
+            DVec2::new(0.0, 4.0),
+        ];
+        assert!(point_in_polygon(DVec2::new(1.0, 3.0), &ring));
+        assert!(point_in_polygon(DVec2::new(3.0, 1.0), &ring));
+        assert!(!point_in_polygon(DVec2::new(3.0, 3.0), &ring), "the notch");
+        assert!(!point_in_polygon(DVec2::new(5.0, 1.0), &ring));
     }
 
     #[test]

@@ -12,6 +12,7 @@ use bevy::window::PrimaryWindow;
 use content::LineSource;
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, NodeSource, ObjectSource,
+    TreeSource,
 };
 use glam::{DVec2, DVec3};
 use i18n::t;
@@ -31,6 +32,14 @@ pub enum Tool {
     PlaceDevice,
     PlaceSwitch,
     PlaceObject,
+    /// One tree per click, free of the track.
+    PlaceTree,
+    /// Forest brush: clicks collect a polygon; Enter/right-click bakes it into
+    /// single trees, so every tree of the wood stays individually editable.
+    PlaceForest,
+    /// Marking brush: sweep over the map to mark trees and objects in bulk,
+    /// then delete them together.
+    Brush,
 }
 
 /// What the Select tool holds.
@@ -40,6 +49,14 @@ pub enum Selection {
     None,
     Edge(usize),
     Device(usize),
+    Object(usize),
+    Tree(usize),
+}
+
+/// One item the marking brush swept over.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    Tree(usize),
     Object(usize),
 }
 
@@ -78,6 +95,16 @@ pub struct EditorState {
     pub jump_to: Option<&'static str>,
     /// Object (`"<mod>:<name>"`) the Place-object tool stamps.
     pub object: Option<String>,
+    /// Tree object the tree and forest tools use; `None` = placeholder tree.
+    pub tree_object: Option<String>,
+    /// Corner points of the forest polygon being drawn.
+    pub forest_points: Vec<EcefPos>,
+    /// Forest brush density [m² per tree]; `None` = 500.
+    pub forest_area: Option<f64>,
+    /// Items the marking brush has swept over — deleted together.
+    pub marked: Vec<Mark>,
+    /// Radius of the marking brush [m]; `None` = 30.
+    pub brush_radius: Option<f64>,
     /// Repeat spacing of the object panel [m]; `None` = the 65 m of a
     /// standard catenary span.
     pub repeat_interval: Option<f64>,
@@ -547,14 +574,128 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
     match std::mem::take(&mut state.selection) {
         Selection::Edge(i) => line.source.remove_edge(i),
         Selection::Device(i) => line.source.remove_device(i),
-        // Nothing references objects by index — a plain remove suffices.
+        // Nothing references objects, trees or forests by index — a plain
+        // remove suffices.
         Selection::Object(i) => {
             if i < line.source.objects.len() {
                 line.source.objects.remove(i);
             }
         }
+        Selection::Tree(i) => {
+            if i < line.source.trees.len() {
+                line.source.trees.remove(i);
+            }
+        }
         Selection::None => {}
     }
+}
+
+/// Deletes everything the marking brush swept over — one undo step.
+pub fn delete_marked(line: &mut Line, state: &mut EditorState) {
+    let mut trees: Vec<usize> = Vec::new();
+    let mut objects: Vec<usize> = Vec::new();
+    for mark in state.marked.drain(..) {
+        match mark {
+            Mark::Tree(i) => trees.push(i),
+            Mark::Object(i) => objects.push(i),
+        }
+    }
+    // Descending order, so earlier removals do not shift later indices.
+    for list in [&mut trees, &mut objects] {
+        list.sort_unstable();
+        list.dedup();
+    }
+    for i in trees.into_iter().rev() {
+        if i < line.source.trees.len() {
+            line.source.trees.remove(i);
+        }
+    }
+    for i in objects.into_iter().rev() {
+        if i < line.source.objects.len() {
+            line.source.objects.remove(i);
+        }
+    }
+    // Tree/object indices shifted under the selection.
+    state.selection = Selection::None;
+}
+
+/// Marks every tree and object within `radius` of `p` — the brush sweep.
+fn mark_within(state: &mut EditorState, line: &Line, focus: &Focus, p: EcefPos, radius: f64) {
+    for (i, tree) in line.source.trees.iter().enumerate() {
+        if tree_pos(tree, focus).distance(p) <= radius && !state.marked.contains(&Mark::Tree(i)) {
+            state.marked.push(Mark::Tree(i));
+        }
+    }
+    for (i, object) in line.source.objects.iter().enumerate() {
+        let near = object_pos(&line.net, object).is_some_and(|q| q.distance(p) <= radius);
+        if near && !state.marked.contains(&Mark::Object(i)) {
+            state.marked.push(Mark::Object(i));
+        }
+    }
+}
+
+/// Bakes the forest brush polygon into single trees — Enter and right-click
+/// share it. Fewer than three corners are reported, not saved. Every baked
+/// tree is an ordinary [`TreeSource`], so a wood from the brush is edited tree
+/// by tree like everything else.
+pub fn finish_forest(
+    line: &mut Line,
+    state: &mut EditorState,
+    overlay: &mut crate::overlay::Overlay,
+) {
+    let points = std::mem::take(&mut state.forest_points);
+    if points.len() < 3 {
+        overlay.status = t!("status-forest-points");
+        return;
+    }
+    let polygon: Vec<(f64, f64)> = points
+        .iter()
+        .map(|p| {
+            let (lat, lon, _) = geo::from_ecef(*p);
+            (lat.to_degrees(), lon.to_degrees())
+        })
+        .collect();
+    let objects: Vec<String> = state.tree_object.iter().cloned().collect();
+    let trees = content::terrain::fill_polygon(
+        &polygon,
+        &objects,
+        state.forest_area.unwrap_or(500.0),
+        line.source.trees.len() as u64,
+        utm_zone_of(polygon[0].1),
+        |lat, lon| clear_of_track(&line.net, lat, lon),
+    );
+    overlay.status = t!("status-forest-baked", count = trees.len());
+    line.source.trees.extend(trees);
+    state.selection = Selection::None;
+}
+
+/// UTM zone containing the longitude [deg] — the fill samples in that grid.
+pub fn utm_zone_of(lon: f64) -> u8 {
+    (((lon + 180.0) / 6.0).floor() as i32).clamp(0, 59) as u8 + 1
+}
+
+/// Keeps baked trees off the track strip the terrain flattens.
+pub fn clear_of_track(net: &TrackNetwork, lat: f64, lon: f64) -> bool {
+    let p = geo::to_ecef_deg(lat, lon, 0.0);
+    // `nearest_on_network` measures in 3D; a probe at ellipsoid height sits far
+    // below the rails, so the vertical part alone would pass the clearance.
+    // Compare horizontally instead: against the nearest track point's lat/lon.
+    match nearest_on_network(net, p) {
+        Some((edge, s, _)) => {
+            let pose = net.edges()[edge].eval(s);
+            let (tlat, tlon, _) = geo::from_ecef(pose.pos);
+            let track = geo::to_ecef_deg(tlat.to_degrees(), tlon.to_degrees(), 0.0);
+            track.distance(p) > content::terrain::TREE_TRACK_CLEARANCE
+        }
+        None => true,
+    }
+}
+
+/// Map position of a tree: its geo position lifted onto the focus plane — the
+/// terrain height only exists in the app, and the editor looks straight down.
+pub fn tree_pos(tree: &TreeSource, focus: &Focus) -> EcefPos {
+    let (_, _, height) = geo::from_ecef(focus.position);
+    geo::to_ecef_deg(tree.lat, tree.lon, height)
 }
 
 /// Turns the finished drawing into track: a free drawing becomes two buffer
@@ -663,7 +804,18 @@ pub fn tool_input(
         Selection::Object(i) if i >= line.source.objects.len() => {
             state.selection = Selection::None;
         }
+        Selection::Tree(i) if i >= line.source.trees.len() => {
+            state.selection = Selection::None;
+        }
         _ => {}
+    }
+    // Stale marks likewise — one out-of-range index and the sweep is void.
+    let stale = state.marked.iter().any(|m| match m {
+        Mark::Tree(i) => *i >= line.source.trees.len(),
+        Mark::Object(i) => *i >= line.source.objects.len(),
+    });
+    if stale {
+        state.marked.clear();
     }
     if state.typing {
         return;
@@ -690,16 +842,28 @@ pub fn tool_input(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Escape) && state.drawing.take().is_none() {
-        state.selection = Selection::None;
+    if keys.just_pressed(KeyCode::Escape) {
+        if !state.forest_points.is_empty() {
+            state.forest_points.clear();
+        } else if !state.marked.is_empty() {
+            state.marked.clear();
+        } else if state.drawing.take().is_none() {
+            state.selection = Selection::None;
+        }
     }
     if keys.just_pressed(KeyCode::Delete) {
-        delete_selection(&mut line, &mut state);
+        if state.marked.is_empty() {
+            delete_selection(&mut line, &mut state);
+        } else {
+            delete_marked(&mut line, &mut state);
+        }
     }
-    if (keys.just_pressed(KeyCode::Enter) || buttons.just_pressed(MouseButton::Right))
-        && !finish_drawing(&mut line, &mut state)
-    {
-        overlay.status = t!("status-split-failed");
+    if keys.just_pressed(KeyCode::Enter) || buttons.just_pressed(MouseButton::Right) {
+        if !state.forest_points.is_empty() {
+            finish_forest(&mut line, &mut state, &mut overlay);
+        } else if !finish_drawing(&mut line, &mut state) {
+            overlay.status = t!("status-split-failed");
+        }
     }
     // Tool switching from the keyboard, as every map editor has it.
     for (key, tool) in [
@@ -708,11 +872,28 @@ pub fn tool_input(
         (KeyCode::Digit3, Tool::PlaceDevice),
         (KeyCode::Digit4, Tool::PlaceSwitch),
         (KeyCode::Digit5, Tool::PlaceObject),
+        (KeyCode::Digit6, Tool::PlaceTree),
+        (KeyCode::Digit7, Tool::PlaceForest),
+        (KeyCode::Digit8, Tool::Brush),
     ] {
         if keys.just_pressed(key) && state.tool != tool {
             state.tool = tool;
             state.drawing = None;
+            state.forest_points.clear();
         }
+    }
+
+    // The marking brush sweeps while the button is held — every frame, not
+    // only on the press, like the support-point drag above.
+    if state.tool == Tool::Brush {
+        if buttons.pressed(MouseButton::Left)
+            && let Some(p) = picked
+        {
+            state.map_used = true;
+            let radius = state.brush_radius.unwrap_or(30.0);
+            mark_within(&mut state, &line, &focus, p, radius);
+        }
+        return;
     }
 
     if !buttons.just_pressed(MouseButton::Left) {
@@ -794,11 +975,26 @@ pub fn tool_input(
                         lateral_offset: spec.map_or(0.0, |o| o.lateral_offset),
                         yaw_deg: spec.map_or(0.0, |o| o.yaw_deg),
                         height: spec.map_or(0.0, |o| o.height),
+                        snap_to_terrain: false,
                     });
                     state.selection = Selection::Object(line.source.objects.len() - 1);
                 }
                 _ => overlay.status = t!("status-no-track-hit"),
             }
+        }
+        Tool::PlaceTree => {
+            let (lat, lon, _) = geo::from_ecef(p);
+            line.source.trees.push(TreeSource {
+                object: state.tree_object.clone().unwrap_or_default(),
+                lat: lat.to_degrees(),
+                lon: lon.to_degrees(),
+                yaw_deg: 0.0,
+                scale: 1.0,
+            });
+            state.selection = Selection::Tree(line.source.trees.len() - 1);
+        }
+        Tool::PlaceForest => {
+            state.forest_points.push(p);
         }
         Tool::Select => {
             let radius = pick_radius(&focus);
@@ -809,39 +1005,47 @@ pub fn tool_input(
                 state.drag = Some((i, k));
                 return;
             }
+            // Nearest point candidate wins; equipment before furniture before
+            // trees on a tie (the iteration order below).
             let device = line
                 .source
                 .devices
                 .iter()
                 .enumerate()
-                .filter_map(|(i, d)| Some((i, device_pos(&line.net, d)?.distance(p))))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .filter(|(_, d)| *d <= radius);
-            let object = line
+                .filter_map(|(i, d)| Some((Selection::Device(i), device_pos(&line.net, d)?)))
+                .collect::<Vec<_>>();
+            let objects_ = line
                 .source
                 .objects
                 .iter()
                 .enumerate()
-                .filter_map(|(i, o)| Some((i, object_pos(&line.net, o)?.distance(p))))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .filter(|(_, d)| *d <= radius);
-            // Equipment first, furniture second, the track last.
-            state.selection = match (device, object) {
-                (Some((i, d)), Some((j, o))) => {
-                    if d <= o {
-                        Selection::Device(i)
-                    } else {
-                        Selection::Object(j)
-                    }
-                }
-                (Some((i, _)), None) => Selection::Device(i),
-                (None, Some((j, _))) => Selection::Object(j),
-                (None, None) => match nearest_on_network(&line.net, p) {
+                .filter_map(|(i, o)| Some((Selection::Object(i), object_pos(&line.net, o)?)))
+                .collect::<Vec<_>>();
+            let trees = line
+                .source
+                .trees
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (Selection::Tree(i), tree_pos(t, &focus)))
+                .collect::<Vec<_>>();
+            let nearest = device
+                .into_iter()
+                .chain(objects_)
+                .chain(trees)
+                .map(|(sel, pos)| (sel, pos.distance(p)))
+                .filter(|(_, d)| *d <= radius)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            // Point candidates first, the track last.
+            state.selection = match nearest {
+                Some((sel, _)) => sel,
+                None => match nearest_on_network(&line.net, p) {
                     Some((i, _, d)) if d <= radius => Selection::Edge(i),
                     _ => Selection::None,
                 },
             };
         }
+        // Handled above — the brush owns the whole press, not just the click.
+        Tool::Brush => {}
     }
 }
 
@@ -1017,20 +1221,74 @@ pub fn draw_gizmos(
                 ground_circle(&mut gizmos, &origin.0, p, radius, accent);
             }
         }
+        // Trees are drawn below, the selected one in accent.
+        Selection::Tree(_) => {}
         Selection::None => {}
     }
 
+    // Trees on the map: a small cross each (a circle per tree would be tens of
+    // thousands of gizmo segments over a baked wood), marked ones in orange,
+    // the selected one as an accent circle. Beyond this height a tree is
+    // sub-pixel — the dots would only be clutter.
+    let vegetation = Color::srgb(0.42, 0.62, 0.35);
+    let marked_color = Color::srgb(0.95, 0.55, 0.25);
+    if focus.height < 2500.0 {
+        let arm = (focus.height * 0.004).max(1.5) as f32;
+        for (i, tree) in line.source.trees.iter().enumerate() {
+            let p = tree_pos(tree, &focus);
+            if state.selection == Selection::Tree(i) {
+                let radius = (focus.height * 0.012).max(4.0) as f32;
+                ground_circle(&mut gizmos, &origin.0, p, radius, accent);
+                continue;
+            }
+            let color = if state.marked.contains(&Mark::Tree(i)) {
+                marked_color
+            } else {
+                vegetation
+            };
+            let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+            let center = origin.0.to_render(p) + up;
+            gizmos.line(center - Vec3::X * arm, center + Vec3::X * arm, color);
+            gizmos.line(center - Vec3::Z * arm, center + Vec3::Z * arm, color);
+        }
+    }
+    // Marked objects wear the same orange as marked trees.
+    for mark in &state.marked {
+        if let Mark::Object(i) = mark
+            && let Some(object) = line.source.objects.get(*i)
+            && let Some(p) = object_pos(&line.net, object)
+        {
+            let radius = (focus.height * 0.010).max(3.0) as f32;
+            ground_circle(&mut gizmos, &origin.0, p, radius, marked_color);
+        }
+    }
+
+    let cursor = windows
+        .single()
+        .ok()
+        .and_then(|w| w.cursor_position())
+        .filter(|c| state.viewport.contains(*c))
+        .and_then(|c| {
+            let (camera, camera_transform) = camera.single().ok()?;
+            pick_ground(camera, camera_transform, c, &origin.0, &focus)
+        });
     if let Some(drawing) = &state.drawing {
-        let cursor = windows
-            .single()
-            .ok()
-            .and_then(|w| w.cursor_position())
-            .filter(|c| state.viewport.contains(*c))
-            .and_then(|c| {
-                let (camera, camera_transform) = camera.single().ok()?;
-                pick_ground(camera, camera_transform, c, &origin.0, &focus)
-            });
         gizmos.linestrip(drawing.polyline(cursor, &origin.0), accent);
+    }
+    // Forest brush preview: the ring so far, the cursor as the next corner.
+    if !state.forest_points.is_empty() {
+        let points = state.forest_points.iter().copied().chain(cursor).map(|p| {
+            let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+            origin.0.to_render(p) + up
+        });
+        gizmos.linestrip(points, accent);
+    }
+    // Marking brush footprint under the cursor.
+    if state.tool == Tool::Brush
+        && let Some(p) = cursor
+    {
+        let radius = state.brush_radius.unwrap_or(30.0) as f32;
+        ground_circle(&mut gizmos, &origin.0, p, radius, marked_color);
     }
 }
 
@@ -1086,6 +1344,7 @@ mod tests {
             edges: vec![],
             devices: vec![],
             objects: vec![],
+            trees: vec![],
             sections: vec![],
             signals: vec![],
             routes: vec![],
@@ -1250,6 +1509,7 @@ mod tests {
             lateral_offset: -3.5,
             yaw_deg: 15.0,
             height: 0.5,
+            snap_to_terrain: false,
         });
         let net = source.compile().unwrap().net;
         let mut doc = Line {

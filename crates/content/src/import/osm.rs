@@ -113,6 +113,60 @@ pub fn parse(json: &str) -> Result<OsmRailway, OsmError> {
     Ok(railway)
 }
 
+/// Forest polygons (`landuse=forest` / `natural=wood`) from an Overpass extract,
+/// as `(lat, lon)` rings in degrees — the route editor's "Import forest" reads
+/// them into [`crate::route::ForestSource`]s. An extract without any is fine
+/// (empty result, not an error).
+///
+/// Query, analogous to the track one:
+///
+/// ```overpassql
+/// [out:json];
+/// (way["landuse"="forest"](52.0,10.0,52.1,10.2); way["natural"="wood"](52.0,10.0,52.1,10.2););
+/// (._;>;);
+/// out body;
+/// ```
+// ponytail: closed ways only — multipolygon relations (forests with clearings)
+// come in as their outer ways or not at all; the relation assembly joins the
+// importer once a real line needs it.
+pub fn parse_forests(json: &str) -> Result<Vec<Vec<(f64, f64)>>, OsmError> {
+    let response: OverpassResponse =
+        serde_json::from_str(json).map_err(|e| OsmError::Json(e.to_string()))?;
+
+    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    let mut ways: Vec<Vec<i64>> = Vec::new();
+    for e in response.elements {
+        match e.kind.as_str() {
+            "node" => {
+                if let (Some(lat), Some(lon)) = (e.lat, e.lon) {
+                    nodes.insert(e.id, (lat, lon));
+                }
+            }
+            "way" => {
+                let forest = e.tags.get("landuse").map(String::as_str) == Some("forest")
+                    || e.tags.get("natural").map(String::as_str) == Some("wood");
+                if forest {
+                    ways.push(e.nodes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut polygons = Vec::new();
+    for mut way in ways {
+        // Closed ways repeat their first node at the end — the ring is implicit.
+        if way.len() > 1 && way.first() == way.last() {
+            way.pop();
+        }
+        let ring: Vec<(f64, f64)> = way.iter().filter_map(|id| nodes.get(id).copied()).collect();
+        if ring.len() >= 3 {
+            polygons.push(ring);
+        }
+    }
+    Ok(polygons)
+}
+
 /// A point of the assembled line.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RoutePoint {
@@ -244,5 +298,33 @@ impl OsmRailway {
             .into_iter()
             .max_by_key(|(_, c)| *c)
             .map(|(n, _)| n.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forests_come_out_of_overpass_json() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.01},
+            {"type": "node", "id": 3, "lat": 52.01, "lon": 10.01},
+            {"type": "node", "id": 4, "lat": 52.01, "lon": 10.0},
+            {"type": "way", "id": 10, "nodes": [1, 2, 3, 4, 1], "tags": {"landuse": "forest"}},
+            {"type": "way", "id": 11, "nodes": [1, 2, 3, 1], "tags": {"natural": "wood"}},
+            {"type": "way", "id": 12, "nodes": [1, 2, 3, 4, 1], "tags": {"landuse": "meadow"}},
+            {"type": "way", "id": 13, "nodes": [1, 2, 1], "tags": {"landuse": "forest"}}
+        ]}"#;
+        let polygons = parse_forests(json).expect("parses");
+        // The meadow is skipped, the two-point ring dropped, the closing node removed.
+        assert_eq!(polygons.len(), 2);
+        assert_eq!(polygons[0].len(), 4);
+        assert_eq!(polygons[0][0], (52.0, 10.0));
+        assert_eq!(polygons[1].len(), 3);
+
+        // A forest-free extract is empty, not an error.
+        assert_eq!(parse_forests(r#"{"elements": []}"#), Ok(vec![]));
     }
 }

@@ -16,6 +16,7 @@ mod streaming;
 mod ui;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
+use bevy::asset::embedded_asset;
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::audio::{AddAudioSource, DefaultSpatialScale, SpatialScale};
@@ -26,7 +27,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
-use content::terrain::{TerrainBuilder, TerrainOptions, TerrainStats};
+use content::terrain::{TerrainBuilder, TerrainOptions, TerrainStats, Vegetation};
 use content::vehicles::{br101, passenger_coach};
 use content::{musterbahn, re_4711, to_musterstadt};
 use mod_runtime::ModRuntime;
@@ -174,6 +175,9 @@ fn main() {
         }),
         ..default()
     }))
+    // Terrain splatting (plan ch. 14): shader from the binary, material plugin
+    // for the extended terrain material.
+    .add_plugins(MaterialPlugin::<render::TerrainMaterial>::default())
     // Placed sounds play through the cab-wall lowpass, which lives in a decoder
     // (`audio::Exterior`) because Bevy's audio has no filter graph.
     .add_audio_source::<audio::Exterior>()
@@ -259,6 +263,9 @@ fn main() {
             .after(sync_vehicles)
             .run_if(in_state(GameState::Driving)),
     );
+    // The splat shader ships inside the binary — the registry only exists once
+    // the asset plugin has run.
+    embedded_asset!(app, "terrain_splat.wgsl");
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
@@ -316,10 +323,13 @@ fn log_mods(mods: Res<Mods>) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut terrain_materials: ResMut<Assets<render::TerrainMaterial>>,
     assets: Res<AssetServer>,
     mut mods: ResMut<Mods>,
     mut manager: ResMut<mods_ui::ModManager>,
@@ -468,6 +478,38 @@ fn setup(
     let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
     let origin = RenderOrigin::new(start);
 
+    // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
+    // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
+    // terrain than fits in memory at once. The builder exists before the scenery,
+    // because objects that snap to the terrain ask it for the ground height.
+    // `--dgm` may be repeated for a line across a UTM zone boundary; the n-th
+    // `--epsg` belongs to the n-th `--dgm` (the last one carries on when there
+    // are fewer).
+    let zones = args_all("--epsg");
+    let mut sources = Vec::new();
+    for (i, dir) in args_all("--dgm").iter().enumerate() {
+        let zone = zones
+            .get(i)
+            .or_else(|| zones.last())
+            .and_then(|v| v.parse().ok())
+            .and_then(world_coords::geo::utm_zone_from_epsg)
+            .unwrap_or(32);
+        match TerrainSource::from_dir(dir, zone) {
+            Ok(s) => {
+                info!("DGM: {} tiles from {dir} (zone {zone})", s.tile_count());
+                sources.push(s);
+            }
+            Err(e) => warn!("DGM {dir} not readable: {e}"),
+        }
+    }
+    let terrain_options = TerrainOptions {
+        zone: dgm_zone(),
+        fallback_height: 100.0,
+        ..default()
+    };
+    let mut terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
+        .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone));
+
     render::spawn_track(
         &mut commands,
         &mut meshes,
@@ -486,6 +528,7 @@ fn setup(
         &sim.net,
         &origin,
         &mods.mods.objects,
+        &mut terrain_builder,
     );
 
     // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
@@ -514,36 +557,18 @@ fn setup(
     );
     commands.insert_resource(signals::SignalModels(signal_models));
 
-    // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
-    // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
-    // terrain than fits in memory at once. `--dgm` may be repeated for a line across a
-    // UTM zone boundary; the n-th `--epsg` belongs to the n-th `--dgm` (the last one
-    // carries on when there are fewer).
-    let zones = args_all("--epsg");
-    let mut sources = Vec::new();
-    for (i, dir) in args_all("--dgm").iter().enumerate() {
-        let zone = zones
-            .get(i)
-            .or_else(|| zones.last())
-            .and_then(|v| v.parse().ok())
-            .and_then(world_coords::geo::utm_zone_from_epsg)
-            .unwrap_or(32);
-        match TerrainSource::from_dir(dir, zone) {
-            Ok(s) => {
-                info!("DGM: {} tiles from {dir} (zone {zone})", s.tile_count());
-                sources.push(s);
-            }
-            Err(e) => warn!("DGM {dir} not readable: {e}"),
-        }
-    }
-    let terrain_options = TerrainOptions {
-        zone: dgm_zone(),
-        fallback_height: 100.0,
-        ..default()
-    };
+    // Vegetation: the line's tree objects resolved against the installed mods.
+    let tree_catalog = render::tree_catalog(
+        terrain_builder.tree_objects(),
+        &mods.mods.objects,
+        &assets,
+        &mut meshes,
+        &mut materials,
+    );
     let streamer = streaming::TerrainStreamer::new(
-        TerrainBuilder::new(&sim.net, sources, terrain_options),
-        render::terrain_materials(&mut materials),
+        terrain_builder,
+        render::terrain_material(&mut images, &mut terrain_materials),
+        tree_catalog,
         LOAD_RADIUS,
     );
 

@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-16 · `cargo test --workspace`: **371 tests green** · clippy and fmt clean.
+As of 2026-08-16 · `cargo test --workspace`: **376 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -14,7 +14,7 @@ As of 2026-08-16 · `cargo test --workspace`: **371 tests green** · clippy and 
 | **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v3 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout facing or trailing with its throw time in the panel, the signal/section/route tables of the interlocking as forms, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
-| **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** (except vegetation/texturing, tracked as next step 5) — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather rendering**: `Sim::weather` (clear/rain/snow/fog) set by the `SetWeather` scenario action — overcast sky, dimmed sun, distance fog from the weather's visibility, rain/snow particle fields around the camera (their streaks slanted by the relative wind of the player's speed), a `Rain` sound quantity for the sound table, and the implied rail condition on every train (`mods/example/scenarios/regenfahrt.ron` shows it); terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, red tail lamps (Zg 101) mark the opposite end, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0); no recorded samples (the sources are generated — content, not code), no vegetation/texturing |
+| **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather rendering**: `Sim::weather` (clear/rain/snow/fog) set by the `SetWeather` scenario action — overcast sky, dimmed sun, distance fog from the weather's visibility, rain/snow particle fields around the camera (their streaks slanted by the relative wind of the player's speed), a `Rain` sound quantity for the sound table, and the implied rail condition on every train (`mods/example/scenarios/regenfahrt.ron` shows it); terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, red tail lamps (Zg 101) mark the opposite end, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0); **terrain texturing and vegetation** (ch. 14): texture splatting — per-vertex weights from slope and track distance blend three generated ground textures (grass/rock/gravel) in a `StandardMaterial` extension — and vegetation as **line content**: every tree its own `LineSource::trees` entry (3D objects from mods' `objects/*.ron`, placeholder for the unnamed), spawned as children of their terrain tile so they stream with it and batch into instanced draws; woods are baked into single trees by the editor, so each one stays individually editable; no recorded samples (the sources are generated — content, not code) |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
 | **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models/track types/track objects as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.trainsim` zip + installer) is still open |
 
@@ -229,7 +229,20 @@ As of 2026-08-16 · `cargo test --workspace`: **371 tests green** · clippy and 
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track, view distance limit per LOD level in the app, built while driving (see
-  streaming above). **One elevation source per UTM zone**: `--dgm`/`--epsg` may be
+  streaming above). **Texturing/vegetation:** every tile carries per-vertex splat
+  weights (gravel on the strip the track flattens, rock on steep ground, grass
+  elsewhere) and the line's trees — every tree an own `trees:` entry, its foot
+  on the tile's height grid. Woods come out of the editor's forest brush and
+  forest import, which **bake** polygons into single trees
+  (`terrain::fill_polygon`: deterministic, one per `area_per_tree` m², clear of
+  the track strip) — one primitive, so any tree of a wood is moved or deleted
+  like a hand-set one. Trees are 3D objects from mods (`objects/*.ron`; empty
+  name = generated placeholder tree). The app blends three generated ground
+  textures by the weights in a `StandardMaterial` extension shader and spawns
+  the trees as children of the tile — shared assets per species, so they render
+  as instanced draws and stream with the tile. Track objects can opt into
+  `snap_to_terrain`: the base moves from the rail plane onto the terrain
+  surface (`TerrainBuilder::surface_height`). **One elevation source per UTM zone**: `--dgm`/`--epsg` may be
   repeated, and a line across the 12° zone boundary takes each height from the first
   source that has one — the tile grid stays in the first zone, which is only a
   partitioning and continues past the boundary without a seam.
@@ -305,7 +318,15 @@ As of 2026-08-16 · `cargo test --workspace`: **371 tests green** · clippy and 
   edits position, lateral offset, rotation and height per placed instance, and
   **Repeat in a row** stamps copies along the track (spacing, default 65 m; end
   position) — the Zusi editor function "insert one every x metres", each copy an
-  ordinary instance that can be moved or deleted on its own.
+  ordinary instance that can be moved or deleted on its own. **Vegetation tools**:
+  a tree tool (key 6) plants single trees free of the track, a forest brush
+  (key 7) outlines a polygon and bakes it into single trees (species and density
+  in the tool options), and **File ▸ Import forest** reads an Overpass extract's
+  `landuse=forest`/`natural=wood` ways and bakes them the same way — an optional
+  aid next to hand placement, and every baked tree stays individually editable
+  and deletable. A **marking brush** (key 8) sweeps over the map, marks trees
+  and objects in bulk and deletes them together in one undo step. Objects offer
+  **snap to terrain** (base on the terrain surface instead of the rail plane).
   Deleting an edge or device **remaps every index in the file** — devices, signals,
   `next` links, routes, sections and switch legs follow, and an edge that continued
   from a removed one is re-anchored geographically first (tested in `content::route`).
@@ -488,6 +509,17 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **The track ribbon is not streamed** — one mesh per edge at startup. A whole 100 km line
   costs a few hundred thousand vertices there; only when the ballast bed gets sleepers and
   a texture does the same tile logic have to be applied to it.
+- **Ground textures are generated noise**, not photographs — the same policy as the
+  sound sources (content, not code). Authored textures go into a mod once terrain
+  texturing becomes moddable content.
+- **One entity per tree**; a per-instance buffer replaces it if someone wants real
+  forest density. **Forest bakes cap at 10 000 trees per polygon** — every baked tree
+  is a file row and part of every undo snapshot, so importing a whole state forest
+  needs a compacter representation, not a bigger cap. **Forest import reads closed
+  ways only** — multipolygon relations (forests with clearings) come in as their
+  outer ways or not at all; the relation assembly joins the importer once a real
+  line needs it. **The marking brush marks trees and scenery objects**, not devices —
+  a swept-away magnet would silently break signal wiring.
 - **No Bevy `AssetLoader` for tiles** (plan 4.3 suggests one): terrain is computed, not
   loaded, and the task pool does that without a detour through an asset path.
 - **Transition curve length and cant come from the rulebook**, not from the data: neither can be
@@ -529,11 +561,10 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
    then the import directly yields an equipped line instead of a bare strand.
 4. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
    (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
-5. **Texturing/vegetation** — the terrain is single-coloured; splatting and instancing are missing.
-6. **Recorded samples for the sound table** — the mechanism is in place and positional; what
+5. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
    interval belong in the same pass.
-7. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
+6. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
    sky and rail; headlights follow switch and direction of travel, red tail lamps
    (Zg 101) mark the rear end, the cab light has its own switch, the precipitation
    streaks lean into the relative wind, and the sound table hears a `Rain` quantity.

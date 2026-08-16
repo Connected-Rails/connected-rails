@@ -9,6 +9,8 @@ pub mod dgm;
 pub mod fit;
 pub mod osm;
 
+pub use osm::parse_forests;
+
 use crate::route::{EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource};
 use alignment::AlignmentOptions;
 use dgm::TerrainSource;
@@ -192,6 +194,7 @@ pub fn import_line(
         edges,
         devices: Vec::new(),
         objects: Vec::new(),
+        trees: Vec::new(),
         sections: Vec::new(),
         signals: Vec::new(),
         routes: Vec::new(),

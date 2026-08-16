@@ -823,6 +823,41 @@ editable, so a mast that collides with a tree is simply moved. Nothing in the si
 reads objects — they are the line's furniture, and deleting or splitting tracks carries
 them along like devices.
 
+A placement with `snap_to_terrain: true` stands on the **terrain surface** instead of the
+rail plane — `height` then measures from the ground. The strip beside the track is
+blended toward rail height, so a snapped object next to the ballast still meets it. The
+editor's selection panel has the checkbox; the app resolves the height, because only it
+has the elevation data.
+
+### Vegetation
+
+Trees are ordinary track objects — an `objects/*.ron` with a tree glTF is all a tree mod
+is. A line stores **every tree as its own entry**, geo-positioned (no track reference,
+height always from the terrain):
+
+```ron
+trees: [
+    // Empty object = the app's built-in placeholder tree.
+    (object: "example:fichte", lat: 52.0006, lon: 10.004, yaw_deg: 0.0, scale: 1.3),
+],
+```
+
+There is no separate forest construct: a wood is many tree entries. That is deliberate —
+whether a tree was hand-set, painted or imported, it is the same kind of row, so any tree
+can be moved, rescaled or deleted on its own afterwards. Trees stream in and out with
+their terrain tile and share meshes per species, so even a big wood renders as instanced
+draws.
+
+In the route editor the **tree tool** (key 6) plants one tree per click. The **forest
+brush** (key 7) outlines an area — Enter or right-click **bakes** it into single trees
+(one per `area per tree` m², species from the tool options, clear of the track strip).
+**File ▸ Import forest…** reads an Overpass JSON extract (`landuse=forest` /
+`natural=wood` ways, same download path as the track import) and bakes each polygon the
+same way — an optional aid: whoever wants every tree hand-set simply never uses it, and
+an imported wood is thinned out or cleared exactly like a painted one. For bulk edits the
+**marking brush** (key 8) sweeps over the map and marks every tree and object under the
+circle; Delete (or the panel button) removes them together in one undo step.
+
 ### Modules and compositions
 
 A big line is built from **modules**, after the Zusi 3 model: a module is an ordinary

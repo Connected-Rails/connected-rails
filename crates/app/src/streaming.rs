@@ -38,7 +38,8 @@ pub struct TerrainStreamer {
     // a single tile at a time turns out to be too slow.
     builder: Arc<Mutex<TerrainBuilder>>,
     options: TerrainOptions,
-    materials: Vec<Handle<StandardMaterial>>,
+    material: Handle<render::TerrainMaterial>,
+    trees: render::TreeCatalog,
     loaded: HashMap<TileKey, Loaded>,
     pending: HashMap<TileKey, Task<Option<(TerrainTile, TerrainStats)>>>,
     /// Keys outside the line corridor — asked for once, never again.
@@ -55,13 +56,15 @@ pub struct TerrainStreamer {
 impl TerrainStreamer {
     pub fn new(
         builder: TerrainBuilder,
-        materials: Vec<Handle<StandardMaterial>>,
+        material: Handle<render::TerrainMaterial>,
+        trees: render::TreeCatalog,
         load_radius: f64,
     ) -> Self {
         Self {
             options: *builder.options(),
             builder: Arc::new(Mutex::new(builder)),
-            materials,
+            material,
+            trees,
             loaded: HashMap::new(),
             pending: HashMap::new(),
             empty: HashSet::new(),
@@ -183,7 +186,8 @@ pub fn stream_terrain(
         let entity = render::spawn_terrain_tile(
             &mut commands,
             &mut meshes,
-            &streamer.materials,
+            &streamer.material,
+            &streamer.trees,
             &tile,
             &origin.0,
         );

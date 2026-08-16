@@ -4,7 +4,7 @@
 
 use crate::route::{
     DeviceSource, EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource, SectionSource,
-    SignalSource,
+    SignalSource, TreeSource,
 };
 use sim_core::interlock::BlockMarkerPayload;
 use sim_core::interlock::{SignalKind, SignalSystem};
@@ -17,6 +17,60 @@ pub const START: GeoPoint = GeoPoint {
     lon: 10.0,
     height: 100.0,
 };
+
+/// Vegetation of the example line: two hand-set trees plus two woods, baked
+/// into single trees exactly as the editor's forest brush does it.
+fn demo_trees() -> Vec<TreeSource> {
+    let mut trees = vec![
+        TreeSource {
+            object: String::new(),
+            lat: 52.0006,
+            lon: 10.004,
+            yaw_deg: 0.0,
+            scale: 1.3,
+        },
+        TreeSource {
+            object: String::new(),
+            lat: 51.9994,
+            lon: 10.007,
+            yaw_deg: 120.0,
+            scale: 1.0,
+        },
+    ];
+    for (polygon, area, seed) in [
+        (
+            vec![
+                (52.001, 10.005),
+                (52.001, 10.030),
+                (52.005, 10.028),
+                (52.004, 10.006),
+            ],
+            400.0,
+            1,
+        ),
+        (
+            vec![
+                (51.995, 10.010),
+                (51.998, 10.012),
+                (51.998, 10.022),
+                (51.994, 10.020),
+            ],
+            700.0,
+            2,
+        ),
+    ] {
+        // The polygons keep off the track on their own — no clearance filter.
+        trees.extend(crate::terrain::fill_polygon(
+            &polygon,
+            &[],
+            area,
+            seed,
+            32,
+            |_, _| true,
+        ));
+    }
+    trees
+}
 
 /// Builds the example line: 3 km straight, 1 km curve, 3 km climb.
 ///
@@ -163,6 +217,11 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         objects: vec![],
+        // Placeholder vegetation (no mod objects named): two woods baked the
+        // same way the editor's forest brush bakes them, plus two single trees
+        // near the start — the demo shows trees, and streaming/instancing and
+        // per-tree editing stay exercised.
+        trees: demo_trees(),
         sections: vec![
             SectionSource { edges: vec![0] },
             SectionSource { edges: vec![1] },

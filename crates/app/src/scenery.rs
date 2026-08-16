@@ -7,15 +7,16 @@ use crate::models;
 use crate::render::WorldAnchored;
 use bevy::gltf::GltfAssetLabel;
 use bevy::prelude::*;
-use content::LineSource;
+use content::{LineSource, TerrainBuilder};
 use glam::DQuat;
 use std::collections::BTreeMap;
 use track_model::TrackNetwork;
 use track_model::TrackObject;
-use world_coords::{EcefPos, RenderOrigin};
+use world_coords::{EcefPos, RenderOrigin, geo};
 
 /// Spawns every scenery object of the line. An unknown object kind gets a
 /// placeholder block — visible in the world instead of silently absent.
+/// `terrain` answers the ground height for objects that snap to the terrain.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_objects(
     commands: &mut Commands,
@@ -26,6 +27,7 @@ pub fn spawn_objects(
     net: &TrackNetwork,
     origin: &RenderOrigin,
     registry: &BTreeMap<String, TrackObject>,
+    terrain: &mut TerrainBuilder,
 ) {
     let placeholder_mesh = meshes.add(Cuboid::new(0.8, 2.0, 0.8));
     let placeholder_material = materials.add(StandardMaterial {
@@ -41,8 +43,15 @@ pub fn spawn_objects(
         let pose = edge.eval(placement.s.clamp(0.0, edge.length()));
         // Positive offset = right of increasing arc length.
         let right = pose.tangent.cross(pose.up).normalize();
-        let anchor =
-            EcefPos(pose.pos.0 + right * placement.lateral_offset + pose.up * placement.height);
+        let base = EcefPos(pose.pos.0 + right * placement.lateral_offset);
+        let anchor = if placement.snap_to_terrain {
+            // Base on the terrain surface; `height` measures from the ground.
+            let ground = terrain.surface_height(base);
+            let (lat, lon, _) = geo::from_ecef(base);
+            geo::to_ecef(lat, lon, ground + placement.height)
+        } else {
+            EcefPos(base.0 + pose.up * placement.height)
+        };
         // Yaw is clockwise seen from above; 0 = front along increasing s.
         let dir = DQuat::from_axis_angle(pose.up, -placement.yaw_deg.to_radians()) * pose.tangent;
 

@@ -11,6 +11,8 @@ pub mod vehicles;
 pub use compose::Composition;
 pub use demo::musterbahn;
 pub use import::{ImportOptions, ImportReport, import_line};
-pub use route::{CompiledLine, LineSource};
+pub use route::{CompiledLine, LineSource, TreeSource};
 pub use scenarios::{re_4711, to_musterstadt};
-pub use terrain::{TerrainBuilder, TerrainOptions, TerrainStats, TerrainTile, TileKey};
+pub use terrain::{
+    TerrainBuilder, TerrainOptions, TerrainStats, TerrainTile, TileKey, Tree, Vegetation,
+};

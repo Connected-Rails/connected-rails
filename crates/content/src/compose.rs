@@ -125,6 +125,7 @@ impl Composition {
             edges: Vec::new(),
             devices: Vec::new(),
             objects: Vec::new(),
+            trees: Vec::new(),
             sections: Vec::new(),
             signals: Vec::new(),
             routes: Vec::new(),
@@ -351,6 +352,9 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
         o.edge += off.edges;
         merged.objects.push(o);
     }
+    // Trees are geo-positioned — the georeference is the connection, so a
+    // plain append composes them.
+    merged.trees.extend(module.trees.iter().cloned());
     for s in &module.sections {
         let mut s = s.clone();
         for e in &mut s.edges {
@@ -468,6 +472,7 @@ mod tests {
                 },
             ],
             objects: vec![],
+            trees: vec![],
             sections: vec![SectionSource { edges: vec![0] }],
             signals: vec![SignalSource {
                 kind: SignalKind::Main,

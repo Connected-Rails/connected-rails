@@ -249,6 +249,7 @@ fn main() {
             models::bind_nodes,
             models::update_lod,
             models::animate_parts,
+            models::animate_backlight,
             models::animate_controls,
             models::animate_digits,
             displays::bind_display_nodes,

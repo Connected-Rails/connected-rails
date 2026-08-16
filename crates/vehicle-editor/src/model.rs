@@ -76,7 +76,7 @@ fn suggest(name: &str, extras: Option<&str>) -> Option<Part> {
 }
 
 /// Blender custom properties end up in glTF `extras`:
-/// `ts_function` (required), `ts_motion` (`rotate`/`translate`/`visibility`),
+/// `ts_function` (required), `ts_motion` (`rotate`/`translate`/`visibility`/`emissive`),
 /// `ts_axis` (`"0 0 1"`), `ts_amount` (degrees or metres).
 fn from_extras(name: &str, extras: &str) -> Option<Part> {
     let value: serde_json::Value = serde_json::from_str(extras).ok()?;
@@ -99,6 +99,7 @@ fn from_extras(name: &str, extras: &str) -> Option<Part> {
             axis,
             metres: amount,
         },
+        Some("emissive") => Motion::Emissive,
         _ => Motion::Visibility,
     };
     Some(Part {

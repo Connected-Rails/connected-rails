@@ -590,7 +590,7 @@ fn preview_cab_test(
 fn motion_transform(motion: &sim_core::train::Motion, value: f32) -> Transform {
     use sim_core::train::Motion;
     match *motion {
-        Motion::Visibility => Transform::IDENTITY,
+        Motion::Visibility | Motion::Emissive => Transform::IDENTITY,
         Motion::Rotate { axis, degrees } => Transform::from_rotation(Quat::from_axis_angle(
             Vec3::from(axis).normalize_or_zero(),
             (degrees * value).to_radians(),

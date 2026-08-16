@@ -88,6 +88,10 @@ pub struct CabInputs {
     /// Cab light on.
     #[serde(default)]
     pub cab_light: bool,
+    /// Instrument backlighting 0 … 1 — its own dimmer, as most locos have one
+    /// next to the cab lamp switch.
+    #[serde(default)]
+    pub instrument_light: f64,
     /// Softkeys next to the cab displays, read by the `display(ctx)` script hook.
     #[serde(default)]
     pub display_buttons: [bool; 8],
@@ -125,6 +129,7 @@ impl Default for CabInputs {
             wipers: 0,
             headlights: true,
             cab_light: false,
+            instrument_light: 0.0,
             display_buttons: [false; 8],
         }
     }
@@ -313,6 +318,8 @@ pub enum CabControl {
     Headlights,
     /// Cab light on/off.
     CabLight,
+    /// Instrument backlighting, continuous over its dimmer 0 … 1.
+    InstrumentLight,
     /// Softkey next to a cab display (0 … 7) — the `display(ctx)` script hook
     /// reads it, which is how a screen gets nested menus.
     Display(u8),
@@ -447,7 +454,7 @@ fn afb_scale(train: &Train) -> f64 {
 }
 
 impl CabControl {
-    pub const ALL: [CabControl; 38] = [
+    pub const ALL: [CabControl; 39] = [
         CabControl::Throttle,
         CabControl::Reverser,
         CabControl::BrakeValve,
@@ -478,6 +485,7 @@ impl CabControl {
         CabControl::Wipers,
         CabControl::Headlights,
         CabControl::CabLight,
+        CabControl::InstrumentLight,
         CabControl::Display(0),
         CabControl::Display(1),
         CabControl::Display(2),
@@ -521,6 +529,7 @@ impl CabControl {
             CabControl::Wipers => "cab-input-wipers",
             CabControl::Headlights => "cab-input-headlights",
             CabControl::CabLight => "cab-input-cab-light",
+            CabControl::InstrumentLight => "cab-input-instrument-light",
             CabControl::Display(n) => match n {
                 0 => "cab-input-display-1",
                 1 => "cab-input-display-2",
@@ -562,7 +571,8 @@ impl CabControl {
             CabControl::Throttle
             | CabControl::BrakeValve
             | CabControl::DirectBrake
-            | CabControl::AfbTarget => 0,
+            | CabControl::AfbTarget
+            | CabControl::InstrumentLight => 0,
             CabControl::Reverser | CabControl::TrainType => 3,
             CabControl::Wipers => 4,
             _ => 2,
@@ -606,6 +616,7 @@ impl CabControl {
             CabControl::Wipers => f64::from(cab.wipers.min(3)) / 3.0,
             CabControl::Headlights => f64::from(cab.headlights),
             CabControl::CabLight => f64::from(cab.cab_light),
+            CabControl::InstrumentLight => cab.instrument_light,
             CabControl::Display(n) => f64::from(cab.display_buttons[usize::from(n) % 8]),
             CabControl::AfbTarget
             | CabControl::Battery
@@ -686,6 +697,7 @@ impl CabControl {
             CabControl::Wipers => cab.wipers = (value * 3.0).round() as u8,
             CabControl::Headlights => cab.headlights = on,
             CabControl::CabLight => cab.cab_light = on,
+            CabControl::InstrumentLight => cab.instrument_light = value,
             CabControl::Display(n) => cab.display_buttons[usize::from(n) % 8] = on,
             CabControl::Battery => {
                 for v in train.vehicles.iter_mut().filter(|v| v.is_powered()) {

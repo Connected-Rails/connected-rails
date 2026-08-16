@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use render::VehicleView;
 use sim_core::cab::CabInputs;
 use sim_core::safety::LampState;
-use sim_core::train::{Motion, Vehicle};
+use sim_core::train::{Motion, Part, Vehicle};
 
 use crate::render;
 
@@ -35,6 +35,16 @@ pub struct LodNode {
     train: usize,
     vehicle: usize,
     level: u8,
+}
+
+/// A mesh below a part node that glows with the part's value ([`Motion::Emissive`]) —
+/// the material is a clone of its own, so dimming one panel dims nothing else.
+#[derive(Component)]
+pub struct GlowMesh {
+    /// The part node whose value drives the glow.
+    node: Entity,
+    /// Emissive colour as it came out of the file; the value scales it.
+    base: LinearRgba,
 }
 
 /// A node moved by the simulation.
@@ -103,6 +113,7 @@ pub fn bind_nodes(
         let mut stack = vec![root];
         let mut found = false;
         let mut control_nodes = Vec::new();
+        let mut glow_nodes = Vec::new();
         let (mut lods, mut parts) = (0, 0);
         while let Some(entity) = stack.pop() {
             if let Ok(kids) = children.get(entity) {
@@ -164,6 +175,9 @@ pub fn bind_nodes(
                         commands.entity(kid).insert(Visibility::Inherited);
                     }
                 }
+                if description.parts[part].motion == Motion::Emissive {
+                    glow_nodes.push(entity);
+                }
                 parts += 1;
             }
         }
@@ -196,6 +210,27 @@ pub fn bind_nodes(
                     .observe(cab::on_drag_start)
                     .observe(cab::on_drag)
                     .observe(cab::on_scroll);
+            }
+        }
+        // A glowing part dims its own material, so every mesh below it takes a
+        // clone of it and remembers what the file lit it with.
+        for node in &glow_nodes {
+            let mut stack = vec![*node];
+            while let Some(entity) = stack.pop() {
+                if let Ok(kids) = children.get(entity) {
+                    stack.extend(kids.iter());
+                }
+                let Ok(handle) = handles.get(entity) else {
+                    continue;
+                };
+                let Some(material) = materials.get(&handle.0).cloned() else {
+                    continue;
+                };
+                let base = material.emissive;
+                commands.entity(entity).insert((
+                    GlowMesh { node: *node, base },
+                    MeshMaterial3d(materials.add(material)),
+                ));
             }
         }
         if found {
@@ -257,7 +292,7 @@ pub fn update_lod(
 /// Transform a [`Motion`] produces at `value` (0 … 1); identity for visibility.
 pub fn motion_transform(motion: &Motion, value: f32) -> Transform {
     match *motion {
-        Motion::Visibility => Transform::IDENTITY,
+        Motion::Visibility | Motion::Emissive => Transform::IDENTITY,
         Motion::Rotate { axis, degrees } => Transform::from_rotation(Quat::from_axis_angle(
             Vec3::from(axis).normalize_or_zero(),
             (degrees * value).to_radians(),
@@ -283,8 +318,19 @@ fn apply_motion(
                 Visibility::Hidden
             };
         }
+        // A glowing part does not move; `animate_backlight` dims its material.
+        Motion::Emissive => {}
         _ => *transform = *base * motion_transform(motion, value),
     }
+}
+
+/// The part a bound node belongs to and its current value, 0 … 1.
+fn part_of<'a>(sim: &'a SimResource, node: &PartNode) -> Option<(&'a Part, f32)> {
+    let vehicle = sim.0.trains.get(node.train)?.vehicles.get(node.vehicle)?;
+    let part = vehicle.spec.model.as_ref()?.parts.get(node.part)?;
+    let cab = sim.0.controls.get(node.train).copied().unwrap_or_default();
+    let value = part_value(&part.function, vehicle, &cab, sim.0.time)?;
+    Some((part, value))
 }
 
 /// Moves the bound parts according to the simulation state.
@@ -293,24 +339,7 @@ pub fn animate_parts(
     mut nodes: Query<(&PartNode, &mut Transform, &mut Visibility)>,
 ) {
     for (node, mut transform, mut visibility) in nodes.iter_mut() {
-        let Some(vehicle) = sim
-            .0
-            .trains
-            .get(node.train)
-            .and_then(|t| t.vehicles.get(node.vehicle))
-        else {
-            continue;
-        };
-        let Some(part) = vehicle
-            .spec
-            .model
-            .as_ref()
-            .and_then(|m| m.parts.get(node.part))
-        else {
-            continue;
-        };
-        let cab = sim.0.controls.get(node.train).copied().unwrap_or_default();
-        let Some(value) = part_value(&part.function, vehicle, &cab, sim.0.time) else {
+        let Some((part, value)) = part_of(&sim, node) else {
             continue;
         };
         apply_motion(
@@ -320,6 +349,29 @@ pub fn animate_parts(
             &mut transform,
             &mut visibility,
         );
+    }
+}
+
+/// Dims the glowing parts ([`Motion::Emissive`]): the emissive colour of the
+/// file scaled by the part's value, so instrument backlighting follows its
+/// dimmer over the whole travel instead of switching on at half.
+pub fn animate_backlight(
+    sim: Res<SimResource>,
+    nodes: Query<&PartNode>,
+    glows: Query<(&GlowMesh, &MeshMaterial3d<StandardMaterial>)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (glow, handle) in &glows {
+        let Ok(node) = nodes.get(glow.node) else {
+            continue;
+        };
+        let Some((_, value)) = part_of(&sim, node) else {
+            continue;
+        };
+        let Some(mut material) = materials.get_mut(&handle.0) else {
+            continue;
+        };
+        material.emissive = glow.base * value.clamp(0.0, 1.0);
     }
 }
 
@@ -386,6 +438,10 @@ fn part_value(function: &str, vehicle: &Vehicle, cab: &CabInputs, time: f64) -> 
         "switch:throttle" => cab.throttle,
         "switch:reverser" => cab.reverser as f64,
         "switch:direct_brake" => cab.direct_brake,
+        "switch:cab_light" => f64::from(cab.cab_light),
+        // Instrument backlighting: an emissive panel node on `Motion::Emissive`
+        // glows with the dimmer, so the dials read after dark (M6 polish).
+        "switch:instrument_light" => cab.instrument_light,
         "wiper" => wiper_position(cab.wipers, time),
         "lamp:main_switch" => f64::from(vehicle.traction.main_switch),
         "lamp:sanding" => f64::from(vehicle.sanding),

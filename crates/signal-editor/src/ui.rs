@@ -667,6 +667,8 @@ fn motion_row(ui: &mut egui::Ui, index: usize, binding: &mut MotionBinding) {
             Motion::Visibility => t!("motion-visible"),
             Motion::Rotate { .. } => t!("motion-rotate"),
             Motion::Translate { .. } => t!("motion-move"),
+            // Not offered below: a signal lamp is switched, not dimmed.
+            Motion::Emissive => t!("motion-glow"),
         };
         egui::ComboBox::from_id_salt(("motion-kind", index))
             .selected_text(selected)
@@ -693,7 +695,7 @@ fn motion_row(ui: &mut egui::Ui, index: usize, binding: &mut MotionBinding) {
                 }
             });
         match &mut binding.motion {
-            Motion::Visibility => {}
+            Motion::Visibility | Motion::Emissive => {}
             Motion::Rotate { axis, degrees } => {
                 axis_drags(ui, axis);
                 ui.add(

@@ -284,6 +284,9 @@
             (node: "digit_dist_1", function: "digit:mfa_zielentfernung:1", motion: Visibility),
             (node: "digit_dist_2", function: "digit:mfa_zielentfernung:2", motion: Visibility),
             (node: "digit_dist_3", function: "digit:mfa_zielentfernung:3", motion: Visibility),
+            // Instrument backlighting: the emissive face of the panel glows
+            // with its dimmer (keys , and .), so the dials read after dark.
+            (node: "instrument_light", function: "switch:instrument_light", motion: Emissive),
         ],
         // Interactive 3D cab (M6): the driver's eye in model space and the
         // controls the mouse can grab. Which gesture a control answers to

@@ -145,6 +145,10 @@ pub enum Motion {
     Rotate { axis: [f32; 3], degrees: f32 },
     /// Translation along a local axis [m] — sliding doors, switches, levers.
     Translate { axis: [f32; 3], metres: f32 },
+    /// The node does not move: its emissive colour is scaled by the value, so
+    /// the glow of the material follows a dimmer instead of popping on and off
+    /// — instrument backlighting, a dimmable lamp.
+    Emissive,
 }
 
 /// A moving part of the model, bound to a glTF node.

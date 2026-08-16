@@ -151,12 +151,19 @@ pub fn player_input(
         cab.wipers = (cab.wipers + 1) % 4;
     }
 
-    // Lights: 9 headlights (Spitzensignal), 0 cab light.
+    // Lights: 9 headlights (Spitzensignal), 0 cab light, ,/. the instrument
+    // backlighting dimmer — held down like the direct brake, since it is a knob.
     if keys.just_pressed(KeyCode::Digit9) {
         cab.headlights = !cab.headlights;
     }
     if keys.just_pressed(KeyCode::Digit0) {
         cab.cab_light = !cab.cab_light;
+    }
+    if keys.pressed(KeyCode::Period) {
+        cab.instrument_light = (cab.instrument_light + dt).min(1.0);
+    }
+    if keys.pressed(KeyCode::Comma) {
+        cab.instrument_light = (cab.instrument_light - dt).max(0.0);
     }
 
     // AFB: 6 on/off, 7/8 dial the target speed in 10 km/h steps.
@@ -554,6 +561,7 @@ pub fn update_hud(
 
     lines.push(t!("hud-keys-drive"));
     lines.push(t!("hud-keys-safety"));
+    lines.push(t!("hud-keys-lights"));
 
     **text = lines.join("\n");
 }

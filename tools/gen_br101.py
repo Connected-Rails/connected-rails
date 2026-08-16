@@ -157,8 +157,15 @@ MATERIALS = [
     ("wheel", dict(baseColorFactor=[0.08, 0.08, 0.09, 1.0], metallicFactor=0.4, roughnessFactor=0.6)),
     ("pant", dict(baseColorFactor=[0.12, 0.12, 0.13, 1.0], metallicFactor=0.6, roughnessFactor=0.5)),
     ("light", dict(baseColorFactor=[0.9, 0.88, 0.8, 1.0], metallicFactor=0.0, roughnessFactor=0.3)),
+    ("backlight", dict(baseColorFactor=[0.05, 0.03, 0.01, 1.0], metallicFactor=0.0, roughnessFactor=1.0)),
 ]
 MAT = {name: i for i, (name, _) in enumerate(MATERIALS)}
+# Instrument backlighting: the one emissive material of the model, so the panel
+# glows warm behind the dials. The runtime scales this colour by the dimmer, so
+# it is the fully-turned-up look — dim on purpose, because with HDR and bloom a
+# factor of 1 turns the panel into a lamp that lights the whole cab, where the
+# prototype only makes its own dials readable.
+EMISSIVE = {"backlight": [0.28, 0.17, 0.06]}
 
 
 def build_body_loft(prim):
@@ -413,6 +420,21 @@ def build_digit(digit):
     return {"light": p}
 
 
+def build_instrument_light():
+    """Backlit face of the instrument panel (M6 polish).
+
+    Emissive plates in the 0.5 mm gap between the panel front (z = -7.56) and the
+    instruments standing proud of it — one behind the speedometer, one behind the
+    lamp, slot and counter cluster — so needle and figures are read against a lit
+    face while the rest of the panel stays dark. The vehicle file shows them
+    with the dimmer (`switch:instrument_light` on `Motion::Emissive`).
+    """
+    p = Prim()
+    p.box((-0.275, 2.285, -7.5599), (-0.125, 2.475, -7.5595))   # speedometer
+    p.box((-0.045, 2.280, -7.5599), (0.230, 2.535, -7.5595))    # lamp, slot, counter
+    return {"backlight": p}
+
+
 def build_lamp_cap():
     """Light cap of an indicator lamp; shown/hidden by the lamp function."""
     p = Prim()
@@ -500,6 +522,7 @@ def build_gltf():
     needle = add_mesh("needle", build_needle())
     needle_red = add_mesh("needle_red", build_needle("red", 0.005, 0.046))
     lamp_cap = add_mesh("lamp_cap", build_lamp_cap())
+    panel_light = add_mesh("instrument_light", build_instrument_light())
     wiper = add_mesh("wiper", build_wiper())
     dist_bar = add_mesh("distance_bar", build_gauge_bar())
     screen_large = add_mesh("screen_large", build_screen(0.40, 0.25))
@@ -546,6 +569,9 @@ def build_gltf():
         {"name": "gauge_v_soll", "mesh": needle_red,
          "translation": [-0.2, 2.38, -7.5535]},
         {"name": "lamp_1000hz", "mesh": lamp_cap, "translation": [0.1, 2.38, -7.553]},
+        # Instrument backlighting, dimmed by its own knob.
+        {"name": "instrument_light", "mesh": panel_light,
+         "extras": {"ts_function": "switch:instrument_light", "ts_motion": "emissive"}},
         # Wiper pivot at the bottom of the -Z windscreen, on the front face
         # plane z = -(Z_NOSE - RAKE*(y - Y_FLOOR)); the vehicle file rotates it
         # about the glass normal.
@@ -599,7 +625,11 @@ def build_gltf():
         "scenes": [{"name": "br101", "nodes": roots}],
         "nodes": nodes,
         "meshes": meshes,
-        "materials": [dict(name=n, pbrMetallicRoughness=m) for n, m in MATERIALS],
+        "materials": [
+            dict(name=n, pbrMetallicRoughness=m,
+                 **({"emissiveFactor": EMISSIVE[n]} if n in EMISSIVE else {}))
+            for n, m in MATERIALS
+        ],
         "accessors": accessors,
         "bufferViews": buffer_views,
         "buffers": [{

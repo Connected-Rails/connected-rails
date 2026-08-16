@@ -1284,6 +1284,7 @@ pub(crate) fn motion_combo(
         Motion::Visibility => "motion-visible",
         Motion::Rotate { .. } => "motion-rotate",
         Motion::Translate { .. } => "motion-move",
+        Motion::Emissive => "motion-glow",
     };
     egui::ComboBox::from_id_salt(("motion", id))
         .selected_text(t!(key))
@@ -1316,6 +1317,13 @@ pub(crate) fn motion_combo(
                 };
                 changed = true;
             }
+            if ui
+                .selectable_label(key == "motion-glow", t!("motion-glow"))
+                .clicked()
+            {
+                *motion = Motion::Emissive;
+                changed = true;
+            }
         });
     changed
 }
@@ -1325,7 +1333,9 @@ pub(crate) fn motion_combo(
 pub(crate) fn motion_params(ui: &mut egui::Ui, motion: &mut Motion) -> bool {
     let mut changed = false;
     match motion {
-        Motion::Visibility => {}
+        // Neither has parameters: one is shown or hidden, the other glows with
+        // the value in the material the model brings.
+        Motion::Visibility | Motion::Emissive => {}
         Motion::Rotate { axis, degrees } => {
             ui.horizontal(|ui| {
                 ui.spacing_mut().interact_size.x = 64.0;

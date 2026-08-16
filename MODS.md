@@ -239,7 +239,7 @@ Two conventions are recognised on top of that, so that a prepared file needs no 
 |---|---|
 | Object name `body_LOD0`, `body_LOD1`, … | "Read from node names" fills the LOD table with default distances (150 / 400 / 1000 / 4000 m) |
 | Object name with the prefix `door_`, `pant_`, `sw_`, `gauge_`, `lamp_`, `wheel_`/`axle_` | suggested function plus a sensible motion |
-| Custom property `ts_function` on the object | exported into glTF `extras` and beats the name. Optional: `ts_motion` (`rotate`/`translate`/`visibility`), `ts_axis` (`"0 0 1"`), `ts_amount` (degrees or metres) |
+| Custom property `ts_function` on the object | exported into glTF `extras` and beats the name. Optional: `ts_motion` (`rotate`/`translate`/`visibility`/`emissive`), `ts_axis` (`"0 0 1"`), `ts_amount` (degrees or metres) |
 
 Custom properties are set in Blender under *Object Properties → Custom Properties*; the
 glTF exporter writes them into `extras` if "Include → Custom Properties" is switched on.
@@ -248,7 +248,9 @@ The simulator spawns the model in place of the placeholder body, shows the level
 whose distance the vehicle is within, and moves the bound parts. Which functions have a
 value today: `pantograph`, `door_left`, `door_right`, `gauge:speed`, `gauge:brake_pipe`,
 `gauge:cylinder`, `gauge:main_reservoir`, `gauge:tractive_effort`, `switch:throttle`,
-`switch:reverser`, `switch:direct_brake`, `lamp:main_switch`, `lamp:sanding`, and
+`switch:reverser`, `switch:direct_brake`, `switch:cab_light`, `switch:instrument_light`,
+`lamp:main_switch`,
+`lamp:sanding`, and
 `lamp:<indicator>` for every indicator of the fitted train protection — the names the HUD
 prints: `lamp:pzb_1000hz`, `lamp:pzb_500hz`, `lamp:pzb_befehl`, `lamp:sifa`, `lamp:lzb_ue`,
 `lamp:lzb_g`, `lamp:lzb_ende`, `lamp:lzb_b`, `lamp:lzb_v40`, `lamp:lzb_stoerung`, …
@@ -261,6 +263,24 @@ into one digit of a numeric display: its children are named `0` … `9` and the 
 is shown (`place` 0 = ones; leading zeros stay blank, an absent indicator goes dark).
 Everything else stays in its rest position until `sim-core` models the state (destination
 displays, marker lights).
+
+**Instrument backlighting** is one of those parts, and it has a motion of its own:
+`motion: Emissive` does not move the node — it scales the **emissive colour of your
+material** by the value, so the node glows along a dimmer instead of popping on at half
+travel. Model the panel face a second time with an emissive material, put it behind the
+dials that stand proud of it, and bind it to `switch:instrument_light`:
+
+```ron
+(node: "instrument_light", function: "switch:instrument_light", motion: Emissive),
+```
+
+`switch:instrument_light` is the instrument dimmer of the cab (keys `,` and `.`, or a
+`CabControl::InstrumentLight` knob in the 3D cab); `switch:cab_light` is the cab lamp's
+plain on/off switch (key 0) for a vehicle whose panel is simply lit or not. The colour in
+your material is the fully-turned-up look, so how bright a cab glows stays yours — the
+example loco carries `instrument_light` in `br101.gltf`. A node named `…_NIGHT` is the
+third variant, for anything that follows dusk rather than a switch (see
+[Lit windows at night](#track-objects)).
 
 ```bash
 cargo run -p app -- --loco example:br101_afb --camera outside
@@ -290,7 +310,8 @@ cab: Some((
 `PzbAcknowledge`, `PzbExempt`, `PzbOverride`, `LzbTakeover`, `LzbEnd`, `LzbTest`, `Horn`,
 `Sanding`, `BrakeRelease`, `EngineStart`, `DoorReleaseLeft`, `DoorReleaseRight`,
 `DoorClose`, `ParkingBrake`, `EpBrake`, `Afb`, `Battery`, `Pantograph`, `MainSwitch`,
-`Compressor`, `TrainType`, `Wipers` (off – interval – slow – fast), and `Display(0)` …
+`Compressor`, `TrainType`, `Wipers` (off – interval – slow – fast), `Headlights`,
+`CabLight`, `InstrumentLight` (the instrument dimmer, continuous), and `Display(0)` …
 `Display(7)` — softkeys for the [cab displays](#displays), read by the `display(ctx)`
 script hook.
 
@@ -300,7 +321,8 @@ How a control answers the mouse follows from the input, nothing is configured:
   button is down and spring back on release.
 - **Switches** (battery, pantograph, main switch, reverser, train type switch, …) cycle
   to their next position on click and step without wrap on the scroll wheel.
-- **Levers and valves** (power controller, brake valves, AFB target) follow a drag along
+- **Levers, valves and knobs** (power controller, brake valves, AFB target, instrument
+  dimmer) follow a drag along
   their on-screen direction of travel and step finely on the scroll wheel. The driver's
   brake valve runs fill – release – lap – service range – emergency over its travel.
 

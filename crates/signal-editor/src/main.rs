@@ -684,7 +684,7 @@ fn slew(value: f32, target: f32, dt: f32, seconds: f32) -> f32 {
 /// mapping the app applies at runtime.
 fn motion_transform(motion: &Motion, value: f32) -> Transform {
     match *motion {
-        Motion::Visibility => Transform::IDENTITY,
+        Motion::Visibility | Motion::Emissive => Transform::IDENTITY,
         Motion::Rotate { axis, degrees } => Transform::from_rotation(Quat::from_axis_angle(
             Vec3::from(axis).normalize_or_zero(),
             (degrees * value).to_radians(),

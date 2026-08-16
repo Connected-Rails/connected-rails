@@ -186,6 +186,7 @@ node-count-filtered = { $shown } von { $total } Knoten
 motion-visible = sichtbar
 motion-rotate = drehen
 motion-move = verschieben
+motion-glow = leuchten
 
 ## Fahrzeugeditor — Bremse
 
@@ -514,6 +515,7 @@ cab-input-train-type = Zugartschalter
 cab-input-wipers = Wischerschalter
 cab-input-headlights = Spitzensignal
 cab-input-cab-light = Führerraumleuchte
+cab-input-instrument-light = Instrumentenbeleuchtung
 cab-input-display-1 = Display-Taste 1
 cab-input-display-2 = Display-Taste 2
 cab-input-display-3 = Display-Taste 3
@@ -918,8 +920,9 @@ hud-scenario-failed = Szenario gescheitert
 hud-outcome = { $result }: { $reason }
 hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
 hud-control = { $name }: { $value } %
-hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer  9/0 Licht  6 AFB  7/8 AFB-Ziel
+hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer  6 AFB  7/8 AFB-Ziel
 hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera  F9 Mods
+hud-keys-lights = 9 Spitzensignal  0 Führerraumlicht  ,/. Instrumentenlicht
 
 ## Hauptmenü
 

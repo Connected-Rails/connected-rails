@@ -126,6 +126,9 @@ impl Composition {
             devices: Vec::new(),
             objects: Vec::new(),
             trees: Vec::new(),
+            markers: Vec::new(),
+            terrain: Vec::new(),
+            heights: Vec::new(),
             sections: Vec::new(),
             signals: Vec::new(),
             routes: Vec::new(),
@@ -355,6 +358,19 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
     // Trees are geo-positioned — the georeference is the connection, so a
     // plain append composes them.
     merged.trees.extend(module.trees.iter().cloned());
+    // The same for reference markers — geo-positioned, and their layer name is
+    // the same string in every module.
+    merged.markers.extend(module.markers.iter().cloned());
+    // Terrain strokes likewise; they keep their order, so a stroke of a later
+    // module wins where two modules shape the same ground.
+    merged.terrain.extend(module.terrain.iter().cloned());
+    // Every module brings its own height data; the paths are mod-qualified, so
+    // they survive the merge unchanged.
+    for h in &module.heights {
+        if !merged.heights.contains(h) {
+            merged.heights.push(h.clone());
+        }
+    }
     for s in &module.sections {
         let mut s = s.clone();
         for e in &mut s.edges {
@@ -473,6 +489,9 @@ mod tests {
             ],
             objects: vec![],
             trees: vec![],
+            markers: vec![],
+            terrain: vec![],
+            heights: vec![],
             sections: vec![SectionSource { edges: vec![0] }],
             signals: vec![SignalSource {
                 kind: SignalKind::Main,

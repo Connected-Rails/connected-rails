@@ -222,6 +222,9 @@ pub fn musterbahn() -> LineSource {
         // near the start — the demo shows trees, and streaming/instancing and
         // per-tree editing stay exercised.
         trees: demo_trees(),
+        markers: vec![],
+        terrain: vec![],
+        heights: vec![],
         sections: vec![
             SectionSource { edges: vec![0] },
             SectionSource { edges: vec![1] },

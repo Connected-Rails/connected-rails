@@ -137,6 +137,77 @@ fn default_scale() -> f64 {
     1.0
 }
 
+/// Height data a module ships with itself: a directory of ESRI ASCII grids,
+/// one per terrain tile, cut out of the state survey office's DGM by the route
+/// editor's DGM import.
+///
+/// A module that names its own heights is self-contained — no `--dgm` on the
+/// command line, and the tiles that were imported are exactly the ground the
+/// module needs. `path` is mod-qualified like everything else
+/// (`"<mod>:heights/<line>"`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeightSource {
+    pub path: String,
+    /// UTM zone of the grids (32 west, 33 east of 12° E).
+    pub zone: u8,
+}
+
+/// What one terrain brush stroke does to the ground.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TerrainEdit {
+    /// Raise (+) or lower (−) the ground by this much at the centre [m].
+    Raise(f64),
+    /// Pull the ground to this ellipsoidal height [m] — the editor fills it in
+    /// from the nearest rail, which is what levelling a station forecourt or a
+    /// depot means.
+    Level(f64),
+}
+
+/// One terrain brush stroke: a round stamp on the elevation data, falling off
+/// to nothing at its edge. Strokes are applied in file order, so a later one
+/// paints over an earlier one exactly as it was drawn.
+///
+/// The DGM stays untouched — a line stores the strokes, not a heightfield, so
+/// every stroke can be picked, re-dialled or deleted afterwards, the file stays
+/// small, and re-importing better elevation data does not throw the shaping
+/// away. The track is never moved: strokes act on the ground *before* the
+/// cutting/embankment blend, so the strip along the rails keeps rail height.
+// ponytail: no smoothing brush — smoothing needs the neighbourhood, which a
+// stamp does not have. A large, gentle `Level` is the same thing by hand; a
+// real smooth brush needs the tile grid as its working set.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TerrainEditSource {
+    /// Centre [deg].
+    pub lat: f64,
+    pub lon: f64,
+    /// Radius of the stroke [m]; beyond it nothing changes.
+    pub radius: f64,
+    pub edit: TerrainEdit,
+}
+
+/// A reference marker: a labelled point on the map that says *where* something
+/// belongs while the track is drawn by hand — a level crossing, a platform, a
+/// kilometre mark. Nothing in the simulation or the compilation reads them;
+/// they are drawing aids and travel with the line so that the next session
+/// still has them.
+///
+/// The `layer` is a free name, and everything sharing it is one layer: the
+/// editor shows, hides and deletes markers by that string. The OSM import
+/// fills it with the tag it matched (`level-crossing`, `platform`, …).
+// ponytail: no layer registry — a layer is the set of markers that name it.
+// Nothing else needs a home for per-layer settings; colour and order would be
+// the first reason to add one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarkerSource {
+    pub layer: String,
+    /// Free text shown next to the marker; empty is fine.
+    #[serde(default)]
+    pub label: String,
+    /// Position [deg]; markers lie on the map plane, not on the terrain.
+    pub lat: f64,
+    pub lon: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SectionSource {
     pub edges: Vec<u32>,
@@ -227,6 +298,19 @@ pub struct LineSource {
     /// deleted on its own.
     #[serde(default)]
     pub trees: Vec<TreeSource>,
+    /// Reference markers — editor aids in named layers, ignored by everything
+    /// that drives a train (see [`MarkerSource`]).
+    #[serde(default)]
+    pub markers: Vec<MarkerSource>,
+    /// Terrain brush strokes on top of the elevation data (see
+    /// [`TerrainEditSource`]).
+    #[serde(default)]
+    pub terrain: Vec<TerrainEditSource>,
+    /// Height data shipped with the module (see [`HeightSource`]). A list
+    /// because a composition merges the modules' entries into one line; a
+    /// module edited on its own has exactly one.
+    #[serde(default)]
+    pub heights: Vec<HeightSource>,
     #[serde(default)]
     pub sections: Vec<SectionSource>,
     #[serde(default)]
@@ -2178,6 +2262,9 @@ mod tests {
             devices: vec![],
             objects: vec![],
             trees: vec![],
+            markers: vec![],
+            terrain: vec![],
+            heights: vec![],
             sections: vec![],
             signals: vec![],
             routes: vec![],

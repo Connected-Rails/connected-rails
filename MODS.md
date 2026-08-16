@@ -721,10 +721,49 @@ example.
 
 The **route editor** (`trainsim-route-editor`) edits a line over aerial imagery: draw tracks
 arc-to-point, place devices, place switches (a click splits the track, the branch is drawn like
-a track and the turnout is wired automatically), and bend existing track by dragging the round
-support-point handles of a selected edge. A *Checks* panel lists wiring that compiles but fails
-on the line — a distant signal without its 1000 Hz magnet, a device beyond its track, a
-boundary on a node that is no buffer.
+a track and the turnout is wired automatically — facing or trailing, chosen in the tool panel),
+and bend existing track by dragging the round support-point handles of a selected edge. The
+throw time of a turnout is edited on the tracks that meet at it. A *Checks* panel lists wiring
+that compiles but fails on the line — a distant signal without its 1000 Hz magnet, a device
+beyond its track, a boundary on a node that is no buffer.
+
+The interlocking tables are edited there as well, so none of them has to be typed as RON:
+a placed `Signal` device gets its **signal table entry** in the selection panel (kind, system,
+the signal it announces, guarded sections, whether it needs a route, diverging speed, signal
+type and 3D model) together with **the routes that start at it** — where each one ends and
+what it locks, and *Find routes*, which runs out over the track and offers one route per leg
+of every turnout ahead, each ending at the next signal on it. Routes already in the file stay
+as they are, so finding again after a change adds what is new and touches nothing else.
+The *Interlocking* panel holds the **sections** (a section is the set
+of tracks that count as occupied together) and the **routes** (entry and exit signal, the
+sections and the overlap they lock, the switch positions they require). *Derive path*
+follows the track from the entry to the exit signal and fills the sections, the switch
+positions and the overlap in by itself. The overlap comes out at the regular length of
+the German rulebook for the speed the route ends at — 50 m up to 30 km/h, 100 m up to 60,
+200 m up to 100, 300 m above that, and a diverging route counts with the entry signal's
+diverging speed. Switch *regular length* off to walk out a length of your own; either way
+the sections it reaches stay editable afterwards. Pointing at a section or a route draws
+it on the map — its tracks in green, the overlap in orange, the flank protection in
+violet — so the index lists can be checked against the line.
+
+**Flank protection** (`flank` on a route) is what keeps a vehicle off the path where a
+track joins it. Two kinds, both enforced by the interlocking: a **protecting turnout**
+(`Switch(node, position)`) is set and locked with the route like one in the path, and a
+**protecting signal** (`Signal(index)`) is held at stop for as long as the route is set —
+no route can be cleared from it meanwhile, and a signal another route already runs from
+cannot be taken as protection in the first place. The derivation fills both in wherever a
+route trails a turnout, which is where the leg it does not use joins the path; a turnout
+the route runs into facing needs none, because it already lies in the position that leads
+a flank movement away.
+
+A **track lock** (Gleissperre) is a signal, not a device of its own: give the signal table
+entry `kind: TrackLock` and it has two states — stop is laid on, proceed is laid off. The
+interlocking lays it off for a route running over it and holds it on where a route names it
+as flank protection; no route ends at one, and none starts there. Everything visible is
+yours: `mods/example/signals/gleissperre.ron` is the two-rule signal type, and a
+`signal_models/*.ron` binds its `"sperre_auf"`/`"sperre_ab"` strings to the shoe — as a
+`motions` entry it swings between the two positions over its travel time instead of
+jumping. Without a model the app draws a plain shoe in the colour of the aspect.
 
 Start a line with `cargo run -p app -- --line example:beispielstrecke`.
 

@@ -46,6 +46,30 @@ pub enum SignalKind {
     Combined,
     /// Shunting signal (Sh1/Ra12).
     Shunting,
+    /// Track lock (Gleissperre, Sh 2/Wn 7): laid on it derails a vehicle
+    /// running onto it, laid off the track is free.
+    ///
+    /// It is a signal here because everything it needs is what a signal has:
+    /// two states, an aspect the interlocking sets, a lamp image the mod's
+    /// signal type names and a 3D model that moves with it (`motions` in the
+    /// signal model swings the shoe). Stop means laid on — the state it rests
+    /// in, and the one flank protection holds it in.
+    TrackLock,
+}
+
+impl SignalKind {
+    /// Can a route end at this signal? A distant signal announces, a track
+    /// lock secures — neither is a place a train move is authorised to.
+    pub fn ends_a_route(self) -> bool {
+        matches!(self, Self::Main | Self::Combined | Self::Shunting)
+    }
+
+    /// Can it hold a movement off a route as flank protection? Everything
+    /// that can show stop by itself — the track lock most of all, which is
+    /// what it exists for.
+    pub fn holds_a_flank(self) -> bool {
+        !matches!(self, Self::Distant)
+    }
 }
 
 /// Main signal aspect.
@@ -317,6 +341,11 @@ pub struct Signal {
     /// Lamp image of the current aspect (only with a signal type).
     #[serde(default)]
     pub lamps: Vec<String>,
+    /// How many set routes hold this signal at stop as their flank protection.
+    /// A counter, not a flag: two routes may lean on the same signal, and the
+    /// second one to be released must not clear it for the first.
+    #[serde(default)]
+    pub flank_locked: u32,
 }
 
 impl Signal {
@@ -343,6 +372,7 @@ impl Signal {
             type_index: None,
             situation: Situation::default(),
             lamps: Vec::new(),
+            flank_locked: 0,
         }
     }
 }
@@ -372,6 +402,9 @@ pub struct Route {
     pub sections: Vec<SectionId>,
     /// Overlap behind the exit signal.
     pub overlap: Vec<SectionId>,
+    /// Flank protection: what keeps a vehicle off the path from the side.
+    #[serde(default)]
+    pub flank: Vec<FlankGuard>,
     /// The route leads over a diverging path (slow speed).
     pub diverging: bool,
     pub state: RouteState,
@@ -386,10 +419,31 @@ impl Route {
             switches: Vec::new(),
             sections: Vec::new(),
             overlap: Vec::new(),
+            flank: Vec::new(),
             diverging: false,
             state: RouteState::Free,
         }
     }
+}
+
+/// One flank protection measure of a route: what keeps a vehicle from running
+/// into its path from the side, where a track joins it.
+///
+/// The two the interlocking can enforce itself. A track that ends in a buffer
+/// stop needs none, and the turnout a route runs into facing protects the
+/// route by lying in the position the route needs anyway.
+///
+/// A **track lock** is the signal case: it is a [`SignalKind::TrackLock`],
+/// so holding it at stop is holding it laid on — which is exactly what flank
+/// protection by a Gleissperre is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlankGuard {
+    /// Protecting turnout (Schutzweiche): held in the position that leads a
+    /// flank movement away from the route, and locked with the route.
+    Switch(NodeId, SwitchPosition),
+    /// Protecting signal (Schutzsignal): held at stop while the route is set,
+    /// so nothing can be cleared onto the route from the side.
+    Signal(SignalId),
 }
 
 /// Activation condition of a signal-dependent trackside device.
@@ -491,6 +545,11 @@ impl Interlock {
         if route.state != RouteState::Free {
             return route.state == RouteState::Locked;
         }
+        // A signal another route holds at stop as its flank protection cannot
+        // clear a route of its own — that is what the protection is for.
+        if self.signals[route.entry.index()].flank_locked > 0 {
+            return false;
+        }
         // No section may be occupied or locked by something else.
         let blocked = route.sections.iter().chain(route.overlap.iter()).any(|s| {
             let sec = &self.sections[s.index()];
@@ -499,8 +558,30 @@ impl Interlock {
         if blocked {
             return false;
         }
-        // Move the switches.
-        let switches = route.switches.clone();
+        // A protecting signal has to be free to be held: a route already set
+        // there runs where this one wants protection.
+        let flank = route.flank.clone();
+        for guard in &flank {
+            if let FlankGuard::Signal(signal) = guard
+                && self
+                    .routes
+                    .iter()
+                    .any(|r| r.entry == *signal && r.state != RouteState::Free)
+            {
+                return false;
+            }
+        }
+        // Move the switches of the path and of the flank protection alike —
+        // a protecting turnout is set and locked exactly like one in the path.
+        let switches: Vec<(NodeId, SwitchPosition)> = self.routes[id.index()]
+            .switches
+            .iter()
+            .copied()
+            .chain(flank.iter().filter_map(|g| match g {
+                FlankGuard::Switch(node, position) => Some((*node, *position)),
+                FlankGuard::Signal(_) => None,
+            }))
+            .collect();
         for (node, pos) in &switches {
             if let Some(sw) = net.switch_mut(*node) {
                 if sw.locked {
@@ -509,6 +590,11 @@ impl Interlock {
                 if sw.command(*pos).is_err() {
                     return false;
                 }
+            }
+        }
+        for guard in &flank {
+            if let FlankGuard::Signal(signal) = guard {
+                self.signals[signal.index()].flank_locked += 1;
             }
         }
         let sections: Vec<SectionId> = route
@@ -527,16 +613,31 @@ impl Interlock {
     /// Release a route (after the train has passed or on cancellation).
     pub fn release_route(&mut self, id: RouteId, net: &mut TrackNetwork) {
         let route = &self.routes[id.index()];
-        let switches = route.switches.clone();
+        let flank = route.flank.clone();
+        let switches: Vec<NodeId> = route
+            .switches
+            .iter()
+            .map(|(node, _)| *node)
+            .chain(flank.iter().filter_map(|g| match g {
+                FlankGuard::Switch(node, _) => Some(*node),
+                FlankGuard::Signal(_) => None,
+            }))
+            .collect();
         let sections: Vec<SectionId> = route
             .sections
             .iter()
             .chain(route.overlap.iter())
             .copied()
             .collect();
-        for (node, _) in switches {
+        for node in switches {
             if let Some(sw) = net.switch_mut(node) {
                 sw.locked = false;
+            }
+        }
+        for guard in &flank {
+            if let FlankGuard::Signal(signal) = guard {
+                let held = &mut self.signals[signal.index()].flank_locked;
+                *held = held.saturating_sub(1);
             }
         }
         for s in sections {
@@ -560,13 +661,22 @@ impl Interlock {
         for i in 0..self.routes.len() {
             match self.routes[i].state {
                 RouteState::Requested => {
-                    // Lock as soon as all switches are in position.
-                    let ready = self.routes[i].switches.iter().all(|(node, pos)| {
+                    // Lock as soon as every switch is in position — those of
+                    // the path and those that give flank protection alike.
+                    let switches: Vec<(NodeId, SwitchPosition)> = self.routes[i]
+                        .switches
+                        .iter()
+                        .copied()
+                        .chain(self.routes[i].flank.iter().filter_map(|g| match g {
+                            FlankGuard::Switch(node, position) => Some((*node, *position)),
+                            FlankGuard::Signal(_) => None,
+                        }))
+                        .collect();
+                    let ready = switches.iter().all(|(node, pos)| {
                         net.switch(*node)
                             .is_none_or(|sw| !sw.is_moving() && sw.position == *pos && !sw.trailed)
                     });
                     if ready {
-                        let switches = self.routes[i].switches.clone();
                         for (node, _) in switches {
                             if let Some(sw) = net.switch_mut(node) {
                                 sw.locked = true;
@@ -614,10 +724,14 @@ impl Interlock {
             if sig.kind == SignalKind::Distant {
                 continue;
             }
-            let free = sig
-                .guarded
-                .iter()
-                .all(|s| !self.sections[s.index()].occupied);
+            // A signal held as another route's flank protection counts as
+            // "not clear": it shows stop, and so does a mod's rule table,
+            // which reads the same situation.
+            let free = sig.flank_locked == 0
+                && sig
+                    .guarded
+                    .iter()
+                    .all(|s| !self.sections[s.index()].occupied);
             let route_ok = !sig.requires_route || sig.route.is_some();
             let diverging = sig
                 .route
@@ -1089,6 +1203,113 @@ mod tests {
         il.update_occupancy(&[e2]);
         assert!(!il.request_route(rid, &mut net));
         assert_eq!(il.route(rid).state, RouteState::Free);
+    }
+
+    /// Flank protection: the route through the straight leg holds the turnout
+    /// in the position that leads a flank movement away, and locks it — the
+    /// same turnout, set for protection rather than for the path.
+    #[test]
+    fn a_protecting_turnout_is_set_and_locked_with_the_route() {
+        let (mut net, node, e0, e1, _e2) = net_with_switch();
+        let mut il = Interlock::new();
+        let s_exit = il.add_section(vec![e1]);
+        let entry = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(0)));
+        let exit = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(1)));
+        let mut route = Route::new(RouteId(0), entry, exit);
+        route.sections = vec![s_exit];
+        route.flank = vec![FlankGuard::Switch(node, SwitchPosition::Diverging)];
+        let rid = il.add_route(route);
+
+        // The switch starts straight, so protection has to move it.
+        net.switch_mut(node).unwrap().position = SwitchPosition::Straight;
+        assert!(il.request_route(rid, &mut net));
+        il.update(&mut net);
+        assert_eq!(il.route(rid).state, RouteState::Requested, "switch moving");
+        net.update_switches(10.0);
+        il.update(&mut net);
+        assert_eq!(il.route(rid).state, RouteState::Locked);
+        let sw = net.switch(node).unwrap();
+        assert_eq!(sw.position, SwitchPosition::Diverging, "leads flank away");
+        assert!(sw.locked, "and is locked with the route");
+
+        il.release_route(rid, &mut net);
+        assert!(!net.switch(node).unwrap().locked);
+        let _ = e0;
+    }
+
+    /// A protecting signal stays at stop while the route is set, and no route
+    /// can be cleared from it — which is the whole point of holding it.
+    #[test]
+    fn a_protecting_signal_is_held_at_stop() {
+        let (mut net, node, _e0, e1, e2) = net_with_switch();
+        let mut il = Interlock::new();
+        let main_section = il.add_section(vec![e1]);
+        let side_section = il.add_section(vec![e2]);
+        let entry = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(0)));
+        let exit = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(1)));
+        // The signal on the side track, which the route wants held at stop.
+        let mut guard = Signal::new(SignalId(0), SignalKind::Main, DeviceId(2));
+        guard.guarded = vec![side_section];
+        let guard_id = il.add_signal(guard);
+
+        let mut route = Route::new(RouteId(0), entry, exit);
+        route.sections = vec![main_section];
+        route.flank = vec![FlankGuard::Signal(guard_id)];
+        let rid = il.add_route(route);
+        // A route of its own from the protecting signal.
+        let mut side = Route::new(RouteId(0), guard_id, exit);
+        side.sections = vec![side_section];
+        let side_id = il.add_route(side);
+
+        // On its own the side signal clears — its section is free.
+        il.update(&mut net);
+        assert_eq!(il.signal(guard_id).aspect.main, Some(MainAspect::Proceed));
+
+        assert!(il.request_route(rid, &mut net));
+        il.update(&mut net);
+        assert_eq!(il.signal(guard_id).aspect.main, Some(MainAspect::Stop));
+        assert!(
+            !il.signal(guard_id).situation.clear,
+            "the rule table sees it"
+        );
+        assert!(
+            !il.request_route(side_id, &mut net),
+            "a held signal clears no route"
+        );
+
+        // Released, the protection goes with it.
+        il.release_route(rid, &mut net);
+        il.update(&mut net);
+        assert_eq!(il.signal(guard_id).flank_locked, 0);
+        assert_eq!(il.signal(guard_id).aspect.main, Some(MainAspect::Proceed));
+        assert!(il.request_route(side_id, &mut net));
+        let _ = node;
+    }
+
+    /// The other way round: a signal that another route already runs from
+    /// cannot be taken as flank protection — it is showing proceed.
+    #[test]
+    fn a_signal_with_a_route_cannot_be_taken_as_protection() {
+        let (mut net, _node, _e0, e1, e2) = net_with_switch();
+        let mut il = Interlock::new();
+        let main_section = il.add_section(vec![e1]);
+        let side_section = il.add_section(vec![e2]);
+        let entry = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(0)));
+        let exit = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(1)));
+        let guard_id = il.add_signal(Signal::new(SignalId(0), SignalKind::Main, DeviceId(2)));
+
+        let mut side = Route::new(RouteId(0), guard_id, exit);
+        side.sections = vec![side_section];
+        let side_id = il.add_route(side);
+        let mut route = Route::new(RouteId(0), entry, exit);
+        route.sections = vec![main_section];
+        route.flank = vec![FlankGuard::Signal(guard_id)];
+        let rid = il.add_route(route);
+
+        assert!(il.request_route(side_id, &mut net));
+        assert!(!il.request_route(rid, &mut net), "protection not available");
+        il.release_route(side_id, &mut net);
+        assert!(il.request_route(rid, &mut net));
     }
 
     #[test]

@@ -1,0 +1,32 @@
+// Track lock (Gleissperre, Sh 2/Wn 7) as a signal type.
+//
+// A track lock is a signal with two states, so it is a signal type like any
+// other: stop = laid on (the shoe sits on the rail and would derail a vehicle
+// running onto it), proceed = laid off. The interlocking sets it — a route
+// over it lays it off, flank protection holds it on — and the `lamps` strings
+// are what the model shows.
+//
+// The look is entirely the mod's: bind "sperre_auf"/"sperre_ab" in a
+// `signal_models/*.ron` to the shoe's node, or better bind one of them as a
+// `motions` entry, and the shoe swings between its two positions over the
+// travel time instead of jumping. Nothing in the engine knows what a track
+// lock looks like.
+(
+    // The presentation system only decides the lamp images; a track lock has
+    // no aspect of the H/V or Ks catalogue, and the strings below are its own.
+    system: Ks,
+    rules: [
+        // Laid off — a route runs over it.
+        (
+            when: (route: Some(true)),
+            show: (main: Some(Proceed)),
+            lamps: ["sperre_ab"],
+        ),
+        // Laid on: the resting state, and the one flank protection holds.
+        (
+            when: (),
+            show: (main: Some(Stop)),
+            lamps: ["sperre_auf"],
+        ),
+    ],
+)

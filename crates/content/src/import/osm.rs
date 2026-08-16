@@ -14,6 +14,7 @@
 //! line (a few thousand nodes); a PBF reader would only be necessary if whole federal
 //! states had to be read in.
 
+use crate::route::MarkerSource;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -165,6 +166,116 @@ pub fn parse_forests(json: &str) -> Result<Vec<Vec<(f64, f64)>>, OsmError> {
         }
     }
     Ok(polygons)
+}
+
+/// Tags the marker import recognises, and the layer each one lands in.
+/// `"*"` matches any value — a way tagged `bridge=viaduct` is a bridge like
+/// any other.
+///
+/// The order decides: the first match wins, so a `railway=platform` way that
+/// also carries `bridge=yes` stays a platform.
+const MARKER_LAYERS: &[(&str, &str, &str)] = &[
+    ("railway", "level_crossing", "level-crossing"),
+    ("railway", "crossing", "level-crossing"),
+    ("railway", "platform", "platform"),
+    ("railway", "station", "station"),
+    ("railway", "halt", "station"),
+    ("railway", "signal", "signal"),
+    ("railway", "switch", "switch"),
+    ("railway", "buffer_stop", "buffer-stop"),
+    ("railway", "milestone", "kilometre-mark"),
+    ("bridge", "*", "bridge"),
+    ("tunnel", "*", "tunnel"),
+    ("power", "tower", "power-tower"),
+    ("man_made", "tower", "tower"),
+    ("man_made", "water_tower", "tower"),
+];
+
+/// Reference markers from an Overpass extract: everything in [`MARKER_LAYERS`]
+/// becomes one [`MarkerSource`] in the layer of the tag it matched. An extract
+/// without any is fine (empty result, not an error).
+///
+/// Query — whatever is wanted, the filter below sorts it out:
+///
+/// ```overpassql
+/// [out:json];
+/// (node["railway"](52.0,10.0,52.1,10.2); way["railway"](52.0,10.0,52.1,10.2););
+/// (._;>;);
+/// out body;
+/// ```
+// ponytail: a way becomes its midpoint. A marker says "something belongs
+// here", and for that a platform is as useful as a point as it is as an
+// outline; carrying the outline would mean a second primitive to draw, pick
+// and delete. Relations are skipped like in `parse_forests`.
+pub fn parse_markers(json: &str) -> Result<Vec<MarkerSource>, OsmError> {
+    let response: OverpassResponse =
+        serde_json::from_str(json).map_err(|e| OsmError::Json(e.to_string()))?;
+
+    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    let mut markers = Vec::new();
+    // Ways are resolved after the pass — Overpass lists them before their nodes.
+    let mut ways: Vec<(Vec<i64>, &'static str, String)> = Vec::new();
+
+    for e in &response.elements {
+        if let (Some(lat), Some(lon)) = (e.lat, e.lon) {
+            nodes.insert(e.id, (lat, lon));
+        }
+    }
+    for e in &response.elements {
+        let Some(layer) = layer_of(&e.tags) else {
+            continue;
+        };
+        let label = label_of(&e.tags, layer);
+        match e.kind.as_str() {
+            "node" => {
+                if let Some(&(lat, lon)) = nodes.get(&e.id) {
+                    markers.push(MarkerSource {
+                        layer: layer.into(),
+                        label,
+                        lat,
+                        lon,
+                    });
+                }
+            }
+            "way" => ways.push((e.nodes.clone(), layer, label)),
+            _ => {}
+        }
+    }
+    for (way, layer, label) in ways {
+        let points: Vec<(f64, f64)> = way.iter().filter_map(|id| nodes.get(id).copied()).collect();
+        if points.is_empty() {
+            continue;
+        }
+        let n = points.len() as f64;
+        markers.push(MarkerSource {
+            layer: layer.into(),
+            label,
+            lat: points.iter().map(|p| p.0).sum::<f64>() / n,
+            lon: points.iter().map(|p| p.1).sum::<f64>() / n,
+        });
+    }
+    Ok(markers)
+}
+
+/// The first layer of [`MARKER_LAYERS`] whose tag the element carries.
+fn layer_of(tags: &HashMap<String, String>) -> Option<&'static str> {
+    MARKER_LAYERS.iter().find_map(|(key, value, layer)| {
+        let actual = tags.get(*key)?;
+        // `bridge=no` is not a bridge — the negations are worth the two lines.
+        let matches = (*value == "*" && actual != "no" && actual != "none") || actual == value;
+        matches.then_some(*layer)
+    })
+}
+
+/// `name`, else `ref` (the kilometre of a milestone lives there), else the
+/// layer itself — a marker without any text at all is hard to tell apart.
+fn label_of(tags: &HashMap<String, String>, layer: &str) -> String {
+    for key in ["name", "ref", "railway:position"] {
+        if let Some(value) = tags.get(key) {
+            return value.clone();
+        }
+    }
+    layer.to_string()
 }
 
 /// A point of the assembled line.
@@ -326,5 +437,36 @@ mod tests {
 
         // A forest-free extract is empty, not an error.
         assert_eq!(parse_forests(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    #[test]
+    fn markers_land_in_the_layer_of_their_tag() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0,
+             "tags": {"railway": "level_crossing", "name": "Dorfstraße"}},
+            {"type": "node", "id": 2, "lat": 52.1, "lon": 10.1,
+             "tags": {"railway": "milestone", "railway:position": "108.2"}},
+            {"type": "node", "id": 3, "lat": 52.2, "lon": 10.2, "tags": {"highway": "bus_stop"}},
+            {"type": "node", "id": 4, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 5, "lat": 52.0, "lon": 10.2},
+            {"type": "way", "id": 20, "nodes": [4, 5], "tags": {"railway": "platform"}},
+            {"type": "way", "id": 21, "nodes": [4, 5], "tags": {"bridge": "no"}}
+        ]}"#;
+        let markers = parse_markers(json).expect("parses");
+
+        // The bus stop and the `bridge=no` way are not markers.
+        assert_eq!(markers.len(), 3);
+        assert_eq!(markers[0].layer, "level-crossing");
+        assert_eq!(markers[0].label, "Dorfstraße");
+        // No `name`: the kilometre out of `railway:position` is the label.
+        assert_eq!(markers[1].layer, "kilometre-mark");
+        assert_eq!(markers[1].label, "108.2");
+        // The way became its midpoint, and no label of its own means the layer.
+        let platform = &markers[2];
+        assert_eq!(platform.layer, "platform");
+        assert_eq!(platform.label, "platform");
+        assert!((platform.lon - 10.1).abs() < 1e-9, "{}", platform.lon);
+
+        assert_eq!(parse_markers(r#"{"elements": []}"#), Ok(vec![]));
     }
 }

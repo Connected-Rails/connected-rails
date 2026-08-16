@@ -897,6 +897,96 @@ an imported wood is thinned out or cleared exactly like a painted one. For bulk 
 **marking brush** (key 8) sweeps over the map and marks every tree and object under the
 circle; Delete (or the panel button) removes them together in one undo step.
 
+### Height data (DGM)
+
+A module can carry its own ground, so it runs without `--dgm` on the command line:
+
+```ron
+heights: [(path: "example:heights/musterbahn", zone: 32)],
+```
+
+Behind that path lies one **ESRI ASCII grid per terrain tile**
+(`<mod>/heights/<line>/x<kx>_y<ky>.asc`), cut out of the state survey office's delivery
+by the route editor. A federal state's DGM1 is hundreds of gigabytes; the corridor of a
+20 km module at 10 m spacing is a few megabytes.
+
+In the editor's **Height data (DGM)** panel: choose the delivery directory, the UTM zone
+(32 west, 33 east of 12° E) and the grid spacing, then
+
+- **Import whole module** — every tile of the line's corridor, or
+- **Import picked tiles** — only what the **DGM tiles** tool has picked. That tool draws
+  the tile grid on the map: green already has heights, blue is picked, grey has none.
+  Tile by tile is how a long line gets its ground without re-cutting what is already
+  there.
+
+Tiles the delivery holds no data for are skipped, so a module at the edge of a state's
+data does not ship plates of zeros. The panel shows the coverage (`n of m corridor
+tiles`). **Drop reference** removes the entry from the line but leaves the files.
+
+At runtime the module's heights come **after** any `--dgm` given on the command line:
+whoever has the original delivery keeps its finer grid, everyone else gets the module's
+cut-out.
+
+### Terrain brush
+
+The ground comes from the DGM, and a line reshapes it with **brush strokes** — round
+stamps that are stored as data, not baked into a heightfield:
+
+```ron
+terrain: [
+    // Raise the ground by 6 m over a 120 m radius, fading to nothing at the edge.
+    (lat: 52.0012, lon: 10.0031, radius: 120.0, edit: Raise(6.0)),
+    // Pull it to an absolute height instead — a level forecourt.
+    (lat: 52.0020, lon: 10.0044, radius: 80.0, edit: Level(143.5)),
+],
+```
+
+Strokes apply in file order, so a later one paints over an earlier one exactly as it was
+drawn, and each one stays pickable, re-dialled or deleted afterwards. The DGM is never
+modified: re-importing better elevation data keeps the shaping. **The track is never
+moved** — strokes work the ground *before* the cutting/embankment blend, so the strip
+along the rails keeps rail height whatever is stamped across it.
+
+In the route editor the **terrain brush** (key 0) stamps one stroke per click, with
+radius and height change in the tool options. **Level to rail** takes its target height
+from the nearest track — that is what levelling a station forecourt or a depot means,
+and it needs no elevation data in the editor. On the map every stroke draws its true
+footprint (warm = raising, cold = lowering, grey = levelling), so overlaps are visible;
+the selection panel re-dials radius and amount, Delete removes a stroke.
+
+A stroke smaller than the terrain grid spacing (4 m at the track, up to 32 m at the edge
+of the corridor) barely shows — the grid cannot resolve it. There is no smoothing brush:
+smoothing needs the neighbourhood, which a stamp does not have; a large, gentle `Level`
+is the same thing by hand.
+
+### Reference markers
+
+Markers are the editor's drawing aids: a labelled point that says *where* something
+belongs while the track is drawn by hand. Nothing in the simulation reads them, and
+nothing is wired up — a marker on a level crossing is a note, not a level crossing.
+
+```ron
+markers: [
+    (layer: "level-crossing", label: "Dorfstraße", lat: 52.0006, lon: 10.004),
+    (layer: "kilometre-mark", label: "108.2", lat: 52.0021, lon: 10.007),
+],
+```
+
+The `layer` is a free name, and everything sharing it is one layer. In the route
+editor's **Reference markers** panel each layer has a checkbox (hide it on the map — it
+is then unpickable too), its marker count, a button that jumps to it, and one that
+deletes the whole layer. Retyping the layer in the selection panel moves a single marker
+into another one. Hiding is session state; the markers themselves travel with the line,
+so the next session still has them.
+
+The **marker tool** (key 9) sets one per click into the layer named in the tool options.
+**File ▸ Import reference markers…** reads an Overpass JSON extract and turns the tags it
+knows into markers, each in the layer of its tag: `level-crossing`, `platform`,
+`station`, `signal`, `switch`, `buffer-stop`, `kilometre-mark`, `bridge`, `tunnel`,
+`power-tower`, `tower`. Ways become their midpoint; the label comes from `name`, `ref` or
+`railway:position`. Everything else in the extract is ignored, and a layer that turns out
+to be noise is deleted in one click.
+
 ### Modules and compositions
 
 A big line is built from **modules**, after the Zusi 3 model: a module is an ordinary

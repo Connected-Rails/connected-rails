@@ -27,7 +27,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
-use content::terrain::{TerrainBuilder, TerrainOptions, TerrainStats, Vegetation};
+use content::terrain::{TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation};
 use content::vehicles::{br101, passenger_coach};
 use content::{musterbahn, re_4711, to_musterstadt};
 use mod_runtime::ModRuntime;
@@ -502,13 +502,34 @@ fn setup(
             Err(e) => warn!("DGM {dir} not readable: {e}"),
         }
     }
+    // Height data the module ships with itself — behind the `--dgm` sources, so
+    // whoever passes the original delivery keeps its finer grid.
+    for h in &line_source.heights {
+        let Some(dir) = mods.mods.resolve_path(&h.path) else {
+            warn!("height data {}: mod not installed", h.path);
+            continue;
+        };
+        match TerrainSource::from_dir(&dir, h.zone) {
+            Ok(s) => {
+                info!(
+                    "module heights: {} tiles from {} (zone {})",
+                    s.tile_count(),
+                    dir.display(),
+                    h.zone
+                );
+                sources.push(s);
+            }
+            Err(e) => warn!("height data {} not readable: {e}", dir.display()),
+        }
+    }
     let terrain_options = TerrainOptions {
         zone: dgm_zone(),
         fallback_height: 100.0,
         ..default()
     };
     let mut terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
-        .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone));
+        .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone))
+        .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(
         &mut commands,

@@ -274,6 +274,17 @@ impl Mods {
         }
     }
 
+    /// Turns a mod-qualified path (`"<mod>:heights/<line>"`) into a real one
+    /// below that mod's directory. `None` if the mod is not installed.
+    ///
+    /// For files that are read directly rather than through Bevy's asset
+    /// system — a module's DGM cut-out is the only one so far.
+    pub fn resolve_path(&self, qualified: &str) -> Option<PathBuf> {
+        let (id, rest) = qualified.split_once(':')?;
+        let man = self.manifests.iter().find(|m| m.id == id)?;
+        Some(man.dir.join(rest))
+    }
+
     /// Resolves the signal type names of a line and hangs the types into the interlocking.
     ///
     /// Signals are compiled in source order, so `line.signals[i]` belongs to

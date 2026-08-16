@@ -241,6 +241,75 @@ impl HeightTile {
     pub fn memory(&self) -> usize {
         self.data.len() * std::mem::size_of::<f32>()
     }
+
+    /// Builds a tile by sampling `sources` over a square — the cut-out a module
+    /// ships instead of the state's whole DGM1. Points without data become
+    /// NODATA, so a square that only half touches the delivery still works.
+    pub fn sample(
+        sources: &mut [TerrainSource],
+        zone: u8,
+        origin: (f64, f64),
+        size: f64,
+        cell: f64,
+    ) -> Self {
+        let cell = cell.max(0.5);
+        // One point past the end, so neighbouring cut-outs share their border
+        // row and no seam appears between them.
+        let n = (size / cell).round().max(1.0) as usize + 1;
+        let mut data = vec![f32::NAN; n * n];
+        for iy in 0..n {
+            for ix in 0..n {
+                let e = origin.0 + ix as f64 * cell;
+                let north = origin.1 + iy as f64 * cell;
+                let height = sources.iter_mut().find_map(|s| {
+                    if s.zone == zone {
+                        s.height_at_utm(e, north)
+                    } else {
+                        // Another zone: the same point, through geodetic.
+                        let (lat, lon) = geo::from_utm(e, north, zone);
+                        s.height_at(lat.to_degrees(), lon.to_degrees())
+                    }
+                });
+                if let Some(h) = height {
+                    data[iy * n + ix] = h as f32;
+                }
+            }
+        }
+        Self {
+            zone,
+            cell,
+            origin,
+            cols: n,
+            rows: n,
+            data,
+        }
+    }
+
+    /// The tile as an ESRI ASCII grid — the format [`Self::parse_asc`] reads,
+    /// so a module's height data needs no reader of its own.
+    pub fn to_asc(&self) -> String {
+        let mut text = format!(
+            "ncols {}\nnrows {}\nxllcorner {}\nyllcorner {}\ncellsize {}\nNODATA_value -9999\n",
+            self.cols, self.rows, self.origin.0, self.origin.1, self.cell
+        );
+        // ASCII grids run from north to south, our grid the other way.
+        for row in (0..self.rows).rev() {
+            for col in 0..self.cols {
+                let v = self.data[row * self.cols + col];
+                if col > 0 {
+                    text.push(' ');
+                }
+                if v.is_nan() {
+                    text.push_str("-9999");
+                } else {
+                    // Centimetres are beyond what a DGM1 promises.
+                    text.push_str(&format!("{v:.2}"));
+                }
+            }
+            text.push('\n');
+        }
+        text
+    }
 }
 
 fn parse_xyz_line(line: &str) -> Option<(f64, f64, f32)> {
@@ -513,6 +582,45 @@ mod tests {
         assert!((mid - 101.25).abs() < 1e-9, "{mid}");
         let east = tile.height_at_utm(600_050.0, 5_760_000.0).unwrap();
         assert!((east - 105.0).abs() < 1e-9, "{east}");
+    }
+
+    /// The module cut-out: sample a square out of a source, write it as an
+    /// ASCII grid, read it back — the heights survive, and an area without
+    /// data stays NODATA instead of turning into zeros.
+    #[test]
+    fn a_sampled_cut_out_survives_the_ascii_round_trip() {
+        let mut source = TerrainSource::from_tile(HeightTile::parse_xyz(&grid_text(), 32).unwrap());
+        let cut = HeightTile::sample(
+            std::slice::from_mut(&mut source),
+            32,
+            (600_000.0, 5_760_000.0),
+            50.0,
+            25.0,
+        );
+        assert_eq!((cut.cols, cut.rows), (3, 3));
+
+        let text = cut.to_asc();
+        let back = HeightTile::parse_asc(&text, 32).unwrap();
+        assert_eq!(back.cell, 25.0);
+        assert_eq!(back.origin, (600_000.0, 5_760_000.0));
+        for (x, expected) in [(600_000.0, 100.0), (600_025.0, 102.5), (600_050.0, 105.0)] {
+            let h = back.height_at_utm(x, 5_760_025.0).unwrap();
+            assert!(
+                (h - expected).abs() < 0.01,
+                "{x}: {h} instead of {expected}"
+            );
+        }
+
+        // A square outside the delivery holds no data at all — the import skips
+        // such tiles instead of shipping a plate of zeros.
+        let empty = HeightTile::sample(
+            std::slice::from_mut(&mut source),
+            32,
+            (700_000.0, 5_760_000.0),
+            50.0,
+            25.0,
+        );
+        assert!(empty.is_empty());
     }
 
     #[test]

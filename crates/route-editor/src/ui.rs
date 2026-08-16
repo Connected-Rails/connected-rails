@@ -332,6 +332,12 @@ fn open(line: &mut Line, history: &mut History, state: &mut EditorState, overlay
                 history.reset(&line.source);
                 state.selection = Selection::None;
                 state.drawing = None;
+                state.picked_tiles.clear();
+                // Which tiles this module already has heights for — read once
+                // per open, not per frame.
+                state.dgm_present = height_dir(line)
+                    .map(|(dir, _)| present_tiles(&dir))
+                    .unwrap_or_default();
                 overlay.status = t!("status-loaded", file = path.display());
             }
             Err(e) => report_failure(
@@ -394,6 +400,182 @@ fn import_forest(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay
     }
 }
 
+/// Where a line's own height tiles live: `<mod>/heights/<line>/`, and the
+/// mod-qualified path that goes into the file. `None` when the line has not
+/// been saved into a mod yet — height data belongs to a mod, not to a loose
+/// file somewhere.
+fn height_dir(line: &Line) -> Option<(std::path::PathBuf, String)> {
+    let path = std::path::Path::new(line.path.as_ref()?);
+    let stem = path.file_stem()?.to_str()?.to_string();
+    // `<mod>/lines/<line>.ron` — the mod directory is two levels up.
+    let mod_dir = path.parent()?.parent()?;
+    let manifest = std::fs::read_to_string(mod_dir.join("mod.ron")).ok()?;
+    let id = manifest
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("id:")?.trim().split('"').nth(1))?
+        .to_string();
+    Some((
+        mod_dir.join("heights").join(&stem),
+        format!("{id}:heights/{stem}"),
+    ))
+}
+
+/// The tiles the module already carries — file name `x<kx>_y<ky>.asc`.
+fn present_tiles(dir: &std::path::Path) -> Vec<content::TileKey> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.path();
+            let stem = name.file_stem()?.to_str()?;
+            let (x, y) = stem.strip_prefix('x')?.split_once("_y")?;
+            Some((x.parse().ok()?, y.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Cuts the module's own height tiles out of a DGM delivery — the whole
+/// corridor, or the tiles picked with the tile tool. Every tile becomes one
+/// ESRI ASCII grid next to the line, and the line records where they are, so
+/// the module carries its ground with it instead of needing `--dgm` at
+/// runtime. Tiles the delivery has no data for are skipped rather than shipped
+/// as a plate of zeros.
+fn import_heights(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay, all: bool) {
+    let Some((dir, qualified)) = height_dir(line) else {
+        overlay.status = t!("status-heights-need-mod");
+        return;
+    };
+    let Some(source_path) = state.dgm_source.clone() else {
+        overlay.status = t!("status-heights-no-source");
+        return;
+    };
+    let zone = state.dgm_zone();
+    let path = std::path::Path::new(&source_path);
+    let source = if path.is_dir() {
+        content::import::dgm::TerrainSource::from_dir(path, zone).map_err(|e| e.to_string())
+    } else {
+        std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|t| {
+                content::import::dgm::HeightTile::parse(&t, zone)
+                    .map(content::import::dgm::TerrainSource::from_tile)
+                    .map_err(|e| e.to_string())
+            })
+    };
+    let mut source = match source {
+        Ok(s) => s,
+        Err(e) => {
+            report_failure(
+                state,
+                overlay,
+                t!("status-error", file = source_path, error = e),
+            );
+            return;
+        }
+    };
+
+    let options = state.terrain_options();
+    let tiles = if all || state.picked_tiles.is_empty() {
+        tools::corridor_tiles(line, options)
+    } else {
+        state.picked_tiles.clone()
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        report_failure(
+            state,
+            overlay,
+            t!("status-error", file = dir.display(), error = e.to_string()),
+        );
+        return;
+    }
+
+    let cell = state.dgm_cell();
+    let (mut written, mut empty) = (0usize, 0usize);
+    for key in tiles {
+        let min = content::terrain::tile_min(key, options.tile_size);
+        let tile = content::import::dgm::HeightTile::sample(
+            std::slice::from_mut(&mut source),
+            zone,
+            (min.x, min.y),
+            options.tile_size,
+            cell,
+        );
+        if tile.is_empty() {
+            empty += 1;
+            continue;
+        }
+        let file = dir.join(format!("x{}_y{}.asc", key.0, key.1));
+        match std::fs::write(&file, tile.to_asc()) {
+            Ok(()) => written += 1,
+            Err(e) => {
+                report_failure(
+                    state,
+                    overlay,
+                    t!("status-error", file = file.display(), error = e.to_string()),
+                );
+                return;
+            }
+        }
+    }
+
+    let entry = content::route::HeightSource {
+        path: qualified,
+        zone,
+    };
+    if written > 0 && !line.source.heights.contains(&entry) {
+        line.source.heights = vec![entry];
+    }
+    state.dgm_present = present_tiles(&dir);
+    state.picked_tiles.clear();
+    overlay.status = t!("status-heights-imported", tiles = written, empty = empty);
+}
+
+/// File ▸ Import reference markers: reads an Overpass JSON extract and turns
+/// the tags it knows into markers, each in the layer of its tag — level
+/// crossings, platforms, kilometre marks. They are drawing aids, not
+/// equipment: nothing is wired, and every layer can be hidden or deleted
+/// again in the marker panel.
+fn import_markers(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay) {
+    let Some(path) = file_dialog(state)
+        .add_filter(t!("filter-overpass-json"), &["json"])
+        .pick_file()
+    else {
+        return;
+    };
+    let parsed = std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| content::import::parse_markers(&text).map_err(|e| e.to_string()));
+    match parsed {
+        Ok(markers) if markers.is_empty() => {
+            overlay.status = t!("status-marker-import-empty", file = path.display());
+        }
+        Ok(markers) => {
+            let count = markers.len();
+            let layers: std::collections::BTreeSet<&str> =
+                markers.iter().map(|m| m.layer.as_str()).collect();
+            let layer_count = layers.len();
+            // An imported layer that was hidden before shows itself again —
+            // otherwise the import looks like it did nothing.
+            for layer in layers {
+                state.hidden_layers.remove(layer);
+            }
+            line.source.markers.extend(markers);
+            overlay.status = t!(
+                "status-markers-imported",
+                count = count,
+                layers = layer_count
+            );
+        }
+        Err(e) => report_failure(
+            state,
+            overlay,
+            t!("status-error", file = path.display(), error = e),
+        ),
+    }
+}
+
 fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
     line.source = LineSource {
         name: "Line".into(),
@@ -403,6 +585,9 @@ fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
         devices: vec![],
         objects: vec![],
         trees: vec![],
+        markers: vec![],
+        terrain: vec![],
+        heights: vec![],
         sections: vec![],
         signals: vec![],
         routes: vec![],
@@ -460,6 +645,10 @@ fn menu_bar(
                     if ui.button(t!("action-import-forest")).clicked() {
                         ui.close();
                         import_forest(line, state, overlay);
+                    }
+                    if ui.button(t!("action-import-markers")).clicked() {
+                        ui.close();
+                        import_markers(line, state, overlay);
                     }
                     ui.separator();
                     if ui.button(t!("action-load-imagery")).clicked() {
@@ -786,6 +975,78 @@ fn left_panel(
                                 }
                             });
                         }
+                        if state.tool == Tool::PlaceMarker {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("place-marker").show(ui, |ui| {
+                                row(ui, "marker-layer", |ui| {
+                                    // The raw value, not `marker_layer()` — an
+                                    // emptied field would refill itself with
+                                    // the default under the typing hands.
+                                    let mut layer = state
+                                        .marker_layer
+                                        .clone()
+                                        .unwrap_or_else(|| tools::DEFAULT_MARKER_LAYER.into());
+                                    if ui
+                                        .add(
+                                            egui::TextEdit::singleline(&mut layer)
+                                                .desired_width(space::FIELD),
+                                        )
+                                        .changed()
+                                    {
+                                        state.marker_layer = Some(layer);
+                                    }
+                                });
+                                row(ui, "marker-label", |ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut state.marker_label)
+                                            .desired_width(space::FIELD),
+                                    );
+                                });
+                            });
+                        }
+                        if state.tool == Tool::TerrainBrush {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("terrain-brush").show(ui, |ui| {
+                                row(ui, "terrain-radius", |ui| {
+                                    let mut radius = state.terrain_radius.unwrap_or(60.0);
+                                    if editor_ui::field(ui, &mut radius, 5.0, 5.0..=2_000.0, "m")
+                                        .changed()
+                                    {
+                                        state.terrain_radius = Some(radius);
+                                    }
+                                });
+                                row(ui, "terrain-mode", |ui| {
+                                    for (level, key) in
+                                        [(false, "terrain-raise"), (true, "terrain-level")]
+                                    {
+                                        if ui
+                                            .selectable_label(state.terrain_level == level, t!(key))
+                                            .on_hover_text(t!(&format!("{key}-hint")))
+                                            .clicked()
+                                        {
+                                            state.terrain_level = level;
+                                        }
+                                    }
+                                });
+                                if !state.terrain_level {
+                                    row(ui, "terrain-amount", |ui| {
+                                        let mut amount = state.terrain_amount.unwrap_or(2.0);
+                                        if editor_ui::field(
+                                            ui,
+                                            &mut amount,
+                                            0.5,
+                                            -100.0..=100.0,
+                                            "m",
+                                        )
+                                        .changed()
+                                        {
+                                            state.terrain_amount = Some(amount);
+                                        }
+                                    });
+                                }
+                            });
+                            ui.small(t!("terrain-count", count = line.source.terrain.len()));
+                        }
                         if let Some(drawing) = &state.drawing {
                             ui.add_space(space::XS);
                             ui.small(t!("draw-active", segments = drawing.segments.len()));
@@ -817,6 +1078,14 @@ fn left_panel(
                             interlock_section(ui, line, state, overlay);
                         },
                     );
+
+                    nav_section(ui, jump, &mut current, "markers", "heading-markers", |ui| {
+                        marker_section(ui, line, state, focus);
+                    });
+
+                    nav_section(ui, jump, &mut current, "heights", "heading-heights", |ui| {
+                        height_section(ui, line, state, overlay);
+                    });
 
                     nav_section(ui, jump, &mut current, "module", "heading-module", |ui| {
                         module_section(ui, line, state, ghost, overlay, focus);
@@ -868,6 +1137,9 @@ fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
             (Tool::PlaceTree, "tool-tree"),
             (Tool::PlaceForest, "tool-forest"),
             (Tool::Brush, "tool-brush"),
+            (Tool::PlaceMarker, "tool-marker"),
+            (Tool::TerrainBrush, "tool-terrain"),
+            (Tool::PickTile, "tool-tile"),
         ] {
             let mut chip = ui.selectable_label(state.tool == tool, t!(key));
             if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
@@ -1074,6 +1346,71 @@ fn selection_panel(
                 });
                 row(ui, "tree-scale", |ui| {
                     editor_ui::field(ui, &mut tree.scale, 0.05, 0.2..=5.0, "");
+                });
+            });
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked() {
+                    focus.position = position;
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
+        }
+        Selection::TerrainEdit(i) => {
+            let Some(edit) = line.source.terrain.get(i) else {
+                return;
+            };
+            let position = tools::terrain_pos(edit, focus);
+            ui.label(t!("sel-terrain-summary", index = i));
+            let edit = &mut line.source.terrain[i];
+            editor_ui::form_grid("sel-terrain").show(ui, |ui| {
+                row(ui, "terrain-radius", |ui| {
+                    editor_ui::field(ui, &mut edit.radius, 5.0, 5.0..=2_000.0, "m");
+                });
+                match &mut edit.edit {
+                    content::route::TerrainEdit::Raise(by) => {
+                        row(ui, "terrain-amount", |ui| {
+                            editor_ui::field(ui, by, 0.5, -100.0..=100.0, "m");
+                        });
+                    }
+                    content::route::TerrainEdit::Level(to) => {
+                        row(ui, "terrain-target", |ui| {
+                            editor_ui::field(ui, to, 0.5, -500.0..=5_000.0, "m");
+                        });
+                    }
+                }
+            });
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked() {
+                    focus.position = position;
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
+        }
+        Selection::Marker(i) => {
+            let Some(marker) = line.source.markers.get(i) else {
+                return;
+            };
+            let position = tools::marker_pos(marker, focus);
+            ui.label(t!("sel-marker-summary", index = i));
+            let marker = &mut line.source.markers[i];
+            editor_ui::form_grid("sel-marker").show(ui, |ui| {
+                // Retyping the layer moves the marker into another one — that
+                // is the whole layer management a marker needs.
+                row(ui, "marker-layer", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut marker.layer).desired_width(space::FIELD),
+                    );
+                });
+                row(ui, "marker-label", |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut marker.label).desired_width(space::FIELD),
+                    );
                 });
             });
             ui.add_space(space::XS);
@@ -2256,6 +2593,134 @@ fn checks_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, f
             );
         });
     }
+}
+
+/// Height data of the module: which DGM delivery it is cut from, at what grid
+/// spacing, and how much of the corridor is covered. The tile tool picks single
+/// tiles on the map; without a pick the import covers the whole corridor.
+fn height_section(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    overlay: &mut Overlay,
+) {
+    editor_ui::form_grid("heights").show(ui, |ui| {
+        row(ui, "dgm-source", |ui| {
+            if ui.button(t!("action-choose-dgm")).clicked()
+                && let Some(dir) = file_dialog(state).pick_folder()
+            {
+                state.dgm_source = Some(dir.display().to_string());
+            }
+        });
+        row(ui, "dgm-zone", |ui| {
+            let mut zone = state.dgm_zone() as f64;
+            if editor_ui::field(ui, &mut zone, 1.0, 32.0..=33.0, "").changed() {
+                state.dgm_zone = Some(zone as u8);
+            }
+        });
+        row(ui, "dgm-cell", |ui| {
+            let mut cell = state.dgm_cell();
+            if editor_ui::field(ui, &mut cell, 1.0, 1.0..=100.0, "m").changed() {
+                state.dgm_cell = Some(cell);
+            }
+        });
+    });
+    if let Some(source) = &state.dgm_source {
+        ui.label(
+            egui::RichText::new(source.clone())
+                .monospace()
+                .color(colors::TEXT_SECONDARY),
+        );
+    }
+
+    ui.add_space(space::XS);
+    let corridor = tools::corridor_tiles(line, state.terrain_options()).len();
+    ui.small(t!(
+        "dgm-coverage",
+        have = state.dgm_present.len(),
+        total = corridor
+    ));
+    if !state.picked_tiles.is_empty() {
+        ui.small(t!("dgm-picked", count = state.picked_tiles.len()));
+    }
+
+    ui.add_space(space::XS);
+    ui.horizontal(|ui| {
+        if ui.button(t!("action-import-heights-all")).clicked() {
+            import_heights(line, state, overlay, true);
+        }
+        let picked = egui::Button::new(t!("action-import-heights-picked"));
+        if ui
+            .add_enabled(!state.picked_tiles.is_empty(), picked)
+            .clicked()
+        {
+            import_heights(line, state, overlay, false);
+        }
+    });
+    ui.horizontal(|ui| {
+        let clear = egui::Button::new(t!("action-clear-picked"));
+        if ui
+            .add_enabled(!state.picked_tiles.is_empty(), clear)
+            .clicked()
+        {
+            state.picked_tiles.clear();
+        }
+        let drop = egui::Button::new(t!("action-drop-heights"));
+        if ui
+            .add_enabled(!line.source.heights.is_empty(), drop)
+            .clicked()
+        {
+            // Only the reference goes; the tiles stay on disk, so a mistaken
+            // click costs a re-import at worst, not the cut-out.
+            line.source.heights.clear();
+        }
+    });
+}
+
+/// Reference markers by layer: a checkbox that hides the layer on the map, its
+/// marker count, and a button that deletes the whole layer. Hiding is session
+/// state, deleting is an edit — the two live in the same row because that is
+/// where the question is asked ("do I still need this?").
+fn marker_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, focus: &mut Focus) {
+    let layers = tools::marker_layers(line);
+    if layers.is_empty() {
+        ui.small(t!("marker-none"));
+        return;
+    }
+    // Deleting inside the loop would shift the indices the rows are drawn from.
+    let mut delete: Option<String> = None;
+    for (layer, count) in &layers {
+        ui.horizontal(|ui| {
+            let mut visible = state.layer_visible(layer);
+            if ui.checkbox(&mut visible, "").changed() {
+                if visible {
+                    state.hidden_layers.remove(layer);
+                } else {
+                    state.hidden_layers.insert(layer.clone());
+                }
+            }
+            ui.label(layer);
+            ui.label(
+                egui::RichText::new(format!("{count}"))
+                    .monospace()
+                    .color(colors::TEXT_SECONDARY),
+            );
+            // First marker of the layer as the place to look at.
+            if ui.button(t!("action-center")).clicked()
+                && let Some(marker) = line.source.markers.iter().find(|m| &m.layer == layer)
+            {
+                focus.position = tools::marker_pos(marker, focus);
+            }
+            if ui.button(t!("action-delete-layer")).clicked() {
+                delete = Some(layer.clone());
+            }
+        });
+    }
+    if let Some(layer) = delete {
+        tools::delete_layer(line, state, &layer);
+    }
+    ui.add_space(space::XS);
+    ui.small(t!("marker-total", count = line.source.markers.len()));
 }
 
 /// The aerial imagery template, editable in place. Edits go through

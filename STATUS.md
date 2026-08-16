@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-16 · `cargo test --workspace`: **376 tests green** · clippy and fmt clean.
+As of 2026-08-16 · `cargo test --workspace`: **379 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -327,6 +327,37 @@ As of 2026-08-16 · `cargo test --workspace`: **376 tests green** · clippy and 
   and deletable. A **marking brush** (key 8) sweeps over the map, marks trees
   and objects in bulk and deletes them together in one undo step. Objects offer
   **snap to terrain** (base on the terrain surface instead of the rail plane).
+  **Height data travels with the module** (`LineSource::heights`): the DGM panel
+  cuts the state survey office's delivery down to one ESRI ASCII grid per
+  terrain tile (`<mod>/heights/<line>/x<kx>_y<ky>.asc`, `HeightTile::sample` +
+  `to_asc`, grid spacing of the module's choosing, default 10 m) — either the
+  whole corridor or the tiles the **DGM tiles** tool picked on the map, which
+  draws the tile grid with its coverage (green has heights, blue is picked).
+  Tiles the delivery has no data for are skipped. The app loads them behind any
+  `--dgm` source, so a module runs self-contained while whoever holds the
+  original delivery keeps its finer grid.
+  A **terrain brush** (key 0) shapes the ground itself: every click stamps a
+  round stroke into `LineSource::terrain` — `Raise(±m)` on top of the DGM, or
+  `Level(height)`, which takes its target from the nearest rail. Strokes are
+  data, not a baked heightfield (pickable, re-dialled, deleted; the DGM stays
+  untouched, so better elevation data can be re-imported without losing the
+  shaping), they apply in file order, fade out with a smoothstep at their
+  radius, and are prefiltered per tile in `TerrainEdits::in_rect`. They act on
+  the ground **before** the cutting/embankment blend, so no stroke can lift the
+  track out of its alignment (pinned by a test). The map draws each stroke's
+  true footprint — warm raising, cold lowering, grey levelling. What the editor
+  does not do is *show* the result: it looks straight down at the aerial
+  imagery, so the shaped terrain is only visible in the app.
+  **Reference markers** (`LineSource::markers`) are the drawing aids for a
+  hand-built line: a labelled point in a freely named layer, set one per click
+  with the marker tool (key 9) or imported from an Overpass extract
+  (**File ▸ Import reference markers**), which sorts the tags it knows into
+  layers of their own (level crossings, platforms, stations, signals, switches,
+  buffer stops, kilometre marks, bridges, tunnels, towers; a way becomes its
+  midpoint). The marker panel lists the layers with their count and hides,
+  centres on or deletes them layer by layer — a hidden layer is unpickable too.
+  Nothing in the simulation reads a marker: it says where something belongs,
+  it is not the thing.
   Deleting an edge or device **remaps every index in the file** — devices, signals,
   `next` links, routes, sections and switch legs follow, and an edge that continued
   from a removed one is re-anchored geographically first (tested in `content::route`).
@@ -553,18 +584,67 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 
 ## Sensible next steps
 
-1. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
-2. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
+1. **The track is drawn in the editor, not imported.** OSM's way chain is traced from aerial
+   imagery and carries neither design elements nor a usable vertical alignment; over the
+   imagery overlay the drawing tool gets closer with less effort. `import-line` stays as a
+   starting strand and as a reference, but the pilot line comes out of the editor. What the
+   import owes the module is the **surroundings** (2) and the **terrain** (3).
+2. **OSM as scenery, layer by layer and opt-in.** "File ▸ Import forest…" is the pattern:
+   pick an Overpass extract, get ordinary primitives that stay individually editable, use it
+   or hand-place everything yourself. To be added the same way, in order of effort:
+   - **Point features onto `TreeSource`** (object at lat/lon with yaw and scale — the
+     primitive exists, only the name says "tree"): single trees, power towers, wind turbines,
+     towers and steeples, lamps. Cheapest layer, no format change.
+   - **Areas and bands onto a fourth splat channel** — `terrain::splat_weights` already
+     carries `[grass, rock, gravel, 1.0]`, the fourth component is free. Water
+     (`natural=water`, `waterway=riverbank`), roads (`highway=*` buffered by their width),
+     farmland and meadow paint into it instead of becoming meshes: one texture in the
+     extension shader, no water renderer, no road ribbon.
+   - **Buildings** (`building=*`, `building:levels`): footprint extruded into a block model —
+     the one layer that genuinely needs new geometry, and the biggest visual gain.
+   - **Reference markers are in place** (see the editor above) — level crossings, platforms,
+     stations, kilometre marks and the rest come out of an Overpass extract into layers that
+     hide and delete as a whole. What they still lack is DB InfraGO's kilometrage line and its
+     operational points (see 5); those come from CSV, not from Overpass, so the import needs a
+     second reader.
+3. **Show the terrain in the editor.** The DGM import (see above) has put the height data
+   inside the module; what is still missing is the editor *reading* it back: hill shading
+   or contours on the map, the ground height under the cursor, and with it a terrain brush
+   whose stroke is visible where it is stamped instead of only in the app.
+4. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node
    without any geometry.
-3. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
-   then the import directly yields an equipped line instead of a bare strand.
-4. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
-   (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
-5. **Recorded samples for the sound table** — the mechanism is in place and positional; what
+5. **Better sources than OSM — evaluated on 2026-08-16; verdict: attributes yes, geometry no.**
+   - **DB InfraGO "Infrastrukturdaten"** (Mobilithek/GovData, CC BY 4.0, data status May 2026,
+     27 MB of CSV plus a GeoPackage): `Streckennetz` gives, per directional track and km range,
+     the VzG speed (`Geschwindigkeit`, `"120 km/h"`; some 3 % of the rows say `SKVerb`,
+     `kein VZG erforderlich` or nothing and need a fallback), electrification, number of tracks
+     and the geometry as WKT in EPSG 4326/25832/31467; `Betriebsstellen` (DS100 code, Bf/Hp/
+     Abzw/…), `Bahnübergänge`, railway bridges and tunnels come km-referenced with coordinates.
+     The geometry is **generalised** — measured over 4 000 rows the vertex spacing is 50 m in the
+     median and 205 m at the 90th percentile — so it is coarser than OSM and no basis for the
+     alignment reconstruction. The value is in the attributes, keyed by (Streckennummer, km).
+   - **RINF / ERA knowledge graph** (SPARQL at `https://rinf.data.era.europa.eu/api/sparql`,
+     CC BY 4.0): the German coverage is complete — of 37 012 tracks 36 840 carry
+     `maximumPermittedSpeed`, 33 153 a `gradientProfile` (entries `-2.8(+108.21)`: per mille
+     plus VzG kilometre, breakpoints every few hundred metres), 35 847 a
+     `minimumHorizontalRadius`; on top of that `etcs`, `contactLineSystem`,
+     `trainDetectionSystem`, `cantDeficiency` and 17 797 operational points with `uopid`
+     (DS100). **No coordinates on the German operational points and no track geometry** — RINF
+     too is attributes over (line, km). The endpoint is slow and answers GET with 500: queries
+     have to be POSTed (`Content-Type: application/sparql-query`) and scoped by country.
+   - **Ruled out**: DB's ISR data service (€1 846 a year, and only for access-authorised
+     railway undertakings) and Trassenfinder (no open licence).
+   - **Consequence**: neither replaces the drawing tool, both hang off the **kilometrage**.
+     Once a module knows its line number and km range, the speed profile comes from DB InfraGO
+     and the gradient profile from RINF onto the drawn edges — the DGM measures the terrain,
+     not the top of rail, and is wrong on every bridge, embankment and tunnel. DB's line
+     geometry, coarse as it is, carries the kilometre marks and so makes the best reference
+     layer while drawing (see 2).
+6. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
    interval belong in the same pass.
-6. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
+7. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
    sky and rail; headlights follow switch and direction of travel, red tail lamps
    (Zg 101) mark the rear end, the cab light has its own switch, the precipitation
    streaks lean into the relative wind, and the sound table hears a `Rain` quantity.

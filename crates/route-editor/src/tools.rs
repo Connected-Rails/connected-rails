@@ -11,8 +11,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use content::LineSource;
 use content::route::{
-    DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, NodeSource, ObjectSource,
-    TreeSource,
+    DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
+    ObjectSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
 use glam::{DVec2, DVec3};
 use i18n::t;
@@ -40,6 +40,13 @@ pub enum Tool {
     /// Marking brush: sweep over the map to mark trees and objects in bulk,
     /// then delete them together.
     Brush,
+    /// One reference marker per click, into the layer the panel names.
+    PlaceMarker,
+    /// Terrain brush: every click stamps one stroke that raises, lowers or
+    /// levels the ground around it.
+    TerrainBrush,
+    /// DGM tiles: clicks pick single terrain tiles for the height import.
+    PickTile,
 }
 
 /// What the Select tool holds.
@@ -51,6 +58,8 @@ pub enum Selection {
     Device(usize),
     Object(usize),
     Tree(usize),
+    Marker(usize),
+    TerrainEdit(usize),
 }
 
 /// One item the marking brush swept over.
@@ -101,6 +110,34 @@ pub struct EditorState {
     pub forest_points: Vec<EcefPos>,
     /// Forest brush density [m² per tree]; `None` = 500.
     pub forest_area: Option<f64>,
+    /// Layer the marker tool writes into; `None` = `"reference"`.
+    pub marker_layer: Option<String>,
+    /// Label the marker tool stamps — empty is allowed.
+    pub marker_label: String,
+    /// Marker layers switched off: hidden on the map, unpickable, untouched in
+    /// the file. Session state, not saved — a hidden layer that stays hidden
+    /// after a restart is a layer someone searches for in vain.
+    pub hidden_layers: std::collections::HashSet<String>,
+    /// Radius of the terrain brush [m]; `None` = 60.
+    pub terrain_radius: Option<f64>,
+    /// How much one terrain stroke raises (+) or lowers (−) the ground [m];
+    /// `None` = 2.
+    pub terrain_amount: Option<f64>,
+    /// The terrain brush levels to rail height instead of raising or lowering.
+    pub terrain_level: bool,
+    /// DGM directory or file the height import reads from.
+    pub dgm_source: Option<String>,
+    /// UTM zone of that delivery; `None` = 32.
+    pub dgm_zone: Option<u8>,
+    /// Grid spacing the module's own height tiles are written at [m];
+    /// `None` = 10, which is well below the 4 m the terrain builds at the
+    /// track without being the 1 m of the original delivery.
+    pub dgm_cell: Option<f64>,
+    /// Terrain tiles picked for a partial import; empty = the whole module.
+    pub picked_tiles: Vec<content::TileKey>,
+    /// Tiles the module already has height data for — read from disk after
+    /// every import and when a line is opened, not per frame.
+    pub dgm_present: Vec<content::TileKey>,
     /// Items the marking brush has swept over — deleted together.
     pub marked: Vec<Mark>,
     /// Radius of the marking brush [m]; `None` = 30.
@@ -129,7 +166,40 @@ impl EditorState {
     pub fn device_kind(&self) -> DeviceKind {
         self.device_kind.clone().unwrap_or(DeviceKind::Signal)
     }
+
+    /// Layer the marker tool writes into.
+    pub fn marker_layer(&self) -> String {
+        match &self.marker_layer {
+            Some(layer) if !layer.trim().is_empty() => layer.trim().to_string(),
+            _ => DEFAULT_MARKER_LAYER.to_string(),
+        }
+    }
+
+    pub fn layer_visible(&self, layer: &str) -> bool {
+        !self.hidden_layers.contains(layer)
+    }
+
+    /// UTM zone of the DGM delivery the height import reads.
+    pub fn dgm_zone(&self) -> u8 {
+        self.dgm_zone.unwrap_or(32)
+    }
+
+    /// Grid spacing the module's height tiles are written at [m].
+    pub fn dgm_cell(&self) -> f64 {
+        self.dgm_cell.unwrap_or(10.0).clamp(1.0, 100.0)
+    }
+
+    /// The terrain tile grid the editor shows — the same one the app builds on.
+    pub fn terrain_options(&self) -> content::TerrainOptions {
+        content::TerrainOptions {
+            zone: self.dgm_zone(),
+            ..Default::default()
+        }
+    }
 }
+
+/// Layer a hand-placed marker lands in when none is named.
+pub const DEFAULT_MARKER_LAYER: &str = "reference";
 
 /// A track being drawn. The first click anchors the ENU frame and the start
 /// point, the second fixes the initial heading, every further click appends a
@@ -586,7 +656,26 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
                 line.source.trees.remove(i);
             }
         }
+        Selection::Marker(i) => {
+            if i < line.source.markers.len() {
+                line.source.markers.remove(i);
+            }
+        }
+        Selection::TerrainEdit(i) => {
+            if i < line.source.terrain.len() {
+                line.source.terrain.remove(i);
+            }
+        }
         Selection::None => {}
+    }
+}
+
+/// Deletes a whole marker layer — one undo step, like the marking brush.
+pub fn delete_layer(line: &mut Line, state: &mut EditorState, layer: &str) {
+    line.source.markers.retain(|m| m.layer != layer);
+    state.hidden_layers.remove(layer);
+    if let Selection::Marker(_) = state.selection {
+        state.selection = Selection::None;
     }
 }
 
@@ -696,6 +785,61 @@ pub fn clear_of_track(net: &TrackNetwork, lat: f64, lon: f64) -> bool {
 pub fn tree_pos(tree: &TreeSource, focus: &Focus) -> EcefPos {
     let (_, _, height) = geo::from_ecef(focus.position);
     geo::to_ecef_deg(tree.lat, tree.lon, height)
+}
+
+/// The same for a reference marker.
+pub fn marker_pos(marker: &MarkerSource, focus: &Focus) -> EcefPos {
+    let (_, _, height) = geo::from_ecef(focus.position);
+    geo::to_ecef_deg(marker.lat, marker.lon, height)
+}
+
+/// The same for a terrain brush stroke.
+pub fn terrain_pos(edit: &TerrainEditSource, focus: &Focus) -> EcefPos {
+    let (_, _, height) = geo::from_ecef(focus.position);
+    geo::to_ecef_deg(edit.lat, edit.lon, height)
+}
+
+/// The terrain tiles of this line's corridor — what a full height import
+/// covers, and the grid the tile picker works on.
+pub fn corridor_tiles(line: &Line, options: content::TerrainOptions) -> Vec<content::TileKey> {
+    content::TerrainBuilder::new(&line.net, Vec::new(), options).corridor_keys()
+}
+
+/// Tile the map point `p` falls into.
+pub fn tile_of(p: EcefPos, options: content::TerrainOptions) -> content::TileKey {
+    content::terrain::tile_at(content::terrain::to_utm(p, &options), &options)
+}
+
+/// The four corners of a tile on the focus plane — for drawing the grid.
+fn tile_corners(
+    k: content::TileKey,
+    options: content::TerrainOptions,
+    focus: &Focus,
+) -> [EcefPos; 5] {
+    let min = content::terrain::tile_min(k, options.tile_size);
+    let (_, _, height) = geo::from_ecef(focus.position);
+    let corner = |dx: f64, dy: f64| {
+        let (lat, lon) = geo::from_utm(min.x + dx, min.y + dy, options.zone);
+        geo::to_ecef(lat, lon, height)
+    };
+    let size = options.tile_size;
+    [
+        corner(0.0, 0.0),
+        corner(size, 0.0),
+        corner(size, size),
+        corner(0.0, size),
+        corner(0.0, 0.0),
+    ]
+}
+
+/// The marker layers present, each with how many markers it holds. Sorted, so
+/// the panel does not reshuffle from frame to frame.
+pub fn marker_layers(line: &Line) -> std::collections::BTreeMap<String, usize> {
+    let mut layers = std::collections::BTreeMap::new();
+    for marker in &line.source.markers {
+        *layers.entry(marker.layer.clone()).or_insert(0) += 1;
+    }
+    layers
 }
 
 /// Turns the finished drawing into track: a free drawing becomes two buffer
@@ -875,6 +1019,8 @@ pub fn tool_input(
         (KeyCode::Digit6, Tool::PlaceTree),
         (KeyCode::Digit7, Tool::PlaceForest),
         (KeyCode::Digit8, Tool::Brush),
+        (KeyCode::Digit9, Tool::PlaceMarker),
+        (KeyCode::Digit0, Tool::TerrainBrush),
     ] {
         if keys.just_pressed(key) && state.tool != tool {
             state.tool = tool;
@@ -996,6 +1142,54 @@ pub fn tool_input(
         Tool::PlaceForest => {
             state.forest_points.push(p);
         }
+        Tool::PickTile => {
+            let key = tile_of(p, state.terrain_options());
+            match state.picked_tiles.iter().position(|k| *k == key) {
+                Some(i) => {
+                    state.picked_tiles.remove(i);
+                }
+                None => state.picked_tiles.push(key),
+            }
+        }
+        Tool::TerrainBrush => {
+            let (lat, lon, _) = geo::from_ecef(p);
+            let edit = if state.terrain_level {
+                // Level to the nearest rail — that is what levelling means on a
+                // railway, and the editor knows the rail height without a DGM.
+                match nearest_on_network(&line.net, p) {
+                    Some((edge, s, _)) => {
+                        let (_, _, height) = geo::from_ecef(line.net.edges()[edge].eval(s).pos);
+                        TerrainEdit::Level(height)
+                    }
+                    None => {
+                        overlay.status = t!("status-no-track-hit");
+                        return;
+                    }
+                }
+            } else {
+                TerrainEdit::Raise(state.terrain_amount.unwrap_or(2.0))
+            };
+            line.source.terrain.push(TerrainEditSource {
+                lat: lat.to_degrees(),
+                lon: lon.to_degrees(),
+                radius: state.terrain_radius.unwrap_or(60.0),
+                edit,
+            });
+            state.selection = Selection::TerrainEdit(line.source.terrain.len() - 1);
+        }
+        Tool::PlaceMarker => {
+            let (lat, lon, _) = geo::from_ecef(p);
+            let layer = state.marker_layer();
+            // A marker in a hidden layer would vanish the moment it is set.
+            state.hidden_layers.remove(&layer);
+            line.source.markers.push(MarkerSource {
+                layer,
+                label: state.marker_label.clone(),
+                lat: lat.to_degrees(),
+                lon: lon.to_degrees(),
+            });
+            state.selection = Selection::Marker(line.source.markers.len() - 1);
+        }
         Tool::Select => {
             let radius = pick_radius(&focus);
             // A handle of the selected edge outranks reselection.
@@ -1028,10 +1222,28 @@ pub fn tool_input(
                 .enumerate()
                 .map(|(i, t)| (Selection::Tree(i), tree_pos(t, &focus)))
                 .collect::<Vec<_>>();
+            let terrain = line
+                .source
+                .terrain
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (Selection::TerrainEdit(i), terrain_pos(e, &focus)))
+                .collect::<Vec<_>>();
+            // Hidden layers are not pickable — out of sight, out of reach.
+            let markers = line
+                .source
+                .markers
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| state.layer_visible(&m.layer))
+                .map(|(i, m)| (Selection::Marker(i), marker_pos(m, &focus)))
+                .collect::<Vec<_>>();
             let nearest = device
                 .into_iter()
                 .chain(objects_)
                 .chain(trees)
+                .chain(markers)
+                .chain(terrain)
                 .map(|(sel, pos)| (sel, pos.distance(p)))
                 .filter(|(_, d)| *d <= radius)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
@@ -1221,9 +1433,62 @@ pub fn draw_gizmos(
                 ground_circle(&mut gizmos, &origin.0, p, radius, accent);
             }
         }
-        // Trees are drawn below, the selected one in accent.
-        Selection::Tree(_) => {}
+        // Trees, markers and terrain strokes are drawn below.
+        Selection::Tree(_) | Selection::Marker(_) | Selection::TerrainEdit(_) => {}
         Selection::None => {}
+    }
+
+    // Terrain strokes as their true footprint: the circle is the radius the
+    // stroke actually reaches, so overlapping ones show where the ground is
+    // worked twice. Raising warm, lowering cold, levelling neutral.
+    for (i, edit) in line.source.terrain.iter().enumerate() {
+        let p = terrain_pos(edit, &focus);
+        let color = match edit.edit {
+            content::route::TerrainEdit::Raise(by) if by >= 0.0 => Color::srgb(0.90, 0.55, 0.30),
+            content::route::TerrainEdit::Raise(_) => Color::srgb(0.35, 0.60, 0.90),
+            content::route::TerrainEdit::Level(_) => Color::srgb(0.65, 0.65, 0.70),
+        };
+        let color = if state.selection == Selection::TerrainEdit(i) {
+            accent
+        } else {
+            color
+        };
+        ground_circle(&mut gizmos, &origin.0, p, edit.radius as f32, color);
+        // The centre, so a stroke stays findable when its radius fills the view.
+        ground_circle(
+            &mut gizmos,
+            &origin.0,
+            p,
+            (edit.radius * 0.06) as f32,
+            color,
+        );
+    }
+
+    // Reference markers: a diamond each, so they read differently from the
+    // round device circles and the tree crosses. Hidden layers draw nothing.
+    let marker_color = Color::srgb(0.85, 0.75, 0.35);
+    let size = (focus.height * 0.006).max(2.5) as f32;
+    for (i, marker) in line.source.markers.iter().enumerate() {
+        if !state.layer_visible(&marker.layer) {
+            continue;
+        }
+        let p = marker_pos(marker, &focus);
+        if state.selection == Selection::Marker(i) {
+            ground_circle(
+                &mut gizmos,
+                &origin.0,
+                p,
+                (focus.height * 0.012).max(4.0) as f32,
+                accent,
+            );
+        }
+        let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+        let center = origin.0.to_render(p) + up;
+        let (x, z) = (Vec3::X * size, Vec3::Z * size);
+        gizmos.linestrip(
+            [center + z, center + x, center - z, center - x, center + z],
+            marker_color,
+        );
     }
 
     // Trees on the map: a small cross each (a circle per tree would be tens of
@@ -1290,6 +1555,36 @@ pub fn draw_gizmos(
         let radius = state.brush_radius.unwrap_or(30.0) as f32;
         ground_circle(&mut gizmos, &origin.0, p, radius, marked_color);
     }
+    // The same for the terrain brush — its footprint is the stroke to come.
+    if state.tool == Tool::TerrainBrush
+        && let Some(p) = cursor
+    {
+        let radius = state.terrain_radius.unwrap_or(60.0) as f32;
+        ground_circle(&mut gizmos, &origin.0, p, radius, accent);
+    }
+
+    // The DGM tile grid, only while the tile picker is in hand: green where the
+    // module already has heights, accent where a tile is picked, faint where
+    // neither. That is the whole status display the import needs.
+    if state.tool == Tool::PickTile {
+        let options = state.terrain_options();
+        let have = Color::srgb(0.35, 0.80, 0.55);
+        let missing = Color::srgb(0.45, 0.47, 0.52);
+        for key in corridor_tiles(&line, options) {
+            let color = if state.picked_tiles.contains(&key) {
+                accent
+            } else if state.dgm_present.contains(&key) {
+                have
+            } else {
+                missing
+            };
+            let corners = tile_corners(key, options, &focus).map(|p| {
+                let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+                origin.0.to_render(p) + up
+            });
+            gizmos.linestrip(corners, color);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1345,6 +1640,9 @@ mod tests {
             devices: vec![],
             objects: vec![],
             trees: vec![],
+            markers: vec![],
+            terrain: vec![],
+            heights: vec![],
             sections: vec![],
             signals: vec![],
             routes: vec![],

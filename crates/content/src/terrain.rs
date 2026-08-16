@@ -18,7 +18,7 @@
 //! driving (plan 4.3).
 
 use crate::import::dgm::TerrainSource;
-use crate::route::{LineSource, TreeSource};
+use crate::route::{LineSource, TerrainEdit, TerrainEditSource, TreeSource};
 use glam::DVec2;
 use std::collections::HashMap;
 use track_model::TrackNetwork;
@@ -288,6 +288,85 @@ impl Vegetation {
     }
 }
 
+/// One prepared brush stroke: centre in UTM, radius, and what it does.
+#[derive(Debug, Clone, Copy)]
+struct Stamp {
+    pos: DVec2,
+    radius: f64,
+    edit: TerrainEdit,
+}
+
+/// The line's terrain brush strokes, prepared for tile builds (positions in
+/// UTM). Strokes apply in file order — the later one paints over the earlier.
+#[derive(Debug, Clone, Default)]
+pub struct TerrainEdits {
+    stamps: Vec<Stamp>,
+}
+
+impl TerrainEdits {
+    pub fn from_line(line: &LineSource, zone: u8) -> Self {
+        Self::from_parts(&line.terrain, zone)
+    }
+
+    pub fn from_parts(edits: &[TerrainEditSource], zone: u8) -> Self {
+        let stamps = edits
+            .iter()
+            .map(|e| {
+                let (east, north) = geo::to_utm(e.lat.to_radians(), e.lon.to_radians(), zone);
+                Stamp {
+                    pos: DVec2::new(east, north),
+                    radius: e.radius.max(1.0),
+                    edit: e.edit,
+                }
+            })
+            .collect();
+        Self { stamps }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.stamps.is_empty()
+    }
+
+    /// The strokes that reach into a tile — the per-tile prefilter, so a line
+    /// with hundreds of strokes still costs a handful per grid point.
+    fn in_rect(&self, min: DVec2, size: f64) -> Self {
+        let stamps = self
+            .stamps
+            .iter()
+            .copied()
+            .filter(|s| distance_to_rect(s.pos, min, size) <= s.radius)
+            .collect();
+        Self { stamps }
+    }
+
+    /// Applies every stroke covering `p` to a ground height.
+    fn apply(&self, p: DVec2, ground: f64) -> f64 {
+        let mut height = ground;
+        for stamp in &self.stamps {
+            let w = falloff(stamp.pos.distance(p) / stamp.radius);
+            if w <= 0.0 {
+                continue;
+            }
+            height = match stamp.edit {
+                TerrainEdit::Raise(by) => height + by * w,
+                TerrainEdit::Level(to) => height * (1.0 - w) + to * w,
+            };
+        }
+        height
+    }
+}
+
+/// Weight of a stroke over its normalised radius: 1 at the centre, 0 at the
+/// edge, flat on both ends (smoothstep), so strokes butt together without a
+/// crease.
+fn falloff(t: f64) -> f64 {
+    if t >= 1.0 {
+        return 0.0;
+    }
+    let t = 1.0 - t;
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Keep this far from the track when baking a forest [m] — the blend zone of
 /// the default [`TerrainOptions`] plus a margin, so no tree stands on the
 /// embankment the terrain pulls up to rail height.
@@ -395,7 +474,7 @@ fn point_in_polygon(p: DVec2, polygon: &[DVec2]) -> bool {
 pub type TileKey = (i64, i64);
 
 /// South-west corner of a tile [m UTM].
-fn tile_min(k: TileKey, tile_size: f64) -> DVec2 {
+pub fn tile_min(k: TileKey, tile_size: f64) -> DVec2 {
     DVec2::new(k.0 as f64 * tile_size, k.1 as f64 * tile_size)
 }
 
@@ -455,6 +534,7 @@ pub struct TerrainBuilder {
     sources: Vec<TerrainSource>,
     options: TerrainOptions,
     vegetation: Vegetation,
+    edits: TerrainEdits,
 }
 
 impl TerrainBuilder {
@@ -464,12 +544,20 @@ impl TerrainBuilder {
             sources,
             options,
             vegetation: Vegetation::default(),
+            edits: TerrainEdits::default(),
         }
     }
 
     /// Trees and forests of the line — tiles built afterwards carry them.
     pub fn with_vegetation(mut self, vegetation: Vegetation) -> Self {
         self.vegetation = vegetation;
+        self
+    }
+
+    /// Terrain brush strokes of the line — tiles built afterwards are shaped
+    /// by them.
+    pub fn with_edits(mut self, edits: TerrainEdits) -> Self {
+        self.edits = edits;
         self
     }
 
@@ -492,6 +580,7 @@ impl TerrainBuilder {
         let ground = sample_height(&mut self.sources, p, lat, lon, self.options.zone)
             .map(|h| h + self.options.geoid_offset)
             .unwrap_or(self.options.fallback_height + self.options.geoid_offset);
+        let ground = self.edits.apply(p, ground);
         blend_height(self.centerline.nearest(p), ground, &self.options)
     }
 
@@ -503,6 +592,7 @@ impl TerrainBuilder {
             &mut self.sources,
             &self.options,
             &self.vegetation,
+            &self.edits,
             stats,
         )
     }
@@ -543,6 +633,7 @@ fn build_key(
     sources: &mut [TerrainSource],
     options: &TerrainOptions,
     vegetation: &Vegetation,
+    edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
     let min = tile_min(k, options.tile_size);
@@ -551,8 +642,10 @@ fn build_key(
         return None;
     }
     let (step, lod) = level_of_detail(distance, options);
+    // Only the strokes that reach this tile — the rest never see a grid point.
+    let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
-        min, step, lod, centerline, sources, options, vegetation, stats,
+        min, step, lod, centerline, sources, options, vegetation, &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -582,7 +675,15 @@ pub fn build(
 
     for k in corridor_keys(&centerline, options) {
         // Tiles that do not touch the corridor are dropped entirely.
-        if let Some(tile) = build_key(k, &centerline, sources, options, &vegetation, &mut stats) {
+        if let Some(tile) = build_key(
+            k,
+            &centerline,
+            sources,
+            options,
+            &vegetation,
+            &TerrainEdits::default(),
+            &mut stats,
+        ) {
             tiles.push(tile);
         }
     }
@@ -646,6 +747,7 @@ fn build_tile(
     sources: &mut [TerrainSource],
     options: &TerrainOptions,
     vegetation: &Vegetation,
+    edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
     let n = (options.tile_size / step).round().max(1.0) as usize;
@@ -670,6 +772,10 @@ fn build_tile(
                     stats.missing += 1;
                     options.fallback_height + options.geoid_offset
                 });
+
+            // Brush strokes shape the ground; the cutting/embankment blend runs
+            // after them, so no stroke can lift the track out of its alignment.
+            let ground = edits.apply(p, ground);
 
             // Cutting/embankment: exactly rail height at the track, then blend.
             let near = centerline.nearest(p);
@@ -1069,6 +1175,52 @@ mod tests {
             .count();
         assert!(built > 0 && built <= near.len());
         assert!(built < builder.corridor_keys().len(), "{built} tiles");
+    }
+
+    /// A brush stroke lifts the ground it covers, leaves everything outside its
+    /// radius alone, and never moves the track: the strip along the rails keeps
+    /// rail height even under a stroke that reaches across it.
+    #[test]
+    fn a_terrain_stroke_shapes_the_ground_but_not_the_track() {
+        let net = test_net();
+        let options = options();
+        // 200 m north of the line's start, well outside the flattened strip.
+        let start = net.edges()[0].eval(0.0).pos;
+        let (lat, lon, rail) = geo::from_ecef(start);
+        let (lat, lon) = (lat.to_degrees(), lon.to_degrees());
+        let hill = geo::to_ecef_deg(lat + 200.0 / 111_320.0, lon, 0.0);
+        let (hill_lat, hill_lon, _) = geo::from_ecef(hill);
+
+        let edits = TerrainEdits::from_parts(
+            &[TerrainEditSource {
+                lat: hill_lat.to_degrees(),
+                lon: hill_lon.to_degrees(),
+                radius: 150.0,
+                edit: TerrainEdit::Raise(20.0),
+            }],
+            options.zone,
+        );
+        let plain = TerrainBuilder::new(&net, vec![test_source()], options);
+        let mut shaped = TerrainBuilder::new(&net, vec![test_source()], options).with_edits(edits);
+        let mut plain = plain;
+
+        // At the centre the ground is 20 m higher, at the edge of the stroke
+        // untouched, and 400 m away nothing has happened.
+        let at = |b: &mut TerrainBuilder, north: f64| {
+            b.surface_height(geo::to_ecef_deg(lat + north / 111_320.0, lon, 0.0))
+        };
+        assert!(
+            (at(&mut shaped, 200.0) - at(&mut plain, 200.0) - 20.0).abs() < 0.01,
+            "centre rose by {:.2} m",
+            at(&mut shaped, 200.0) - at(&mut plain, 200.0)
+        );
+        assert!((at(&mut shaped, 400.0) - at(&mut plain, 400.0)).abs() < 1e-6);
+        // On the track itself the height stays the rail's — the blend runs last.
+        let on_track = shaped.surface_height(start);
+        assert!(
+            (on_track - rail).abs() < 0.5,
+            "track moved to {on_track:.2} instead of {rail:.2}"
+        );
     }
 
     #[test]

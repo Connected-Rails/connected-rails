@@ -925,19 +925,98 @@ hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B
 hud-keys-lights = 9 Spitzensignal  0 Führerraumlicht  ,/. Instrumentenlicht
 
 ## Hauptmenü
+#
+# Die Navigationsspalte links, danach die Seiten, die sie öffnet. Ein -hint-Schlüssel
+# ist die zweite, blassere Zeile unter dem gleichnamigen Eintrag.
 
-menu-start = Fahrt starten
+menu-tagline = Deutsche Eisenbahnsimulation
+menu-nav-title = Hauptmenü
+menu-drive = Fahren
+menu-drive-hint = Strecke, Fahrzeug und Szenario
 menu-mods = Mods
+menu-mods-hint = Inhalte ein- und ausschalten
+menu-settings = Einstellungen
+menu-settings-hint = Bild, Ton und Steuerung
 menu-quit = Beenden
-menu-keys = ↑/↓ oder Maus auswählen   Enter oder Klick bestätigen
-menu-keys-back = ↑/↓ oder Maus auswählen   Enter oder Klick bestätigen   Esc zurück
+menu-quit-hint = Den Simulator verlassen
+menu-step = Schritt { $step } von { $total }
 menu-select-line = Strecke auswählen
 menu-select-loco = Fahrzeug auswählen
 menu-select-scenario = Szenario auswählen
 # Die eingebauten Inhalte, auf die der Simulator zurückfällt, wenn nichts gewählt wird.
-menu-line-builtin = Beispielstrecke (eingebaut)
-menu-loco-builtin = BR 101 (eingebaut)
+# Das Fähnchen an der Zeile sagt das, der Name selbst muss es nicht mehr.
+menu-chip-builtin = Integriert
+menu-chip-composition = Komposition
+menu-line-builtin = Beispielstrecke
+menu-loco-builtin = BR 101
 menu-scenario-none = Kein Szenario — freie Fahrt
+menu-free-run = Kein Fahrplan und keine Wertung: die Strecke, das Fahrzeug, und wohin Sie damit fahren.
+# Die Tastenhinweise in der Fußleiste: ein Fähnchen je Taste.
+menu-hint-select = auswählen
+menu-hint-confirm = bestätigen
+menu-hint-toggle = ein/aus
+menu-hint-start = Fahrt starten
+menu-hint-change = ändern
+menu-hint-next = nächster Wert
+menu-hint-back = zurück
+menu-hint-section = Bereich
+# Die Schaltfläche am Fuß der Detailspalte — dasselbe, was Enter tut.
+menu-action-next = Weiter
+menu-action-start = Fahrt starten
+# Die zweite Zeile einer Zeile — Werte aus dem Inhalt selbst.
+menu-meta-line = { $length } km · { $signals } Signale
+menu-meta-vehicle = { $mass } t · { $speed } km/h
+# Die Detailspalte neben der Liste.
+menu-fact-length = Länge
+menu-fact-signals = Signale
+menu-fact-scenery = Streckenobjekte
+menu-fact-drive = Antrieb
+menu-fact-brake = Bremse
+menu-fact-start = Beginn
+menu-fact-timetable = Fahrplan
+menu-fact-line = Strecke
+menu-fact-events = Ereignisse
+menu-fact-km = { $value } km
+menu-fact-m = { $value } m
+menu-fact-t = { $value } t
+menu-fact-kmh = { $value } km/h
+
+## Einstellungen
+#
+# Eine Seite des Hauptmenüs, als TOML im Einstellungsverzeichnis des Betriebssystems
+# abgelegt. Ein -hint-Schlüssel ist die Beschreibung unter dem Namen der Einstellung.
+
+set-graphics = Grafik
+set-audio = Ton
+set-gameplay = Spiel
+set-stored = Bleibt zwischen zwei Starts in der Einstellungsdatei des Benutzerkontos erhalten.
+# Fähnchen an den Zeilen, die beim Start einer Fahrt in die Szene gebacken werden.
+set-restart-badge = nächste Fahrt
+set-view-distance = Sichtweite
+set-view-distance-hint = Wie weit Gelände gebaut und gezeichnet wird — der größte einzelne Posten.
+set-shadows = Schatten
+set-shadows-hint = Schattenkarten der Sonne.
+set-bloom = Lichtschein
+set-bloom-hint = Lässt Lampen und Signale nach Einbruch der Dunkelheit leuchten.
+set-fullscreen = Vollbild
+set-fullscreen-hint = Randlos, auf dem Bildschirm, auf dem das Fenster steht.
+set-vsync = Vertikale Synchronisation
+set-vsync-hint = Deckelt die Bildrate auf die des Bildschirms, gegen Bildrisse.
+set-volume = Gesamtlautstärke
+set-volume-hint = Lautstärke von allem, was der Simulator abspielt.
+set-language = Sprache
+set-language-hint = Wirkt sofort, im Menü wie im Führerstand.
+set-language-system = System
+set-hud = HUD
+set-hud-hint = Die Anzeige von Geschwindigkeit, Bremsen und Zugsicherung während der Fahrt.
+set-look-speed = Umsehgeschwindigkeit
+set-look-speed-hint = Wie weit sich der Blick dreht, während die rechte Maustaste gehalten wird.
+set-reset = Auf Standard zurücksetzen
+set-reset-hint = Setzt jede Einstellung dieser Seite auf den Auslieferungszustand.
+# Einheiten der Werte am rechten Rand einer Einstellungszeile.
+set-metres = { $value } m
+set-percent = { $value } %
+set-factor = { $value } ×
 
 ## Mod-Verwaltung
 
@@ -948,7 +1027,6 @@ mods-content = Inhalte: { $vehicles } Fahrzeuge, { $lines } Strecken, { $composi
 mods-log = Warnungen:
 mods-restart = Änderung wirkt nach einem Neustart.
 mods-keys = ↑/↓ auswählen   Enter ein/aus   F9 schließen
-mods-keys-menu = ↑/↓ oder Maus auswählen   Enter oder Klick ein/aus   Esc zurück
 
 ## Wertung
 

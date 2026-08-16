@@ -458,9 +458,16 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
   mods with version, on/off state, missing dependencies and the loading warnings);
   switching writes `enabled` back into `mod.ron` (that one field only) and takes effect
   when the run starts, because the world is built only on leaving the menu. F9 opens the
-  same list in the simulator, where a toggle needs a restart. Any run flag on the command
-  line (`--line`, `--frames`, …) skips the menu, so CLI and CI invocations stay
-  non-interactive, and a flag beats the menu's choice where both are set.
+  same list in the simulator, where a toggle needs a restart. **The settings section**
+  sits next to it: view distance, shadows, bloom, fullscreen, vertical sync, master
+  volume, language, HUD and look sensitivity, kept between runs as TOML in the operating
+  system's settings directory (Bevy's own `bevy::settings`, `crates/app/src/settings.rs`).
+  Language, volume, fullscreen and vertical sync apply the moment they are dialled;
+  what is baked into the scene when the run starts — view distance, shadows, bloom —
+  applies to the next run, which is the only moment the menu is reachable anyway.
+  Any run flag on the command line (`--line`, `--frames`, …) skips the menu, so CLI and CI
+  invocations stay non-interactive, and a flag beats the menu's choice where both are set;
+  `--menu` puts the menu back in front, which is the only way to photograph it.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
 
@@ -588,15 +595,28 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **Mod hooks run once per frame**, not once per simulation step — a Lua call every 5 ms per
   train for behaviour that reacts in tenths of a second would be pure overhead. A hook that
   genuinely has to see every step moves into `Sim::step`.
-- **The main menu and the mod manager are text panels on the existing Bevy UI** — no
-  `egui` in the simulator. Keyboard and mouse drive the same selection index: ↑/↓ or
-  hover selects, Enter or a left click confirms, Esc goes one page back. Every page is
-  the same list of rows, so a new page is a `match` arm and nothing else.
-- **The simulator draws its text with the full Fira Mono** (`crates/app/fonts`, SIL OFL
-  1.1, compiled in) instead of Bevy's built-in ASCII subset of the same face, which left
-  every umlaut and arrow as a box. It is put into the asset slot the empty `TextFont`
-  handle points at, so HUD, menu, mod panel and cab displays get it without naming a font
-  anywhere. Monospace is a requirement, not a preference — the HUD is laid out in columns.
+- **The main menu is built from plain Bevy UI nodes** — no `egui` in the simulator. A
+  navigation column on the left (with the drive section unfolded into its three steps and
+  what was picked for each), the page's rows in the middle, and a detail pane on the right
+  showing what the highlighted row actually is — length, permitted speed and signal count
+  of a line, mass, running-gear limit, drive and brake of a vehicle, start time, timetable
+  and event count of a scenario, all read off the same data the simulation runs on. Header
+  above, key hints as chips below. Keyboard and mouse drive the same selection index: ↑/↓
+  or hover selects, Enter or a left click confirms, ←/→ dial a setting, Esc goes one step
+  back, Tab steps to the next section. Every page is the same list of rows (leading slot,
+  label, provenance chip, second line, control), so a new page is a `match` arm and nothing
+  else. The rows are rebuilt whenever a fingerprint of what they show changes, rather than
+  patched in place — a row is four nodes deep and differently shaped per page, and the menu
+  is idle the rest of the time. A settings row draws its value as a pill, a filled track or
+  a pair of chevrons, so nothing that can be changed looks like plain text.
+- **The simulator draws prose in Fira Sans and machine output in Fira Mono**
+  (`crates/app/fonts`, SIL OFL 1.1, compiled in) — the same family, so names and figures
+  read as one typeface. Mono is not a preference: the HUD, the cab displays and the mod
+  panel are laid out in columns, so it goes into the asset slot the empty `TextFont` handle
+  points at and they get it without naming a font anywhere. That slot also replaces Bevy's
+  built-in ASCII subset of the same face, which left every umlaut and arrow as a box. The
+  menu asks for the two Fira Sans faces by handle on top of that, for everything that is a
+  sentence rather than a measurement.
 - **A composed line runs one script** — the composition's, or the single module script
   found; further module scripts are dropped with a note. Running every module's hook
   side by side needs a script list in the runtime, nothing in the format.

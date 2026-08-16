@@ -23,7 +23,7 @@ world-render = { workspace = true }
 glam = { workspace = true }
 # `wav`: the sound loops are generated at startup as WAV buffers (ch. 13), so rodio has
 # to be able to decode them — Bevy only brings the ogg decoder by default.
-bevy = { workspace = true, features = ["wav"] }
+bevy = { workspace = true, features = ["wav", "bevy_settings"] }
 
 [features]
 # Links Bevy as a shared library instead of statically: much faster relinks.

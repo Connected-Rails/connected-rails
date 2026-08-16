@@ -10,6 +10,7 @@ mod menu;
 mod models;
 mod mods_ui;
 mod render;
+mod settings;
 mod signals;
 mod streaming;
 mod ui;
@@ -110,13 +111,11 @@ pub struct AiDrivers(pub Vec<(usize, AiDriver)>);
 #[derive(Resource)]
 pub struct Mods(pub ModRuntime);
 
-/// Terrain view distance [m] — tiles beyond it are hidden.
+/// Terrain view distance [m] — tiles beyond it are hidden. Also the streaming load
+/// radius: nothing further away is built, so nothing further away can be drawn either.
+/// Comes from the settings (`settings::Graphics::view_distance`) when the run starts.
 #[derive(Resource)]
 pub struct ViewDistance(pub f32);
-
-/// Streaming load radius [m] — nothing further away is built, so nothing further away
-/// can be drawn either.
-const LOAD_RADIUS: f64 = 4_000.0;
 
 /// Key figures of the generated terrain (for the HUD).
 #[derive(Resource, Default)]
@@ -130,10 +129,17 @@ struct FrameLimit(u32);
 #[derive(Resource)]
 struct ShotPath(String);
 
-/// The font the whole UI draws with — the full Fira Mono, not Bevy's ASCII subset of it.
-/// Compiled in rather than loaded, so the binary stays self-contained (SIL OFL 1.1,
-/// `fonts/LICENSE-FiraMono.txt`).
+/// The font everything numeric draws with — the full Fira Mono, not Bevy's ASCII subset
+/// of it. The HUD, the cab displays and the mod panel are laid out in columns, so they
+/// need the fixed advance; the menu keeps it for figures, ids and key caps.
+/// Compiled in rather than loaded, so the binary stays self-contained.
 const UI_FONT: &[u8] = include_bytes!("../fonts/FiraMono-Regular.ttf");
+
+/// Fira Sans for the menu's prose. Same family as the mono above and the same licence
+/// file (SIL OFL 1.1, `fonts/LICENSE-Fira.txt`) — prose and figures therefore read as
+/// one typeface rather than as two fonts that happen to sit next to each other.
+const MENU_FONT: &[u8] = include_bytes!("../fonts/FiraSans-Regular.ttf");
+const MENU_FONT_SEMIBOLD: &[u8] = include_bytes!("../fonts/FiraSans-SemiBold.ttf");
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -162,15 +168,27 @@ fn main() {
         "--frames",
         "--screenshot",
     ];
-    let autostart = args.iter().any(|a| run_flags.contains(&a.as_str()));
+    // `--menu` overrules them again — the only way to put the menu itself in front of
+    // `--screenshot`, which would otherwise photograph the world behind it. It takes an
+    // optional page (`--menu settings`), because a screenshot cannot press keys.
+    let menu_page = flag("--menu").filter(|page| !page.starts_with("--"));
+    let autostart =
+        !args.iter().any(|a| a == "--menu") && args.iter().any(|a| run_flags.contains(&a.as_str()));
 
     let mut app = App::new();
     // Models, textures and sounds of a mod come from its own directory: `mods://<mod>/…`.
     // Has to be registered before the asset plugin.
     app.register_asset_source(world_render::MOD_SOURCE, world_render::mod_asset_source());
+    // Settings before the window: loading happens while the plugin is built, so the
+    // stored language translates the title and the stored window mode creates the
+    // window — no flip on the first frame.
+    app.add_plugins(settings::plugin);
+    let graphics = app.world().resource::<settings::Graphics>().clone();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: i18n::t!("window-simulator"),
+            mode: settings::window_mode(&graphics),
+            present_mode: settings::present_mode(&graphics),
             ..default()
         }),
         ..default()
@@ -267,17 +285,28 @@ fn main() {
     // Bevy ships an ASCII subset of Fira Mono as the default font, which leaves every
     // umlaut and every arrow in the German UI as a box. Overwriting the asset the empty
     // `TextFont` handle points at swaps it for the full face everywhere at once — HUD,
-    // menu, mod panel and cab displays — and it is the same typeface, so nothing moves.
-    app.world_mut()
-        .resource_mut::<Assets<Font>>()
-        .insert(AssetId::default(), Font::from_bytes(UI_FONT.to_vec()))
-        .expect("the default font slot takes the full Fira Mono");
+    // mod panel and cab displays — and it is the same typeface, so nothing moves.
+    // The menu asks for the two Fira Sans faces by handle on top of that.
+    let fonts = {
+        let mut assets = app.world_mut().resource_mut::<Assets<Font>>();
+        assets
+            .insert(AssetId::default(), Font::from_bytes(UI_FONT.to_vec()))
+            .expect("the default font slot takes the full Fira Mono");
+        menu::Fonts {
+            sans: assets.add(Font::from_bytes(MENU_FONT.to_vec())),
+            semibold: assets.add(Font::from_bytes(MENU_FONT_SEMIBOLD.to_vec())),
+        }
+    };
+    app.insert_resource(fonts);
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
     }
     if let Some(path) = shot {
         app.insert_resource(ShotPath(path));
+    }
+    if let Some(page) = menu_page {
+        app.insert_resource(menu::StartPage(page));
     }
     app.run();
 }
@@ -340,6 +369,7 @@ fn setup(
     mut mods: ResMut<Mods>,
     mut manager: ResMut<mods_ui::ModManager>,
     selection: Res<menu::Selection>,
+    graphics: Res<settings::Graphics>,
 ) {
     // A mod was toggled on the menu: reload, so the world is built from the set on disk.
     if manager.restart_needed {
@@ -620,7 +650,7 @@ fn setup(
         terrain_builder,
         render::terrain_material(&mut images, &mut terrain_materials, season),
         tree_catalog,
-        LOAD_RADIUS,
+        f64::from(graphics.view_distance),
     );
 
     // Vehicles as simple bodies — the 3D cab comes in M6.
@@ -732,7 +762,7 @@ fn setup(
         Sun,
         DirectionalLight {
             illuminance: 20_000.0,
-            shadow_maps_enabled: true,
+            shadow_maps_enabled: graphics.shadows,
             ..default()
         },
         Transform::from_xyz(200.0, 400.0, 200.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -746,30 +776,35 @@ fn setup(
         },
         Transform::default(),
     ));
-    commands.spawn((
-        Camera3d::default(),
-        // HDR + bloom: emissive lamp lenses glow at night (M6 night lighting).
-        bevy::camera::Hdr,
-        Bloom::NATURAL,
-        AmbientLight {
-            color: Color::srgb(0.7, 0.8, 1.0),
-            brightness: 250.0,
-            ..default()
-        },
-        Projection::Perspective(PerspectiveProjection {
-            far: 20_000.0,
-            ..default()
-        }),
-        // Weather visibility (M6): `update_daylight` pulls the falloff in and
-        // keeps the fog colour on the sky colour.
-        DistanceFog {
-            falloff: FogFalloff::from_visibility(CLEAR_VISIBILITY),
-            ..default()
-        },
-        Transform::default(),
-        MeshPickingCamera,
-        ui::CabCamera,
-    ));
+    let camera = commands
+        .spawn((
+            Camera3d::default(),
+            // HDR: emissive lamp lenses glow at night (M6 night lighting) — the glow
+            // itself is bloom, which the settings can switch off.
+            bevy::camera::Hdr,
+            AmbientLight {
+                color: Color::srgb(0.7, 0.8, 1.0),
+                brightness: 250.0,
+                ..default()
+            },
+            Projection::Perspective(PerspectiveProjection {
+                far: 20_000.0,
+                ..default()
+            }),
+            // Weather visibility (M6): `update_daylight` pulls the falloff in and
+            // keeps the fog colour on the sky colour.
+            DistanceFog {
+                falloff: FogFalloff::from_visibility(CLEAR_VISIBILITY),
+                ..default()
+            },
+            Transform::default(),
+            MeshPickingCamera,
+            ui::CabCamera,
+        ))
+        .id();
+    if graphics.bloom {
+        commands.entity(camera).insert(Bloom::NATURAL);
+    }
 
     // Rain and snow: a particle column of crossed quads that follows the camera
     // and scrolls downwards (`update_precipitation`). Both fields exist from the
@@ -810,7 +845,7 @@ fn setup(
 
     commands.insert_resource(TerrainInfo::default());
     commands.insert_resource(streamer);
-    commands.insert_resource(ViewDistance(LOAD_RADIUS as f32));
+    commands.insert_resource(ViewDistance(graphics.view_distance));
     commands.insert_resource(Origin(origin));
     commands.insert_resource(PlayerTrain(player));
     commands.insert_resource(AiDrivers(drivers));
@@ -964,6 +999,7 @@ type BodyLight<'w, 's, B, Other> = Query<
 fn update_daylight(
     sim: Res<SimResource>,
     origin: Res<Origin>,
+    graphics: Res<settings::Graphics>,
     mut clear: ResMut<ClearColor>,
     mut daylight: ResMut<Daylight>,
     mut sun: BodyLight<Sun, Moon>,
@@ -999,7 +1035,7 @@ fn update_daylight(
     if let Ok((mut tf, mut light)) = sun.single_mut() {
         *tf = Transform::from_rotation(look_at_body(az, el));
         light.illuminance = 20_000.0 * (1.0 - 0.85 * overcast) * el.sin().max(0.0) as f32;
-        light.shadow_maps_enabled = e > 0.0 && overcast < 0.5;
+        light.shadow_maps_enabled = graphics.shadows && e > 0.0 && overcast < 0.5;
         let c = lerp3(
             (1.0, 0.60, 0.30),
             (1.0, 1.0, 1.0),

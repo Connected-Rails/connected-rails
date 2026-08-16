@@ -211,6 +211,7 @@ dependencies = [
  "sim-core",
  "track-model",
  "world-coords",
+ "world-render",
 ]
 
 [[package]]
@@ -5584,6 +5585,7 @@ dependencies = [
  "sim-core",
  "track-model",
  "world-coords",
+ "world-render",
 ]
 
 [[package]]
@@ -7512,6 +7514,18 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "serde",
+]
+
+[[package]]
+name = "world-render"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "content",
+ "glam",
+ "sim-core",
+ "track-model",
+ "world-coords",
 ]
 
 [[package]]

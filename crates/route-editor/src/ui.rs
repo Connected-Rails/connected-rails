@@ -49,6 +49,7 @@ pub fn draw(
     mut history: ResMut<History>,
     mut state: ResMut<EditorState>,
     mut ghost: ResMut<Ghost>,
+    mut terrain: ResMut<crate::terrain::TerrainView>,
     types: Res<TrackTypes>,
     objects: Res<TrackObjects>,
     mut themed: Local<bool>,
@@ -82,9 +83,10 @@ pub fn draw(
         &mut state,
         &mut overlay,
         &mut request,
+        &mut terrain,
         &mut exit,
     );
-    status_bar(&mut root, &line, &state, &overlay, &focus);
+    status_bar(&mut root, &line, &state, &overlay, &focus, &terrain);
     left_panel(
         &mut root,
         &mut line,
@@ -612,6 +614,7 @@ fn menu_bar(
     state: &mut EditorState,
     overlay: &mut Overlay,
     request: &mut Request,
+    terrain: &mut crate::terrain::TerrainView,
     exit: &mut MessageWriter<AppExit>,
 ) {
     egui::Panel::top("menu")
@@ -719,12 +722,24 @@ fn menu_bar(
                         ui.close();
                     }
                 });
-                ui.menu_button(t!("menu-view"), language_menu);
+                ui.menu_button(t!("menu-view"), |ui| {
+                    // The terrain replaces the imagery under the track: both
+                    // lie on the map plane, only one of them is drawn.
+                    if ui
+                        .checkbox(&mut terrain.enabled, t!("action-show-terrain"))
+                        .changed()
+                    {
+                        ui.close();
+                    }
+                    ui.separator();
+                    language_menu(ui);
+                });
                 ui.menu_button(t!("menu-help"), |ui| {
                     ui.label(t!("help-pan"));
                     ui.label(t!("help-opacity"));
                     ui.label(t!("help-offset"));
                     ui.label(t!("help-draw"));
+                    ui.label(t!("help-terrain"));
                 });
             });
         });
@@ -736,6 +751,7 @@ fn status_bar(
     state: &EditorState,
     overlay: &Overlay,
     focus: &Focus,
+    terrain: &crate::terrain::TerrainView,
 ) {
     egui::Panel::bottom("status")
         .frame(editor_ui::bar_frame())
@@ -756,6 +772,11 @@ fn status_bar(
                 };
                 ui.add(egui::Label::new(status).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // The ground under the cursor — the height the run will
+                    // have there, brush strokes and embankment included.
+                    if let Some(height) = terrain.cursor_height {
+                        ui.label(t!("status-ground-height", height = format!("{height:.1}")));
+                    }
                     let (lat, lon) = focus_degrees(focus.position);
                     ui.label(t!(
                         "status-position",

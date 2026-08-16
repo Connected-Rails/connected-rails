@@ -9,6 +9,8 @@
 //! on first start and can be reloaded at runtime (F5).
 
 mod overlay;
+mod signals;
+mod terrain;
 mod tools;
 mod ui;
 
@@ -26,6 +28,7 @@ use overlay::{Overlay, OverlayTile};
 use tools::EditorState;
 use track_model::{DeviceKind, TrackEdge, TrackNetwork};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
+use world_render::WorldAnchored;
 
 /// Geographic position of a world point in **degrees** — `geo::from_ecef` returns radians,
 /// while both the tile grid and the display work in degrees.
@@ -164,11 +167,13 @@ pub fn type_color32(index: u32) -> bevy_egui::egui::Color32 {
 }
 
 /// The document's own world-anchored entities: what a rebuild despawns —
-/// overlay tiles and the ghost stay.
+/// overlay tiles, terrain tiles and the ghost stay (the terrain follows the
+/// edit through its own streaming).
 type DocumentAnchored = (
     With<WorldAnchored>,
     Without<OverlayTile>,
     Without<GhostTrack>,
+    Without<terrain::TerrainChunk>,
 );
 
 const UNDO_DEPTH: usize = 64;
@@ -224,12 +229,6 @@ impl History {
     }
 }
 
-/// World-anchored objects (track, device markers) — re-aligned on a rebase.
-#[derive(Component)]
-struct WorldAnchored {
-    anchor: EcefPos,
-}
-
 /// Device marker quad — scaled with the view height so it stays clickable.
 #[derive(Component)]
 struct DeviceMarker;
@@ -281,6 +280,9 @@ fn main() {
         .or_else(|| shot.as_ref().map(|_| 60));
 
     let mut app = App::new();
+    // Models of trees and scenery objects come from the mods: `mods://<mod>/…`.
+    // Has to be registered before the asset plugin.
+    app.register_asset_source(world_render::MOD_SOURCE, world_render::mod_asset_source());
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: t!("window-route-editor"),
@@ -292,6 +294,8 @@ fn main() {
         ..default()
     }))
     .add_plugins(EguiPlugin::default())
+    // Terrain, trees and objects are drawn with the simulator's own code.
+    .add_plugins(world_render::WorldRenderPlugin)
     // The UI belongs on our own camera. Left to itself, `bevy_egui` creates a context on a
     // camera without a render graph — depending on which startup system runs first, and the
     // panels then stay invisible.
@@ -313,10 +317,16 @@ fn main() {
             camera_control,
             tools::tool_input,
             track_changes,
+            terrain::update,
             rebuild,
             spawn_ghost,
             overlay_control,
             overlay::update,
+            terrain::probe_cursor,
+            world_render::mount_parts,
+            world_render::bind_lamps,
+            signals::light_lamps,
+            signals::show_finest_lod,
             rebase_origin,
             tools::draw_gizmos,
             scale_markers,
@@ -338,7 +348,17 @@ fn main() {
 #[derive(Resource)]
 struct LinePath(Option<String>);
 
-fn setup(mut commands: Commands, config_path: Res<ConfigPath>, line_path: Res<LinePath>) {
+#[allow(clippy::too_many_arguments)]
+fn setup(
+    mut commands: Commands,
+    config_path: Res<ConfigPath>,
+    line_path: Res<LinePath>,
+    assets: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut terrain_materials: ResMut<Assets<world_render::TerrainMaterial>>,
+) {
     // Load the line.
     let (source, path) = match &line_path.0 {
         Some(path) => match std::fs::read_to_string(path).map(|t| LineSource::from_ron(&t)) {
@@ -389,18 +409,21 @@ fn setup(mut commands: Commands, config_path: Res<ConfigPath>, line_path: Res<Li
         Transform::default(),
         AmbientLight {
             color: Color::WHITE,
-            brightness: 800.0,
+            brightness: 400.0,
             ..default()
         },
         PrimaryEguiContext,
     ));
+    // Light from the north-west at about 35° — the cartographic hillshade
+    // angle. Everything but the terrain is drawn unlit, so this light exists
+    // to make the ground's relief readable from straight above.
     commands.spawn((
         DirectionalLight {
-            illuminance: 8_000.0,
+            illuminance: 9_000.0,
             shadow_maps_enabled: false,
             ..default()
         },
-        Transform::from_xyz(100.0, 400.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-300.0, 300.0, -300.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
     commands.insert_resource(Overlay::new(
@@ -420,6 +443,26 @@ fn setup(mut commands: Commands, config_path: Res<ConfigPath>, line_path: Res<Li
     commands.insert_resource(TrackObjects {
         map: load_mod_ron(mods_dir, "objects", track_model::TrackObject::from_ron),
     });
+    commands.insert_resource(signals::SignalTypes {
+        map: load_mod_ron(mods_dir, "signals", |t| ron::from_str(t)),
+    });
+    commands.insert_resource(signals::SignalModelFiles {
+        map: load_mod_ron(mods_dir, "signal_models", |t| ron::from_str(t)),
+    });
+    commands.init_resource::<signals::LampImages>();
+    commands.init_resource::<world_render::SignalModels>();
+    // Terrain material and the (still empty) tree catalog — the catalog is
+    // filled from the line on the first frame.
+    commands.insert_resource(terrain::TerrainView::new(
+        world_render::terrain_material(&mut images, &mut terrain_materials),
+        world_render::tree_catalog(
+            &[],
+            &Default::default(),
+            &assets,
+            &mut meshes,
+            &mut materials,
+        ),
+    ));
     commands.insert_resource(History::new(source.clone()));
     // Track and markers are spawned by `rebuild` on the first frame.
     commands.insert_resource(Line {
@@ -471,12 +514,21 @@ fn rebuild(
     mut overlay: ResMut<Overlay>,
     types: Res<TrackTypes>,
     objects: Res<TrackObjects>,
+    signal_types: Res<signals::SignalTypes>,
+    signal_files: Res<signals::SignalModelFiles>,
+    mut lamp_images: ResMut<signals::LampImages>,
+    mut signal_models: ResMut<world_render::SignalModels>,
+    mut terrain: ResMut<terrain::TerrainView>,
+    assets: Res<AssetServer>,
     old: Query<Entity, DocumentAnchored>,
 ) {
     if !line.needs_rebuild {
         return;
     }
     line.needs_rebuild = false;
+    // Track, strokes and trees are what the terrain is built from; it takes the
+    // new state over on the next frame (this system runs after `terrain::update`).
+    terrain.dirty = true;
     match line.source.compile() {
         Ok(compiled) => line.net = compiled.net,
         Err(e) => {
@@ -497,13 +549,40 @@ fn rebuild(
             overlay.clear(&mut commands);
         }
     }
-    spawn_track(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &line.net,
-        &origin.0,
-    );
+    // Two ways of drawing the same line: the schematic map over the aerial
+    // imagery, or the world as the run builds it.
+    if terrain.enabled {
+        world_render::spawn_track(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &assets,
+            &line.net,
+            &origin.0,
+        );
+        let (models, images) = signals::spawn(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &assets,
+            &line,
+            &signal_types,
+            &signal_files,
+            &origin,
+        );
+        signal_models.0 = models;
+        lamp_images.0 = images;
+    } else {
+        spawn_track(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &line.net,
+            &origin.0,
+        );
+        signal_models.0.clear();
+        lamp_images.0.clear();
+    }
     spawn_markers(
         &mut commands,
         &mut meshes,
@@ -511,6 +590,21 @@ fn rebuild(
         &line.source,
         &line.net,
         &origin.0,
+        terrain.enabled,
+    );
+    // Scenery objects as the run shows them: the mod's glTF at the placement's
+    // own pose, on the terrain surface where the placement says so.
+    let mut ground = terrain.builder_lock();
+    world_render::spawn_objects(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &assets,
+        &line.source,
+        &line.net,
+        &origin.0,
+        &objects.map,
+        ground.as_deref_mut(),
     );
 }
 
@@ -631,6 +725,7 @@ fn spawn_ghost(
 }
 
 /// One colored quad per trackside device, lifted above the ribbon.
+#[allow(clippy::too_many_arguments)]
 fn spawn_markers(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -638,10 +733,16 @@ fn spawn_markers(
     source: &LineSource,
     net: &TrackNetwork,
     origin: &RenderOrigin,
+    world_view: bool,
 ) {
     let mesh = meshes
         .add(Mesh::from(Plane3d::default().mesh().size(2.0, 2.0)).translated_by(Vec3::Y * 0.8));
     for device in &source.devices {
+        // In the world view a signal stands there as its model — a marker on
+        // top of it would be the one thing the run does not show.
+        if world_view && device.kind == DeviceKind::Signal {
+            continue;
+        }
         let Some(pos) = tools::device_pos(net, device) else {
             continue;
         };
@@ -654,26 +755,6 @@ fn spawn_markers(
                 unlit: true,
                 ..default()
             })),
-            Transform::from_translation(translation).with_rotation(rotation),
-            WorldAnchored { anchor: pos },
-            DeviceMarker,
-        ));
-    }
-    // Scenery objects: one olive marker each — furniture, not equipment.
-    let object_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.72, 0.68, 0.40),
-        unlit: true,
-        ..default()
-    });
-    for object in &source.objects {
-        let Some(pos) = tools::object_pos(net, object) else {
-            continue;
-        };
-        let frame = EnuFrame::at(pos);
-        let (translation, rotation) = origin.frame_transform(&frame);
-        commands.spawn((
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(object_material.clone()),
             Transform::from_translation(translation).with_rotation(rotation),
             WorldAnchored { anchor: pos },
             DeviceMarker,

@@ -954,6 +954,20 @@ and it needs no elevation data in the editor. On the map every stroke draws its 
 footprint (warm = raising, cold = lowering, grey = levelling), so overlaps are visible;
 the selection panel re-dials radius and amount, Delete removes a stroke.
 
+**`T` shows the world itself** (View ▸ Show terrain): the editor draws with the same code
+the run does — the DGM, the strokes, the cutting/embankment at the track, the ground
+textures, the ballast bed and rails of every track type, the line's **trees and scenery
+objects**, and the **signal assemblies** on their mount points. A wood, a lineside hut or
+a signal mast is judged where it is set instead of only in the run. Terrain and aerial
+imagery lie in the same place, so only one of them is drawn at a time; a module that
+brings height data starts on its world view, one without stays on the imagery. Whichever
+is shown, the status bar reads out the ground height under the cursor.
+
+Signals stand **at stop** there: the editor runs no interlocking, so a signal shows the
+lamp image its type's first matching rule gives for an untouched situation — the picture
+a line shows before the first route is set. A signal without a type stays dark, and one
+without a model gets the run's placeholder mast.
+
 A stroke smaller than the terrain grid spacing (4 m at the track, up to 32 m at the edge
 of the corridor) barely shows — the grid cannot resolve it. There is no smoothing brush:
 smoothing needs the neighbourhood, which a stamp does not have; a large, gentle `Level`

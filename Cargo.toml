@@ -15,6 +15,7 @@ members = [
     "crates/vehicle-editor",
     "crates/signal-editor",
     "crates/editor-ui",
+    "crates/world-render",
 ]
 
 [workspace.package]
@@ -43,6 +44,7 @@ mod-runtime = { path = "crates/mod-runtime" }
 ai-driver = { path = "crates/ai-driver" }
 imagery = { path = "crates/imagery" }
 editor-ui = { path = "crates/editor-ui" }
+world-render = { path = "crates/world-render" }
 
 [profile.dev]
 opt-level = 1

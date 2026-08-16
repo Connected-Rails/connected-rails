@@ -1,0 +1,13 @@
+[package]
+name = "world-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+content = { workspace = true }
+track-model = { workspace = true }
+sim-core = { workspace = true }
+world-coords = { workspace = true }
+glam = { workspace = true }
+bevy = { workspace = true }

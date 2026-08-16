@@ -185,7 +185,9 @@ enters memory once a query falls into it, and at most eight stay loaded at a tim
 even a DGM1 of an entire federal state (several thousand tiles) usable.
 
 The tool reports length, edge count, elevation coverage and the largest deviation of the
-alignment from the OSM points.
+alignment from the OSM points. Heights can also be pulled in later from inside the route
+editor: the DGM tile tool shows the elevation tile grid and imports either the picked tiles
+or the whole corridor.
 
 ## Workspace
 
@@ -237,6 +239,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `F1`–`F3` | Camera: cab / external / lineside |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
+| Mouse | Left button operates the controls of the 3D cab (click, drag, wheel), right button looks around |
 
 ## Example line
 
@@ -262,6 +265,12 @@ For comparison: unmodified DGM1 would be 2,000,000 triangles per km². On top of
 skirts at the tile edges against cracks between levels, and a cutting/embankment profile that
 pulls the terrain near the track up to rail level.
 
+The ground is textured by **splatting**: per-vertex weights from slope and track distance blend
+grass, rock and gravel. Trees are line content — every tree its own entry, spawned as a child
+of its terrain tile, so vegetation streams and batches with the ground it stands on. Terrain,
+splatting, vegetation and track objects live in `world-render` and therefore look the same in
+the simulator and in the route editor.
+
 The app shows the terrain automatically (flat without DGM):
 
 ```bash
@@ -283,8 +292,8 @@ an assembly of shared parts.
 
 | Program | Purpose |
 |---|---|
-| `cargo run -p route-editor` | line: track, equipment, aerial imagery overlay |
-| `cargo run -p vehicle-editor` | vehicle: base data, glTF model, LOD, moving parts |
+| `cargo run -p route-editor` | line: track, equipment, switches, objects, vegetation, terrain, aerial imagery overlay |
+| `cargo run -p vehicle-editor` | vehicle: base data, glTF model, LOD, moving parts, 3D cab, displays, sounds |
 | `cargo run -p signal-editor` | signal model: glTF parts on mount points, lamp bindings, lamp test |
 
 All are desktop applications, not game screens: menu bar, docked panels, the operating
@@ -368,21 +377,55 @@ prepared in Blender** — but a prepared file needs no clicking:
 |---|---|
 | Object name `body_LOD0`, `body_LOD1`, … | "Read from node names" fills the LOD table; the distances stay editable |
 | Object name `door_left`, `pant_front`, `sw_throttle`, `gauge_speed`, `lamp_left`, `wheel_1` | suggested function plus a sensible motion |
-| Custom property `ts_function` (plus `ts_motion` = `rotate`/`translate`/`visibility`, `ts_axis` = `"0 0 1"`, `ts_amount`) | exported into glTF `extras` and beats the name |
+| Custom property `ts_function` (plus `ts_motion` = `rotate`/`translate`/`visibility`/`emissive`, `ts_axis` = `"0 0 1"`, `ts_amount`) | exported into glTF `extras` and beats the name |
+| Node name ending in `_NIGHT` (lit windows, glowing signs) | switched on at dusk in every model, no binding needed |
 
 The simulator uses the same data: a vehicle with a model gets its glTF instead of the
 placeholder body, the level of detail follows the camera distance, and the bound parts follow
 the simulation state (pantograph, gauges, switches, lamps). Models live in the mod and are
 addressed as `mods://<mod>/assets/<file>` — the same string in the editor and in the game.
 
+**Cab, displays and sounds** are edited in the same program. The cab panel sets the eye point
+and binds glTF nodes to cab controls — each with the gesture that suits it, so a lever is
+dragged, a button pressed and a rotary switch stepped with the wheel. Instruments are bound the
+same way: `gauge:` pointers, `lamp:` indicators and `digit:` seven-segment counters. A screen is
+a **display** rendered to texture, written either as a declarative widget list in RON, as a Lua
+`display(ctx)` hook with menus and softkeys, or as an HTML/CSS/JS page under `displays/` —
+parsed, laid out and scripted in-engine by `html-display`, with no browser embedded. The sound
+table maps quantities (speed, traction, air, roughness, rain, control clicks) to the mod's own
+samples.
+
 Details: [MODS.md](MODS.md).
 
-### Route editor with aerial imagery overlay
+### Route editor
 
 ```bash
 cargo run -p route-editor                              # example line
 cargo run -p route-editor -- line.ron --imagery my_imagery.ron
 ```
+
+The line is edited from above, over the aerial imagery. The tool palette sits on the left, the
+selected element's fields on the right; the middle mouse button drags the map, the wheel zooms.
+Every edit goes through undo/redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z), the rule check flags what
+the compiler will reject, and saving guards against discarding unsaved work.
+
+| Tool | What a click does |
+|---|---|
+| `1` Select | Pick a track, device or object and edit its fields; `Delete` removes it |
+| `2` Draw track | Every click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction. `Enter` or right-click finishes, `Esc` cancels |
+| `3` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
+| `4` Place switch | Splits the track and draws the branch; facing or trailing and the throw time follow in the panel |
+| `5` Place object | Drops a mod's 3D object at its predefined offset and rotation |
+| `6` / `7` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
+| `8` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
+| `9` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
+| `0` Terrain brush | One stroke per click: raise, lower or level. The track keeps its height, cutting and embankment are laid over it afterwards |
+| DGM tiles | Shows the elevation tile grid and picks single tiles for the height import; without a pick the whole corridor is imported |
+
+`T` swaps the aerial imagery for the module's terrain, built exactly as the run builds it —
+so track types, objects and vegetation can be judged against the ground they sit on. The
+interlocking (signals, sections, routes) and the module boundaries are forms of their own,
+with a ghost of the neighbouring module at the boundary.
 
 The overlay configuration (`imagery.ron`) is created on first start and is fully editable:
 provider, opacity, zoom level or target resolution, load radius, tile limit, image offset
@@ -425,6 +468,8 @@ loads, evictions and usage.
 | Key | Function |
 |---|---|
 | `WASD` / arrows | Move the view point, `Page Up/Down` height |
+| `1`–`0` | Pick a tool (see the table above) |
+| `T` | Terrain view instead of the aerial imagery |
 | `O` | Overlay on/off |
 | `P` | Switch provider |
 | `[` `]` | Opacity |
@@ -509,7 +554,8 @@ git tag v0.2.0-rc.1 && git push origin v0.2.0-rc.1   # prerelease
 
 Any tag containing a `-` is published as a prerelease — the version part must still
 match `Cargo.toml`, otherwise the workflow stops before anything is published.
-[The release workflow](.github/workflows/release.yml) builds the simulator and both
-editors for Linux, Windows and macOS (Intel and Apple Silicon), packs each together with
+[The release workflow](.github/workflows/release.yml) builds the simulator, the route
+editor and the vehicle editor for Linux, Windows and macOS (Intel and Apple Silicon) —
+the signal editor is built from source for now — packs each together with
 `mods/` and the licence, and attaches the archives to a GitHub release whose notes are
 generated from the merged pull requests.

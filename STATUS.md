@@ -16,7 +16,7 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather rendering**: `Sim::weather` (clear/rain/snow/fog) set by the `SetWeather` scenario action — overcast sky, dimmed sun, distance fog from the weather's visibility, rain/snow particle fields around the camera (their streaks slanted by the relative wind of the player's speed), a `Rain` sound quantity for the sound table, and the implied rail condition on every train (`mods/example/scenarios/regenfahrt.ron` shows it); terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **seasons** (ch. 14 "seasons v2"): the same start date colours ground textures and placeholder vegetation — meadows turn through October, ground, gravel and foliage go under snow from November to March — and a mod may add optional `autumn_model`/`winter_model` variants to its track objects, falling back to the year-round model where it ships none; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, red tail lamps (Zg 101) mark the opposite end, **mods' `_NIGHT` nodes** (lit windows, glowing signs) switch at dusk in every model, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0); **terrain texturing and vegetation** (ch. 14): texture splatting — per-vertex weights from slope and track distance blend three generated ground textures (grass/rock/gravel) in a `StandardMaterial` extension — and vegetation as **line content**: every tree its own `LineSource::trees` entry (3D objects from mods' `objects/*.ron`, placeholder for the unnamed), spawned as children of their terrain tile so they stream with it and batch into instanced draws; woods are baked into single trees by the editor, so each one stays individually editable; no recorded samples (the sources are generated — content, not code) |
 | **M7** | Pilot line from OSM/DGM, scenarios, scoring, save/load | **largely done** — scenario system, scoring, save/load and the OSM/DGM importer are in place; only a real pilot line is missing (data procurement) |
-| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models/track types/track objects as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, mod manager on the main menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.crails` zip + installer) is still open |
+| **M8** | Mod runtime: declarative content plus Lua behaviour | **done** — loader with dependency order, vehicles/lines/compositions/scenarios/timetables/signal types/signal models/track types/track objects as RON, signal state machine as data, four Lua hooks (vehicle, signal aspect, line, scenario) with a sandbox, main menu with line, vehicle and scenario selection from the loaded mods (keyboard and mouse), mod manager on the same menu (a toggle applies on start) and under F9; reference mod under `mods/example` incl. a glTF model. Only distribution (`.crails` zip + installer) is still open |
 
 ## What is in place
 
@@ -451,13 +451,16 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
   scoring with it; without one only the scenario points count.
   Lines and scenarios have their own hooks (`on_load`, `on_frame`): the script decides *when*
   an event fires, the actions of that event stay declarative RON — an event with
-  `trigger: Never` waits for the script. **The mod manager lives on the main menu**
-  (installed mods with version, on/off state, missing dependencies and the loading
-  warnings); switching writes `enabled` back into `mod.ron` (that one field only) and takes
-  effect when the run starts, because the world is built only on leaving the menu. F9 opens
-  the same list in the simulator, where a toggle needs a restart. Any run flag on the
-  command line (`--line`, `--frames`, …) skips the menu, so CLI and CI invocations stay
-  non-interactive.
+  `trigger: Never` waits for the script. **The main menu picks line, vehicle and scenario**
+  from the loaded mods — three list pages, each opening with the built-in default, so a
+  run starts even with nothing installed; lines and compositions share one list, since
+  `resolve_line` takes either name. **The mod manager lives on the same menu** (installed
+  mods with version, on/off state, missing dependencies and the loading warnings);
+  switching writes `enabled` back into `mod.ron` (that one field only) and takes effect
+  when the run starts, because the world is built only on leaving the menu. F9 opens the
+  same list in the simulator, where a toggle needs a restart. Any run flag on the command
+  line (`--line`, `--frames`, …) skips the menu, so CLI and CI invocations stay
+  non-interactive, and a flag beats the menu's choice where both are set.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
 
@@ -585,12 +588,15 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **Mod hooks run once per frame**, not once per simulation step — a Lua call every 5 ms per
   train for behaviour that reacts in tenths of a second would be pure overhead. A hook that
   genuinely has to see every step moves into `Sim::step`.
-- **The main menu and the mod manager are keyboard-driven text panels** on the existing
-  Bevy UI — no mouse, no `egui` in the simulator. A clickable menu comes when it grows
-  real content (line, vehicle and scenario selection); the state machine behind it
-  (`GameState::Menu`/`Driving`) is already the one it will hang off. Toggling a mod
-  mid-run still needs going through a restart — reloading would mean rebuilding line,
-  trains and interlocking.
+- **The main menu and the mod manager are text panels on the existing Bevy UI** — no
+  `egui` in the simulator. Keyboard and mouse drive the same selection index: ↑/↓ or
+  hover selects, Enter or a left click confirms, Esc goes one page back. Every page is
+  the same list of rows, so a new page is a `match` arm and nothing else.
+- **The simulator draws its text with the full Fira Mono** (`crates/app/fonts`, SIL OFL
+  1.1, compiled in) instead of Bevy's built-in ASCII subset of the same face, which left
+  every umlaut and arrow as a box. It is put into the asset slot the empty `TextFont`
+  handle points at, so HUD, menu, mod panel and cab displays get it without naming a font
+  anywhere. Monospace is a requirement, not a preference — the HUD is laid out in columns.
 - **A composed line runs one script** — the composition's, or the single module script
   found; further module scripts are dropped with a note. Running every module's hook
   side by side needs a script list in the runtime, nothing in the format.

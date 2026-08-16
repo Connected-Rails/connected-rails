@@ -926,7 +926,15 @@ hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B
 menu-start = Fahrt starten
 menu-mods = Mods
 menu-quit = Beenden
-menu-keys = ↑/↓ auswählen   Enter bestätigen
+menu-keys = ↑/↓ oder Maus auswählen   Enter oder Klick bestätigen
+menu-keys-back = ↑/↓ oder Maus auswählen   Enter oder Klick bestätigen   Esc zurück
+menu-select-line = Strecke auswählen
+menu-select-loco = Fahrzeug auswählen
+menu-select-scenario = Szenario auswählen
+# Die eingebauten Inhalte, auf die der Simulator zurückfällt, wenn nichts gewählt wird.
+menu-line-builtin = Beispielstrecke (eingebaut)
+menu-loco-builtin = BR 101 (eingebaut)
+menu-scenario-none = Kein Szenario — freie Fahrt
 
 ## Mod-Verwaltung
 
@@ -937,7 +945,7 @@ mods-content = Inhalte: { $vehicles } Fahrzeuge, { $lines } Strecken, { $composi
 mods-log = Warnungen:
 mods-restart = Änderung wirkt nach einem Neustart.
 mods-keys = ↑/↓ auswählen   Enter ein/aus   F9 schließen
-mods-keys-menu = ↑/↓ auswählen   Enter ein/aus   Esc zurück
+mods-keys-menu = ↑/↓ oder Maus auswählen   Enter oder Klick ein/aus   Esc zurück
 
 ## Wertung
 

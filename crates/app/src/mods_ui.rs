@@ -2,9 +2,10 @@
 //! mod is missing.
 //!
 //! The list lives on the main menu (`menu.rs`), where a toggle takes effect when the run
-//! starts. F9 opens the same list in the simulator; there a toggle only takes effect after
-//! a restart — reloading mid-run would mean rebuilding the line, the trains and the
-//! interlocking from scratch.
+//! starts — the menu draws it as clickable rows and gets the row text from `row` and the
+//! summary below it from `details`. F9 opens the same list in the simulator as one text
+//! block; there a toggle only takes effect after a restart — reloading mid-run would mean
+//! rebuilding the line, the trains and the interlocking from scratch.
 
 use crate::Mods;
 use bevy::prelude::*;
@@ -64,11 +65,11 @@ pub fn mod_manager(
     *visibility = Visibility::Inherited;
 
     navigate(&keys, &mut manager, &mut mods.0);
-    **text = render(&mods.0, &manager, false);
+    **text = render(&mods.0, &manager);
 }
 
-/// ↑/↓ select, Enter toggles `enabled` on disk — shared by the F9 panel and the menu.
-pub(crate) fn navigate(
+/// ↑/↓ select, Enter toggles — the F9 panel's keyboard handling.
+fn navigate(
     keys: &ButtonInput<KeyCode>,
     manager: &mut ModManager,
     runtime: &mut mod_runtime::ModRuntime,
@@ -84,44 +85,57 @@ pub(crate) fn navigate(
         manager.selected = (manager.selected + count - 1) % count;
     }
     if keys.just_pressed(KeyCode::Enter) {
-        let manifest = &mut runtime.mods.manifests[manager.selected];
-        let wanted = !manifest.enabled;
-        match manifest.set_enabled(wanted) {
-            Ok(()) => manager.restart_needed = true,
-            Err(e) => warn!("mod {}: {e}", manifest.id),
-        }
+        toggle(runtime, manager.selected, manager);
     }
 }
 
-pub(crate) fn render(
+/// Writes `enabled` for one mod back to disk — shared by the F9 panel and the menu.
+pub(crate) fn toggle(
+    runtime: &mut mod_runtime::ModRuntime,
+    index: usize,
+    manager: &mut ModManager,
+) {
+    let Some(manifest) = runtime.mods.manifests.get_mut(index) else {
+        return;
+    };
+    let wanted = !manifest.enabled;
+    match manifest.set_enabled(wanted) {
+        Ok(()) => manager.restart_needed = true,
+        Err(e) => warn!("mod {}: {e}", manifest.id),
+    }
+}
+
+/// One list row: the on/off box, the id, the version, the name — plus what it is missing.
+pub(crate) fn row(mods: &mod_runtime::Mods, index: usize) -> String {
+    let Some(man) = mods.manifests.get(index) else {
+        return String::new();
+    };
+    let mut row = format!(
+        "[{}] {:<24} {:<8} {}",
+        if man.enabled { "x" } else { " " },
+        man.id,
+        man.version,
+        man.name
+    );
+    let missing = mods.missing_depends(&man.id);
+    if !missing.is_empty() {
+        row.push_str(&format!(
+            "  {}",
+            t!("mods-missing-depends", depends = missing.join(", "))
+        ));
+    }
+    row
+}
+
+/// What is below the list: how much content the mods contribute, what went wrong, and
+/// whether the change is still waiting for a restart.
+pub(crate) fn details(
     runtime: &mod_runtime::ModRuntime,
     manager: &ModManager,
     in_menu: bool,
 ) -> String {
     let mods = &runtime.mods;
-    let mut lines = vec![t!("mods-title"), String::new()];
-    if mods.manifests.is_empty() {
-        lines.push(t!("mods-none"));
-    }
-    for (i, man) in mods.manifests.iter().enumerate() {
-        let marker = if i == manager.selected { ">" } else { " " };
-        lines.push(format!(
-            "{marker} [{}] {:<24} {:<8} {}",
-            if man.enabled { "x" } else { " " },
-            man.id,
-            man.version,
-            man.name
-        ));
-        let missing = mods.missing_depends(&man.id);
-        if !missing.is_empty() {
-            lines.push(format!(
-                "      {}",
-                t!("mods-missing-depends", depends = missing.join(", "))
-            ));
-        }
-    }
-    lines.push(String::new());
-    lines.push(t!(
+    let mut lines = vec![t!(
         "mods-content",
         vehicles = mods.vehicles.len(),
         lines = mods.lines.len(),
@@ -130,7 +144,7 @@ pub(crate) fn render(
         timetables = mods.timetables.len(),
         signals = mods.signal_types.len(),
         scripts = mods.scripts.len(),
-    ));
+    )];
     // Loading warnings and script errors — the modder's first place to look.
     let log = runtime.log();
     if !log.is_empty() {
@@ -146,11 +160,23 @@ pub(crate) fn render(
         lines.push(String::new());
         lines.push(t!("mods-restart"));
     }
+    lines.join("\n")
+}
+
+/// The whole panel as one text block — the F9 view, which has no clickable rows.
+fn render(runtime: &mod_runtime::ModRuntime, manager: &ModManager) -> String {
+    let mods = &runtime.mods;
+    let mut lines = vec![t!("mods-title"), String::new()];
+    if mods.manifests.is_empty() {
+        lines.push(t!("mods-none"));
+    }
+    for i in 0..mods.manifests.len() {
+        let marker = if i == manager.selected { ">" } else { " " };
+        lines.push(format!("{marker} {}", row(mods, i)));
+    }
     lines.push(String::new());
-    lines.push(if in_menu {
-        t!("mods-keys-menu")
-    } else {
-        t!("mods-keys")
-    });
+    lines.push(details(runtime, manager, false));
+    lines.push(String::new());
+    lines.push(t!("mods-keys"));
     lines.join("\n")
 }

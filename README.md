@@ -12,7 +12,7 @@ signals, your own lines. See [Mods](#mods) for the guide.
 
 ```bash
 cargo test --workspace     # all acceptance tests (headless, no GPU)
-cargo run -p app           # start the simulator (main menu: start, mods, quit)
+cargo run -p app           # start the simulator (main menu: line/vehicle/scenario, mods, quit)
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
 
@@ -21,10 +21,12 @@ cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
-Without arguments the simulator starts on the main menu, where mods are switched on and
-off — a toggle there takes effect when the run starts. Any run flag (`--line`, `--loco`,
-`--scenario`, `--frames`, `--screenshot`, …) skips the menu, so the invocations above stay
-non-interactive.
+Without arguments the simulator starts on the main menu: "start driving" walks through
+line, vehicle and scenario — each list opening with the built-in default — and "mods"
+switches the installed mods on and off, which takes effect when the run starts. ↑/↓ or the
+mouse select, `Enter` or a left click confirms, `Esc` goes one page back. Any run flag
+(`--line`, `--loco`, `--scenario`, `--frames`, `--screenshot`, …) skips the menu and wins
+over what was picked there, so the invocations above stay non-interactive.
 
 For a faster edit-compile-run loop, add `--features dev` to any of the four binaries
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
@@ -193,7 +195,7 @@ alignment from the OSM points.
 | `mod-runtime` | Mod discovery, declarative content, Lua behaviour hooks (ch. 19) |
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
-| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13) |
+| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13); text in Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down view with aerial imagery overlay (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
@@ -223,7 +225,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `1`–`4` | Battery / pantograph / main switch / air compressor |
 | `5` | Start the diesel engine |
 | `F1`–`F3` | Camera: cab / external / lineside |
-| `F9` | Mod manager (↑/↓ select, `Enter` toggles — in-game only after a restart; on the main menu a toggle applies on start) |
+| `F9` | Mod manager (↑/↓ select, `Enter` toggles — in-game only after a restart; on the main menu a toggle applies on start, and the rows are clickable there) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 
 ## Example line

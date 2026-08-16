@@ -130,6 +130,11 @@ struct FrameLimit(u32);
 #[derive(Resource)]
 struct ShotPath(String);
 
+/// The font the whole UI draws with — the full Fira Mono, not Bevy's ASCII subset of it.
+/// Compiled in rather than loaded, so the binary stays self-contained (SIL OFL 1.1,
+/// `fonts/LICENSE-FiraMono.txt`).
+const UI_FONT: &[u8] = include_bytes!("../fonts/FiraMono-Regular.ttf");
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| -> Option<String> {
@@ -191,6 +196,7 @@ fn main() {
     .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
     .init_resource::<menu::MenuState>()
+    .init_resource::<menu::Selection>()
     // HTML cab screens hold a boa script context, which is `!Send` — a non-send
     // resource keeps them on the main thread, where the display chain runs anyway.
     .init_non_send::<displays::HtmlGauges>()
@@ -257,6 +263,14 @@ fn main() {
             .after(sync_vehicles)
             .run_if(in_state(GameState::Driving)),
     );
+    // Bevy ships an ASCII subset of Fira Mono as the default font, which leaves every
+    // umlaut and every arrow in the German UI as a box. Overwriting the asset the empty
+    // `TextFont` handle points at swaps it for the full face everywhere at once — HUD,
+    // menu, mod panel and cab displays — and it is the same typeface, so nothing moves.
+    app.world_mut()
+        .resource_mut::<Assets<Font>>()
+        .insert(AssetId::default(), Font::from_bytes(UI_FONT.to_vec()))
+        .expect("the default font slot takes the full Fira Mono");
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
@@ -324,6 +338,7 @@ fn setup(
     assets: Res<AssetServer>,
     mut mods: ResMut<Mods>,
     mut manager: ResMut<mods_ui::ModManager>,
+    selection: Res<menu::Selection>,
 ) {
     // A mod was toggled on the menu: reload, so the world is built from the set on disk.
     if manager.restart_needed {
@@ -335,15 +350,17 @@ fn setup(
     }
     let mods = &mut mods.0;
 
-    // Build line and simulation. `--line <mod>:<name>` takes a line or a composition of
-    // modules from a mod; a scenario may name its line itself, `--line` wins.
-    let scenario_id = arg("--scenario");
-    let line_ref = arg("--line").or_else(|| {
-        scenario_id
-            .as_ref()
-            .and_then(|id| mods.mods.scenarios.get(id))
-            .and_then(|s| s.line.clone())
-    });
+    // Build line and simulation. Selection comes from the menu or from CLI flags.
+    // CLI flags take precedence (command line usage stays non-interactive).
+    let scenario_id = arg("--scenario").or_else(|| selection.scenario_id.clone());
+    let line_ref = arg("--line")
+        .or_else(|| selection.line_ref.clone())
+        .or_else(|| {
+            scenario_id
+                .as_ref()
+                .and_then(|id| mods.mods.scenarios.get(id))
+                .and_then(|s| s.line.clone())
+        });
     let resolved = line_ref.and_then(|id| match mods.mods.resolve_line(&id) {
         Ok(composed) => {
             for note in &composed.notes {
@@ -376,8 +393,9 @@ fn setup(
     }
     let mut sim = Sim::new(line.net, line.interlock, 2024);
 
-    // `--loco <mod>:<name>` puts a vehicle from a mod at the head of the train.
+    // Vehicle from menu selection or CLI flag.
     let loco = arg("--loco")
+        .or_else(|| selection.loco_id.clone())
         .and_then(|id| match mods.mods.vehicles.get(&id) {
             Some(spec) => Some(spec.clone()),
             None => {

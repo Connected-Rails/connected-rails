@@ -1,8 +1,8 @@
 {
  "asset": {
   "version": "2.0",
-  "generator": "tools/gen_br101.py (TrainSim-DE example mod)",
-  "copyright": "TrainSim-DE project. Procedural model built from scratch in tools/gen_br101.py, no third-party assets; licensed like the project."
+  "generator": "tools/gen_br101.py (Connected Rails example mod)",
+  "copyright": "Connected Rails project. Procedural model built from scratch in tools/gen_br101.py, no third-party assets; licensed like the project."
  },
  "scene": 0,
  "scenes": [

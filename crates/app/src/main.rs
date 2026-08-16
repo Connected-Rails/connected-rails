@@ -1,4 +1,4 @@
-//! TrainSim-DE — Bevy app: rendering, camera, input, HUD (plan ch. 12).
+//! Connected Rails — Bevy app: rendering, camera, input, HUD (plan ch. 12).
 //!
 //! The app ticks `sim-core` with a fixed time step and mirrors the state into ECS components.
 //! Simulation logic does **not** belong here.

@@ -31,7 +31,7 @@ from pathlib import Path
 ASSETS = Path(__file__).resolve().parents[1] / "mods" / "example" / "assets"
 
 COPYRIGHT = (
-    "TrainSim-DE project. Procedural model built from scratch in "
+    "Connected Rails project. Procedural model built from scratch in "
     "tools/gen_signal_parts.py, no third-party assets; licensed like the project."
 )
 
@@ -155,7 +155,7 @@ def write_gltf(filename, scene_name, materials, mesh_specs, nodes):
     gltf = {
         "asset": {
             "version": "2.0",
-            "generator": "tools/gen_signal_parts.py (TrainSim-DE example mod)",
+            "generator": "tools/gen_signal_parts.py (Connected Rails example mod)",
             "copyright": COPYRIGHT,
         },
         "scene": 0,

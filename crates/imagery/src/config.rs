@@ -197,7 +197,7 @@ pub struct RequestConfig {
 impl Default for RequestConfig {
     fn default() -> Self {
         Self {
-            user_agent: format!("TrainSim-DE-Editor/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: format!("ConnectedRails-Editor/{}", env!("CARGO_PKG_VERSION")),
             timeout_seconds: 15,
             parallel: 4,
             retries: 2,

@@ -1,17 +1,17 @@
-# TrainSim-DE — deutsche Übersetzung.
+# Connected Rails — deutsche Übersetzung.
 #
 # Schlüssel auf -hint sind der Tooltip des gleichnamigen Feldes.
 # Platzhalter wie { $file } füllt das Programm; sie müssen erhalten bleiben.
 
 ## Fenster und Menüs
 
-window-simulator = TrainSim-DE
-window-vehicle-editor = TrainSim-DE — Fahrzeugeditor
-window-vehicle-editor-named = { $name } — TrainSim-DE Fahrzeugeditor
-window-vehicle-editor-unsaved = • { $name } — TrainSim-DE Fahrzeugeditor
-window-route-editor = TrainSim-DE — Streckeneditor
-window-route-editor-named = { $name } — TrainSim-DE Streckeneditor
-window-route-editor-unsaved = • { $name } — TrainSim-DE Streckeneditor
+window-simulator = Connected Rails
+window-vehicle-editor = Connected Rails — Fahrzeugeditor
+window-vehicle-editor-named = { $name } — Connected Rails Fahrzeugeditor
+window-vehicle-editor-unsaved = • { $name } — Connected Rails Fahrzeugeditor
+window-route-editor = Connected Rails — Streckeneditor
+window-route-editor-named = { $name } — Connected Rails Streckeneditor
+window-route-editor-unsaved = • { $name } — Connected Rails Streckeneditor
 
 menu-file = Datei
 menu-edit = Bearbeiten
@@ -548,9 +548,9 @@ disp-widgets = { $count } Widgets — werden in der Fahrzeugdatei gepflegt
 ## leere Knoten namens mp_* — plus die Bindung der Lampenbild-Strings des
 ## Signaltyps an Knoten.
 
-window-signal-editor = TrainSim-DE — Signaleditor
-window-signal-editor-named = { $name } — TrainSim-DE Signaleditor
-window-signal-editor-unsaved = • { $name } — TrainSim-DE Signaleditor
+window-signal-editor = Connected Rails — Signaleditor
+window-signal-editor-named = { $name } — Connected Rails Signaleditor
+window-signal-editor-unsaved = • { $name } — Connected Rails Signaleditor
 heading-signal-model = Signalmodell
 filter-signal-model-ron = Signalmodell (RON)
 status-new-signal-model = Neues Signalmodell

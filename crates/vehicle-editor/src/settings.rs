@@ -109,14 +109,14 @@ impl Settings {
     }
 }
 
-/// `%APPDATA%\TrainSim-DE\` on Windows, `$XDG_CONFIG_HOME` or `~/.config`
+/// `%APPDATA%\Connected Rails\` on Windows, `$XDG_CONFIG_HOME` or `~/.config`
 /// elsewhere. Not worth a crate — this is the whole rule.
 fn settings_path() -> Option<PathBuf> {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join("TrainSim-DE").join("vehicle-editor.ron"))
+    Some(base.join("Connected Rails").join("vehicle-editor.ron"))
 }
 
 #[cfg(test)]

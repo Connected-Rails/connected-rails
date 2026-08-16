@@ -1,4 +1,4 @@
-//! TrainSim-DE signal editor — modular signal models: glTF parts on mount points,
+//! Connected Rails signal editor — modular signal models: glTF parts on mount points,
 //! lamp-image bindings, live preview (plan ch. 15.3, the Zusi assembly pattern).
 //!
 //! ```text
@@ -253,13 +253,13 @@ impl Settings {
     }
 }
 
-/// `%APPDATA%\TrainSim-DE\` on Windows, `$XDG_CONFIG_HOME` or `~/.config` elsewhere.
+/// `%APPDATA%\Connected Rails\` on Windows, `$XDG_CONFIG_HOME` or `~/.config` elsewhere.
 fn settings_path() -> Option<PathBuf> {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join("TrainSim-DE").join("signal-editor.ron"))
+    Some(base.join("Connected Rails").join("signal-editor.ron"))
 }
 
 /// Orbit camera around the signal.

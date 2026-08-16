@@ -448,8 +448,11 @@ gets its timetable by reference (`timetable: Some("<mod>:<name>")`, a `timetable
 in the mod) — without one, only the scenario's own points count. A timetable is either
 `kind: Scenario` (times from the start of the run, runs once) or `kind: Daily` (times as
 seconds since midnight, wrapping around every 24 h). `start:` sets date and local time
-of the run (default: midsummer noon) — it anchors `Daily` timetables and puts the sun
-and moon where they belong for the georeferenced line, season included.
+of the run (default: midsummer noon) — it anchors `Daily` timetables, puts the sun
+and moon where they belong for the georeferenced line, and paints the season: meadows
+turn through October, ground and trees go under snow from November to March. A mod's
+track object may bring its own `autumn_model`/`winter_model` glTF — optional, and
+whatever it leaves out keeps the year-round model.
 `SetWeather(Clear | Rain | Snow | Fog)` changes the weather: sky, visibility and
 precipitation in the renderer, plus the rail condition the weather implies (rain wets
 the rail, snow makes it slippery). `SetRail(Dry | Wet | Slippery)` sets the rail alone

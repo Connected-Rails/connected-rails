@@ -26,6 +26,14 @@ pub struct TrackObject {
     /// Default height above the railhead [m].
     #[serde(default)]
     pub height: f64,
+    /// Optional seasonal variants of the model — a mod that has an autumn or a
+    /// winter version of a tree names it here, with its own textures inside the
+    /// glTF. Whatever is missing falls back to `model`, and an object that
+    /// looks the same all year (mast, board, lamp) names neither.
+    #[serde(default)]
+    pub autumn_model: Option<String>,
+    #[serde(default)]
+    pub winter_model: Option<String>,
 }
 
 impl TrackObject {
@@ -50,13 +58,16 @@ mod tests {
             lateral_offset: -3.5,
             yaw_deg: 90.0,
             height: 0.0,
+            autumn_model: None,
+            winter_model: Some("example/assets/mast_winter.gltf".into()),
         };
         assert_eq!(TrackObject::from_ron(&full.to_ron()).unwrap(), full);
 
-        // A minimal file needs only name and model.
+        // A minimal file needs only name and model; seasonal variants are optional.
         let minimal =
             TrackObject::from_ron("(name:\"Baum\",model:\"x/assets/tree.gltf\")").unwrap();
         assert_eq!(minimal.lateral_offset, 0.0);
         assert_eq!(minimal.yaw_deg, 0.0);
+        assert_eq!(minimal.winter_model, None);
     }
 }

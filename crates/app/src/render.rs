@@ -4,8 +4,8 @@
 use bevy::prelude::*;
 use world_coords::{EnuFrame, RenderOrigin};
 pub use world_render::{
-    TerrainMaterial, TreeCatalog, WorldAnchored, spawn_terrain_tile, spawn_track, terrain_material,
-    tree_catalog,
+    Season, TerrainMaterial, TreeCatalog, WorldAnchored, spawn_terrain_tile, spawn_track,
+    terrain_material, tree_catalog,
 };
 
 /// Reference point of the rendering as a Bevy resource.

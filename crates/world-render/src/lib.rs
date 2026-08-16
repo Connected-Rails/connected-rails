@@ -37,7 +37,72 @@ pub struct WorldRenderPlugin;
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "terrain_splat.wgsl");
-        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
+            .init_resource::<Daylight>()
+            .add_systems(Update, switch_night_nodes);
+    }
+}
+
+/// How light it is outside: 0 = night … 1 = full daylight. The simulator writes
+/// it from the sun's elevation; the editor leaves it at day.
+#[derive(Resource)]
+pub struct Daylight(pub f32);
+
+impl Default for Daylight {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+/// Suffix that marks a glTF node as night furniture: lit windows in a house,
+/// a glowing sign, the pool of light under a platform lamp.
+///
+/// A mod needs nothing but the node name — whatever is modelled there (an
+/// emissive window pane is the usual answer) is switched like a signal's lamp
+/// node, and a model without such a node simply never lights up. The same
+/// convention as `_LOD<level>`, and it holds for every glTF the world is drawn
+/// from: scenery objects, trees, signal parts, vehicles.
+pub const NIGHT_SUFFIX: &str = "_NIGHT";
+
+/// A node found by that suffix.
+#[derive(Component)]
+pub struct NightNode;
+
+/// Below this much daylight the night nodes are on — the sun at the horizon,
+/// the same dusk the headlights come up in.
+const NIGHT_BELOW: f32 = 0.5;
+
+/// Tags freshly spawned night nodes and switches all of them when dusk falls.
+// ponytail: a hard switch at one threshold, not a fade — the glow lives in the
+// mod's own emissive material, and fading it would mean patching every loaded
+// glTF material per frame.
+pub fn switch_night_nodes(
+    mut commands: Commands,
+    daylight: Res<Daylight>,
+    fresh: Query<(Entity, &Name), Added<Name>>,
+    mut nodes: Query<&mut Visibility, With<NightNode>>,
+    mut was_lit: Local<Option<bool>>,
+) {
+    let lit = daylight.0 < NIGHT_BELOW;
+    let shown = |on: bool| {
+        if on {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        }
+    };
+    // A glTF node does not have to carry `Visibility`; without one it could not
+    // be switched at all (the same reason as for the lamp nodes).
+    for (entity, name) in &fresh {
+        if name.as_str().ends_with(NIGHT_SUFFIX) {
+            commands.entity(entity).insert((NightNode, shown(lit)));
+        }
+    }
+    if *was_lit != Some(lit) {
+        *was_lit = Some(lit);
+        for mut visibility in &mut nodes {
+            *visibility = shown(lit);
+        }
     }
 }
 
@@ -89,13 +154,96 @@ impl MaterialExtension for TerrainSplat {
     }
 }
 
-/// The one terrain material, its ground textures generated at startup —
-/// like the sound sources (ch. 13), the repository carries no binary assets.
+/// What the date does to ground and foliage (plan ch. 14 "seasons v2").
+///
+/// The season falls out of the scenario's start date — the same date the sun
+/// and moon are computed from (`world_coords::sun`). Both programs build their
+/// ground textures and placeholder trees through it, so the editor shows the
+/// module in the season it was set up for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Season {
+    /// Snow cover: 0 = bare ground … 1 = deep winter.
+    pub snow: f32,
+    /// Autumn colour of the foliage: 0 = green … 1 = fully turned.
+    pub autumn: f32,
+}
+
+impl Default for Season {
+    /// Midsummer, like `sim_core::scenario::StartTime::default`.
+    fn default() -> Self {
+        Self::on(6, 21)
+    }
+}
+
+impl Season {
+    /// The season of a calendar date.
+    // ponytail: two cosines over the day of the year instead of a climate
+    // table — this is a central European lowland year, so a line in the Alps
+    // or south of the equator gets the wrong month. A per-line climate entry
+    // fixes that, not a finer curve here.
+    pub fn on(month: u32, day: u32) -> Self {
+        let day_of_year = (month.clamp(1, 12) - 1) as f32 * 30.44 + day as f32;
+        let wave = |peak: f32| (std::f32::consts::TAU * (day_of_year - peak) / 365.25).cos();
+        Self {
+            // Snow from November to March, deepest around 20 January.
+            snow: ((wave(20.0) - 0.35) / 0.5).clamp(0.0, 1.0),
+            // The leaves turn through October.
+            autumn: ((wave(288.0) - 0.8) / 0.15).clamp(0.0, 1.0),
+        }
+    }
+
+    /// Anything green as the date paints it: turned in autumn, under snow in winter.
+    pub fn green(&self, color: [f32; 3]) -> [f32; 3] {
+        self.snowed(mix(color, STRAW, self.autumn), 1.0)
+    }
+
+    /// Bare ground under snow. `cover` says how much of it the snow holds —
+    /// a rock face keeps showing through, gravel between the sleepers less so.
+    pub fn snowed(&self, color: [f32; 3], cover: f32) -> [f32; 3] {
+        mix(color, SNOW, self.snow * cover)
+    }
+
+    /// The model file an object shows in this season: the mod's winter or
+    /// autumn variant where it ships one, otherwise the year-round model.
+    /// Seasonal variants are optional — a mast needs none, a birch may bring
+    /// three, and neither the line nor the editor has to know which.
+    // ponytail: a variant either shows or it does not, at half a season —
+    // cross-fading two glTFs means drawing every tree twice.
+    pub fn model_of<'a>(&self, object: &'a TrackObject) -> &'a str {
+        let variant = if self.snow > 0.5 {
+            object.winter_model.as_deref()
+        } else if self.autumn > 0.5 {
+            object.autumn_model.as_deref()
+        } else {
+            None
+        };
+        variant.unwrap_or(&object.model)
+    }
+}
+
+/// Fresh snow, and the straw the meadows turn to in autumn.
+const SNOW: [f32; 3] = [0.86, 0.88, 0.93];
+const STRAW: [f32; 3] = [0.45, 0.40, 0.19];
+
+fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
+}
+
+fn opaque(color: [f32; 3]) -> [f32; 4] {
+    [color[0], color[1], color[2], 1.0]
+}
+
+/// The one terrain material, its ground textures generated at startup in the
+/// colours of `season` — like the sound sources (ch. 13), the repository
+/// carries no binary assets.
 // ponytail: procedural noise textures instead of authored ones — photographed
-// ground goes into a mod once terrain texturing is moddable content.
+// ground goes into a mod once terrain texturing is moddable content. The
+// season is baked in at load: a run that drives from October into November
+// keeps the ground it started on.
 pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
+    season: Season,
 ) -> Handle<TerrainMaterial> {
     materials.add(TerrainMaterial {
         base: StandardMaterial {
@@ -104,20 +252,20 @@ pub fn terrain_material(
         },
         extension: TerrainSplat {
             grass: images.add(ground_texture(
-                [0.20, 0.32, 0.11],
-                [0.41, 0.45, 0.18],
+                season.green([0.20, 0.32, 0.11]),
+                season.green([0.41, 0.45, 0.18]),
                 64,
                 1,
             )),
             rock: images.add(ground_texture(
-                [0.35, 0.33, 0.31],
-                [0.55, 0.53, 0.50],
+                season.snowed([0.35, 0.33, 0.31], 0.45),
+                season.snowed([0.55, 0.53, 0.50], 0.45),
                 48,
                 2,
             )),
             gravel: images.add(ground_texture(
-                [0.39, 0.35, 0.29],
-                [0.57, 0.54, 0.49],
+                season.snowed([0.39, 0.35, 0.29], 0.7),
+                season.snowed([0.57, 0.54, 0.49], 0.7),
                 12,
                 3,
             )),
@@ -168,13 +316,14 @@ pub fn tree_catalog(
     assets: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    season: Season,
 ) -> TreeCatalog {
     let scenes = names
         .iter()
         .map(|name| match registry.get(name) {
             Some(object) => Some(
                 assets
-                    .load(GltfAssetLabel::Scene(0).from_asset(asset_path(&object.model)))
+                    .load(GltfAssetLabel::Scene(0).from_asset(asset_path(season.model_of(object))))
                     .clone(),
             ),
             None => {
@@ -183,7 +332,7 @@ pub fn tree_catalog(
             }
         })
         .collect();
-    let (placeholder, placeholder_material) = placeholder_trees(meshes, materials);
+    let (placeholder, placeholder_material) = placeholder_trees(meshes, materials, season);
     TreeCatalog {
         scenes,
         placeholder,
@@ -191,10 +340,14 @@ pub fn tree_catalog(
     }
 }
 
-/// Low-poly placeholder trees, coloured by vertex so one white material serves both kinds.
+/// Low-poly placeholder trees, coloured by vertex so one white material serves
+/// both kinds — and by the season, so a winter run drives through snowy woods.
+// ponytail: the broadleaf keeps its crown all year; bare winter branches are a
+// second mesh, not a colour.
 fn placeholder_trees(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    season: Season,
 ) -> ([Handle<Mesh>; 2], Handle<StandardMaterial>) {
     let material = materials.add(StandardMaterial {
         perceptual_roughness: 0.9,
@@ -220,7 +373,8 @@ fn placeholder_trees(
                     .resolution(8)
                     .anchor(ConeAnchor::Base)
                     .build(),
-                [0.10, 0.22, 0.09, 1.0],
+                // A conifer does not turn; it only carries the snow.
+                opaque(season.snowed([0.10, 0.22, 0.09], 0.6)),
             )
             .transformed_by(Transform::from_xyz(0.0, 1.4, 0.0)),
         )
@@ -229,8 +383,11 @@ fn placeholder_trees(
     let mut broadleaf = trunk(2.6);
     broadleaf
         .merge(
-            &colored(Sphere::new(2.3).mesh().uv(10, 7), [0.17, 0.30, 0.10, 1.0])
-                .transformed_by(Transform::from_xyz(0.0, 4.2, 0.0)),
+            &colored(
+                Sphere::new(2.3).mesh().uv(10, 7),
+                opaque(season.green([0.17, 0.30, 0.10])),
+            )
+            .transformed_by(Transform::from_xyz(0.0, 4.2, 0.0)),
         )
         .expect("same vertex layout");
 
@@ -297,10 +454,11 @@ pub fn spawn_terrain_tile(
         .id()
 }
 
-/// Spawns every scenery object of the line. An unknown object kind gets a
-/// placeholder block — visible in the world instead of silently absent.
-/// `terrain` answers the ground height for objects that snap to the terrain.
-/// The same objects in the editor and in the run — that is the point.
+/// Spawns every scenery object of the line, each in the model `season` picks
+/// for it. An unknown object kind gets a placeholder block — visible in the
+/// world instead of silently absent. `terrain` answers the ground height for
+/// objects that snap to the terrain. The same objects in the editor and in the
+/// run — that is the point.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_objects(
     commands: &mut Commands,
@@ -312,6 +470,7 @@ pub fn spawn_objects(
     origin: &RenderOrigin,
     registry: &BTreeMap<String, TrackObject>,
     mut terrain: Option<&mut TerrainBuilder>,
+    season: Season,
 ) {
     let placeholder_mesh = meshes.add(Cuboid::new(0.8, 2.0, 0.8));
     let placeholder_material = materials.add(StandardMaterial {
@@ -363,8 +522,8 @@ pub fn spawn_objects(
 
         match registry.get(&placement.object) {
             Some(object) => {
-                let scene =
-                    assets.load(GltfAssetLabel::Scene(0).from_asset(asset_path(&object.model)));
+                let scene = assets
+                    .load(GltfAssetLabel::Scene(0).from_asset(asset_path(season.model_of(object))));
                 commands.spawn((WorldAssetRoot(scene), Transform::default(), ChildOf(view)));
             }
             None => {
@@ -1153,6 +1312,126 @@ mod tests {
             let (a, b, c) = (p(triangle[0]), p(triangle[1]), p(triangle[2]));
             let normal = (b - a).cross(c - a);
             assert!(normal.y > 0.0, "triangle faces down: {normal:?}");
+        }
+    }
+
+    /// The season is what the date makes of the ground and the leaves —
+    /// green in summer, turned in October, white in January.
+    #[test]
+    fn the_season_follows_the_calendar() {
+        let green = [0.20, 0.32, 0.11];
+
+        let summer = Season::on(6, 21);
+        assert_eq!((summer.snow, summer.autumn), (0.0, 0.0));
+        assert_eq!(summer.green(green), green);
+
+        let october = Season::on(10, 15);
+        assert!(october.autumn > 0.5, "autumn {}", october.autumn);
+        assert_eq!(october.snow, 0.0);
+        // Turned: the meadow yellows — red gains more than green does.
+        let turned = october.green(green);
+        assert!(
+            turned[0] - green[0] > turned[1] - green[1],
+            "not yellowing: {turned:?}"
+        );
+
+        let january = Season::on(1, 20);
+        assert_eq!(january.snow, 1.0);
+        assert_eq!(january.green(green), SNOW);
+        // Rock only holds part of it and keeps showing through.
+        assert!(january.snowed(green, 0.45)[2] < SNOW[2]);
+
+        assert_eq!(Season::default(), summer);
+    }
+
+    /// A mod may ship seasonal models, and may just as well not: whatever it
+    /// leaves out falls back to the year-round one.
+    #[test]
+    fn seasonal_models_are_optional() {
+        let birch = TrackObject {
+            name: "Birke".into(),
+            model: "x/birke.gltf".into(),
+            autumn_model: Some("x/birke_herbst.gltf".into()),
+            winter_model: Some("x/birke_winter.gltf".into()),
+            ..plain("x/mast.gltf")
+        };
+        assert_eq!(Season::on(6, 21).model_of(&birch), "x/birke.gltf");
+        assert_eq!(Season::on(10, 15).model_of(&birch), "x/birke_herbst.gltf");
+        assert_eq!(Season::on(1, 20).model_of(&birch), "x/birke_winter.gltf");
+
+        // A spruce with a winter model only keeps its own look in autumn.
+        let spruce = TrackObject {
+            winter_model: Some("x/fichte_winter.gltf".into()),
+            ..plain("x/fichte.gltf")
+        };
+        assert_eq!(Season::on(10, 15).model_of(&spruce), "x/fichte.gltf");
+        assert_eq!(Season::on(1, 20).model_of(&spruce), "x/fichte_winter.gltf");
+
+        // A mast ships none and stands the same all year.
+        let mast = plain("x/mast.gltf");
+        for date in [(6, 21), (10, 15), (1, 20)] {
+            assert_eq!(Season::on(date.0, date.1).model_of(&mast), "x/mast.gltf");
+        }
+    }
+
+    /// Lit windows: a node named for the night is hidden by day, shown after
+    /// dusk — and a node without the suffix is never touched.
+    #[test]
+    fn night_nodes_switch_at_dusk() {
+        let mut app = App::new();
+        app.init_resource::<Daylight>()
+            .add_systems(Update, switch_night_nodes);
+        let windows = app
+            .world_mut()
+            .spawn(Name::new(format!("fenster{NIGHT_SUFFIX}")))
+            .id();
+        let walls = app.world_mut().spawn(Name::new("mauer")).id();
+
+        // Daylight: the windows are dark, the walls stay as they were modelled.
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(windows),
+            Some(&Visibility::Hidden)
+        );
+        assert_eq!(app.world().get::<Visibility>(walls), None);
+
+        // Dusk: they light up.
+        app.world_mut().resource_mut::<Daylight>().0 = 0.2;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(windows),
+            Some(&Visibility::Inherited)
+        );
+
+        // A house that is built after dark is lit from its first frame.
+        let late = app
+            .world_mut()
+            .spawn(Name::new(format!("laterne{NIGHT_SUFFIX}")))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(late),
+            Some(&Visibility::Inherited)
+        );
+
+        // And back off at sunrise.
+        app.world_mut().resource_mut::<Daylight>().0 = 1.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(windows),
+            Some(&Visibility::Hidden)
+        );
+    }
+
+    fn plain(model: &str) -> TrackObject {
+        TrackObject {
+            name: "test".into(),
+            model: model.into(),
+            lateral_offset: 0.0,
+            yaw_deg: 0.0,
+            height: 0.0,
+            autumn_model: None,
+            winter_model: None,
         }
     }
 

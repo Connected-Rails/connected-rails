@@ -452,15 +452,17 @@ fn setup(
     commands.init_resource::<signals::LampImages>();
     commands.init_resource::<world_render::SignalModels>();
     // Terrain material and the (still empty) tree catalog — the catalog is
-    // filled from the line on the first frame.
+    // filled from the line on the first frame. The editor builds in summer
+    // (`Season::default`); which season a run shows is the scenario's date.
     commands.insert_resource(terrain::TerrainView::new(
-        world_render::terrain_material(&mut images, &mut terrain_materials),
+        world_render::terrain_material(&mut images, &mut terrain_materials, default()),
         world_render::tree_catalog(
             &[],
             &Default::default(),
             &assets,
             &mut meshes,
             &mut materials,
+            default(),
         ),
     ));
     commands.insert_resource(History::new(source.clone()));
@@ -605,6 +607,7 @@ fn rebuild(
         &origin.0,
         &objects.map,
         ground.as_deref_mut(),
+        default(),
     );
 }
 

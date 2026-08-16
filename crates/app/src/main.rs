@@ -32,6 +32,10 @@ use sim_core::Sim;
 use sim_core::train::{Train, Vehicle, VehicleSpec, Weather};
 use track_model::{EdgeId, TrackPosition};
 use world_coords::{RenderOrigin, sun};
+// Daylight factor of this frame, 0 (night) … 1 (full day) — written by
+// `update_daylight`, read by everything that switches with darkness: the
+// headlights here, the mods' `_NIGHT` nodes in `world-render`.
+use world_render::Daylight;
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
 /// the menu apply without restarting the process.
@@ -45,11 +49,6 @@ pub enum GameState {
 /// The running simulation.
 #[derive(Resource)]
 pub struct SimResource(pub Sim);
-
-/// Daylight factor of this frame, 0 (night) … 1 (full day) — written by
-/// `update_daylight`, read by everything that switches with darkness.
-#[derive(Resource, Default)]
-pub struct Daylight(pub f32);
 
 /// Headlight cone at one end of a train (M6 night lighting). `reverse` marks the
 /// cone on the rear end; `update_headlights` lights the one facing the direction
@@ -188,7 +187,6 @@ fn main() {
         require_markers: true,
         ..default()
     })
-    .init_resource::<Daylight>()
     .init_resource::<ui::CameraState>()
     .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
@@ -471,6 +469,10 @@ fn setup(
     let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
     let origin = RenderOrigin::new(start);
 
+    // Ground, scenery and foliage wear the season of the scenario's start date
+    // — the same date the sun and moon are computed from (plan ch. 14).
+    let season = render::Season::on(sim.start.month, sim.start.day);
+
     // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
     // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
     // terrain than fits in memory at once. The builder exists before the scenery,
@@ -543,6 +545,7 @@ fn setup(
         &origin,
         &mods.mods.objects,
         Some(&mut terrain_builder),
+        season,
     );
 
     // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
@@ -592,10 +595,11 @@ fn setup(
         &assets,
         &mut meshes,
         &mut materials,
+        season,
     );
     let streamer = streaming::TerrainStreamer::new(
         terrain_builder,
-        render::terrain_material(&mut images, &mut terrain_materials),
+        render::terrain_material(&mut images, &mut terrain_materials, season),
         tree_catalog,
         LOAD_RADIUS,
     );

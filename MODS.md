@@ -841,6 +841,23 @@ meant, so the editor's object tool drops it correctly with one click:
 )
 ```
 
+**Seasonal variants are optional.** An object may name an autumn or a winter glTF next to
+its year-round one; each brings its own textures, and whatever is left out falls back to
+`model`. A mast, a board or a lamp names neither and looks the same all year:
+
+```ron
+(
+    name: "Birke",
+    model: "example/assets/birke.gltf",
+    autumn_model: Some("example/assets/birke_herbst.gltf"),
+    winter_model: Some("example/assets/birke_winter.gltf"),
+)
+```
+
+Which one is spawned follows the scenario's start date (see *Seasons* below): the winter
+variant while snow lies, the autumn one while the leaves have turned, the year-round model
+otherwise. An object that ships no variant is never treated as a mistake.
+
 A line places instances under `objects:`; each placement stores concrete values (stamped
 from the object's defaults, editable per instance), so the file stands on its own:
 
@@ -867,6 +884,21 @@ rail plane — `height` then measures from the ground. The strip beside the trac
 blended toward rail height, so a snapped object next to the ballast still meets it. The
 editor's selection panel has the checkbox; the app resolves the height, because only it
 has the elevation data.
+
+**Lit windows at night.** A node whose name ends in **`_NIGHT`** is shown after dusk and
+hidden by day — lit windows in a house, a glowing sign, the light pool under a platform
+lamp. Nothing is declared in the RON: model a second window pane with an emissive
+material, call it `fenster_NIGHT`, and it switches like a signal's lamp node. The
+convention holds for every glTF the world is drawn from (scenery objects, trees, signal
+parts, vehicles), and a model without such a node simply never lights up. It is a hard
+switch at dusk, not a fade — the glow lives in your material, and it stays yours.
+
+```
+Haus.gltf
+├── mauern           always there
+├── fenster          the dark pane by day
+└── fenster_NIGHT    the emissive one, shown after dusk
+```
 
 ### Vegetation
 
@@ -1108,6 +1140,18 @@ from UT in hours (Germany: 1 in winter, 2 in summer). It drives the sun and moon
 the georeferenced line and anchors `Daily` timetables; `Scenario` timetables and event
 triggers stay relative to the start of the run. Without the field, a run begins at
 midsummer noon.
+
+#### Seasons
+
+The same date paints the **season**, and no mod has to do anything for it: the generated
+ground textures and the built-in placeholder trees turn through October and go under snow
+from November to March. On top of that a mod may ship **seasonal variants of its objects**
+(`autumn_model` / `winter_model`, see *Track objects*) — each with its own textures inside
+the glTF, each optional. A tree mod that ships only a summer birch is complete; one that
+adds a winter birch gets it spawned while the snow lies. The season is fixed at load, so a
+run that drives from October into November keeps the world it started in, and the route
+editor always builds in summer — which season a run shows is the scenario's date, not the
+module's.
 
 ### Line and scenario hooks `on_load(ctx)` / `on_frame(ctx)`
 

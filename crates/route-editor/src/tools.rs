@@ -11,12 +11,17 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use content::LineSource;
 use content::route::{
-    DeviceSource, EdgeSource, EdgeStart, GeoPoint, NodeSource, ObjectSource, TreeSource,
+    DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, NodeSource, ObjectSource,
+    TreeSource,
 };
 use glam::{DVec2, DVec3};
 use i18n::t;
 use track_model::{DeviceKind, Facing, Segment, TrackNetwork, TrackPose};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
+
+/// Throw time a freshly placed turnout gets [s] — the file format's own
+/// default; the selection panel edits it per switch afterwards.
+const DEFAULT_THROW_TIME: f64 = 6.0;
 
 /// Active tool of the viewport.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -55,6 +60,15 @@ pub enum Mark {
     Object(usize),
 }
 
+/// What the interlocking panel points at right now — the row under the mouse.
+/// Sections and routes are lists of indices; on the map they are stretches of
+/// track, and this is what puts the two together.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Highlight {
+    Section(usize),
+    Route(usize),
+}
+
 /// Tool state, selection and what the UI pass leaves behind for the input
 /// systems: the free viewport rect and whether a text field has focus.
 #[derive(Resource, Default)]
@@ -66,6 +80,19 @@ pub struct EditorState {
     pub drag: Option<(usize, usize)>,
     /// Kind the Place-device tool stamps.
     pub device_kind: Option<DeviceKind>,
+    /// The Place-switch tool draws a trailing connection instead of a facing
+    /// turnout — the branch then leaves against the clicked track's direction.
+    pub switch_trailing: bool,
+    /// Section or route the interlocking panel points at; the map draws it.
+    /// Set by the panel every frame, so it follows the mouse by itself.
+    pub highlight: Option<Highlight>,
+    /// Overlap length the route derivation walks out behind the exit signal
+    /// [m]; `None` = the regular length of the rulebook for the speed the
+    /// route ends at (`content::route::regular_overlap`).
+    pub overlap_length: Option<f64>,
+    /// Panel section to scroll to on the next frame — a row that belongs
+    /// somewhere else (a signal's routes) sends the panel there.
+    pub jump_to: Option<&'static str>,
     /// Object (`"<mod>:<name>"`) the Place-object tool stamps.
     pub object: Option<String>,
     /// Tree object the tree and forest tools use; `None` = placeholder tree.
@@ -119,6 +146,9 @@ pub struct Drawing {
     pub segments: Vec<Segment>,
     /// The edge this drawing branches off (switch tool): `(edge, s)`.
     pub branch_of: Option<(usize, f64)>,
+    /// Trailing turnout: the branch leaves against the running direction of
+    /// the clicked track, so the far half of the split becomes the root.
+    pub trailing: bool,
     /// End of the drawn alignment in the frame's EN plane.
     end: DVec2,
     /// Math heading at the end [rad], 0 = east, counter-clockwise.
@@ -138,6 +168,7 @@ impl Drawing {
             heading_deg: None,
             segments: Vec::new(),
             branch_of: None,
+            trailing: false,
             end: DVec2::ZERO,
             end_heading: 0.0,
         }
@@ -147,15 +178,28 @@ impl Drawing {
     /// (`edge`, `s`) with the track's own heading fixed, so the branch leaves
     /// tangentially — a turnout, not a crossing.
     ///
-    /// ponytail: facing turnouts only — the branch runs with the clicked
-    /// track's direction. A trailing tool draws against the root's heading.
-    pub fn branch_at(pose: &TrackPose, geoid_offset: f64, edge: usize, s: f64) -> Self {
+    /// `trailing` turns the heading around: the branch then runs back along
+    /// the clicked track, which is what a trailing connection looks like from
+    /// the driver of that track — the fork lies behind them, not ahead.
+    pub fn branch_at(
+        pose: &TrackPose,
+        geoid_offset: f64,
+        edge: usize,
+        s: f64,
+        trailing: bool,
+    ) -> Self {
         let mut drawing = Self::start_at(pose.pos, geoid_offset);
-        let tangent = drawing.frame.dir_to_local(pose.tangent);
+        let along = if trailing {
+            -pose.tangent
+        } else {
+            pose.tangent
+        };
+        let tangent = drawing.frame.dir_to_local(along);
         let heading = tangent.y.atan2(tangent.x);
         drawing.heading_deg = Some((90.0 - heading.to_degrees()).rem_euclid(360.0));
         drawing.end_heading = heading;
         drawing.branch_of = Some((edge, s));
+        drawing.trailing = trailing;
         drawing
     }
 
@@ -672,22 +716,46 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
         let buffer = line.source.nodes.len() as u32;
         line.source.nodes.push(NodeSource::Buffer);
         let branch = line.source.edges.len();
+        let trailing = drawing.trailing;
         line.source.edges.push(EdgeSource {
             from: joint,
             to: buffer,
-            // Continue = end pose of the first half = the cut, tangentially.
-            start: EdgeStart::Continue { edge: base as u32 },
+            // Facing: Continue = end pose of the first half = the cut,
+            // tangentially. Trailing: the branch runs the other way, and a
+            // `Continue` can only ever mean "onwards" — the cut's own
+            // coordinates with the reversed heading say the same thing.
+            start: if trailing {
+                EdgeStart::Geo {
+                    point: drawing.start,
+                    heading_deg,
+                }
+            } else {
+                EdgeStart::Continue { edge: base as u32 }
+            },
             segments: drawing.segments,
             grade: vec![],
             cant: vec![],
             speed: vec![],
             track_type: vec![],
         });
-        line.source.nodes[joint as usize] = NodeSource::Switch {
-            root: (base as u32, true),
-            straight: (straight, false),
-            diverging: (branch as u32, false),
-            throw_time: 6.0,
+        // Facing: a train reaches the fork over the first half, so that end is
+        // the root. Trailing: it comes from the far side — the second half is
+        // the root and the first half becomes the straight leg, which is
+        // exactly what makes a move over the base track a trailing one.
+        line.source.nodes[joint as usize] = if trailing {
+            NodeSource::Switch {
+                root: (straight, false),
+                straight: (base as u32, true),
+                diverging: (branch as u32, false),
+                throw_time: DEFAULT_THROW_TIME,
+            }
+        } else {
+            NodeSource::Switch {
+                root: (base as u32, true),
+                straight: (straight, false),
+                diverging: (branch as u32, false),
+                throw_time: DEFAULT_THROW_TIME,
+            }
         };
         state.selection = Selection::Edge(branch);
         return true;
@@ -844,22 +912,30 @@ pub fn tool_input(
                 Some(drawing) => drawing.click(p),
             }
         }
-        Tool::PlaceSwitch => match &mut state.drawing {
-            Some(drawing) => drawing.click(snap_ghost(p, &ghost, &focus)),
-            None => match nearest_on_network(&line.net, p) {
-                Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
-                    let length = line.net.edges()[edge].length();
-                    if s < 1.0 || s > length - 1.0 {
-                        overlay.status = t!("status-split-at-end");
-                    } else {
-                        let pose = line.net.edges()[edge].eval(s);
-                        state.drawing =
-                            Some(Drawing::branch_at(&pose, line.source.geoid_offset, edge, s));
+        Tool::PlaceSwitch => {
+            let trailing = state.switch_trailing;
+            match &mut state.drawing {
+                Some(drawing) => drawing.click(snap_ghost(p, &ghost, &focus)),
+                None => match nearest_on_network(&line.net, p) {
+                    Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                        let length = line.net.edges()[edge].length();
+                        if s < 1.0 || s > length - 1.0 {
+                            overlay.status = t!("status-split-at-end");
+                        } else {
+                            let pose = line.net.edges()[edge].eval(s);
+                            state.drawing = Some(Drawing::branch_at(
+                                &pose,
+                                line.source.geoid_offset,
+                                edge,
+                                s,
+                                trailing,
+                            ));
+                        }
                     }
-                }
-                _ => overlay.status = t!("status-no-track-hit"),
-            },
-        },
+                    _ => overlay.status = t!("status-no-track-hit"),
+                },
+            }
+        }
         Tool::PlaceDevice => {
             match nearest_on_network(&line.net, p) {
                 Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
@@ -990,6 +1066,88 @@ fn ground_circle(
     );
 }
 
+/// Track ribbon of one edge as a line on the ground.
+fn edge_line(gizmos: &mut Gizmos, origin: &RenderOrigin, edge: &track_model::TrackEdge, c: Color) {
+    let steps = ((edge.length() / 10.0).ceil() as usize).max(2);
+    let points = (0..=steps).map(|j| {
+        let pose = edge.eval(edge.length() * j as f64 / steps as f64);
+        origin.to_render(pose.pos) + origin.dir_to_render(pose.up)
+    });
+    gizmos.linestrip(points, c);
+}
+
+/// The section or route the interlocking panel points at, drawn where it
+/// actually lies: the tracks of its sections in green, the overlap behind the
+/// exit signal in orange, its switches and its two signals as circles. Index
+/// lists are unreadable as a check — the map is the check.
+fn draw_highlight(
+    gizmos: &mut Gizmos,
+    line: &Line,
+    origin: &RenderOrigin,
+    focus: &Focus,
+    highlight: Highlight,
+) {
+    let green = Color::srgb(0.35, 0.80, 0.55);
+    let orange = Color::srgb(0.95, 0.60, 0.25);
+    let mut draw_section = |section: u32, color: Color| {
+        let Some(section) = line.source.sections.get(section as usize) else {
+            return;
+        };
+        for edge in &section.edges {
+            if let Some(edge) = line.net.edges().get(*edge as usize) {
+                edge_line(gizmos, origin, edge, color);
+            }
+        }
+    };
+    let route = match highlight {
+        Highlight::Section(i) => {
+            draw_section(i as u32, green);
+            return;
+        }
+        Highlight::Route(i) => match line.source.routes.get(i) {
+            Some(route) => route,
+            None => return,
+        },
+    };
+    for section in &route.sections {
+        draw_section(*section, green);
+    }
+    for section in &route.overlap {
+        draw_section(*section, orange);
+    }
+    let radius = (focus.height * 0.012).max(4.0) as f32;
+    for (node, _) in &route.switches {
+        if let Some(p) = node_pos(&line.source, &line.net, *node) {
+            ground_circle(gizmos, origin, p, radius, green);
+        }
+    }
+    let signal_pos = |signal: u32| {
+        line.source
+            .signals
+            .get(signal as usize)
+            .and_then(|s| line.source.devices.get(s.device as usize))
+            .and_then(|d| device_pos(&line.net, d))
+    };
+    // Entry and exit signal — where the route begins and ends.
+    for signal in [route.entry, route.exit] {
+        if let Some(p) = signal_pos(signal) {
+            ground_circle(gizmos, origin, p, radius * 1.5, green);
+        }
+    }
+    // Flank protection in its own colour: it is not on the path, it is what
+    // keeps the path free from the side.
+    let violet = Color::srgb(0.72, 0.45, 0.92);
+    for guard in &route.flank {
+        let position = match guard {
+            FlankSource::Switch(node, _) => node_pos(&line.source, &line.net, *node),
+            FlankSource::Signal(signal) => signal_pos(*signal),
+        };
+        if let Some(p) = position {
+            ground_circle(gizmos, origin, p, radius * 1.2, violet);
+        }
+    }
+}
+
 /// Selection highlight, support-point handles, boundaries and drawing preview.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_gizmos(
@@ -1003,6 +1161,10 @@ pub fn draw_gizmos(
     mut gizmos: Gizmos,
 ) {
     let accent = Color::srgb(0.36, 0.61, 0.96);
+
+    if let Some(highlight) = state.highlight {
+        draw_highlight(&mut gizmos, &line, &origin.0, &focus, highlight);
+    }
 
     // Boundary markers: own in warn yellow, the ghost module's in its grey.
     let boundary_radius = (focus.height * 0.015).max(5.0) as f32;
@@ -1030,13 +1192,7 @@ pub fn draw_gizmos(
     match state.selection {
         Selection::Edge(i) => {
             if let Some(edge) = line.net.edges().get(i) {
-                let steps = ((edge.length() / 10.0).ceil() as usize).max(2);
-                let points = (0..=steps).map(|j| {
-                    let pose = edge.eval(edge.length() * j as f64 / steps as f64);
-                    let up = origin.0.dir_to_render(pose.up);
-                    origin.0.to_render(pose.pos) + up
-                });
-                gizmos.linestrip(points, accent);
+                edge_line(&mut gizmos, &origin.0, edge, accent);
             }
             // Draggable support points as handles.
             if state.tool == Tool::Select {
@@ -1237,7 +1393,7 @@ mod tests {
 
         // Branch off edge 0 at km 1.5, curving away to the left.
         let pose = doc.net.edges()[0].eval(1500.0);
-        let mut drawing = Drawing::branch_at(&pose, doc.source.geoid_offset, 0, 1500.0);
+        let mut drawing = Drawing::branch_at(&pose, doc.source.geoid_offset, 0, 1500.0, false);
         let frame = EnuFrame::at(pose.pos);
         let tangent = frame.dir_to_local(pose.tangent);
         let left = DVec3::new(-tangent.y, tangent.x, 0.0);
@@ -1277,6 +1433,68 @@ mod tests {
                 "leg {leg} kinks"
             );
         }
+    }
+
+    /// A trailing connection: the branch runs back along the clicked track, so
+    /// the far half of the split becomes the root and a move over the base
+    /// track is a trailing one. Geometry still meets at the cut.
+    #[test]
+    fn a_trailing_branch_puts_the_root_on_the_far_half() {
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let mut doc = Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            recenter: false,
+            issues: Vec::new(),
+        };
+
+        let pose = doc.net.edges()[0].eval(1500.0);
+        let mut drawing = Drawing::branch_at(&pose, doc.source.geoid_offset, 0, 1500.0, true);
+        let frame = EnuFrame::at(pose.pos);
+        let tangent = frame.dir_to_local(pose.tangent);
+        let left = DVec3::new(-tangent.y, tangent.x, 0.0);
+        // Backwards along the track, curving away — the driver of edge 0 has
+        // the fork behind them.
+        drawing.click(frame.to_ecef(-tangent * 400.0 + left * 60.0));
+        let mut state = EditorState {
+            drawing: Some(drawing),
+            ..Default::default()
+        };
+        assert!(finish_drawing(&mut doc, &mut state));
+
+        let compiled = doc.source.compile().expect("turnout compiles");
+        let switch = doc
+            .source
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                NodeSource::Switch {
+                    root,
+                    straight,
+                    diverging,
+                    ..
+                } => Some((*root, *straight, *diverging)),
+                _ => None,
+            })
+            .expect("a switch node exists");
+        // Root = start of the second half, straight = end of the first.
+        assert_eq!(switch, ((3, false), (0, true), (4, false)));
+
+        let cut = compiled.net.edges()[0].end_pose();
+        let branch = compiled.net.edges()[4].eval(0.0);
+        assert!(
+            branch.pos.distance(cut.pos) < 0.05,
+            "branch detached by {} m",
+            branch.pos.distance(cut.pos)
+        );
+        assert!(
+            branch.tangent.dot(cut.tangent) < -0.999,
+            "the branch has to leave against the track"
+        );
     }
 
     /// The repeat function stamps a row of copies along the edge, carrying

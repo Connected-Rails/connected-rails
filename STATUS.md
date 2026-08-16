@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-16 · `cargo test --workspace`: **364 tests green** · clippy and fmt clean.
+As of 2026-08-16 · `cargo test --workspace`: **376 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,7 +11,7 @@ As of 2026-08-16 · `cargo test --workspace`: **364 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v2 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v3 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout facing or trailing with its throw time in the panel, the signal/section/route tables of the interlocking as forms, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather rendering**: `Sim::weather` (clear/rain/snow/fog) set by the `SetWeather` scenario action — overcast sky, dimmed sun, distance fog from the weather's visibility, rain/snow particle fields around the camera (their streaks slanted by the relative wind of the player's speed), a `Rain` sound quantity for the sound table, and the implied rail condition on every train (`mods/example/scenarios/regenfahrt.ron` shows it); terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, red tail lamps (Zg 101) mark the opposite end, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0); **terrain texturing and vegetation** (ch. 14): texture splatting — per-vertex weights from slope and track distance blend three generated ground textures (grass/rock/gravel) in a `StandardMaterial` extension — and vegetation as **line content**: every tree its own `LineSource::trees` entry (3D objects from mods' `objects/*.ron`, placeholder for the unnamed), spawned as children of their terrain tile so they stream with it and batch into instanced draws; woods are baked into single trees by the editor, so each one stays individually editable; no recorded samples (the sources are generated — content, not code) |
@@ -167,7 +167,22 @@ As of 2026-08-16 · `cargo test --workspace`: **364 tests green** · clippy and 
   after a consist change the bus is inaugurated first, and a command needs one bus cycle per
   vehicle to reach the rear.
 - **Interlocking (ch. 10):** signal aspects, distant signalling, automatic block, routes,
-  signal-dependent magnet activation.
+  signal-dependent magnet activation. **Flank protection** (Ril 819) is what a route
+  carries against movements from the side: `Route::flank` lists **protecting turnouts**
+  (`FlankGuard::Switch`), which are commanded and locked exactly like the ones in the
+  path, and **protecting signals** (`FlankGuard::Signal`), which are held at stop for as
+  long as the route is set — a counter per signal, so two routes may lean on the same
+  one. The hold works both ways: a held signal shows stop and reports itself as not
+  clear to a mod's rule table, and no route can be cleared from it; conversely a signal
+  another route already runs from cannot be taken as protection, so the request fails
+  instead of clearing two conflicting moves.
+  A **track lock** (Gleissperre) is a signal variant, `SignalKind::TrackLock`: two states,
+  stop = laid on, and everything else falls out of what a signal already has — the
+  interlocking lays it off for a route over it and holds it on as flank protection, the
+  aspect comes from a mod's signal type and the look from its signal model, where a
+  `motions` binding swings the shoe between its two positions. No route ends at one and
+  none starts there; without a model the app draws the shoe itself in the aspect colour
+  rather than a mast. `mods/example/signals/gleissperre.ron` is the two-rule table.
 - **AI (ch. 11):** look-ahead across the track graph, braking curve with reaction and
   response distance, timetable stops, operates Sifa and PZB itself.
 - **Scenarios (ch. 11.4):** RON events with triggers (time, train position, stop, speed,
@@ -239,14 +254,53 @@ As of 2026-08-16 · `cargo test --workspace`: **364 tests green** · clippy and 
   All of it controllable through a RON file, reloadable at runtime.
 - **Editors (ch. 15):** three separate programs with a desktop UI (menu bar, docked panels,
   native file dialogs): `route-editor` edits a line over the aerial imagery overlay
-  (editor v2): a **track drawing tool** that appends one
+  (editor v3): a **track drawing tool** that appends one
   tangent-continuous arc or straight per click (arc-to-point, G1 by construction), a
   **device tool** that drops any `DeviceKind` onto the nearest track, and a selection
   panel with the device's fields (kind, position, facing, lateral offset, RON payload).
   A **switch tool** clicks a point on a track and draws the branch: on finish the edge
   is split at the cut (`LineSource::split_edge` — devices, profiles, sections, switch
   legs and followers all follow), the joint becomes the turnout node and the branch its
-  diverging leg, tangential by construction. **Support points are draggable**: the
+  diverging leg, tangential by construction. The tool places **facing or trailing**
+  turnouts: trailing reverses the drawing heading and makes the far half of the split
+  the root, so a train over the clicked track trails the points instead of facing them.
+  The **throw time** is edited on the selected track, which names the node and says
+  whether that track is its root, straight or diverging leg — the map has no node
+  picking, and every leg of a switch is a track.
+  The **interlocking tables are forms**, not RON text: a placed `Signal` device carries
+  its `SignalSource` entry in the selection panel (kind, system, the signal it announces,
+  guarded sections, `requires_route`, diverging speed, signal type and model override),
+  **the routes that start at it** — the list a signal carries in the Zusi editor: where
+  each one ends and what it locks, a jump into its fields, and **Find routes**
+  (`LineSource::routes_from`), which runs out over the track and offers one route per leg
+  of every turnout ahead, each ending at the next signal on it (existing routes are left
+  alone, distant signals start none).
+  An **Interlocking section** holds the occupancy sections (tracks added from the
+  selection) and the routes (entry/exit signal, sections, overlap, required switch
+  positions, flank protection, diverging flag). **Derive path** fills a route in from the
+  geometry:
+  `LineSource::route_between` runs a breadth-first search over `(edge, direction)`
+  from the entry signal to the exit signal — the entry signal's own edge stays out of
+  the sections (that is where the waiting train stands), every turnout on the way
+  reports the position its leg needs, and a path over a diverging leg marks the route
+  as one. The **overlap** is walked on behind the exit signal and comes out at the
+  regular length of the rulebook for the speed the route ends at (`regular_overlap`:
+  50 m to 30 km/h, 100 m to 60, 200 m to 100, 300 m above — a diverging route counts
+  with the entry signal's Zs3 speed); the panel switches that off for a length of its
+  own, the sections it reaches become the overlap and the turnouts inside it are locked
+  with the route. **Flank protection** comes out of the same walk (see the interlocking
+  above): every turnout the route trails contributes the guard that covers the leg it
+  does not use — a signal to be held at stop, or a turnout to be laid away — and the
+  panel edits them as chips, offering only signals that can actually hold a movement.
+  The row under the mouse is **drawn on the map**: the tracks of its sections
+  in green, the overlap in orange, its switches and its two signals as circles and its
+  flank protection in violet, so an index list can be checked against the line
+  instead of read. Deleting an entry remaps
+  what pointed at it —
+  `remove_signal` clears `next` links, drops routes over that signal and rewrites the
+  magnet payloads that named it; `remove_section` moves guarded lists, route sections
+  and overlaps, and empties the block marker payload of a marker that loses its section
+  rather than letting it mark the next one. **Support points are draggable**: the
   selected edge shows a handle per segment boundary, a drag refits the whole chain
   arc-to-point through the untouched points (edges with transition curves offer no
   handles — a refit would flatten them). A **rule check** (`LineSource::check`, run on
@@ -376,7 +430,6 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   measured characteristic field — four numbers per circuit instead of two curves. The field
   cannot be read back out of a tractive effort curve anyway, so the numbers are fitted against
   the plot in the vehicle editor; the data sheets state the ends of both lines.
-- **Flank protection** is only switch locking.
 - **The LZB braking curve** is derived from the train, but with a straight line through the
   deceleration steps instead of the steps themselves: proportional to the braked weight
   percentage, falling off linearly above 150 km/h. The real steps of the LZB brake tables sit
@@ -425,9 +478,30 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **One terrain builder behind a mutex:** the DGM cache inside it is shared state, so tile
   builds run one after another even though they sit on the task pool. One source per
   worker if a single tile at a time turns out to be too slow.
-- **The switch tool places facing turnouts only** — the branch leaves in the running
-  direction of the clicked track. A trailing connection is drawn from the other side;
-  a real trailing tool needs the drawing to run against the root's heading.
+- **A turnout is placed from the track, never from the node** — the switch tool splits an
+  edge, and the throw time is edited on the tracks that meet at the joint. Node picking on
+  the map (and with it crossings, double slips and a switch drawn between two existing
+  tracks) is a selection kind of its own.
+- **A signal's routes end at the next signal** (`routes_from`) — that is what a route is,
+  but it means the editor offers no route *over* an intermediate signal, and no shunting
+  route that ends at a point rather than at a signal. Both are entered by hand: entry and
+  exit are pickers over the whole signal table, and Derive path takes any pair.
+- **Flank protection is derived only where a route trails a turnout** — that is where the
+  leg it does not use joins the path. A facing turnout guards the route itself by lying
+  in the position the route needs. Beyond the fork the search takes the first signal
+  covering that leg, or the first turnout that can be laid away; where the leg opens into
+  another turnout at its *root*, both legs beyond it would need protection and the search
+  reports none — a station throat the builder answers for.
+- **The derived path is the shortest one** (`route_between`, breadth-first with one visit
+  per `(edge, direction)`), and its overlap runs straight on wherever the track forks —
+  an overlap is the plain continuation of the route, not a second diverging move. A
+  builder who wants the long way round, or another leg, edits the fields; the search
+  fills them in, it does not own them.
+- **The regular overlap is four steps** (`regular_overlap`: 50/100/200/300 m by the speed
+  the route ends at), as the literature on German signalling states them — Ril 819
+  "Durchrutschwege bemessen" is no more a public document than the LZB brake tables. A
+  full table would replace that one function; until then the editor's own length is
+  what a line with better knowledge uses.
 - **Support-point dragging refits arcs only**: edges carrying transition curves show no
   handles, because the arc-to-point refit would flatten the clothoids. Re-fitting
   transitions around a moved point belongs to an alignment-aware pass (ch. 15 already
@@ -479,23 +553,18 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 
 ## Sensible next steps
 
-1. **Route editor v3**: v2 covers switches, geometry dragging, rule checking and the
-   module tooling. Still open: a UI for the signal/section/route tables (a placed
-   Signal device still gets its `SignalSource` entry — kind, system, `next`, guarded
-   sections — typed in RON), switch fields (throw time) in the panel, and trailing
-   turnouts (the switch tool places facing ones).
-2. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
-3. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
+1. **Import a real pilot line** (Overpass extract + DGM1 from a state surveying office).
+2. **Switch catalogue**: standard switches (EW 190-1:9 … EW 1200-1:18.5) as a data table with
    radius, branch length and diverging speed; OSM only supplies a `railway=switch` node
    without any geometry.
-4. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
+3. **Carry over OSM equipment**: signals, platforms, stopping points and level crossings —
    then the import directly yields an equipped line instead of a bare strand.
-5. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
+4. **Evaluate better sources** than OSM: the EU's RINF infrastructure register
    (speeds, gradients, train protection, partly minimum radii) and DB's open geodata.
-6. **Recorded samples for the sound table** — the mechanism is in place and positional; what
+5. **Recorded samples for the sound table** — the mechanism is in place and positional; what
    is missing is the audio itself. Rail joints out of the track instead of out of a distance
    interval belong in the same pass.
-7. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
+6. **Weather rendering polish (M6 is functional)** — rain/fog/snow affect visibility,
    sky and rail; headlights follow switch and direction of travel, red tail lamps
    (Zg 101) mark the rear end, the cab light has its own switch, the precipitation
    streaks lean into the relative wind, and the sound table hears a `Rain` quantity.

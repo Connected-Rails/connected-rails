@@ -4,19 +4,21 @@
 //! keyboard is in the menu as well, and the file dialogs are the operating system's own.
 
 use crate::overlay::Overlay;
-use crate::tools::{self, EditorState, Selection, Tool};
+use crate::tools::{self, EditorState, Highlight, Selection, Tool};
 use crate::{Focus, Ghost, History, Line, Request, TrackObjects, TrackTypes, focus_degrees};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use content::LineSource;
-use content::route::{BoundarySource, NodeSource, RuleIssue};
+use content::route::{
+    BoundarySource, FlankSource, NodeSource, RouteSource, RuleIssue, SectionSource, SignalSource,
+};
 use editor_ui::{colors, space};
 use i18n::t;
 use imagery::ZoomMode;
-use sim_core::interlock::BlockMarkerPayload;
+use sim_core::interlock::{BlockMarkerPayload, SignalKind, SignalSystem};
 use sim_core::safety::de::{LzbSection, MagnetFrequency, MagnetPayload};
 use std::path::{Path, PathBuf};
-use track_model::{DeviceKind, Facing};
+use track_model::{DeviceKind, Facing, SwitchPosition};
 use world_coords::EcefPos;
 
 const SHORTCUT_NEW: egui::KeyboardShortcut =
@@ -592,9 +594,10 @@ fn status_bar(
 /// key of the title. The jump bar sits above the scroll area and has to name
 /// them before the first one has been laid out. Editing first, template
 /// configuration after, diagnostics last.
-const SECTIONS: [(&str, &str); 6] = [
+const SECTIONS: [(&str, &str); 7] = [
     ("tools", "heading-tools"),
     ("selection", "heading-selection"),
+    ("interlock", "heading-interlock"),
     ("module", "heading-module"),
     ("checks", "heading-checks"),
     ("imagery", "heading-imagery"),
@@ -661,7 +664,11 @@ fn left_panel(
                 .color(colors::TEXT_SECONDARY),
             );
             ui.add_space(space::S);
-            let mut jump = None;
+            // A row of another panel may have asked for a section last frame.
+            let mut jump = state.jump_to.take();
+            // Both the selection and the interlocking panel point at things on
+            // the map; whatever the mouse is over this frame wins.
+            state.highlight = None;
             ui.horizontal_wrapped(|ui| {
                 for (id, key) in SECTIONS {
                     // The section being read wears the "widget pressed" fill
@@ -694,6 +701,27 @@ fn left_panel(
                                     let mut kind = state.device_kind();
                                     kind_combo(ui, "place-kind", &mut kind);
                                     state.device_kind = Some(kind);
+                                });
+                            });
+                        }
+                        if state.tool == Tool::PlaceSwitch {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("place-switch").show(ui, |ui| {
+                                row(ui, "switch-orientation", |ui| {
+                                    for (trailing, key) in
+                                        [(false, "switch-facing"), (true, "switch-trailing")]
+                                    {
+                                        if ui
+                                            .selectable_label(
+                                                state.switch_trailing == trailing,
+                                                t!(key),
+                                            )
+                                            .on_hover_text(t!(&format!("{key}-hint")))
+                                            .clicked()
+                                        {
+                                            state.switch_trailing = trailing;
+                                        }
+                                    }
                                 });
                             });
                         }
@@ -775,7 +803,18 @@ fn left_panel(
                         "selection",
                         "heading-selection",
                         |ui| {
-                            selection_panel(ui, line, state, types, objects, focus);
+                            selection_panel(ui, line, state, types, objects, focus, overlay);
+                        },
+                    );
+
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "interlock",
+                        "heading-interlock",
+                        |ui| {
+                            interlock_section(ui, line, state, overlay);
                         },
                     );
 
@@ -873,6 +912,7 @@ fn selection_panel(
     types: &TrackTypes,
     objects: &TrackObjects,
     focus: &mut Focus,
+    overlay: &mut Overlay,
 ) {
     match state.selection {
         Selection::None => {
@@ -903,6 +943,7 @@ fn selection_panel(
                 t!("sel-edge-handles")
             });
             track_type_rows(ui, line, i, length, types);
+            switch_rows(ui, line, i);
             ui.add_space(space::XS);
             ui.horizontal(|ui| {
                 if ui.button(t!("action-center")).clicked()
@@ -953,6 +994,10 @@ fn selection_panel(
                     .desired_width(f32::INFINITY),
             );
             payload_presets(ui, device);
+            let is_signal = device.kind == DeviceKind::Signal;
+            if is_signal {
+                signal_rows(ui, line, state, overlay, i);
+            }
             ui.add_space(space::XS);
             ui.horizontal(|ui| {
                 if ui.button(t!("action-center")).clicked()
@@ -1158,6 +1203,746 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
         let name = known.first().cloned().unwrap_or_else(|| "default".into());
         edge.track_type.push((s, name));
     }
+}
+
+/// Switch fields of the nodes the selected track hangs on. A turnout is a
+/// node, and the editor has no node picking — the tracks meeting there are how
+/// the map addresses it, and every leg of a switch is one of them.
+fn switch_rows(ui: &mut egui::Ui, line: &mut Line, edge: usize) {
+    let Some(source) = line.source.edges.get(edge) else {
+        return;
+    };
+    let mut nodes = vec![source.from, source.to];
+    nodes.dedup();
+    nodes.retain(|n| {
+        matches!(
+            line.source.nodes.get(*n as usize),
+            Some(NodeSource::Switch { .. })
+        )
+    });
+    if nodes.is_empty() {
+        return;
+    }
+    editor_ui::subheading(ui, t!("sel-switch"));
+    editor_ui::form_grid(&format!("edge-switch-{edge}")).show(ui, |ui| {
+        for node in nodes {
+            let Some(NodeSource::Switch {
+                root,
+                straight,
+                throw_time,
+                ..
+            }) = line.source.nodes.get_mut(node as usize)
+            else {
+                continue;
+            };
+            let leg = if root.0 as usize == edge {
+                "switch-leg-root"
+            } else if straight.0 as usize == edge {
+                "switch-leg-straight"
+            } else {
+                "switch-leg-diverging"
+            };
+            editor_ui::form_label(ui, t!("sel-switch-node", node = node, leg = t!(leg)))
+                .on_hover_text(t!("sel-switch-hint"));
+            ui.horizontal(|ui| {
+                editor_ui::field(ui, throw_time, 0.5, 0.5..=120.0, "s");
+            });
+            ui.end_row();
+        }
+    });
+}
+
+/// Short label of a signal for the pickers: index, kind and the device it
+/// stands on — enough to tell two main signals apart on the same track.
+fn signal_labels(source: &LineSource) -> Vec<String> {
+    source
+        .signals
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            t!(
+                "signal-label",
+                index = i,
+                kind = signal_kind_label(s.kind),
+                device = s.device
+            )
+        })
+        .collect()
+}
+
+/// The signal table entry of a placed Signal device — what the interlocking
+/// actually reads. Without it the device is a mast with nothing behind it,
+/// which is why the entry is edited here rather than in a table of its own.
+fn signal_rows(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    overlay: &mut Overlay,
+    device: usize,
+) {
+    editor_ui::subheading(ui, t!("sel-signal"));
+    let Some(index) = line
+        .source
+        .signals
+        .iter()
+        .position(|s| s.device == device as u32)
+    else {
+        if ui
+            .button(t!("action-add-signal"))
+            .on_hover_text(t!("sel-signal-hint"))
+            .clicked()
+        {
+            line.source.signals.push(SignalSource {
+                kind: SignalKind::Main,
+                system: SignalSystem::Ks,
+                device: device as u32,
+                next: None,
+                guarded: Vec::new(),
+                requires_route: false,
+                diverging_speed: None,
+                signal_type: None,
+                model: None,
+            });
+        }
+        return;
+    };
+    // Both pickers read from tables the signal itself lives in — resolved
+    // before the entry is borrowed mutably.
+    let labels = signal_labels(&line.source);
+    let sections = line.source.sections.len();
+    let signal = &mut line.source.signals[index];
+    editor_ui::form_grid(&format!("signal-{index}")).show(ui, |ui| {
+        row(ui, "sig-kind", |ui| {
+            signal_kind_combo(ui, index, &mut signal.kind);
+        });
+        row(ui, "sig-system", |ui| {
+            signal_system_combo(ui, index, &mut signal.system);
+        });
+        row(ui, "sig-next", |ui| {
+            egui::ComboBox::from_id_salt(("sig-next", index))
+                .width(space::FIELD)
+                .selected_text(match signal.next {
+                    Some(n) => labels
+                        .get(n as usize)
+                        .cloned()
+                        .unwrap_or_else(|| n.to_string()),
+                    None => t!("common-none"),
+                })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(signal.next.is_none(), t!("common-none"))
+                        .clicked()
+                    {
+                        signal.next = None;
+                    }
+                    for (n, label) in labels.iter().enumerate() {
+                        if n == index {
+                            continue; // a signal does not announce itself
+                        }
+                        if ui
+                            .selectable_label(signal.next == Some(n as u32), label)
+                            .clicked()
+                        {
+                            signal.next = Some(n as u32);
+                        }
+                    }
+                });
+        });
+        row(ui, "sig-requires-route", |ui| {
+            ui.checkbox(&mut signal.requires_route, "");
+        });
+        row(ui, "sig-diverging-speed", |ui| {
+            let mut set = signal.diverging_speed.is_some();
+            if ui.checkbox(&mut set, "").changed() {
+                signal.diverging_speed = set.then_some(40.0);
+            }
+            if let Some(speed) = &mut signal.diverging_speed {
+                editor_ui::field(ui, speed, 5.0, 10.0..=160.0, "km/h");
+            }
+        });
+        row(ui, "sig-type", |ui| {
+            optional_text(ui, ("sig-type", index), &mut signal.signal_type);
+        });
+        row(ui, "sig-model", |ui| {
+            optional_text(ui, ("sig-model", index), &mut signal.model);
+        });
+    });
+    index_chips(
+        ui,
+        ("sig-guarded", index),
+        t!("sig-guarded"),
+        &mut signal.guarded,
+        sections,
+    );
+    let starts_routes = signal.kind.ends_a_route();
+    ui.add_space(space::XS);
+    if ui
+        .small_button(t!("action-delete-signal"))
+        .on_hover_text(t!("action-delete-signal-hint"))
+        .clicked()
+    {
+        line.source.remove_signal(index);
+        return;
+    }
+    // Routes start where a train move is authorised — a distant signal
+    // announces, a track lock secures, neither begins one.
+    if starts_routes {
+        signal_routes(ui, line, state, overlay, index, &labels);
+    }
+}
+
+/// The routes that start at this signal. Zusi carries them on the signal, and
+/// so does this: what leaves here, where it ends, and one button that finds
+/// every route the track allows — one per leg of every turnout ahead, each
+/// ending at the next signal on it. Editing stays in the interlocking panel,
+/// which every row jumps to.
+fn signal_routes(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    overlay: &mut Overlay,
+    signal: usize,
+    labels: &[String],
+) {
+    editor_ui::subheading(ui, t!("sig-routes"));
+    let mine: Vec<usize> = line
+        .source
+        .routes
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.entry == signal as u32)
+        .map(|(i, _)| i)
+        .collect();
+    if mine.is_empty() {
+        ui.small(t!("sig-routes-none"));
+    }
+    let mut remove = None;
+    for i in mine {
+        let route = &line.source.routes[i];
+        let exit = labels
+            .get(route.exit as usize)
+            .cloned()
+            .unwrap_or_else(|| route.exit.to_string());
+        let summary = t!(
+            "sig-route-row",
+            exit = exit,
+            sections = route.sections.len(),
+            switches = route.switches.len()
+        );
+        let row = ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(summary).color(colors::TEXT_SECONDARY));
+            if ui.small_button(t!("action-edit-route")).clicked() {
+                state.jump_to = Some("interlock");
+            }
+            if ui.small_button("×").clicked() {
+                remove = Some(i);
+            }
+        });
+        if ui.rect_contains_pointer(row.response.rect) {
+            state.highlight = Some(Highlight::Route(i));
+        }
+    }
+    if let Some(i) = remove {
+        line.source.routes.remove(i);
+    }
+    if ui
+        .small_button(t!("action-find-routes"))
+        .on_hover_text(t!("action-find-routes-hint"))
+        .clicked()
+    {
+        let found = line.source.routes_from(signal as u32, state.overlap_length);
+        let (mut added, mut known) = (0, 0);
+        for route in found {
+            // A route that is already in the file keeps whatever the builder
+            // did to it — this adds what is missing, it does not overwrite.
+            if line
+                .source
+                .routes
+                .iter()
+                .any(|r| r.entry == route.entry && r.exit == route.exit)
+            {
+                known += 1;
+            } else {
+                line.source.routes.push(route);
+                added += 1;
+            }
+        }
+        overlay.status = t!("status-routes-found", added = added, known = known);
+    }
+}
+
+/// An optional name field: empty text means the option is `None`, which is
+/// what "no signal type of its own" looks like in the file.
+fn optional_text(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut Option<String>,
+) {
+    let mut text = value.clone().unwrap_or_default();
+    let field = egui::TextEdit::singleline(&mut text)
+        .id_salt(id)
+        .hint_text(t!("common-none"))
+        .desired_width(space::FIELD);
+    if ui.add(field).changed() {
+        *value = (!text.trim().is_empty()).then_some(text);
+    }
+}
+
+/// A list of indices into another table, as removable chips plus a picker that
+/// appends one. `count` is how large that table is — an empty one leaves the
+/// picker with nothing to offer, which is the honest state of the file.
+fn index_chips(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    label: String,
+    list: &mut Vec<u32>,
+    count: usize,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(label).color(colors::TEXT_SECONDARY));
+        let mut remove = None;
+        for (k, value) in list.iter().enumerate() {
+            if ui.small_button(format!("{value} ×")).clicked() {
+                remove = Some(k);
+            }
+        }
+        if let Some(k) = remove {
+            list.remove(k);
+        }
+        egui::ComboBox::from_id_salt(id)
+            .width(48.0)
+            .selected_text("+")
+            .show_ui(ui, |ui| {
+                for candidate in 0..count as u32 {
+                    if !list.contains(&candidate)
+                        && ui.selectable_label(false, candidate.to_string()).clicked()
+                    {
+                        list.push(candidate);
+                    }
+                }
+            });
+    });
+}
+
+/// Switch positions a route sets: node index plus which way it lies. Clicking
+/// a chip flips it — with two positions a picker would only cost a click.
+fn switch_chips(
+    ui: &mut egui::Ui,
+    route: usize,
+    list: &mut Vec<(u32, SwitchPosition)>,
+    nodes: &[u32],
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(t!("route-switches")).color(colors::TEXT_SECONDARY));
+        let mut remove = None;
+        for (k, (node, position)) in list.iter_mut().enumerate() {
+            let label = match position {
+                SwitchPosition::Straight => t!("switch-straight"),
+                SwitchPosition::Diverging => t!("switch-diverging"),
+            };
+            if ui
+                .small_button(format!("{node} {label}"))
+                .on_hover_text(t!("route-switch-hint"))
+                .clicked()
+            {
+                *position = match position {
+                    SwitchPosition::Straight => SwitchPosition::Diverging,
+                    SwitchPosition::Diverging => SwitchPosition::Straight,
+                };
+            }
+            if ui.small_button("×").clicked() {
+                remove = Some(k);
+            }
+        }
+        if let Some(k) = remove {
+            list.remove(k);
+        }
+        egui::ComboBox::from_id_salt(("route-switch", route))
+            .width(48.0)
+            .selected_text("+")
+            .show_ui(ui, |ui| {
+                for node in nodes {
+                    if !list.iter().any(|(n, _)| n == node)
+                        && ui.selectable_label(false, node.to_string()).clicked()
+                    {
+                        list.push((*node, SwitchPosition::Straight));
+                    }
+                }
+            });
+    });
+}
+
+/// Flank protection of a route: what keeps a vehicle off its path where a
+/// track joins it. A protecting turnout carries the position it has to lie in
+/// (click to flip), a protecting signal is held at stop while the route is set.
+fn flank_chips(
+    ui: &mut egui::Ui,
+    route: usize,
+    list: &mut Vec<FlankSource>,
+    nodes: &[u32],
+    labels: &[String],
+    holds: &[u32],
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(t!("route-flank")).color(colors::TEXT_SECONDARY));
+        let mut remove = None;
+        for (k, guard) in list.iter_mut().enumerate() {
+            let text = match guard {
+                FlankSource::Switch(node, SwitchPosition::Straight) => {
+                    t!(
+                        "flank-switch",
+                        node = node,
+                        position = t!("switch-straight")
+                    )
+                }
+                FlankSource::Switch(node, SwitchPosition::Diverging) => {
+                    t!(
+                        "flank-switch",
+                        node = node,
+                        position = t!("switch-diverging")
+                    )
+                }
+                FlankSource::Signal(signal) => t!(
+                    "flank-signal",
+                    signal = labels
+                        .get(*signal as usize)
+                        .cloned()
+                        .unwrap_or_else(|| signal.to_string())
+                ),
+            };
+            let chip = ui.small_button(text);
+            if let FlankSource::Switch(_, position) = guard {
+                if chip.on_hover_text(t!("route-switch-hint")).clicked() {
+                    *position = match position {
+                        SwitchPosition::Straight => SwitchPosition::Diverging,
+                        SwitchPosition::Diverging => SwitchPosition::Straight,
+                    };
+                }
+            } else {
+                chip.on_hover_text(t!("flank-signal-hint"));
+            }
+            if ui.small_button("×").clicked() {
+                remove = Some(k);
+            }
+        }
+        if let Some(k) = remove {
+            list.remove(k);
+        }
+        egui::ComboBox::from_id_salt(("flank-switch", route))
+            .width(72.0)
+            .selected_text(t!("flank-add-switch"))
+            .show_ui(ui, |ui| {
+                for node in nodes {
+                    if ui.selectable_label(false, node.to_string()).clicked() {
+                        list.push(FlankSource::Switch(*node, SwitchPosition::Straight));
+                    }
+                }
+            });
+        egui::ComboBox::from_id_salt(("flank-signal", route))
+            .width(72.0)
+            .selected_text(t!("flank-add-signal"))
+            .show_ui(ui, |ui| {
+                // Only signals that can hold a movement — a distant signal
+                // announces the one ahead of it and stops nothing.
+                for (i, label) in labels.iter().enumerate() {
+                    if !holds.contains(&(i as u32)) {
+                        continue;
+                    }
+                    if ui.selectable_label(false, label).clicked() {
+                        list.push(FlankSource::Signal(i as u32));
+                    }
+                }
+            });
+    });
+}
+
+/// Occupancy sections and routes — the two interlocking tables of the file,
+/// which until now were typed into the RON by hand. Both are index-addressed,
+/// so the editor shows the indices rather than inventing names for them, and
+/// the row under the mouse is drawn on the map (`EditorState::highlight`).
+fn interlock_section(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    overlay: &mut Overlay,
+) {
+    let selected_edge = match state.selection {
+        Selection::Edge(i) => Some(i as u32),
+        _ => None,
+    };
+
+    editor_ui::subheading(ui, t!("il-sections"));
+    if line.source.sections.is_empty() {
+        ui.small(t!("il-sections-none"));
+    }
+    let mut remove = None;
+    for (i, section) in line.source.sections.iter_mut().enumerate() {
+        let row = ui.horizontal_wrapped(|ui| {
+            ui.label(
+                egui::RichText::new(t!("il-section-row", index = i)).color(colors::TEXT_SECONDARY),
+            );
+            let mut drop_edge = None;
+            for (k, edge) in section.edges.iter().enumerate() {
+                if ui.small_button(format!("{edge} ×")).clicked() {
+                    drop_edge = Some(k);
+                }
+            }
+            if let Some(k) = drop_edge {
+                section.edges.remove(k);
+            }
+            let addable = selected_edge.filter(|e| !section.edges.contains(e));
+            let add = ui.add_enabled(
+                addable.is_some(),
+                egui::Button::new(t!("action-add-track")).small(),
+            );
+            if add
+                .on_disabled_hover_text(t!("il-add-track-hint"))
+                .clicked()
+                && let Some(edge) = addable
+            {
+                section.edges.push(edge);
+            }
+            if ui.small_button("×").clicked() {
+                remove = Some(i);
+            }
+        });
+        if ui.rect_contains_pointer(row.response.rect) {
+            state.highlight = Some(Highlight::Section(i));
+        }
+    }
+    if let Some(i) = remove {
+        line.source.remove_section(i);
+    }
+    if ui
+        .small_button(t!("action-add-section"))
+        .on_hover_text(t!("il-sections-hint"))
+        .clicked()
+    {
+        line.source.sections.push(SectionSource {
+            edges: selected_edge.into_iter().collect(),
+        });
+    }
+
+    ui.add_space(space::S);
+    editor_ui::subheading(ui, t!("il-routes"));
+    if line.source.signals.len() < 2 {
+        ui.small(t!("il-routes-need-signals"));
+        return;
+    }
+    let labels = signal_labels(&line.source);
+    let switches: Vec<u32> = line
+        .source
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| matches!(n, NodeSource::Switch { .. }))
+        .map(|(i, _)| i as u32)
+        .collect();
+    let sections = line.source.sections.len();
+    // Signals that can be held at stop for flank protection.
+    let holding: Vec<u32> = line
+        .source
+        .signals
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind.holds_a_flank())
+        .map(|(i, _)| i as u32)
+        .collect();
+    // What "Derive path" walks out behind the exit signal. The rulebook length
+    // depends on the speed each route ends at, so the regular case is a state
+    // of its own rather than a number sitting in the field.
+    editor_ui::form_grid("il-overlap").show(ui, |ui| {
+        row(ui, "route-overlap-length", |ui| {
+            let mut by_rule = state.overlap_length.is_none();
+            if ui
+                .checkbox(&mut by_rule, t!("overlap-by-rule"))
+                .on_hover_text(t!("overlap-by-rule-hint"))
+                .changed()
+            {
+                state.overlap_length = (!by_rule).then_some(200.0);
+            }
+            if let Some(length) = &mut state.overlap_length {
+                editor_ui::field(ui, length, 10.0, 0.0..=1000.0, "m");
+            }
+        });
+    });
+    if line.source.routes.is_empty() {
+        ui.small(t!("il-routes-none"));
+    }
+    let mut remove = None;
+    let mut derive = None;
+    for (i, route) in line.source.routes.iter_mut().enumerate() {
+        let block = ui.scope(|ui| {
+            editor_ui::form_grid(&format!("route-{i}")).show(ui, |ui| {
+                row(ui, "route-entry", |ui| {
+                    signal_combo(ui, ("route-entry", i), &mut route.entry, &labels);
+                });
+                row(ui, "route-exit", |ui| {
+                    signal_combo(ui, ("route-exit", i), &mut route.exit, &labels);
+                });
+                row(ui, "route-diverging", |ui| {
+                    ui.checkbox(&mut route.diverging, "");
+                });
+            });
+            index_chips(
+                ui,
+                ("route-sections", i),
+                t!("route-sections"),
+                &mut route.sections,
+                sections,
+            );
+            index_chips(
+                ui,
+                ("route-overlap", i),
+                t!("route-overlap"),
+                &mut route.overlap,
+                sections,
+            );
+            switch_chips(ui, i, &mut route.switches, &switches);
+            flank_chips(ui, i, &mut route.flank, &switches, &labels, &holding);
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button(t!("action-derive-route"))
+                    .on_hover_text(t!("action-derive-route-hint"))
+                    .clicked()
+                {
+                    derive = Some(i);
+                }
+                if ui.small_button(t!("action-delete-route")).clicked() {
+                    remove = Some(i);
+                }
+            });
+        });
+        if ui.rect_contains_pointer(block.response.rect) {
+            state.highlight = Some(Highlight::Route(i));
+        }
+        ui.add_space(space::XS);
+    }
+    // Both act on the table the loop just borrowed.
+    if let Some(i) = derive {
+        derive_route(line, i, state.overlap_length, overlay);
+    }
+    if let Some(i) = remove {
+        line.source.routes.remove(i);
+    }
+    if ui
+        .small_button(t!("action-add-route"))
+        .on_hover_text(t!("il-routes-hint"))
+        .clicked()
+    {
+        line.source.routes.push(RouteSource {
+            entry: 0,
+            exit: 1,
+            switches: Vec::new(),
+            sections: Vec::new(),
+            overlap: Vec::new(),
+            flank: Vec::new(),
+            diverging: false,
+        });
+    }
+}
+
+/// Fills route `index` in from the geometry: the path across the track graph
+/// from its entry to its exit signal decides the sections, the switch
+/// positions and — walked on behind the exit signal — the overlap.
+fn derive_route(line: &mut Line, index: usize, overlap: Option<f64>, overlay: &mut Overlay) {
+    let Some((entry, exit)) = line.source.routes.get(index).map(|r| (r.entry, r.exit)) else {
+        return;
+    };
+    match line.source.route_between(entry, exit, overlap) {
+        Some(found) => {
+            let route = &mut line.source.routes[index];
+            route.switches = found.switches;
+            route.sections = found.sections;
+            route.overlap = found.overlap;
+            route.flank = found.flank;
+            route.diverging = found.diverging;
+            overlay.status = t!(
+                "status-route-derived",
+                sections = route.sections.len(),
+                overlap = route.overlap.len(),
+                switches = route.switches.len()
+            );
+        }
+        None => overlay.status = t!("status-no-route-path"),
+    }
+}
+
+/// Picker over the signal table for the entry and exit of a route.
+fn signal_combo(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut u32,
+    labels: &[String],
+) {
+    let current = labels
+        .get(*value as usize)
+        .cloned()
+        .unwrap_or_else(|| value.to_string());
+    egui::ComboBox::from_id_salt(id)
+        .width(space::FIELD)
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for (i, label) in labels.iter().enumerate() {
+                if ui.selectable_label(*value == i as u32, label).clicked() {
+                    *value = i as u32;
+                }
+            }
+        });
+}
+
+fn signal_kind_label(kind: SignalKind) -> String {
+    match kind {
+        SignalKind::Main => t!("sig-kind-main"),
+        SignalKind::Distant => t!("sig-kind-distant"),
+        SignalKind::Combined => t!("sig-kind-combined"),
+        SignalKind::Shunting => t!("sig-kind-shunting"),
+        SignalKind::TrackLock => t!("sig-kind-track-lock"),
+    }
+}
+
+fn signal_kind_combo(ui: &mut egui::Ui, index: usize, kind: &mut SignalKind) {
+    egui::ComboBox::from_id_salt(("sig-kind", index))
+        .width(space::FIELD)
+        .selected_text(signal_kind_label(*kind))
+        .show_ui(ui, |ui| {
+            for candidate in [
+                SignalKind::Main,
+                SignalKind::Distant,
+                SignalKind::Combined,
+                SignalKind::Shunting,
+                SignalKind::TrackLock,
+            ] {
+                if ui
+                    .selectable_label(*kind == candidate, signal_kind_label(candidate))
+                    .clicked()
+                {
+                    *kind = candidate;
+                }
+            }
+        });
+}
+
+fn signal_system_combo(ui: &mut egui::Ui, index: usize, system: &mut SignalSystem) {
+    // H/V, Ks and Hl are designations, not prose — they stay literal.
+    let label = |s: SignalSystem| match s {
+        SignalSystem::HV => "H/V",
+        SignalSystem::Ks => "Ks",
+        SignalSystem::Hl => "Hl",
+    };
+    egui::ComboBox::from_id_salt(("sig-system", index))
+        .width(space::FIELD)
+        .selected_text(label(*system))
+        .show_ui(ui, |ui| {
+            for candidate in [SignalSystem::HV, SignalSystem::Ks, SignalSystem::Hl] {
+                if ui
+                    .selectable_label(*system == candidate, label(candidate))
+                    .clicked()
+                {
+                    *system = candidate;
+                }
+            }
+        });
 }
 
 /// One-click starting payloads for the kinds whose RON a modder would
@@ -1400,6 +2185,13 @@ fn issue_target(line: &Line, issue: &RuleIssue) -> (Option<EcefPos>, Selection) 
                 .map(|e| e.eval(e.length() / 2.0).pos),
             Selection::Edge(*edge as usize),
         ),
+        RuleIssue::FlankGuardInvalid { route } => match line.source.routes.get(*route as usize) {
+            Some(route) => match line.source.signals.get(route.entry as usize) {
+                Some(signal) => device_target(signal.device),
+                None => (None, Selection::None),
+            },
+            None => (None, Selection::None),
+        },
         RuleIssue::ObjectOffEdge { object } | RuleIssue::UnknownObject { object } => (
             line.source
                 .objects
@@ -1430,6 +2222,7 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::LzbTypeWithoutConductor { edge } => t!("check-lzb-no-conductor", edge = edge),
         RuleIssue::ObjectOffEdge { object } => t!("check-object-off-edge", object = object),
         RuleIssue::UnknownObject { object } => t!("check-unknown-object", object = object),
+        RuleIssue::FlankGuardInvalid { route } => t!("check-flank-guard", route = route),
     }
 }
 

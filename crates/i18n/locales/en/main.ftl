@@ -925,7 +925,15 @@ hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZ
 menu-start = Start driving
 menu-mods = Mods
 menu-quit = Quit
-menu-keys = ↑/↓ select   Enter confirm
+menu-keys = ↑/↓ or mouse select   Enter or click confirm
+menu-keys-back = ↑/↓ or mouse select   Enter or click confirm   Esc back
+menu-select-line = Select line
+menu-select-loco = Select vehicle
+menu-select-scenario = Select scenario
+# The built-in content the simulator falls back on when nothing is picked.
+menu-line-builtin = Example line (built-in)
+menu-loco-builtin = BR 101 (built-in)
+menu-scenario-none = No scenario — free run
 
 ## Mod manager
 
@@ -936,7 +944,7 @@ mods-content = Content: { $vehicles } vehicles, { $lines } lines, { $composition
 mods-log = Warnings:
 mods-restart = Change takes effect after a restart.
 mods-keys = ↑/↓ select   Enter on/off   F9 close
-mods-keys-menu = ↑/↓ select   Enter on/off   Esc back
+mods-keys-menu = ↑/↓ or mouse select   Enter or click on/off   Esc back
 
 ## Scoring
 

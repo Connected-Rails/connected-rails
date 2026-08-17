@@ -194,7 +194,7 @@ group-brake = Bremse
 brk-valve = Steuerventil
 brk-valve-hint = welches Steuerventil verbaut ist
 brk-position = Bremsstellung
-brk-position-hint = G Güterzug · P Personenzug · R Schnellzug · R+Mg mit Magnetschienenbremse
+brk-position-hint = G Güterzug · P Personenzug · R Schnellzug; R mit Magnetschienenbremse ergibt die Anschrift „R + Mg“
 brk-friction = Reibpaarung
 brk-friction-hint = wie der Reibwert über der Geschwindigkeit verläuft
 brk-friction-points = Reibwert (km/h → µ)
@@ -219,6 +219,8 @@ brk-percentage = Bremshundertstel des leeren Fahrzeugs: { $percent } %
 group-additional-brakes = Zusatzbremsen
 label-force = Kraft
 brk-mg = Magnetschienenbremse
+brk-mg-hint = Ausrüstung des Fahrzeugs. Sie wirkt in Bremsstellung R — zusammen ergibt das die Anschrift „R + Mg“
+brk-mg-needs-r = Wirkt nur in Bremsstellung R; das Fahrzeug steht auf G oder P
 brk-direct = Zusatzbremse (direkte Bremse)
 brk-direct-cylinder-hint = bar; 0 = wie die selbsttätige Bremse
 brk-parking = Feststellbremse

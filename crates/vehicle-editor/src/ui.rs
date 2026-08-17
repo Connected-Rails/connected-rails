@@ -43,6 +43,10 @@ pub fn draw(
     mut active: Local<Option<&'static str>>,
     mut view: ResMut<crate::View>,
     windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
+    // Native dialogs are opened from here. Windows only lets a window take the
+    // foreground from the thread that owns it — off the main thread the dialog
+    // opens behind the editor. The marker pins the system to the main thread.
+    _main_thread: bevy::ecs::system::NonSendMarker,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     // Kept on the editor so every dialog site (including the close handler in

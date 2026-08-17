@@ -293,6 +293,12 @@ pub struct VehicleSpec {
     /// [`crate::sound::default_table`] — the generated loops.
     #[serde(default)]
     pub sounds: Vec<SoundSpec>,
+    /// Block diagram of the vehicle ([`crate::blocks`]). When present, loading bakes it
+    /// over `traction`, `brake`, `safety`, `doors`, `afb`, `slip_protection` and the
+    /// wheelset figures — the graph is the source of truth, the baked fields are the
+    /// runtime format.
+    #[serde(default)]
+    pub graph: Option<crate::blocks::VehicleGraph>,
 }
 
 impl VehicleSpec {
@@ -372,6 +378,7 @@ impl Default for VehicleSpec {
             script: None,
             model: None,
             sounds: Vec::new(),
+            graph: None,
         }
     }
 }

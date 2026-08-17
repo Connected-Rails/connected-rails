@@ -74,6 +74,10 @@ pub struct TractionState {
     /// Braking force the dynamic brake is actually delivering [N], positive.
     #[serde(default)]
     pub dynamic_force: f64,
+    /// Ramped force of the electric brake of a diesel-electric drive [N] — its own state,
+    /// because `dynamic_force` also carries the retarder's share.
+    #[serde(default)]
+    pub electric_brake: f64,
 }
 
 impl Default for TractionState {
@@ -101,6 +105,7 @@ impl Default for TractionState {
             motor_current: 0.0,
             field: 1.0,
             dynamic_force: 0.0,
+            electric_brake: 0.0,
         }
     }
 }
@@ -131,6 +136,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
         }
         approach(&mut state.retarder_fill, 0.0, 1.0, dt);
         state.dynamic_force = 0.0;
+        state.electric_brake = 0.0;
         state.motor_current = 0.0;
         if !matches!(spec, TractionSpec::Diesel { .. }) {
             state.engine_rpm = 0.0;
@@ -210,6 +216,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
             engine,
             transmission,
             hydrodynamic_brake,
+            dynamic_brake,
             ..
         } => {
             step_diesel(
@@ -218,6 +225,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
                 engine.as_ref(),
                 transmission.as_ref(),
                 hydrodynamic_brake.as_ref(),
+                dynamic_brake.as_ref(),
                 *ramp_time,
                 v,
                 notch,
@@ -265,13 +273,14 @@ fn step_diesel(
     engine: Option<&DieselEngine>,
     transmission: Option<&Transmission>,
     retarder: Option<&HydrodynamicBrake>,
+    dynamic_brake: Option<&DynamicBrake>,
     ramp_time: f64,
     v: f64,
     notch: f64,
     dt: f64,
 ) {
     // The hydrodynamic brake is independent of the engine — it only needs a turning wheel.
-    let brake_force = match retarder {
+    let retarder_force = match retarder {
         Some(retarder) => {
             let demand = (-notch).clamp(0.0, 1.0);
             approach(
@@ -287,6 +296,23 @@ fn step_diesel(
             0.0
         }
     };
+    // Electric brake of a diesel-electric drive: motors into the braking resistors. A
+    // regenerative flag stays dead — a diesel loco has no line to feed back into.
+    let electric_force = match dynamic_brake {
+        Some(brake) if !brake.regenerative => {
+            let available = brake.available(v);
+            let demand = (-notch).clamp(0.0, 1.0) * available;
+            let rate = available.max(1.0) / brake.ramp_time.max(0.1);
+            approach(&mut state.electric_brake, demand, rate, dt);
+            state.electric_brake = state.electric_brake.min(available);
+            state.electric_brake
+        }
+        _ => {
+            state.electric_brake = 0.0;
+            0.0
+        }
+    };
+    let brake_force = retarder_force + electric_force;
     state.dynamic_force = brake_force;
 
     let Some(engine) = engine else {
@@ -572,6 +598,7 @@ mod tests {
                 fill_time: 1.5,
                 fade_out_kmh: 12.0,
             }),
+            dynamic_brake: None,
         }
     }
 

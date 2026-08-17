@@ -24,6 +24,7 @@ mods/<id>/mod.ron           manifest
          /timetable/*.ron   Timetable — referenced by a scenario for stop scoring
          /signals/*.ron     SignalType
          /signal_models/*.ron SignalModel — glTF parts on mount points, lamp bindings
+         /blocks/*.ron      block presets for the vehicle editor's palette
          /scripts/*.lua     behaviour
          /assets/…          models, textures, sounds — as `mods://<id>/assets/…`
 ```
@@ -90,6 +91,7 @@ without a matching rule shows stop.
 | `doors` | door control the vehicle brings: `None` / `Tb0` / `Tav` / `UicWtb` |
 | `hunting` | hunting −1 … 1, 0 = standard |
 | `script` | optional behaviour hook `"<mod>:<name>"` |
+| `graph` | optional block diagram of drive, brake and equipment — when present it is authoritative over the fields it bakes, see below |
 | `model` | glTF file, levels of detail, moving parts — see below |
 
 `safety` and `doors` are the **equipment** of the vehicle, so a train carries what its
@@ -182,6 +184,7 @@ traction: Some(Diesel(
         final_ratio: 1.0, wheel_diameter: 1.0, count: 1, efficiency: 0.95,
     )),
     hydrodynamic_brake: None,
+    dynamic_brake: None,     // electric brake of a diesel-electric, see below
 )),
 ```
 
@@ -199,6 +202,162 @@ hole in the tractive effort at the change point. `drain_time: 0.0` takes the fil
 
 Everything after `absorption` in a circuit, plus `drain_time` and `droop`, may be left out;
 they default to 0, which is the behaviour of a transmission without any of them.
+
+A **diesel-electric** locomotive (engine → generator → traction motors, Class 66/BR 232
+style) has no hydraulic transmission; its rheostatic brake is `dynamic_brake` — the same
+record the tap changer drive uses, optional and absent by default, so existing files are
+untouched. A `regenerative: true` inside it is ignored: a diesel has no line to feed
+back into.
+
+### Block diagram
+
+Drive, brake and equipment can also be declared as a **block diagram**: the vehicle is
+a circuit of components, and the physics follows from what is wired to what. The diagram is edited on the vehicle editor's node canvas (chips at the
+top left of the centre view switch between *3D model* and *Block diagram*; `--graph` on
+the command line starts on the diagram) and stored in the vehicle file as the optional
+`graph` field:
+
+```ron
+graph: Some((
+    blocks: [
+        (id: 0, kind: "diesel-engine", pos: (-320.0, 0.0),
+         params: { "max_power": Number(1840000.0), "governor": Choice("speed") }),
+        (id: 1, kind: "example:voith-l620", pos: (-80.0, 0.0)),
+        (id: 2, kind: "wheelset", pos: (160.0, 0.0),
+         params: { "axles": Number(4.0), "adhesive_mass_fraction": Number(1.0) }),
+    ],
+    wires: [
+        (from: 0, from_port: "out", to: 1, to_port: "shaft"),
+        (from: 1, from_port: "out", to: 2, to_port: "shaft"),
+    ],
+))
+```
+
+A block is `(id, kind, pos, params)`: `id` is a stable number the wires reference,
+`kind` a palette id (built-in, or `<mod>:<preset>` — see the presets below), `pos` the
+canvas position, `params` a map parameter id → value. Values are typed —
+`Number(…)`, `Bool(…)`, `Choice("<kebab-case id>")`, `Text("…")`, `Curve([(x, y), …])`,
+`List([…])` or `Circuits([…])`, the last one the circuits of a hydraulic transmission
+in the same shape as `transmission.circuits` above. A missing parameter falls back to
+the block's default.
+
+**Ports have domains, and only like connects to like** — the editor colour- *and*
+shape-codes the pins: mechanical (rotating shaft), force (at the wheel), electrical,
+pneumatic, signal (control values 0 … 1) and fuel. A drag between two pins wires them;
+a right click on the canvas adds a block, a right click on a node removes it.
+
+**When a vehicle file carries a `graph`, the graph is authoritative.** Loading bakes it
+and overwrites `traction`, `brake`, `safety`, `doors`, `passenger_doors`, `afb`,
+`slip_protection`, `axles`, `adhesive_mass_fraction` and `script`; every other field —
+mass, length, running resistance, coupler, sounds, model, … — stays hand-edited as
+before. A vehicle **without** a graph keeps working unchanged; the editor synthesises a
+diagram from the spec on open (`blocks::from_spec`) and writes it on save, so opening
+and saving an old file upgrades it. While you wire, the editor lists the **bake
+findings** (errors and warnings) below the palette — a click selects the offending
+block.
+
+The baker recognises the drive chains of the four traction models:
+
+| Chain | Bakes to |
+|---|---|
+| `traction-curve` | `Curve` — tractive effort straight off the diagram |
+| `pantograph` + `main-switch` + `transformer` + `tap-changer` (+ `series-motor`) (+ `dynamic-brake`) | `TapChanger` |
+| … + `traction-converter` + `traction-motor` (+ `dynamic-brake`) | `Converter` |
+| `diesel-engine` + `hydro-transmission` (+ `retarder`) | `Diesel`, diesel-hydraulic |
+| `diesel-engine` + `generator` + `traction-motor` (+ `dynamic-brake`) | `Diesel` with `dynamic_brake` — diesel-electric |
+
+The brake blocks map onto the `BrakeSpec` fields above: the `control-valve` carries
+valve type, brake position, braked weight and load braking; the `brake-rigging` the
+friction pairing and its maximum force; a `relay-valve` is the pre-controlled cylinder
+(`pilot_controlled`; its `supplement` flag is the air supplement brake); the
+`driver-brake-valve` carries the equalising device; reservoirs, pipe and compressor
+their volumes and figures; `direct-brake`, `parking-brake`, `mg-brake` and
+`wheel-slide-protection` the additional brakes and the slip protection.
+
+The built-in palette:
+
+| Kind | What it is | Key parameters |
+|---|---|---|
+| **Energy** | | |
+| `battery` | on-board battery — the cab needs it | — |
+| `fuel-tank` | fuel supply of a diesel | capacity [l] |
+| `pantograph` | collects power from the contact line | — |
+| `diesel-engine` | diesel engine, optionally with the full engine map | force/power/v max hyperbola, ramp and cranking time; engine map: idle/rated/overspeed rpm, torque curve, speed or fill governor with notches and droop, inertia, rack time |
+| **Drivetrain** | | |
+| `hydro-transmission` | converters and couplings engaged by filling | circuits, fill steps, fill/drain time, hysteresis, final drive, wheel diameter, count, efficiency |
+| `retarder` | hydrodynamic brake in the transmission | absorption, ratio, wheel diameter, force, power, fill time, fade-out |
+| `generator` | main generator of a diesel-electric | — |
+| `traction-motor` | three-phase motor behind converter or generator | — |
+| `series-motor` | series-wound motor behind the tap changer | count, resistance, machine constant, saturation and maximum current, voltage, field weakening steps, gear ratio, wheel diameter, efficiency |
+| `traction-curve` | the simplified model: effort straight off the diagram | force and brake curves [km/h → N], v max, ramp time |
+| **Electric** | | |
+| `main-switch` | main circuit breaker | — |
+| `transformer` | main transformer | — |
+| `tap-changer` | tap changer feeding series-wound motors | steps, step time, starting effort, power, v max |
+| `traction-converter` | three-phase traction converter | starting effort, power, v max, ramp time, pull-out speed |
+| `dynamic-brake` | electric brake of the drive it hangs on | force, power, fade-out speed, regenerative flag, ramp time |
+| **Brake** | | |
+| `compressor` | air supply | delivery [l/min] |
+| `main-reservoir` | main air reservoir | volume [l] |
+| `driver-brake-valve` | the driver's valve feeding the brake pipe | equalising device (Angleicher) |
+| `brake-pipe` | this vehicle's stretch of the pipe | volume, leakage |
+| `control-valve` | control valve reading the pipe | valve type (K-GP … KE-L2d), position G/P/R, braked weight [t], load braking (weighing / changeover) |
+| `aux-reservoir` | auxiliary reservoir | volume [l] |
+| `relay-valve` | pre-controlled cylinder fed from the main reservoir | supplement flag (air supplement brake) |
+| `brake-cylinder` | the cylinder itself | maximum pressure, cylinder/reservoir volume ratio |
+| `brake-rigging` | puts the cylinder force onto the wheel | friction pairing (block, disc, K, LL, Mg, custom curve), maximum force |
+| `direct-brake` | direct (additional) brake of a traction unit | maximum cylinder pressure |
+| `parking-brake` | parking brake | force, spring accumulator flag |
+| `mg-brake` | magnetic track brake | force |
+| `wheel-slide-protection` | slip protection | mode: slip brake / traction cutback / creep control |
+| `sander` | sanding gear | — |
+| **Running gear** | | |
+| `wheelset` | where force meets rail | axle count, adhesive mass fraction |
+| **Control** | | |
+| `cab` | the driver's desk: throttle, brake demand, direct brake, sanding | — |
+| `afb` | AFB in the throttle path | — |
+| **Equipment** | | |
+| `sifa` | driver's safety device | kind: time-time / time-distance / RZM |
+| `pzb` | intermittent train protection | variant (I 54 … PZB 90 V2.0), train type O/M/U |
+| `lzb` | continuous train protection | — |
+| `doors` | door control | system (TB0 / TAV / UIC-WTB), passenger doors flag |
+| `script` | the Lua behaviour hook | script `"<mod>:<name>"` |
+
+#### Block presets (`blocks/*.ron`)
+
+A mod extends the palette with **presets**: a built-in block under a new name with new
+parameter defaults — a data sheet, not new physics. `mods/example/blocks/voith-l620.ron`:
+
+```ron
+(
+    id: "voith-l620",
+    name: "Voith L 620 reU2",
+    description: "Two-circuit hydraulic transmission of the DB class 218: starting converter and travel converter, 2 700 kW input.",
+    base: "hydro-transmission",
+    params: {
+        "final_ratio": Number(1.58),
+        "wheel_diameter": Number(1.0),
+        "fill_time": Number(1.2),
+        "hysteresis_kmh": Number(8.0),
+        "efficiency": Number(0.96),
+        "circuits": Circuits([
+            (kind: Converter, ratio: 3.93, stall_ratio: 2.4, coupling_nu: 0.85,
+             absorption: 0.53, absorption_slope: 0.15,
+             shift_up_kmh: 72.0, shift_primary_kmh: 20.0),
+            (kind: Converter, ratio: 2.05, stall_ratio: 1.9, coupling_nu: 0.9,
+             absorption: 0.5, absorption_slope: 0.1,
+             shift_up_kmh: 0.0, shift_primary_kmh: 0.0),
+        ]),
+    },
+)
+```
+
+`base` names the built-in block, `params` overrides its defaults with the same typed
+values a graph uses. The preset appears in the editor palette as "Voith L 620 reU2",
+a vehicle's `graph` addresses it as `example:voith-l620`, and it bakes exactly like
+its base block with those defaults. An unknown `base` or a wrongly-typed parameter is
+a loading warning, never a crash. Behaviour beyond the built-in physics still goes
+through the `script` block — the Lua hook, as everywhere else.
 
 ### Model (glTF)
 

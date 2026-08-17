@@ -56,3 +56,6 @@ debug = "line-tables-only"
 opt-level = 3
 # Dependencies are rebuilt rarely and never stepped through in a debugger.
 debug = false
+
+[patch.crates-io]
+egui-snarl = { path = "crates/egui-snarl" }

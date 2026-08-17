@@ -1,0 +1,37 @@
+// Block preset: a named transmission for the editor palette. `base` names the
+// built-in block it specialises; `params` overrides that block's defaults.
+(
+    id: "voith-l620",
+    name: "Voith L 620 reU2",
+    description: "Two-circuit hydraulic transmission of the DB class 218: starting converter and travel converter, 2 700 kW input.",
+    base: "hydro-transmission",
+    params: {
+        "final_ratio": Number(1.58),
+        "wheel_diameter": Number(1.0),
+        "fill_time": Number(1.2),
+        "hysteresis_kmh": Number(8.0),
+        "efficiency": Number(0.96),
+        "circuits": Circuits([
+            (
+                kind: Converter,
+                ratio: 3.93,
+                stall_ratio: 2.4,
+                coupling_nu: 0.85,
+                absorption: 0.53,
+                absorption_slope: 0.15,
+                shift_up_kmh: 72.0,
+                shift_primary_kmh: 20.0,
+            ),
+            (
+                kind: Converter,
+                ratio: 2.05,
+                stall_ratio: 1.9,
+                coupling_nu: 0.9,
+                absorption: 0.5,
+                absorption_slope: 0.1,
+                shift_up_kmh: 0.0,
+                shift_primary_kmh: 0.0,
+            ),
+        ]),
+    },
+)

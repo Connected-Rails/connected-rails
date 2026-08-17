@@ -1057,3 +1057,211 @@ score-forced-brakes = { $count } Zwangsbremsung(en)
 score-overspeed = { $seconds } s zu schnell (max. { $excess } km/h)
 score-energy = { $energy } kWh Traktionsenergie
 score-scenario = Szenariowertung
+
+## Fahrzeugeditor: Bausteindiagramm — Ansichten und Leinwand
+
+view-model = 3D-Modell
+view-blocks = Bausteindiagramm
+graph-palette = Bausteine
+graph-search = Bausteine suchen…
+graph-inspector = Eigenschaften
+graph-issues = Befunde
+graph-no-selection = Einen Baustein auf der Leinwand auswählen, um seine Werte zu bearbeiten.
+graph-no-params = Dieser Baustein hat keine eigenen Werte.
+graph-add-block = Baustein hinzufügen
+graph-remove-block = Baustein entfernen
+graph-domain-mismatch = Nur Anschlüsse gleicher Farbe lassen sich verbinden.
+graph-circuit-add = Kreislauf hinzufügen
+graph-circuit-remove = Kreislauf entfernen
+
+## Fahrzeugeditor: Bausteindiagramm — Anschlussarten (Leitungsfarben)
+
+domain-mech = Welle (Drehmoment)
+domain-force = Kraft
+domain-elec = Elektrisch
+domain-air = Druckluft
+domain-signal = Steuersignal
+domain-fuel = Kraftstoff
+
+## Fahrzeugeditor: Bausteindiagramm — Anschlussbeschriftungen
+
+port-shaft = Welle
+port-elec = Elektrisch
+port-air = Luft
+port-brake-pipe = Hauptluftleitung
+port-force = Kraft
+port-ctrl = Steuerung
+port-throttle = Fahrschalter
+port-brake-demand = Führerbremsventil
+port-direct = Zusatzbremse
+port-sanding = Sanden
+port-slip = Schlupf
+port-pilot = Vorsteuerung
+port-supply = Versorgung
+port-aux = Vorratsbehälter
+port-fuel = Kraftstoff
+
+## Fahrzeugeditor: Bausteindiagramm — Palettengruppen
+
+blkcat-energy = Energie
+blkcat-drivetrain = Antriebsstrang
+blkcat-electric = Elektrik
+blkcat-brake = Bremse
+blkcat-running-gear = Laufwerk
+blkcat-control = Steuerung
+blkcat-equipment = Ausrüstung
+
+## Fahrzeugeditor: Bausteindiagramm — Bausteinnamen und Tooltips
+
+blk-battery = Batterie
+blk-battery-hint = Fahrzeugbatterie: Steuerstrom für Stromabnehmer, Motorstart und Beleuchtung
+blk-fuel-tank = Kraftstoffbehälter
+blk-fuel-tank-hint = Dieselvorrat des Motors
+blk-pantograph = Stromabnehmer
+blk-pantograph-hint = Nimmt den Strom von der Fahrleitung ab (15 kV 16,7 Hz)
+blk-diesel-engine = Dieselmotor
+blk-diesel-engine-hint = Kraftquelle: Drehmomentkennfeld, Regler und Anlassen — der Kopf jeder Dieselkette
+blk-hydro-transmission = Strömungsgetriebe
+blk-hydro-transmission-hint = Wandler und Kupplungen, durch Füllen und Entleeren geschaltet — das Voith-Prinzip
+blk-retarder = Hydrodynamische Bremse
+blk-retarder-hint = Retarder im Getriebe: verschleißfreies Bremsen, stark bei Fahrt, wirkungslos im Stand
+blk-generator = Hauptgenerator
+blk-generator-hint = Dieselelektrische Kette: der Motor treibt ihn, die Fahrmotoren nehmen seine Leistung — die Leistung steht am Dieselmotor
+blk-traction-motor = Fahrmotor
+blk-traction-motor-hint = Fahrmotor hinter Stromrichter oder Generator; die Kennwerte der Kette stehen an jenen Bausteinen
+blk-series-motor = Reihenschlussmotor
+blk-series-motor-hint = Der klassische Gleichstrommotor (BR 110/140) nach seinen Maschinengleichungen: sättigender Fluss, Feldschwächung
+blk-main-switch = Hauptschalter
+blk-main-switch-hint = Verbindet das Fahrzeug mit der Versorgung; schließt nur mit gehobenem Stromabnehmer und anliegender Fahrdrahtspannung
+blk-transformer = Haupttransformator
+blk-transformer-hint = Setzt die Fahrdrahtspannung für Schaltwerk, Stromrichter und Hilfsbetriebe herab
+blk-tap-changer = Schaltwerk
+blk-tap-changer-hint = Stufe um Stufe entlang der Trafowicklung — die Steuerung der klassischen Wechselstromlok
+blk-traction-converter = Traktionsstromrichter
+blk-traction-converter-hint = Drehstromantrieb: Zugkraft entlang der Kraft-/Leistungshyperbel, darüber die Kippgrenze
+blk-dynamic-brake = Dynamische Bremse
+blk-dynamic-brake-hint = Motoren als Generatoren: in die Bremswiderstände, oder zurück ins Netz, wenn rückspeisend
+blk-traction-curve = Zugkraftkurve
+blk-traction-curve-hint = Vereinfachter Antrieb direkt aus dem Diagramm des Datenblatts — weiß nichts von Motoren oder Getrieben
+blk-compressor = Kompressor
+blk-compressor-hint = Füllt den Hauptluftbehälter zwischen Ein- und Ausschaltdruck
+blk-main-reservoir = Hauptluftbehälter
+blk-main-reservoir-hint = Luftvorrat des Triebfahrzeugs: Zusatzbremse, Relaisventil und Federspeicher bedienen sich hier
+blk-driver-brake-valve = Führerbremsventil
+blk-driver-brake-valve-hint = Stellt den Hauptluftleitungsdruck ein: Lösen, Abschluss, Betriebsbremsung, Schnellbremsung
+blk-brake-pipe = Hauptluftleitung
+blk-brake-pipe-hint = Die zuglange Steuerleitung mit 5 bar: ein Druckabfall legt die Bremse an — ausfallsicher
+blk-control-valve = Steuerventil
+blk-control-valve-hint = Vergleicht Hauptluftleitung und Referenzdruck und füllt danach den Zylinder
+blk-aux-reservoir = Vorratsbehälter
+blk-aux-reservoir-hint = Vorrat je Fahrzeug, aus der Hauptluftleitung gefüllt; speist den Bremszylinder
+blk-relay-valve = Relaisventil
+blk-relay-valve-hint = Vorsteuerung: bildet den Steuerdruck mit Hauptluftbehälterluft nach — schnell, unerschöpfbar, und der Weg der EP-Bremsung
+blk-brake-cylinder = Bremszylinder
+blk-brake-cylinder-hint = Druck wird Kolbenkraft
+blk-brake-rigging = Bremsgestänge
+blk-brake-rigging-hint = Übersetzung und Reibpaarung: Zylinderkraft wird Verzögerung am Rad
+blk-direct-brake = Zusatzbremse
+blk-direct-brake-hint = Lokbremse direkt aus dem Hauptluftbehälter
+blk-parking-brake = Feststellbremse
+blk-parking-brake-hint = Federspeicher oder Handbremse — hält ohne Luft
+blk-mg-brake = Magnetschienenbremse
+blk-mg-brake-hint = Presst auf den Schienenkopf, unabhängig vom Kraftschluss der Räder; wirkt in Stellung R bei einer Schnellbremsung
+blk-wheel-slide-protection = Gleitschutz
+blk-wheel-slide-protection-hint = Überwacht den Schlupf und antwortet mit Schleuderbremse, Zugkraftrücknahme oder Schlupfregelung
+blk-sander = Sandstreuer
+blk-sander-hint = Sand vor den Treibrädern erhöht den Kraftschluss
+blk-wheelset = Radsatz
+blk-wheelset-hint = Wo Zug- und Bremskraft die Schiene erreichen: Achszahl und Reibungsmasse
+blk-cab = Führerstand
+blk-cab-hint = Die Bedienelemente: Fahrschalter, Führerbremsventil, Zusatzbremse, Sanden
+blk-afb = AFB
+blk-afb-hint = Automatische Fahr- und Bremssteuerung zwischen Fahrschalter und Antrieb
+blk-sifa = Sifa
+blk-sifa-hint = Sicherheitsfahrschaltung
+blk-pzb = PZB
+blk-pzb-hint = Indusi/PZB-Zugbeeinflussung, mit der Anfangsstellung des Zugartschalters
+blk-lzb = LZB
+blk-lzb-hint = Linienzugbeeinflussung auf Strecken mit Linienleiter
+blk-doors = Türsteuerung
+blk-doors-hint = Türsystem des Fahrzeugs, und ob seine Türen der Freigabe des Zuges folgen
+blk-script = Lua-Skript
+blk-script-hint = Verhaltens-Hook eines Mods: Schaltwerkslogik, AFB, Aufrüstvorgang
+
+## Fahrzeugeditor: Bausteindiagramm — neue Parameter
+
+eng-map = Motorkennfeld
+eng-map-hint = mit Kennfeld entscheidet die Drehmomentbilanz; ohne folgt die Zugkraft der Hyperbel
+eng-torque-curve = Volllastdrehmoment (1/min → N·m)
+eng-notches = Fahrstufen
+eng-notches-hint = des Fahrschalters; 0 = stufenlos
+eng-droop = Statik (Droop)
+eng-droop-hint = Anteil der Nenndrehzahl, um den die Solldrehzahl zwischen Leerlauf und voller Füllung absinkt
+eng-governor-speed = Drehzahlgeregelt
+eng-governor-fill = Füllungsgeregelt
+drv-brake-curve = Dynamische Bremse (km/h → N)
+drv-fuel-capacity = Tankinhalt
+cir-kind = Bauart
+cir-kind-hint = ein Wandler übersetzt das Drehmoment, eine Kupplung überträgt es eins zu eins
+cir-kind-converter = Drehmomentwandler
+cir-kind-coupling = Strömungskupplung
+brk-compressor-delivery = Förderleistung
+brk-compressor-delivery-hint = l/min freie Luft
+brk-main-volume = Volumen
+brk-pipe-volume = Leitungsanteil
+brk-pipe-volume-hint = Anteil dieses Fahrzeugs am Volumen der Hauptluftleitung
+brk-leakage = Leckrate
+brk-leakage-hint = l/min freie Luft, die die Leitung verliert
+brk-aux-volume = Volumen
+brk-direct-cylinder = Zylinderdruck
+brk-mg-force = Kraft
+brk-mg-force-hint = N auf den Schienenkopf
+brk-load-none = Keine
+brk-load-weighing = Wiegeventil
+brk-load-changeover = Umstellung Leer/Beladen
+brk-friction-block = Graugussklötze
+brk-friction-disc = Scheibe
+brk-friction-composite-k = Komposit K
+brk-friction-composite-ll = Komposit LL
+brk-friction-magnetic = Magnetisch
+brk-friction-custom = Eigene Kurve
+brk-slip-slip-brake = Schleuderbremse
+brk-slip-traction-cutback = Zugkraftrücknahme
+brk-slip-creep-control = Schlupfregelung
+eq-train-type = Zugart
+eq-train-type-hint = Anfangsstellung des Zugartschalters
+eq-sifa-time-time = Zeit-Zeit
+eq-sifa-time-distance = Zeit-Weg
+eq-sifa-rzm = Reaktionszeitmessung (RZM)
+eq-doors-none = Keine
+
+## Fahrzeugeditor: Bausteindiagramm — Befunde des Bakings
+
+bake-unknown-block = Unbekannter Bausteintyp — der Mod, der ihn definiert, ist nicht installiert
+bake-duplicate-block = Dieser Baustein darf je Fahrzeug nur einmal vorkommen
+bake-bad-wire = Eine Leitung verbindet Anschlüsse, die nicht zueinander passen
+bake-unconnected = Mit nichts verbunden
+bake-missing-wire = Eine erwartete Verbindung fehlt
+bake-multiple-drives = Mehr als ein Antrieb — ein Fahrzeug nimmt eine Antriebskette
+bake-brake-needs-drive = Eine dynamische Bremse braucht einen Antrieb, mit dem sie arbeitet
+bake-no-pantograph = Ein elektrischer Antrieb erwartet einen Stromabnehmer
+bake-transmission-needs-map = Ein Strömungsgetriebe braucht das Motorkennfeld
+bake-hydro-and-generator = Strömungsgetriebe und Generator am selben Motor — das Getriebe gewinnt
+bake-brake-needs-generator = Eine dieselelektrische Bremse braucht die Generatorkette
+bake-series-motor-unused = Ein Reihenschlussmotor wirkt nur hinter einem Schaltwerk
+bake-no-control-valve = Kein Steuerventil — das Fahrzeug kann nicht bremsen
+bake-no-brake-cylinder = Kein Bremszylinder — das Fahrzeug kann nicht bremsen
+bake-no-brake-rigging = Kein Bremsgestänge — die Zylinderkraft erreicht kein Rad
+bake-no-brake-pipe = Keine Hauptluftleitung — die Zugbremse hat keine Steuerleitung
+bake-no-aux-reservoir = Kein Vorratsbehälter — es gilt der Vorgabewert von 100 l
+bake-needs-main-reservoir = Braucht einen Hauptluftbehälter als Luftversorgung
+bake-mg-needs-r = Die Magnetschienenbremse wirkt nur in Stellung R — das Steuerventil hat keine R-Stellung
+bake-no-wheelset = Kein Radsatz — nichts trägt die Kräfte auf die Schiene
+
+## Fahrzeugeditor: Bausteindiagramm — Kommentarrahmen und Leinwand-Tastatur
+
+graph-group = Kommentarrahmen
+graph-group-default = Kommentar
+graph-group-name = Titel
+graph-group-color = Farbe
+graph-group-remove = Kommentarrahmen entfernen

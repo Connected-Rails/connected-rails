@@ -102,6 +102,7 @@ mods/<id>/mod.ron           id, name, version, author, depends, enabled
          /timetable/*.ron   timetables (stop scoring, referenced by a scenario)
          /signals/*.ron     signal types (aspect table + optional script)
          /signal_models/*.ron signal models: glTF parts on mount points, lamp bindings
+         /blocks/*.ron      block presets for the vehicle editor's palette
          /track_types/*.ron superstructure classes: texture, speed limit, roughness, LZB flag
          /objects/*.ron     track objects: a 3D model plus its pose relative to the track
          /displays/*.html   cab displays as an HTML/CSS/JS page
@@ -250,7 +251,7 @@ or the whole corridor.
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down map over aerial imagery or a flown 3D view — track, equipment, objects, vegetation, terrain (ch. 15) |
-| `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
+| `vehicle-editor` | Vehicle editor: base data, block diagram (drive, brake, equipment), glTF import, LOD, moving parts (ch. 15) |
 | `signal-editor` | Signal editor: modular signal models — glTF parts on mount points, lamp bindings (ch. 15) |
 
 `sim-core` is a pure Rust library with a fixed time step (200 Hz). The Bevy app ticks it and
@@ -338,7 +339,7 @@ an assembly of shared parts.
 | Program | Purpose |
 |---|---|
 | `cargo run -p route-editor` | line: track, equipment, switches, objects, vegetation, terrain, aerial imagery overlay |
-| `cargo run -p vehicle-editor` | vehicle: base data, glTF model, LOD, moving parts, 3D cab, displays, sounds |
+| `cargo run -p vehicle-editor` | vehicle: base data, block diagram (drive, brake, equipment), glTF model, LOD, moving parts, 3D cab, displays, sounds |
 | `cargo run -p signal-editor` | signal model: glTF parts on mount points, lamp bindings, lamp test |
 
 All are desktop applications, not game screens: menu bar, docked panels, the operating
@@ -361,12 +362,14 @@ plus one line in `i18n::LANGUAGES` — the source language is English.
 ```bash
 cargo run -p vehicle-editor                                   # new vehicle
 cargo run -p vehicle-editor -- mods/example/vehicles/br101_afb.ron
+cargo run -p vehicle-editor -- mods/example/vehicles/br101_afb.ron --graph   # open on the block diagram
 ```
 
 The left panel holds the vehicle's base data, the right one the model, the middle shows the
 3D viewport with the track and a reference body of the length over buffers — so it is
 immediately visible whether the model matches the LÜP. Right mouse button rotates, the
-wheel zooms.
+wheel zooms. Chips at the top left of the centre switch it between the **3D model** and the
+**block diagram**; the `--graph` flag starts on the diagram.
 
 **Base data** (everything that is declaration, not script):
 
@@ -377,7 +380,6 @@ wheel zooms.
 | v max | highest permitted *running* speed, independent of the traction characteristic |
 | Mass | tare mass; payload separately |
 | Rotating mass | allowance for rotating parts of running gear and drive — acts on the inertia, not on the weight. Diesel-hydraulic 10–15 %, diesel-electric and electric loco 15–25 %, freight wagon 8–10 %, coach 6–9 % |
-| Axles | information for consist lists and brake sheets |
 | Axle base sum | sum over all bogies (two bogies of 2.5 m → 5.0 m), **not** the vehicle length — the larger the value, the higher the curve resistance |
 | Rolling resistance | bearing friction and rolling of the wheel; "Suggest" derives a standard value from the mass |
 | Air resistance | cw·A [m²]; `F = ½·ρ·cw·A·v²`. Without it the quadratic Davis term applies |
@@ -386,33 +388,24 @@ wheel zooms.
 | Hunting | −1 no hunting, 0 standard (tuned for bogie vehicles), up to 1 more — raise it slightly for single-axle running gear |
 | Max payload | e.g. about 5 t for a passenger coach, per the anscriptions for freight |
 
-**Brake** — the panel below the base data. Control valve (`K-GP`, `KE-GP`, `KE-GPR`, `KE-Tm`,
-`KE-L2a`, `KE-L2d`), brake position (G/P/R/R+Mg), friction pairing (cast iron block, disc,
-K block, LL block, magnetic rail, or an own characteristic as a table), braked weight and
-the force that follows from it, cylinder pressure and the cylinder/reservoir volume ratio.
-Below that the additional brakes — magnetic track brake, direct brake, parking brake with or
-without a spring accumulator, pre-controlled cylinder, air supplement brake, equalising
-device — and the air data: auxiliary reservoir, brake pipe, main reservoir, compressor
-delivery and leakage, plus the wheel slip protection (none, wheel slip brake, traction
-cutback, creep control).
-
-**Drive** — pick the model, then fill in the data sheet:
-
-| Model | What is asked for |
-|---|---|
-| Tractive effort curve | the simplified model: a table km/h → N, optionally a second one for the dynamic brake |
-| Tap changer (series-wound) | notches, time per notch, starting effort, power — and optionally the motor data (resistance, machine constant, saturation and maximum current, voltage, field weakening stages, gear ratio, wheel diameter), plus a rheostatic brake |
-| Converter (three-phase) | starting effort, power, pull-out speed (above it the effort falls with 1/v²), brake force and power, fade-out speed, regenerative yes/no |
-| Diesel | engine map (idle/rated/overspeed, full load torque over engine speed, speed- or fill-governed with droop, inertia, rack travel time), hydraulic transmission (circuits as converter or coupling with ratio, stall torque ratio, coupling point, absorption and its trend over ν, change-up point and primary influence; filling steps, filling and emptying time, change hysteresis, final drive, number of transmissions), hydrodynamic brake |
-
-The detailed data is optional throughout: a `Diesel` without an engine map runs on the plain
-tractive effort hyperbola, and the motor or gearbox can be added later without changing the
-vehicle's type.
-
-A hydraulic transmission cannot be computed back out of a given tractive effort curve, so it
-is fitted: the plot under the drive panel draws the curve the parameters actually produce —
-change point and all — and **Suggest** puts a usable starting set there, out of the starting
-effort, the top speed, the rated speed, the rated torque and the wheel diameter.
+**Drive, brake, equipment and behaviour are the block diagram** — a blueprint-style node
+editor: the vehicle is a circuit of components, and the physics follows from what is wired
+to what. The palette on the left (searchable, grouped by category) carries every physical
+component as a block — pantograph, transformer, tap changer, traction converter, series
+and three-phase motors, diesel engine, hydraulic transmission and retarder, the complete
+air brake from compressor to brake rigging, wheelset, cab, AFB, Sifa, PZB, LZB, doors and
+the Lua script hook — plus the **presets installed mods bring** (`blocks/*.ron`, e.g. a
+Voith L 620 as a preset of the hydraulic transmission). A right click on the canvas adds a
+block, a right click on a node removes it, a drag from pin to pin wires them; pins are
+colour- **and** shape-coded by domain (shaft, force, electrical, pneumatic, signal, fuel),
+and only like connects to like. Clicking a node puts its data sheet below the palette —
+control valve and friction pairing, engine map, converter circuits, motor data; axle count
+and adhesive mass sit on the wheelset block — together with the live **bake findings**:
+the diagram is stored in the vehicle file (`graph`) and baked into the runtime fields
+(`traction`, `brake`, `safety`, `doors`, …) on save and on load, and every error or
+warning of that bake is listed, a click selecting the offending block. A vehicle file
+without a diagram opens with one synthesised from its spec. The palette reference, the
+wire rules and the preset format: [MODS.md](MODS.md#block-diagram).
 
 **Models are glTF**, and the glTF's own features are used. Levels of detail and moving parts
 are found in the file; the binding is stored in the vehicle RON, so **nothing has to be

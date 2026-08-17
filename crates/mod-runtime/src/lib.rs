@@ -9,6 +9,7 @@
 //! ```text
 //! mods/<id>/mod.ron           manifest (id, name, version, author, depends)
 //!          /vehicles/*.ron    VehicleSpec
+//!          /blocks/*.ron      block presets for the vehicle editor (sim_core::blocks)
 //!          /lines/*.ron       LineSource — a line, or a module with `boundaries`
 //!          /compositions/*.ron Composition — modules merged into one line
 //!          /scenarios/*.ron   Scenario
@@ -112,6 +113,8 @@ fn field_span(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
 pub struct Mods {
     pub manifests: Vec<ModManifest>,
     pub vehicles: BTreeMap<String, VehicleSpec>,
+    /// Block palette: the built-in blocks plus every mod's presets (`blocks/*.ron`).
+    pub blocks: sim_core::blocks::Registry,
     pub lines: BTreeMap<String, LineSource>,
     pub compositions: BTreeMap<String, Composition>,
     pub scenarios: BTreeMap<String, Scenario>,
@@ -130,6 +133,7 @@ impl Mods {
     /// Reads all mods below `root`. A missing directory is not an error.
     pub fn load(root: impl AsRef<Path>) -> Self {
         let mut mods = Mods::default();
+        mods.blocks = sim_core::blocks::Registry::builtin();
         let Ok(entries) = std::fs::read_dir(root.as_ref()) else {
             return mods;
         };
@@ -180,6 +184,20 @@ impl Mods {
         }
         // Stable order for the mod manager; the load order above is already done with.
         mods.manifests.sort_by(|a, b| a.id.cmp(&b.id));
+
+        // Bake block graphs with the complete palette — after every mod's presets are in.
+        let mut warnings = Vec::new();
+        for (key, spec) in mods.vehicles.iter_mut() {
+            let Some(graph) = spec.graph.clone() else {
+                continue;
+            };
+            for issue in sim_core::blocks::bake(&graph, &mods.blocks, spec) {
+                if issue.severity == sim_core::blocks::Severity::Error {
+                    warnings.push(format!("{key}: block graph: {}", issue.key));
+                }
+            }
+        }
+        mods.warnings.append(&mut warnings);
         mods
     }
 
@@ -251,6 +269,17 @@ impl Mods {
             insert(path, id, &mut self.scripts, &mut self.warnings, |t| {
                 Ok(t.to_string())
             });
+        }
+        for path in files(&dir.join("blocks"), "ron") {
+            let result = std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|t| {
+                    sim_core::blocks::parse_mod_block(&t).map_err(|e| e.to_string())
+                })
+                .and_then(|def| self.blocks.add_mod_block(id, def));
+            if let Err(e) = result {
+                self.warnings.push(format!("{}: {e}", path.display()));
+            }
         }
     }
 
@@ -711,6 +740,38 @@ mod tests {
         );
         assert_eq!(sim.interlock.signals[0].aspect.speed, Some(40.0));
         assert!(runtime.log().is_empty(), "log: {:?}", runtime.log());
+    }
+
+    /// A mod's `blocks/*.ron` presets join the palette under the `<mod>:` prefix, and a
+    /// broken preset warns instead of failing the load.
+    #[test]
+    fn mod_block_presets_join_the_registry() {
+        let root = std::env::temp_dir().join("trainsim-mods-blockdefs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("m").join("blocks")).unwrap();
+        std::fs::write(root.join("m").join("mod.ron"), "(id: \"m\", name: \"M\")").unwrap();
+        std::fs::write(
+            root.join("m").join("blocks").join("l620.ron"),
+            "(id: \"l620\", name: \"Voith L 620 reU2\", base: \"hydro-transmission\", \
+             params: { \"final_ratio\": Number(2.73) })",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("m").join("blocks").join("broken.ron"),
+            "(id: \"x\", name: \"X\", base: \"warp-drive\")",
+        )
+        .unwrap();
+        let mods = Mods::load(&root);
+        let preset = mods.blocks.get("m:l620").expect("preset registered");
+        assert_eq!(preset.name, "Voith L 620 reU2");
+        assert_eq!(mods.blocks.base_kind("m:l620"), Some("hydro-transmission"));
+        assert_eq!(
+            mods.blocks.default_of("m:l620", "final_ratio"),
+            Some(sim_core::blocks::ParamValue::Number(2.73))
+        );
+        assert_eq!(mods.warnings.len(), 1, "{:?}", mods.warnings);
+        assert!(mods.warnings[0].contains("warp-drive"), "{:?}", mods.warnings);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

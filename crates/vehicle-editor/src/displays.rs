@@ -115,6 +115,7 @@ fn node_combo(
     let response = egui::ComboBox::from_id_salt(("display-node", id))
         .selected_text(selected)
         .width(width)
+        .truncate()
         .show_ui(ui, |ui| {
             for name in names {
                 if ui

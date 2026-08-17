@@ -7,19 +7,25 @@
 //! and every change writes the file on the i/o pool. A synchronous save on `AppExit`
 //! on top of that, so a change made in the very last frame still lands.
 //!
-//! What applies live: language, master volume, fullscreen, vertical sync, HUD and
-//! look sensitivity. Everything that is baked into the scene when the run starts —
-//! view distance, shadows, bloom — is read by `setup` and therefore takes effect on
-//! the next run, which is the only moment the menu is reachable anyway.
+//! **Every setting applies the moment it is dialled.** Language, volume, HUD and look
+//! sensitivity are read where they are used; fullscreen and vertical sync go onto the
+//! window; view distance, shadows and bloom reach into a running scene through
+//! `apply_scene`. A setting that needs a restart is an excuse, and it would go stale the
+//! moment there is a pause menu.
 
 use std::sync::OnceLock;
 
 use bevy::audio::{GlobalVolume, Volume};
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::settings::{
     ReflectSettingsGroup, SaveSettings, SaveSettingsSync, SettingsGroup, SettingsPlugin,
 };
 use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
+
+use crate::ViewDistance;
+use crate::streaming::TerrainStreamer;
+use crate::ui::CabCamera;
 
 /// Names the directory the settings file lives in — reverse domain name, so it
 /// cannot collide with another app's.
@@ -120,6 +126,7 @@ pub fn plugin(app: &mut App) {
         Update,
         (
             apply_window.run_if(resource_changed::<Graphics>),
+            apply_scene.run_if(resource_changed::<Graphics>),
             apply_audio.run_if(resource_changed::<Audio>),
             save_changed.run_if(
                 resource_changed::<Graphics>
@@ -181,6 +188,38 @@ fn apply_window(graphics: Res<Graphics>, mut window: Query<&mut Window, With<Pri
     }
 }
 
+/// View distance and bloom into a scene that is already running. Every parameter is
+/// optional because none of it exists while the menu is up — the world is built on
+/// leaving it.
+///
+/// Shadows need nothing here: `update_daylight` re-reads the setting every frame anyway,
+/// because it also has to switch them off at night and under an overcast sky.
+fn apply_scene(
+    graphics: Res<Graphics>,
+    mut commands: Commands,
+    view: Option<ResMut<ViewDistance>>,
+    streamer: Option<ResMut<TerrainStreamer>>,
+    cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
+) {
+    if let Some(mut view) = view {
+        view.0 = graphics.view_distance;
+    }
+    if let Some(mut streamer) = streamer {
+        streamer.set_load_radius(f64::from(graphics.view_distance));
+    }
+    for (camera, has_bloom) in &cameras {
+        match (graphics.bloom, has_bloom) {
+            (true, false) => {
+                commands.entity(camera).insert(Bloom::NATURAL);
+            }
+            (false, true) => {
+                commands.entity(camera).remove::<Bloom>();
+            }
+            _ => {}
+        }
+    }
+}
+
 fn apply_audio(audio: Res<Audio>, mut volume: ResMut<GlobalVolume>) {
     volume.volume = Volume::Linear(audio.master);
 }
@@ -217,6 +256,27 @@ mod tests {
         assert!((VIEW_DISTANCE.0..=VIEW_DISTANCE.1).contains(&graphics.view_distance));
         assert!((VOLUME.0..=VOLUME.1).contains(&Audio::default().master));
         assert!((LOOK_SPEED.0..=LOOK_SPEED.1).contains(&Gameplay::default().look_speed));
+    }
+
+    /// The view distance reaches a scene that is already running. Without this the
+    /// setting would only be read while the world is built, and the menu would be back to
+    /// promising an effect "on the next run".
+    #[test]
+    fn the_view_distance_reaches_a_running_scene() {
+        let mut app = App::new();
+        app.insert_resource(Graphics::default())
+            .insert_resource(ViewDistance(0.0))
+            .add_systems(Update, apply_scene.run_if(resource_changed::<Graphics>));
+        app.update();
+        assert_eq!(
+            app.world().resource::<ViewDistance>().0,
+            Graphics::default().view_distance,
+            "the first frame hands the stored value over"
+        );
+
+        app.world_mut().resource_mut::<Graphics>().view_distance = 9_000.0;
+        app.update();
+        assert_eq!(app.world().resource::<ViewDistance>().0, 9_000.0);
     }
 
     /// An empty language code is the system's, not English — the menu shows it as

@@ -929,7 +929,6 @@ hud-keys-lights = 9 headlights  0 cab light  ,/. instrument dimmer
 # second, dimmer line under the entry of the same name.
 
 menu-tagline = German railway simulation
-menu-nav-title = Main menu
 menu-drive = Drive
 menu-drive-hint = Line, vehicle and scenario
 menu-mods = Mods
@@ -938,10 +937,17 @@ menu-settings = Settings
 menu-settings-hint = Picture, sound and controls
 menu-quit = Quit
 menu-quit-hint = Leave the simulator
+# The Esc overlay over a run that is standing still.
+menu-paused = Paused
+menu-resume = Resume
+menu-resume-hint = Carry on where the train stands
 menu-step = Step { $step } of { $total }
 menu-select-line = Select line
+menu-select-line-hint = Where the run takes place.
 menu-select-loco = Select vehicle
+menu-select-loco-hint = What is at the head of the train.
 menu-select-scenario = Select scenario
+menu-select-scenario-hint = A timetable and a task, or free rein.
 # The built-in content the simulator falls back on when nothing is picked. The chip on
 # the row says so, so the name itself no longer has to.
 menu-chip-builtin = Built in
@@ -958,7 +964,8 @@ menu-hint-start = start run
 menu-hint-change = change
 menu-hint-next = next value
 menu-hint-back = back
-menu-hint-section = section
+menu-hint-open = open
+menu-hint-resume = resume
 # The button at the foot of the detail pane — the same thing Enter does.
 menu-action-next = Continue
 menu-action-start = Start run
@@ -989,8 +996,6 @@ set-graphics = Graphics
 set-audio = Audio
 set-gameplay = Gameplay
 set-stored = Kept between runs in the settings file of your user account.
-# Badge on the rows that are baked into the scene when a run starts.
-set-restart-badge = next run
 set-view-distance = View distance
 set-view-distance-hint = How far terrain is built and drawn — the biggest single cost.
 set-shadows = Shadows

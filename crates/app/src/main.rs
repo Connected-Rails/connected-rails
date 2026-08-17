@@ -40,11 +40,16 @@ use world_render::Daylight;
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
 /// the menu apply without restarting the process.
+///
+/// `Paused` is the run standing still under the Esc overlay: every driving system is
+/// gated on `Driving`, so entering it freezes the simulation, the clock and the camera
+/// while the menu keeps running.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
     #[default]
     Menu,
     Driving,
+    Paused,
 }
 
 /// The running simulation.
@@ -141,6 +146,13 @@ const UI_FONT: &[u8] = include_bytes!("../fonts/FiraMono-Regular.ttf");
 const MENU_FONT: &[u8] = include_bytes!("../fonts/FiraSans-Regular.ttf");
 const MENU_FONT_SEMIBOLD: &[u8] = include_bytes!("../fonts/FiraSans-SemiBold.ttf");
 
+/// The picture behind the main menu, compiled in like the fonts so the binary needs no
+/// asset directory beside it.
+///
+/// ponytail: **placeholder, not ours to ship** — replace it with our own render before
+/// any release. A single file swap; nothing reads it but the menu.
+const MENU_BACKGROUND: &[u8] = include_bytes!("../images/menu-background.jpg");
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| -> Option<String> {
@@ -229,7 +241,13 @@ fn main() {
     })
     .add_systems(Startup, log_mods)
     .add_systems(OnEnter(GameState::Menu), menu::spawn_menu)
-    .add_systems(Update, menu::menu.run_if(in_state(GameState::Menu)))
+    // The same menu, as an overlay over the standing world.
+    .add_systems(OnEnter(GameState::Paused), menu::spawn_pause)
+    .add_systems(
+        Update,
+        menu::menu.run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
+    )
+    .add_systems(Update, pause_on_escape.run_if(in_state(GameState::Driving)))
     // The sound table and the display cameras need the trains, which `setup` only
     // creates when its commands are applied — the chain inserts that sync point.
     .add_systems(
@@ -298,6 +316,20 @@ fn main() {
         }
     };
     app.insert_resource(fonts);
+    let wallpaper = bevy::image::Image::from_buffer(
+        MENU_BACKGROUND,
+        bevy::image::ImageType::Extension("jpg"),
+        bevy::image::CompressedImageFormats::NONE,
+        true,
+        bevy::image::ImageSampler::linear(),
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    )
+    .expect("the compiled-in menu background decodes");
+    let wallpaper = app
+        .world_mut()
+        .resource_mut::<Assets<Image>>()
+        .add(wallpaper);
+    app.insert_resource(menu::Wallpaper(wallpaper));
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
@@ -335,6 +367,15 @@ fn exit_after_frames(
     // The capture goes through the render thread: it only lands on disk a few frames later.
     if *count >= limit.0 + 10 {
         exit.write(AppExit::Success);
+    }
+}
+
+/// Esc during a run raises the pause overlay, which also holds the settings. Leaving it
+/// again is the overlay's own job — this system only runs while `Driving`, so the Esc that
+/// resumes cannot bounce straight back into the pause.
+fn pause_on_escape(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<GameState>>) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next.set(GameState::Paused);
     }
 }
 

@@ -24,17 +24,20 @@ cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
-Without arguments the simulator starts on the main menu. A navigation column on the left holds
-four sections — **Drive**, **Mods**, **Settings**, **Quit** — and the drive section walks line →
-vehicle → scenario in three steps, showing what was picked for each. Beside the list a detail
-pane reads the highlighted entry out of the loaded content: length, permitted speed and signals
-of a line; mass, running-gear limit, drive and brake of a vehicle; start time, timetable and
-events of a scenario. `↑`/`↓` or the mouse select, `Enter` or a left click confirms, `←`/`→` dial
-a setting, `Esc` goes one step back, `Tab` steps to the next section; `F9` opens the mod manager
-in-game. Any run flag (`--line`, `--loco`, `--scenario`, `--frames`, `--screenshot`, …) skips the
-menu entirely, so the invocations above stay non-interactive — `--menu` puts it back in front,
-optionally on a named page (`--menu settings`, also `line`, `loco`, `scenario`, `mods`), which is
-the only way to photograph the menu itself.
+Without arguments the simulator opens on a title screen: wordmark over the backdrop, and four
+verbs — **Drive**, **Mods**, **Settings**, **Quit**. Drive walks line → vehicle → scenario in
+three steps, shown as a numbered rail across the top with what was picked under each. Beside
+the list a detail pane reads the highlighted entry out of the loaded content: length, permitted
+speed and signals of a line; mass, running-gear limit, drive and brake of a vehicle; start time,
+timetable and events of a scenario. `↑`/`↓` or the mouse select, `Enter` or a left click
+confirms, `←`/`→` dial a setting, `Esc` goes one step back and leaves at the title screen; `F9`
+opens the mod manager in-game. Any run flag (`--line`, `--loco`, `--scenario`, `--frames`,
+`--screenshot`, …) skips the menu entirely, so the invocations above stay non-interactive —
+`--menu` puts it back in front, optionally on a named page (`--menu settings`, also `root`,
+`line`, `loco`, `scenario`, `mods`), which is the only way to photograph the menu itself.
+
+The picture behind the menu lives in `crates/app/images/` and is compiled into the binary. The
+one checked in today is a **placeholder that is not ours to distribute** — see the README there.
 
 For a faster edit-compile-run loop, add `--features dev` to any of the four binaries
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
@@ -60,15 +63,25 @@ on Windows, `~/.config/dev.vanlueck.connected-rails/settings.toml` on Linux). It
 `bevy::settings`, so the file is plain text and can be edited by hand; an unknown or malformed
 key falls back to the built-in default instead of taking the program down.
 
+Every setting applies the moment it is changed — none of them waits for a restart or for
+the next run. View distance moves the streamer's load radius while tiles are in the air,
+bloom is added to and taken off the live camera, and the rest is re-read where it is used.
+
+`Esc` during a run raises the **pause overlay** — the world stands still under it — with
+**Resume**, **Settings** and **Quit**. Its settings page is the same one, minus the language
+(not a driving decision) and the reset (too blunt to have under the cursor while a train is
+standing on a gradient); everything on it takes effect while you watch. `Esc` on the overlay
+resumes.
+
 | Section | Setting | Effect |
 |---|---|---|
-| `[graphics]` | `view_distance` | How far terrain is built and drawn [m], 1000 … 12000. The biggest single cost. Applies to the next run. |
-| | `shadows` | Shadow maps of the sun. Applies to the next run. |
-| | `bloom` | Glow around lamps and signals after dark. Applies to the next run. |
-| | `fullscreen` | Borderless, on the monitor the window is on. Applies right away. |
-| | `vsync` | Caps the frame rate at the monitor's. Applies right away. |
-| `[audio]` | `master` | Linear master volume, 0 … 1. Applies right away. |
-| `[gameplay]` | `language` | `en`, `de`, or empty for the system's. Applies right away. |
+| `[graphics]` | `view_distance` | How far terrain is built and drawn [m], 1000 … 12000. The biggest single cost. |
+| | `shadows` | Shadow maps of the sun. |
+| | `bloom` | Glow around lamps and signals after dark. |
+| | `fullscreen` | Borderless, on the monitor the window is on. |
+| | `vsync` | Caps the frame rate at the monitor's. |
+| `[audio]` | `master` | Linear master volume, 0 … 1. |
+| `[gameplay]` | `language` | `en`, `de`, or empty for the system's. |
 | | `hud` | Draw the readout while driving. |
 | | `look_speed` | Factor on the mouse look speed, 0.2 … 3.0. |
 
@@ -267,6 +280,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `6` / `7` / `8` | AFB on/off / dial down / dial up (in 10 km/h steps) |
 | `9` / `0` | Headlights / cab light |
 | `,` / `.` | Instrument backlighting dimmer down / up |
+| `Esc` | Pause: resume, settings, quit — the world stands still under the overlay |
 | `F1`–`F3` | Camera: cab / external / lineside |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |

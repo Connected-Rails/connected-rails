@@ -930,7 +930,6 @@ hud-keys-lights = 9 Spitzensignal  0 Führerraumlicht  ,/. Instrumentenlicht
 # ist die zweite, blassere Zeile unter dem gleichnamigen Eintrag.
 
 menu-tagline = Deutsche Eisenbahnsimulation
-menu-nav-title = Hauptmenü
 menu-drive = Fahren
 menu-drive-hint = Strecke, Fahrzeug und Szenario
 menu-mods = Mods
@@ -939,10 +938,17 @@ menu-settings = Einstellungen
 menu-settings-hint = Bild, Ton und Steuerung
 menu-quit = Beenden
 menu-quit-hint = Den Simulator verlassen
+# Die Esc-Überlagerung über einer stehenden Fahrt.
+menu-paused = Pause
+menu-resume = Fortsetzen
+menu-resume-hint = Weiter, wo der Zug steht
 menu-step = Schritt { $step } von { $total }
 menu-select-line = Strecke auswählen
+menu-select-line-hint = Wo die Fahrt stattfindet.
 menu-select-loco = Fahrzeug auswählen
+menu-select-loco-hint = Was an der Spitze des Zuges läuft.
 menu-select-scenario = Szenario auswählen
+menu-select-scenario-hint = Ein Fahrplan mit Aufgabe — oder freie Hand.
 # Die eingebauten Inhalte, auf die der Simulator zurückfällt, wenn nichts gewählt wird.
 # Das Fähnchen an der Zeile sagt das, der Name selbst muss es nicht mehr.
 menu-chip-builtin = Integriert
@@ -959,7 +965,8 @@ menu-hint-start = Fahrt starten
 menu-hint-change = ändern
 menu-hint-next = nächster Wert
 menu-hint-back = zurück
-menu-hint-section = Bereich
+menu-hint-open = öffnen
+menu-hint-resume = fortsetzen
 # Die Schaltfläche am Fuß der Detailspalte — dasselbe, was Enter tut.
 menu-action-next = Weiter
 menu-action-start = Fahrt starten
@@ -990,8 +997,6 @@ set-graphics = Grafik
 set-audio = Ton
 set-gameplay = Spiel
 set-stored = Bleibt zwischen zwei Starts in der Einstellungsdatei des Benutzerkontos erhalten.
-# Fähnchen an den Zeilen, die beim Start einer Fahrt in die Szene gebacken werden.
-set-restart-badge = nächste Fahrt
 set-view-distance = Sichtweite
 set-view-distance-hint = Wie weit Gelände gebaut und gezeichnet wird — der größte einzelne Posten.
 set-shadows = Schatten

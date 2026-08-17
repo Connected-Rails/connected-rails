@@ -462,9 +462,18 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
   sits next to it: view distance, shadows, bloom, fullscreen, vertical sync, master
   volume, language, HUD and look sensitivity, kept between runs as TOML in the operating
   system's settings directory (Bevy's own `bevy::settings`, `crates/app/src/settings.rs`).
-  Language, volume, fullscreen and vertical sync apply the moment they are dialled;
-  what is baked into the scene when the run starts — view distance, shadows, bloom —
-  applies to the next run, which is the only moment the menu is reachable anyway.
+  **Every one of them applies the moment it is changed** — `apply_scene` moves the
+  streamer's load radius and the view distance while tiles are in the air and adds or
+  removes `Bloom` on the live camera, `apply_window` carries fullscreen and vertical sync
+  onto the window, and language, volume, HUD and look sensitivity are re-read where they
+  are used. Nothing waits for a restart; a setting that needs one is an excuse. **Esc
+  during a run raises the same menu as an overlay** (`GameState::Paused`, `spawn_pause`):
+  no camera of its own — the cab's draws the UI — no wallpaper, a thinner scrim so the
+  world stays recognisable, and Resume / Settings / Quit. Every driving system is gated on
+  `Driving`, so the pause freezes simulation, clock and camera by itself. The overlay's
+  settings page is the front end's minus the language and the reset. Going back to the
+  title screen is **not** offered there: the world `setup` builds carries no despawn
+  marker, so tearing it down again is its own piece of work.
   Any run flag on the command line (`--line`, `--frames`, …) skips the menu, so CLI and CI
   invocations stay non-interactive, and a flag beats the menu's choice where both are set;
   `--menu` puts the menu back in front, which is the only way to photograph it.
@@ -596,19 +605,29 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   train for behaviour that reacts in tenths of a second would be pure overhead. A hook that
   genuinely has to see every step moves into `Sim::step`.
 - **The main menu is built from plain Bevy UI nodes** — no `egui` in the simulator. A
-  navigation column on the left (with the drive section unfolded into its three steps and
-  what was picked for each), the page's rows in the middle, and a detail pane on the right
-  showing what the highlighted row actually is — length, permitted speed and signal count
-  of a line, mass, running-gear limit, drive and brake of a vehicle, start time, timetable
-  and event count of a scenario, all read off the same data the simulation runs on. Header
-  above, key hints as chips below. Keyboard and mouse drive the same selection index: ↑/↓
-  or hover selects, Enter or a left click confirms, ←/→ dial a setting, Esc goes one step
-  back, Tab steps to the next section. Every page is the same list of rows (leading slot,
-  label, provenance chip, second line, control), so a new page is a `match` arm and nothing
-  else. The rows are rebuilt whenever a fingerprint of what they show changes, rather than
-  patched in place — a row is four nodes deep and differently shaped per page, and the menu
-  is idle the rest of the time. A settings row draws its value as a pill, a filled track or
-  a pair of chevrons, so nothing that can be changed looks like plain text.
+  **title screen** (wordmark over the backdrop and four verbs set large) and behind it a
+  **full-width flow**: the three steps of picking a run stand in a numbered rail across the
+  top with what was picked under each, the list sits left, and a detail pane on the right
+  shows what the highlighted row actually is — length, permitted speed and signal count of
+  a line, mass, running-gear limit, drive and brake of a vehicle, start time, timetable and
+  event count of a scenario, all read off the same data the simulation runs on. There is
+  deliberately **no navigation rail down the side**: a rail plus a content pane is the shape
+  of a web dashboard and reads as one whatever it is coloured; the step rail is the
+  breadcrumb, and Esc is the way home. Keyboard and mouse drive the same selection index:
+  ↑/↓ or hover selects, Enter or a left click confirms, ←/→ dial a setting, Esc goes one
+  step back. Every page is the same list of rows (leading slot, label, provenance chip,
+  second line, control), so a new page is a `match` arm and nothing else. The rows are
+  rebuilt whenever a fingerprint of what they show changes, rather than patched in place —
+  a row is four nodes deep and differently shaped per page, and the menu is idle the rest
+  of the time. A settings row draws its value as a pill, a filled track or a pair of
+  chevrons, so nothing that can be changed looks like plain text.
+- **The menu is monochrome, with traffic red as the only saturated colour.** Selection and
+  focus are bone white on stepped grey surfaces; RAL 3020 appears twice, as the mark above
+  the wordmark and on the button that starts something, and amber is kept for the two
+  warnings (a setting that waits for the next run, a mod missing a dependency). A picture
+  sits behind everything under a left-to-right wash that thins where nothing is written —
+  compiled into the binary (`crates/app/images/`), and today a **placeholder that is not
+  ours to distribute**.
 - **The simulator draws prose in Fira Sans and machine output in Fira Mono**
   (`crates/app/fonts`, SIL OFL 1.1, compiled in) — the same family, so names and figures
   read as one typeface. Mono is not a preference: the HUD, the cab displays and the mod

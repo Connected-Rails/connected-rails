@@ -1,21 +1,34 @@
-//! Main menu: a navigation column on the left, the page's rows in the middle, what the
-//! highlighted row actually is on the right, the game's name above and the key hints below.
+//! Main menu: a title screen, and a full-width flow behind it.
 //!
-//! Four sections hang in the navigation — drive, mods, settings, quit — and the drive
-//! section walks line → vehicle → scenario. Keyboard (↑/↓, ←/→, Enter, Esc, Tab) and
-//! mouse (hover selects, click confirms) drive the same selection index, so neither input
-//! is a special case. The world is built only on leaving the menu, so a mod toggled here
-//! takes effect on start — no restart. Any run flag on the command line (`--line`,
-//! `--frames`, …) skips the menu entirely, which keeps the documented CLI and CI
-//! invocations non-interactive.
+//! **The title screen** is the game's front door — wordmark, and four verbs set large:
+//! begin a run, mods, settings, quit. No panels, no persistent navigation rail. A rail
+//! down the left with a content pane beside it is the shape of a web dashboard, and it
+//! reads as one no matter how it is coloured.
 //!
-//! Two rules hold the look together. **Prose is Fira Sans, machine output is Fira Mono** —
-//! names and sentences in the proportional face, ids, versions, metres, per cent and key
-//! caps in the fixed one, so figures stay in their columns and the two faces still read as
-//! one family. And **a state is a surface, not a decoration**: the selected row is an
-//! opaque tier plus an accent bar on its leading edge, never a gradient washing across the
-//! row, which leaves its own right-hand end unpainted and drops the second line to an
-//! unreadable contrast.
+//! **The flow** takes the whole screen. Picking a run walks line → vehicle → scenario;
+//! which step that is stands in a numbered rail across the top, with what has been picked
+//! under each — that is the breadcrumb, the back button and the progress bar in one. The
+//! list sits left, and beside it a pane reads the highlighted entry out of the loaded
+//! content. Esc walks the steps back and leaves at the title screen.
+//!
+//! Keyboard (↑/↓, ←/→, Enter, Esc) and mouse (hover selects, click confirms) drive the
+//! same selection index, so neither input is a special case. The world is built only on
+//! leaving the menu, so a mod toggled here takes effect on start — no restart. Any run
+//! flag on the command line (`--line`, `--frames`, …) skips the menu entirely, which keeps
+//! the documented CLI and CI invocations non-interactive.
+//!
+//! Three rules hold the look together. **Prose is Fira Sans, machine output is Fira
+//! Mono** — names and sentences in the proportional face, ids, versions, metres, per cent
+//! and key caps in the fixed one, so figures stay in their columns and the two faces still
+//! read as one family. **A state is a surface, not a decoration**: the selected row is an
+//! opaque tier plus a bar on its leading edge, never a gradient washing across the row.
+//! And **the interface is monochrome**; the one saturated colour is traffic red, which
+//! appears exactly twice — as the mark above the wordmark, and on the button that starts
+//! something. A second accent hue would only compete with it. Amber is left for the one
+//! warning there is: a mod missing a dependency.
+//!
+//! Every setting applies the moment it is dialled — see `settings::apply_scene`. Nothing
+//! here says "takes effect on the next run", because nothing does.
 //!
 //! The rows are torn down and rebuilt whenever their fingerprint changes rather than
 //! patched in place: a row is four nodes deep and carries a different shape per page, and
@@ -27,7 +40,8 @@ use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
 use bevy::text::FontSource;
-use bevy::ui::ScrollPosition;
+use bevy::ui::widget::NodeImageMode;
+use bevy::ui::{BackgroundGradient, ColorStop, LinearGradient, ScrollPosition};
 use content::musterbahn;
 use content::route::LineSource;
 use i18n::t;
@@ -39,45 +53,48 @@ use crate::mods_ui::{self, ModManager};
 use crate::settings::{self, Audio, Gameplay, Graphics};
 use crate::{GameState, Mods};
 
-// Surfaces, opaque and in tiers. Translucent panels over a background gradient measured
-// 1.04:1 against each other — three panels nobody can see are not three panels.
+// Surfaces, opaque and in tiers, and neutral rather than blue — a blue-black dark theme
+// with one warm accent is the look every generated dashboard wears.
 /// The page behind everything.
-const BASE: Color = Color::srgb(0.055, 0.067, 0.086);
-/// Navigation column, footer bar, detail pane.
-const PANE: Color = Color::srgb(0.071, 0.090, 0.118);
+const BASE: Color = Color::srgb(0.047, 0.047, 0.055);
+/// Footer bar and detail pane.
+const PANE: Color = Color::srgb(0.078, 0.078, 0.094);
 /// A row at rest …
-const ROW: Color = Color::srgb(0.086, 0.110, 0.141);
+const ROW: Color = Color::srgb(0.102, 0.102, 0.122);
 /// … under the cursor …
-const ROW_HOVER: Color = Color::srgb(0.110, 0.141, 0.188);
+const ROW_HOVER: Color = Color::srgb(0.137, 0.137, 0.161);
 /// … and the one the selection sits on.
-const ROW_ACTIVE: Color = Color::srgb(0.137, 0.173, 0.220);
+const ROW_ACTIVE: Color = Color::srgb(0.173, 0.173, 0.204);
 /// The leading slot of a row, which will hold artwork once there is any.
-const SLOT: Color = Color::srgb(0.125, 0.157, 0.196);
+const SLOT: Color = Color::srgb(0.149, 0.149, 0.173);
 /// Slider track and the off state of a toggle.
-const TRACK: Color = Color::srgb(0.165, 0.200, 0.247);
+const TRACK: Color = Color::srgb(0.200, 0.200, 0.231);
 /// Key cap in the footer.
-const CHIP: Color = Color::srgb(0.118, 0.153, 0.200);
+const CHIP: Color = Color::srgb(0.118, 0.118, 0.137);
 /// Rules and panel edges — opaque, so they do not change with what is behind them.
-const HAIRLINE: Color = Color::srgb(0.137, 0.169, 0.208);
+const HAIRLINE: Color = Color::srgb(0.165, 0.165, 0.192);
 
-/// The one accent: signal amber. Selection, focus and the primary action, nothing else.
-const ACCENT: Color = Color::srgb(0.941, 0.663, 0.231);
-/// The same amber at the alpha a badge sits on.
-const ACCENT_SOFT: Color = Color::srgba(0.941, 0.663, 0.231, 0.14);
-/// A mod that is missing a dependency.
-const DANGER: Color = Color::srgb(0.878, 0.341, 0.294);
+/// Selection and focus: warm bone white, no hue of its own. Everything the cursor is on
+/// simply becomes brighter, which is what keeps the one saturated colour below meaningful.
+const ACCENT: Color = Color::srgb(0.949, 0.941, 0.918);
+/// Traffic red (RAL 3020), the colour German railways are painted and signed in. It marks
+/// the wordmark and fills the button that starts something — nothing else.
+const BRAND: Color = Color::srgb(0.882, 0.000, 0.059);
+/// Amber, for the one thing that is neither: a mod that is missing a dependency.
+const WARN: Color = Color::srgb(0.878, 0.663, 0.231);
 
-const TEXT_BRIGHT: Color = Color::WHITE;
-const TEXT: Color = Color::srgb(0.910, 0.930, 0.949);
-const TEXT_MID: Color = Color::srgb(0.659, 0.702, 0.753);
-const TEXT_DIM: Color = Color::srgb(0.486, 0.529, 0.580);
-const TEXT_FAINT: Color = Color::srgb(0.431, 0.478, 0.533);
+const TEXT_BRIGHT: Color = Color::srgb(0.976, 0.973, 0.965);
+const TEXT: Color = Color::srgb(0.902, 0.902, 0.910);
+const TEXT_MID: Color = Color::srgb(0.627, 0.627, 0.659);
+const TEXT_DIM: Color = Color::srgb(0.459, 0.459, 0.494);
+const TEXT_FAINT: Color = Color::srgb(0.333, 0.333, 0.361);
 
 /// Height of a row, of a section heading on the settings page, and the gap below either.
 /// The list scrolls by the running sum of these, so a heading may be shorter than a row
 /// without the keyboard losing track of where a row sits.
 const ROW_HEIGHT: f32 = 56.0;
 const HEADING_HEIGHT: f32 = 46.0;
+const VERB_HEIGHT: f32 = 52.0;
 const ROW_GAP: f32 = 6.0;
 
 /// Width the list stops growing at — narrow beside the detail pane, wider on the two
@@ -102,6 +119,11 @@ pub struct Fonts {
     pub semibold: Handle<Font>,
 }
 
+/// The picture behind the menu. Compiled in like the fonts, so the binary stays
+/// self-contained and there is no asset directory to ship beside it.
+#[derive(Resource, Default, Clone)]
+pub struct Wallpaper(pub Handle<Image>);
+
 impl Fonts {
     fn source(&self, face: Face) -> FontSource {
         match face {
@@ -121,27 +143,33 @@ pub struct Selection {
     pub scenario_id: Option<String>,
 }
 
-/// An entry of the navigation column.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Drive,
-    Mods,
-    Settings,
-    Quit,
-}
-
-/// The navigation column, in order: section and the key of its label.
-const NAV: [(Section, &str); 4] = [
-    (Section::Drive, "menu-drive"),
-    (Section::Mods, "menu-mods"),
-    (Section::Settings, "menu-settings"),
-    (Section::Quit, "menu-quit"),
+/// The verbs on the title screen, in order: the key of the label, and the page it opens.
+/// Quit carries no page — it leaves.
+const VERBS: [(&str, Option<Page>); 4] = [
+    ("menu-drive", Some(Page::Line)),
+    ("menu-mods", Some(Page::Mods)),
+    ("menu-settings", Some(Page::Settings)),
+    ("menu-quit", None),
 ];
 
-/// Which list the menu is showing. The drive section walks Line → Loco → Scenario.
+/// The verbs of the pause overlay. Shorter on purpose: mods cannot be toggled into a
+/// world that is already built, and going back to the title screen would have to tear that
+/// world down again.
+const PAUSE_VERBS: [&str; 3] = ["menu-resume", "menu-settings", "menu-quit"];
+
+/// The settings the overlay leaves out of its groups. The language belongs to the front
+/// end — switching it in the middle of a run is not a driving decision. (Reset is left out
+/// too, but it hangs below the groups rather than inside one.)
+const NOT_WHILE_DRIVING: [Setting; 1] = [Setting::Language];
+
+/// Which screen the menu is showing. `Root` is the title screen; everything else is the
+/// full-width flow behind it, and the first three are the steps of picking a run.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
     #[default]
+    Root,
+    /// The root of the overlay over a standing run.
+    Pause,
     Line,
     Loco,
     Scenario,
@@ -150,27 +178,28 @@ enum Page {
 }
 
 impl Page {
-    /// Which navigation entry is lit while this page is open.
-    fn section(self) -> Section {
-        match self {
-            Page::Line | Page::Loco | Page::Scenario => Section::Drive,
-            Page::Mods => Section::Mods,
-            Page::Settings => Section::Settings,
-        }
+    /// The page of verbs this one belongs under — the title screen, or the pause overlay.
+    fn home(overlay: bool) -> Page {
+        if overlay { Page::Pause } else { Page::Root }
     }
 
-    /// Where Esc goes. The first page of the drive section is the menu's home and has
-    /// nowhere left to go.
-    fn back(self) -> Option<Page> {
+    /// Whether this page is a list of verbs rather than a list of content.
+    fn is_home(self) -> bool {
+        matches!(self, Page::Root | Page::Pause)
+    }
+
+    /// Where Esc goes. Everything leads back to the page of verbs, one step at a time;
+    /// from there the front end has nowhere to go and the overlay resumes the run.
+    fn back(self, overlay: bool) -> Option<Page> {
         match self {
-            Page::Line => None,
+            Page::Root | Page::Pause => None,
+            Page::Line | Page::Mods | Page::Settings => Some(Page::home(overlay)),
             Page::Loco => Some(Page::Line),
             Page::Scenario => Some(Page::Loco),
-            Page::Mods | Page::Settings => Some(Page::Line),
         }
     }
 
-    /// Position of this page in the drive section's three steps.
+    /// Position of this page in the three steps of picking a run.
     fn step(self) -> Option<usize> {
         match self {
             Page::Line => Some(1),
@@ -185,23 +214,31 @@ impl Page {
 #[derive(Resource, Default)]
 pub struct MenuState {
     page: Page,
+    /// The menu is the Esc overlay over a run rather than the game's front end: no
+    /// wallpaper, no camera of its own, a scrim over the standing world, and a shorter
+    /// list of settings.
+    overlay: bool,
     selected: usize,
     /// Row under the cursor, which is shown apart from the selection so a mouse and a
     /// keyboard user can both see where they are.
     hovered: Option<usize>,
     /// Set by a click observer, consumed like an Enter press.
     clicked: bool,
-    /// Navigation entry a click landed on, consumed like a Tab press.
-    nav_click: Option<usize>,
-    /// Labels of the line and the vehicle already picked — the drive section shows them
-    /// as its breadcrumb, and only the menu ever needs them as text.
+    /// Labels of the line and the vehicle already picked — the step rail shows them under
+    /// their step, and only the menu ever needs them as text.
     chosen: [String; 2],
-    /// The nodes the navigation entries, the rows, the detail pane and the key hints
-    /// hang off.
-    nav: Option<Entity>,
+    /// The two screens, shown one at a time.
+    title_screen: Option<Entity>,
+    flow_screen: Option<Entity>,
+    /// The nodes the verbs, the step rail, the rows, the detail pane and the key hints
+    /// hang off. `verbs` and `list` are both row lists — only one of them is filled.
+    verbs: Option<Entity>,
+    steps: Option<Entity>,
     list: Option<Entity>,
     detail: Option<Entity>,
     hints: Option<Entity>,
+    /// The dark wash over the wallpaper, which is heavier where there is more text.
+    scrim: Option<Entity>,
     /// Fingerprint of what is on screen; everything is rebuilt when it changes.
     drawn: Option<u64>,
 }
@@ -214,6 +251,7 @@ pub struct StartPage(pub String);
 impl Page {
     fn named(name: &str) -> Option<Page> {
         match name {
+            "root" => Some(Page::Root),
             "line" => Some(Page::Line),
             "loco" => Some(Page::Loco),
             "scenario" => Some(Page::Scenario),
@@ -224,18 +262,17 @@ impl Page {
     }
 }
 
-/// A text node of the frame that is refilled every frame.
+/// A text node of the frame that is refilled every frame. `Hint` belongs to the title
+/// screen and says what the highlighted verb does; `Title` and `Caption` head the flow.
 #[derive(Component)]
 pub enum MenuLabel {
     Title,
     Caption,
+    Hint,
 }
 
-/// One entry of the navigation column, by index into [`NAV`].
-#[derive(Component)]
-struct NavRow(usize);
-
-/// One row of the content list, by index into the page's entries.
+/// One row of a list, by index into the page's entries. Verbs on the title screen and
+/// rows in the flow both carry it — they are the same selection.
 #[derive(Component)]
 struct MenuRow(usize);
 
@@ -264,6 +301,9 @@ struct Entry {
     warning: bool,
     /// A section heading on the settings page: drawn, but never selected.
     heading: bool,
+    /// A verb on the title screen — set large, on nothing, with a red marker when the
+    /// cursor is on it. Not a card in a list.
+    verb: bool,
     /// Which setting the row changes, if any …
     setting: Option<Setting>,
     /// … and how it is operated, read off the settings when the row is built.
@@ -272,16 +312,16 @@ struct Entry {
 
 impl Entry {
     fn height(&self) -> f32 {
-        if self.heading {
-            HEADING_HEIGHT
-        } else {
-            ROW_HEIGHT
+        match (self.heading, self.verb) {
+            (true, _) => HEADING_HEIGHT,
+            (_, true) => VERB_HEIGHT,
+            _ => ROW_HEIGHT,
         }
     }
 }
 
 /// A single adjustable value on the settings page.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Setting {
     ViewDistance,
     Shadows,
@@ -342,15 +382,6 @@ impl Setting {
             Setting::LookSpeed => "set-look-speed",
             Setting::Reset => "set-reset",
         }
-    }
-
-    /// Whether the setting is baked into the scene when the run starts. Those rows carry
-    /// a badge instead of repeating the same sentence in three help lines.
-    fn needs_restart(self) -> bool {
-        matches!(
-            self,
-            Setting::ViewDistance | Setting::Shadows | Setting::Bloom
-        )
     }
 
     fn control(self, graphics: &Graphics, audio: &Audio, gameplay: &Gameplay) -> Control {
@@ -470,14 +501,47 @@ fn onoff(on: bool) -> String {
 // Frame
 // ---------------------------------------------------------------------------------
 
+/// The game's front end: its own camera, the wallpaper, the title screen.
 pub fn spawn_menu(
-    mut commands: Commands,
+    commands: Commands,
     fonts: Res<Fonts>,
+    wallpaper: Res<Wallpaper>,
     start: Option<Res<StartPage>>,
-    mut menu: ResMut<MenuState>,
+    menu: ResMut<MenuState>,
 ) {
-    // The world with its 3D camera does not exist yet — the menu brings its own.
-    commands.spawn((Camera2d, DespawnOnExit(GameState::Menu)));
+    spawn(commands, &fonts, &wallpaper, start.as_deref(), menu, false);
+}
+
+/// The same menu as an overlay over a run that is standing still: no camera (the cab's
+/// draws the UI), no wallpaper (the world is the picture), a scrim to lift the type off it.
+pub fn spawn_pause(
+    commands: Commands,
+    fonts: Res<Fonts>,
+    wallpaper: Res<Wallpaper>,
+    menu: ResMut<MenuState>,
+) {
+    spawn(commands, &fonts, &wallpaper, None, menu, true);
+}
+
+fn spawn(
+    mut commands: Commands,
+    fonts: &Fonts,
+    wallpaper: &Wallpaper,
+    start: Option<&StartPage>,
+    mut menu: ResMut<MenuState>,
+    overlay: bool,
+) {
+    let leaves = if overlay {
+        GameState::Paused
+    } else {
+        GameState::Menu
+    };
+    // In front of a run the world with its 3D camera does not exist yet, so the menu
+    // brings its own; over one, the cab camera already draws the UI and a second camera
+    // would only compose over it.
+    if !overlay {
+        commands.spawn((Camera2d, DespawnOnExit(leaves)));
+    }
     let root = commands
         .spawn((
             Node {
@@ -486,115 +550,162 @@ pub fn spawn_menu(
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(BASE),
-            DespawnOnExit(GameState::Menu),
+            BackgroundColor(if overlay { Color::NONE } else { BASE }),
+            DespawnOnExit(leaves),
         ))
         .id();
 
-    // Header: the game's name and what it is. The version moved to the footer — alone in
-    // the top right corner it had nine hundred pixels of nothing to its left.
-    let header = commands
+    // The wallpaper, and the wash that makes text sit on it. Both absolute and first, so
+    // everything spawned after them draws on top. Photography behind type without a scrim
+    // is the one thing that looks cheap no matter how good the photograph is — and over a
+    // run the photograph is the run, which needs the same treatment.
+    if !overlay {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            ImageNode {
+                image: wallpaper.0.clone(),
+                image_mode: NodeImageMode::Stretch,
+                ..default()
+            },
+            ChildOf(root),
+        ));
+    }
+    let scrim = commands
         .spawn((
             Node {
-                height: Val::Px(88.0),
-                // Header, rule and footer are fixed furniture. Without this taffy
-                // squeezes them the moment the list is longer than the screen, and the
-                // whole page creeps upwards as rows are added.
-                flex_shrink: 0.0,
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            scrim_gradient(Page::home(overlay), overlay),
+            ChildOf(root),
+        ))
+        .id();
+
+    // --- Title screen: wordmark, the verbs, and one line about the highlighted one.
+    let title_screen = commands
+        .spawn((
+            Node {
+                flex_grow: 1.0,
+                min_height: Val::Px(0.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
-                row_gap: Val::Px(5.0),
-                padding: UiRect::horizontal(Val::Px(40.0)),
+                padding: UiRect::horizontal(Val::Px(96.0)),
                 ..default()
             },
             ChildOf(root),
         ))
         .id();
+    // The mark: traffic red, the colour the trains in the picture are painted.
     commands.spawn((
-        text(&fonts, t!("window-simulator"), Face::Semibold, 28.0, TEXT),
-        ChildOf(header),
+        Node {
+            width: Val::Px(52.0),
+            height: Val::Px(4.0),
+            margin: UiRect::bottom(Val::Px(20.0)),
+            ..default()
+        },
+        BackgroundColor(BRAND),
+        ChildOf(title_screen),
     ));
+    // Over a run the wordmark steps aside for what this actually is.
     commands.spawn((
-        text(&fonts, t!("menu-tagline"), Face::Sans, 13.0, TEXT_DIM),
-        ChildOf(header),
+        text(
+            fonts,
+            if overlay {
+                t!("menu-paused")
+            } else {
+                t!("window-simulator")
+            },
+            Face::Semibold,
+            if overlay { 38.0 } else { 54.0 },
+            TEXT_BRIGHT,
+        ),
+        ChildOf(title_screen),
     ));
-    commands.spawn((rule(Val::Percent(100.0)), ChildOf(root)));
+    if !overlay {
+        commands.spawn((
+            text(fonts, t!("menu-tagline"), Face::Sans, 15.0, TEXT_MID),
+            Node {
+                margin: UiRect::top(Val::Px(6.0)),
+                ..default()
+            },
+            ChildOf(title_screen),
+        ));
+    }
+    let verbs = commands
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                margin: UiRect::top(Val::Px(48.0)),
+                ..default()
+            },
+            ChildOf(title_screen),
+        ))
+        .id();
+    commands.spawn((
+        text(fonts, String::new(), Face::Sans, 13.0, TEXT_MID),
+        Node {
+            height: Val::Px(20.0),
+            margin: UiRect::top(Val::Px(20.0)),
+            ..default()
+        },
+        MenuLabel::Hint,
+        ChildOf(title_screen),
+    ));
 
-    // `min_height: 0` on every flex column below: without it a flex item refuses to
-    // shrink under its content, and the scrolling list would push the footer off screen.
-    let body = commands
+    // --- Flow: step rail, page title, list and detail pane, all full width.
+    // `min_height: 0` on every flex column: without it a flex item refuses to shrink
+    // under its content, and the scrolling list would push the footer off screen.
+    let flow_screen = commands
+        .spawn((
+            Node {
+                display: Display::None,
+                flex_grow: 1.0,
+                min_height: Val::Px(0.0),
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            ChildOf(root),
+        ))
+        .id();
+    let head = commands
+        .spawn((
+            Node {
+                flex_shrink: 0.0,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                padding: UiRect::new(Val::Px(64.0), Val::Px(64.0), Val::Px(36.0), Val::Px(24.0)),
+                ..default()
+            },
+            ChildOf(flow_screen),
+        ))
+        .id();
+    let steps = commands
         .spawn((
             Node {
                 flex_direction: FlexDirection::Row,
-                flex_grow: 1.0,
-                min_height: Val::Px(0.0),
+                align_items: AlignItems::Center,
+                margin: UiRect::bottom(Val::Px(22.0)),
                 ..default()
             },
-            ChildOf(root),
-        ))
-        .id();
-    let sidebar = commands
-        .spawn((
-            Node {
-                width: Val::Px(260.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(10.0),
-                padding: UiRect::axes(Val::Px(16.0), Val::Px(28.0)),
-                border: UiRect::right(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(PANE),
-            BorderColor::all(HAIRLINE),
-            ChildOf(body),
+            ChildOf(head),
         ))
         .id();
     commands.spawn((
-        text(
-            &fonts,
-            t!("menu-nav-title").to_uppercase(),
-            Face::Semibold,
-            11.0,
-            TEXT_DIM,
-        ),
-        Node {
-            margin: UiRect::left(Val::Px(16.0)),
-            ..default()
-        },
-        ChildOf(sidebar),
-    ));
-    let nav = commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(4.0),
-                ..default()
-            },
-            ChildOf(sidebar),
-        ))
-        .id();
-
-    let content = commands
-        .spawn((
-            Node {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                min_height: Val::Px(0.0),
-                padding: UiRect::axes(Val::Px(40.0), Val::Px(32.0)),
-                row_gap: Val::Px(6.0),
-                ..default()
-            },
-            ChildOf(body),
-        ))
-        .id();
-    commands.spawn((
-        text(&fonts, String::new(), Face::Semibold, 20.0, TEXT),
+        text(fonts, String::new(), Face::Semibold, 26.0, TEXT_BRIGHT),
         MenuLabel::Title,
-        ChildOf(content),
+        ChildOf(head),
     ));
     commands.spawn((
-        text(&fonts, String::new(), Face::Sans, 13.0, TEXT_DIM),
+        text(fonts, String::new(), Face::Sans, 13.0, TEXT_MID),
         MenuLabel::Caption,
-        ChildOf(content),
+        ChildOf(head),
     ));
     let split = commands
         .spawn((
@@ -602,11 +713,11 @@ pub fn spawn_menu(
                 flex_direction: FlexDirection::Row,
                 flex_grow: 1.0,
                 min_height: Val::Px(0.0),
-                column_gap: Val::Px(24.0),
-                margin: UiRect::top(Val::Px(20.0)),
+                column_gap: Val::Px(28.0),
+                padding: UiRect::new(Val::Px(64.0), Val::Px(64.0), Val::Px(0.0), Val::Px(28.0)),
                 ..default()
             },
-            ChildOf(content),
+            ChildOf(flow_screen),
         ))
         .id();
     let list = commands
@@ -618,15 +729,16 @@ pub fn spawn_menu(
         .id();
     let detail = commands.spawn((detail_node(false), ChildOf(split))).id();
 
+    // --- Footer: version and the key hints, on both screens.
     let footer = commands
         .spawn((
             Node {
-                height: Val::Px(48.0),
+                height: Val::Px(52.0),
                 flex_shrink: 0.0,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 column_gap: Val::Px(24.0),
-                padding: UiRect::horizontal(Val::Px(40.0)),
+                padding: UiRect::horizontal(Val::Px(64.0)),
                 border: UiRect::top(Val::Px(1.0)),
                 ..default()
             },
@@ -637,7 +749,7 @@ pub fn spawn_menu(
         .id();
     commands.spawn((
         text(
-            &fonts,
+            fonts,
             format!("v{}", env!("CARGO_PKG_VERSION")),
             Face::Mono,
             11.0,
@@ -658,19 +770,53 @@ pub fn spawn_menu(
         .id();
 
     let page = start
-        .as_ref()
         .and_then(|start| Page::named(&start.0))
-        .unwrap_or_default();
+        .unwrap_or(Page::home(overlay));
     *menu = MenuState {
-        nav: Some(nav),
+        overlay,
+        title_screen: Some(title_screen),
+        flow_screen: Some(flow_screen),
+        verbs: Some(verbs),
+        steps: Some(steps),
         list: Some(list),
         detail: Some(detail),
         hints: Some(hints),
+        scrim: Some(scrim),
         page,
         // The settings page opens on a heading; `menu` moves the cursor off it on the
         // first frame, before anything is drawn.
         ..default()
     };
+}
+
+/// The wash over whatever is behind the menu — the wallpaper in front of a run, the
+/// standing world during one. The page of verbs keeps its type on the left, so the
+/// gradient runs left to right and lets the picture breathe where nothing is written; a
+/// flow page covers the screen in text and needs it almost gone. The overlay stays a
+/// little thinner throughout: the world under it should still be recognisable as the place
+/// the run was paused in.
+fn scrim_gradient(page: Page, overlay: bool) -> BackgroundGradient {
+    let wash = |alpha: f32| {
+        Color::srgba(
+            0.020,
+            0.020,
+            0.024,
+            if overlay { alpha * 0.82 } else { alpha },
+        )
+    };
+    let stops = if page.is_home() {
+        vec![
+            ColorStop::percent(wash(0.97), 0.0),
+            ColorStop::percent(wash(0.90), 34.0),
+            ColorStop::percent(wash(0.42), 100.0),
+        ]
+    } else {
+        vec![
+            ColorStop::percent(wash(0.955), 0.0),
+            ColorStop::percent(wash(0.90), 100.0),
+        ]
+    };
+    BackgroundGradient::from(LinearGradient::to_right(stops))
 }
 
 /// The list. It stops growing at `width` — a row given the full pane prints "Modul Ost"
@@ -734,7 +880,7 @@ fn text(fonts: &Fonts, content: String, face: Face, size: f32, color: Color) -> 
 // ---------------------------------------------------------------------------------
 
 /// ↑/↓ or hover selects, Enter or left click confirms, ←/→ dials a setting, Esc goes one
-/// page back, Tab steps to the next section.
+/// step back and leaves at the title screen.
 // A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn menu(
@@ -753,25 +899,13 @@ pub fn menu(
     mut labels: Query<(&MenuLabel, &mut Text)>,
     mut lists: Query<(&ComputedNode, &mut ScrollPosition)>,
 ) {
-    let (Some(nav), Some(list), Some(detail), Some(hints)) =
-        (menu.nav, menu.list, menu.detail, menu.hints)
+    let (Some(list), Some(verbs), Some(detail), Some(hints)) =
+        (menu.list, menu.verbs, menu.detail, menu.hints)
     else {
         return;
     };
-
-    // The observers only record what was hit; every state change happens here.
-    if let Some(index) = menu.nav_click.take() {
-        open(&mut menu, &mut exit, index);
-    }
-    if keys.just_pressed(KeyCode::Tab) {
-        let at = NAV
-            .iter()
-            .position(|(s, _)| *s == menu.page.section())
-            .unwrap_or(0);
-        open(&mut menu, &mut exit, (at + 1) % NAV.len());
-    }
-
-    let items = entries(menu.page, &mods.0, &graphics, &audio, &gameplay);
+    let overlay = menu.overlay;
+    let items = entries(menu.page, overlay, &mods.0, &graphics, &audio, &gameplay);
     if items.is_empty() {
         menu.selected = 0;
     } else {
@@ -805,6 +939,21 @@ pub fn menu(
         let id = entry.id.clone();
         let label = entry.label.clone();
         match menu.page {
+            // The title screen: a verb opens its page, or leaves.
+            Page::Root => match VERBS.get(menu.selected).and_then(|(_, page)| *page) {
+                Some(page) => go(&mut menu, page),
+                None => {
+                    exit.write(AppExit::Success);
+                }
+            },
+            // The pause overlay: resume, settings, or leave.
+            Page::Pause => match menu.selected {
+                0 => next.set(GameState::Driving),
+                1 => go(&mut menu, Page::Settings),
+                _ => {
+                    exit.write(AppExit::Success);
+                }
+            },
             Page::Line => {
                 selection.line_ref = id;
                 menu.chosen[0] = label;
@@ -828,19 +977,24 @@ pub fn menu(
             Page::Settings => {}
         }
     }
-    if keys.just_pressed(KeyCode::Escape)
-        && let Some(back) = menu.page.back()
-    {
-        go(&mut menu, back);
+    if keys.just_pressed(KeyCode::Escape) {
+        match menu.page.back(overlay) {
+            Some(back) => go(&mut menu, back),
+            // Esc on the overlay's own root is the way out of the pause: the run goes on.
+            None if overlay => next.set(GameState::Driving),
+            None => {}
+        }
     }
 
     // The page and the values may have changed above — re-read before drawing.
     let page = menu.page;
-    let items = entries(page, &mods.0, &graphics, &audio, &gameplay);
+    let rows = if page.is_home() { verbs } else { list };
+    let items = entries(page, overlay, &mods.0, &graphics, &audio, &gameplay);
     let print = fingerprint(page, &items, menu.selected, menu.hovered);
     if menu.drawn != Some(print) {
-        build_nav(&mut commands, &fonts, nav, page, &menu.chosen);
-        build_rows(&mut commands, &fonts, list, &items, &menu);
+        show_screen(&mut commands, &menu, page);
+        build_steps(&mut commands, &fonts, menu.steps, page, &menu.chosen);
+        build_rows(&mut commands, &fonts, rows, &items, &menu);
         build_detail(
             &mut commands,
             &fonts,
@@ -854,10 +1008,15 @@ pub fn menu(
         menu.drawn = Some(print);
     }
 
+    let hint = items
+        .get(menu.selected)
+        .map(|entry| entry.hint.clone())
+        .unwrap_or_default();
     for (label, mut text) in &mut labels {
         let content = match label {
             MenuLabel::Title => title(page),
             MenuLabel::Caption => caption(page, &mods.0, &manager),
+            MenuLabel::Hint => hint.clone(),
         };
         if **text != content {
             **text = content;
@@ -867,16 +1026,22 @@ pub fn menu(
     scroll_into_view(&mut lists, list, menu.selected, &items);
 }
 
-/// Opens the n-th navigation entry.
-fn open(menu: &mut MenuState, exit: &mut MessageWriter<AppExit>, index: usize) {
-    match NAV.get(index).map(|(section, _)| *section) {
-        Some(Section::Drive) => go(menu, Page::Line),
-        Some(Section::Mods) => go(menu, Page::Mods),
-        Some(Section::Settings) => go(menu, Page::Settings),
-        Some(Section::Quit) => {
-            exit.write(AppExit::Success);
-        }
-        None => {}
+/// Swaps the two screens and re-weights the wash over what lies behind them.
+fn show_screen(commands: &mut Commands, menu: &MenuState, page: Page) {
+    let home = page.is_home();
+    for (entity, shown) in [(menu.title_screen, home), (menu.flow_screen, !home)] {
+        let Some(entity) = entity else { continue };
+        commands
+            .entity(entity)
+            .entry::<Node>()
+            .and_modify(move |mut node| {
+                node.display = if shown { Display::Flex } else { Display::None };
+            });
+    }
+    if let Some(scrim) = menu.scrim {
+        commands
+            .entity(scrim)
+            .insert(scrim_gradient(page, menu.overlay));
     }
 }
 
@@ -931,15 +1096,6 @@ fn on_row_click(click: On<Pointer<Click>>, rows: Query<&MenuRow>, mut menu: ResM
 fn on_action_click(click: On<Pointer<Click>>, mut menu: ResMut<MenuState>) {
     if click.event().event.button == PointerButton::Primary {
         menu.clicked = true;
-    }
-}
-
-fn on_nav_click(click: On<Pointer<Click>>, rows: Query<&NavRow>, mut menu: ResMut<MenuState>) {
-    if click.event().event.button != PointerButton::Primary {
-        return;
-    }
-    if let Ok(NavRow(i)) = rows.get(click.event().entity) {
-        menu.nav_click = Some(*i);
     }
 }
 
@@ -1006,80 +1162,116 @@ const STEPS: [&str; 3] = [
     "menu-select-scenario",
 ];
 
-fn build_nav(
+/// The numbered rail across the top of the flow: which of the three steps this is, and
+/// what has been answered for the ones behind it. Breadcrumb, progress bar and the reason
+/// there is no navigation rail down the side, in one row.
+fn build_steps(
     commands: &mut Commands,
     fonts: &Fonts,
-    nav: Entity,
+    steps: Option<Entity>,
     page: Page,
     chosen: &[String; 2],
 ) {
-    commands.entity(nav).despawn_related::<Children>();
-    for (i, (section, key)) in NAV.iter().enumerate() {
-        let on = *section == page.section();
-        let row = commands
-            .spawn((
+    let Some(steps) = steps else { return };
+    commands.entity(steps).despawn_related::<Children>();
+    let Some(current) = page.step() else {
+        return;
+    };
+    for (index, title) in STEPS.iter().enumerate() {
+        let number = index + 1;
+        let here = number == current;
+        let done = number < current;
+        if index > 0 {
+            commands.spawn((
                 Node {
-                    height: Val::Px(44.0),
-                    flex_shrink: 0.0,
-                    justify_content: JustifyContent::Center,
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::left(Val::Px(13.0)),
-                    border: UiRect::left(Val::Px(3.0)),
-                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    width: Val::Px(40.0),
+                    height: Val::Px(1.0),
+                    margin: UiRect::horizontal(Val::Px(16.0)),
                     ..default()
                 },
-                BorderColor::all(if on { ACCENT } else { Color::NONE }),
-                BackgroundColor(if on { ROW_ACTIVE } else { Color::NONE }),
-                NavRow(i),
-                ChildOf(nav),
+                BackgroundColor(if done || here { TEXT_FAINT } else { HAIRLINE }),
+                ChildOf(steps),
+            ));
+        }
+        let step = commands
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                },
+                ChildOf(steps),
             ))
-            .observe(on_nav_click)
+            .id();
+        let disc = commands
+            .spawn((
+                Node {
+                    width: Val::Px(24.0),
+                    height: Val::Px(24.0),
+                    flex_shrink: 0.0,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(if here {
+                    ACCENT
+                } else if done {
+                    ROW_ACTIVE
+                } else {
+                    ROW
+                }),
+                ChildOf(step),
+            ))
             .id();
         commands.spawn((
             text(
                 fonts,
-                t!(key),
-                if on { Face::Semibold } else { Face::Sans },
-                15.0,
-                if on { TEXT_BRIGHT } else { TEXT_MID },
+                number.to_string(),
+                Face::Mono,
+                11.0,
+                if here { BASE } else { TEXT_DIM },
             ),
-            ChildOf(row),
+            ChildOf(disc),
         ));
-        // The drive section unfolds into its three steps, each showing what was picked
-        // for it. That is the breadcrumb the "step 1 of 3" line used to stand in for —
-        // and it says at a glance which answers are already in.
-        if on && *section == Section::Drive {
-            for (step, title) in STEPS.iter().enumerate() {
-                let here = page.step() == Some(step + 1);
-                let answer = chosen.get(step).filter(|c| !c.is_empty());
-                let node = commands
-                    .spawn((
-                        Node {
-                            height: Val::Px(26.0),
-                            flex_shrink: 0.0,
-                            justify_content: JustifyContent::Center,
-                            padding: UiRect::left(Val::Px(29.0)),
-                            ..default()
-                        },
-                        ChildOf(nav),
-                    ))
-                    .id();
-                commands.spawn((
-                    text(
-                        fonts,
-                        answer.cloned().unwrap_or_else(|| t!(title)),
-                        Face::Sans,
-                        12.0,
-                        match (here, answer.is_some()) {
-                            (true, _) => ACCENT,
-                            (false, true) => TEXT_MID,
-                            (false, false) => TEXT_FAINT,
-                        },
-                    ),
-                    ChildOf(node),
-                ));
-            }
-        }
+        let column = commands
+            .spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(2.0),
+                    ..default()
+                },
+                ChildOf(step),
+            ))
+            .id();
+        commands.spawn((
+            text(
+                fonts,
+                t!(title).to_uppercase(),
+                Face::Semibold,
+                10.0,
+                if here { TEXT_MID } else { TEXT_FAINT },
+            ),
+            ChildOf(column),
+        ));
+        // Under the label: what was picked for that step, so the answers stay on screen
+        // while the next question is asked.
+        let answer = chosen.get(index).filter(|c| !c.is_empty());
+        commands.spawn((
+            text(
+                fonts,
+                answer.cloned().unwrap_or_else(|| t!("common-none")),
+                Face::Sans,
+                13.0,
+                match (here, answer.is_some()) {
+                    (true, _) => TEXT_BRIGHT,
+                    (false, true) => TEXT_MID,
+                    (false, false) => TEXT_FAINT,
+                },
+            ),
+            ChildOf(column),
+        ));
     }
 }
 
@@ -1094,6 +1286,10 @@ fn build_rows(
     for (i, entry) in items.iter().enumerate() {
         if entry.heading {
             build_heading(commands, fonts, list, i, entry);
+            continue;
+        }
+        if entry.verb {
+            build_verb(commands, fonts, list, i, entry, i == menu.selected);
             continue;
         }
         let on = i == menu.selected;
@@ -1115,7 +1311,7 @@ fn build_rows(
                 },
                 BorderColor::all(match (on, entry.warning) {
                     (true, _) => ACCENT,
-                    (false, true) => DANGER,
+                    (false, true) => WARN,
                     (false, false) => Color::NONE,
                 }),
                 BackgroundColor(match (on, menu.hovered == Some(i)) {
@@ -1187,22 +1383,12 @@ fn build_rows(
             ChildOf(line),
         ));
         if !entry.chip.is_empty() {
-            build_chip(commands, fonts, line, &entry.chip, TEXT_DIM, Color::NONE);
-        }
-        if entry.setting.is_some_and(Setting::needs_restart) {
-            build_chip(
-                commands,
-                fonts,
-                line,
-                &t!("set-restart-badge"),
-                ACCENT,
-                ACCENT_SOFT,
-            );
+            build_chip(commands, fonts, line, &entry.chip);
         }
         // The help line belongs to the row the cursor is on. All nine at once is a wall
         // of prose that nobody reads.
         let second = if entry.warning {
-            Some((entry.hint.clone(), Face::Sans, DANGER))
+            Some((entry.hint.clone(), Face::Sans, WARN))
         } else if on && !entry.hint.is_empty() {
             Some((entry.hint.clone(), Face::Sans, TEXT_MID))
         } else if !entry.meta.is_empty() {
@@ -1229,6 +1415,58 @@ fn build_rows(
             ));
         }
     }
+}
+
+/// A verb on the title screen: large type on nothing at all, with a red marker and a step
+/// to the right when the cursor is on it. No card, no fill — a front door is not a list.
+fn build_verb(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    list: Entity,
+    index: usize,
+    entry: &Entry,
+    on: bool,
+) {
+    let row = commands
+        .spawn((
+            Node {
+                height: Val::Px(VERB_HEIGHT),
+                flex_shrink: 0.0,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(18.0),
+                padding: UiRect::left(Val::Px(if on { 0.0 } else { 16.0 })),
+                ..default()
+            },
+            MenuRow(index),
+            ChildOf(list),
+        ))
+        .observe(on_row_over)
+        .observe(on_row_out)
+        .observe(on_row_click)
+        .id();
+    if on {
+        commands.spawn((
+            Node {
+                width: Val::Px(4.0),
+                height: Val::Px(26.0),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            BackgroundColor(BRAND),
+            ChildOf(row),
+        ));
+    }
+    commands.spawn((
+        text(
+            fonts,
+            entry.label.clone(),
+            if on { Face::Semibold } else { Face::Sans },
+            26.0,
+            if on { TEXT_BRIGHT } else { TEXT_MID },
+        ),
+        ChildOf(row),
+    ));
 }
 
 /// A section heading on the settings page: a small caps label and a rule filling the
@@ -1276,30 +1514,22 @@ fn build_heading(
     ));
 }
 
-/// A small pill: the mod a row came from, or the note that a setting waits for the next
-/// run. Uppercase at 10 px needs the extra padding to stop looking like a grey brick.
-fn build_chip(
-    commands: &mut Commands,
-    fonts: &Fonts,
-    parent: Entity,
-    label: &str,
-    color: Color,
-    background: Color,
-) {
+/// Where a row came from, beside its name: the simulator itself, the mod that brought it,
+/// or that it is a composition. Uppercase at 10 px needs the padding to stop looking like
+/// a grey brick.
+fn build_chip(commands: &mut Commands, fonts: &Fonts, parent: Entity, label: &str) {
     let chip = commands
         .spawn((
             Node {
                 padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
-                border_radius: BorderRadius::all(Val::Px(3.0)),
                 flex_shrink: 0.0,
                 ..default()
             },
-            BackgroundColor(background),
             ChildOf(parent),
         ))
         .id();
     commands.spawn((
-        text(fonts, label.to_uppercase(), Face::Semibold, 10.0, color),
+        text(fonts, label.to_uppercase(), Face::Semibold, 10.0, TEXT_DIM),
         ChildOf(chip),
     ));
 }
@@ -1460,12 +1690,16 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
             match page {
                 Page::Scenario => "menu-hint-start",
                 Page::Mods => "menu-hint-toggle",
+                Page::Root | Page::Pause => "menu-hint-open",
                 _ => "menu-hint-confirm",
             },
         ));
     }
-    keys.push(("Esc", "menu-hint-back"));
-    keys.push(("Tab", "menu-hint-section"));
+    match page {
+        Page::Root => {}
+        Page::Pause => keys.push(("Esc", "menu-hint-resume")),
+        _ => keys.push(("Esc", "menu-hint-back")),
+    }
     for (cap, label) in keys {
         let chip = commands
             .spawn((
@@ -1636,6 +1870,7 @@ fn build_detail(
 
 fn title(page: Page) -> String {
     match page {
+        Page::Root | Page::Pause => String::new(),
         Page::Line => t!("menu-select-line"),
         Page::Loco => t!("menu-select-loco"),
         Page::Scenario => t!("menu-select-scenario"),
@@ -1644,13 +1879,16 @@ fn title(page: Page) -> String {
     }
 }
 
-/// The line under the title: how far through the drive section we are, what the mods
-/// contribute, or where the settings file lives.
+/// The line under the title: what to do on this page, what the mods contribute, or where
+/// the settings file lives. Which step we are on is the rail's job now.
 fn caption(page: Page, runtime: &mod_runtime::ModRuntime, manager: &ModManager) -> String {
     match page {
+        Page::Root | Page::Pause => String::new(),
         Page::Settings => t!("set-stored"),
         Page::Mods => mods_ui::details(runtime, manager, true),
-        _ => t!("menu-step", step = page.step().unwrap_or(1), total = 3),
+        Page::Line => t!("menu-select-line-hint"),
+        Page::Loco => t!("menu-select-loco-hint"),
+        Page::Scenario => t!("menu-select-scenario-hint"),
     }
 }
 
@@ -1677,6 +1915,7 @@ fn origin(id: &str) -> String {
 /// is never empty and the run starts even with no mod installed.
 fn entries(
     page: Page,
+    overlay: bool,
     runtime: &mod_runtime::ModRuntime,
     graphics: &Graphics,
     audio: &Audio,
@@ -1693,6 +1932,22 @@ fn entries(
         ..default()
     };
     match page {
+        // The two pages of verbs, each with one line about what it does.
+        Page::Root | Page::Pause => {
+            let keys: Vec<&str> = if page == Page::Pause {
+                PAUSE_VERBS.to_vec()
+            } else {
+                VERBS.iter().map(|(key, _)| *key).collect()
+            };
+            keys.into_iter()
+                .map(|key| Entry {
+                    label: t!(key),
+                    hint: t!(&format!("{key}-hint")),
+                    verb: true,
+                    ..default()
+                })
+                .collect()
+        }
         // Lines and compositions share one list: `resolve_line` takes either name, and
         // the player is picking a route, not a file format.
         Page::Line => std::iter::once(builtin("menu-line-builtin", line_meta(&musterbahn())))
@@ -1754,24 +2009,34 @@ fn entries(
                 }
             })
             .collect(),
+        // Over a run the page is shorter (see `NOT_WHILE_DRIVING`) — and a group that
+        // loses all of its rows loses its heading with them.
         Page::Settings => SETTINGS
             .iter()
             .flat_map(|(heading, group)| {
-                std::iter::once(Entry {
+                let group: Vec<&Setting> = group
+                    .iter()
+                    .filter(|setting| !overlay || !NOT_WHILE_DRIVING.contains(setting))
+                    .collect();
+                let heading = (!group.is_empty()).then(|| Entry {
                     label: t!(heading),
                     heading: true,
                     ..default()
-                })
-                .chain(group.iter().map(|setting| Entry {
-                    label: t!(setting.key()),
-                    hint: t!(&format!("{}-hint", setting.key())),
-                    value: setting.value(graphics, audio, gameplay),
-                    setting: Some(*setting),
-                    control: Some(setting.control(graphics, audio, gameplay)),
-                    ..default()
-                }))
+                });
+                heading
+                    .into_iter()
+                    .chain(group.into_iter().map(|setting| Entry {
+                        label: t!(setting.key()),
+                        hint: t!(&format!("{}-hint", setting.key())),
+                        value: setting.value(graphics, audio, gameplay),
+                        setting: Some(*setting),
+                        control: Some(setting.control(graphics, audio, gameplay)),
+                        ..default()
+                    }))
             })
-            .chain(std::iter::once(Entry {
+            // Resetting everything at once is too blunt a thing to have under the cursor
+            // while a train is standing on a gradient.
+            .chain((!overlay).then(|| Entry {
                 label: t!(Setting::Reset.key()),
                 hint: t!("set-reset-hint"),
                 setting: Some(Setting::Reset),
@@ -1953,7 +2218,7 @@ fn facts(page: Page, entry: &Entry, runtime: &mod_runtime::ModRuntime) -> Option
                 ..base(Vec::new())
             })
         }
-        Page::Mods | Page::Settings => None,
+        Page::Root | Page::Pause | Page::Mods | Page::Settings => None,
     }
 }
 
@@ -1994,6 +2259,7 @@ mod tests {
             .init_resource::<Audio>()
             .init_resource::<Gameplay>()
             .init_resource::<Fonts>()
+            .init_resource::<Wallpaper>()
             // The example mod is the run's content; a missing directory is not an error,
             // so this also covers the "no mods installed" case on CI.
             .insert_resource(Mods(mod_runtime::ModRuntime::load("../../mods")))
@@ -2037,12 +2303,12 @@ mod tests {
         let runtime = mod_runtime::ModRuntime::load("does-not-exist");
         let (graphics, audio, gameplay) = default();
         for page in [Page::Line, Page::Loco, Page::Scenario, Page::Settings] {
-            let items = entries(page, &runtime, &graphics, &audio, &gameplay);
+            let items = entries(page, false, &runtime, &graphics, &audio, &gameplay);
             assert!(!items.is_empty(), "{page:?} is empty");
         }
         // The defaults carry no id — `setup` reads that as "use the built-in".
         for page in [Page::Line, Page::Loco, Page::Scenario] {
-            let items = entries(page, &runtime, &graphics, &audio, &gameplay);
+            let items = entries(page, false, &runtime, &graphics, &audio, &gameplay);
             assert!(items[0].id.is_none(), "{page:?}");
         }
     }
@@ -2054,7 +2320,7 @@ mod tests {
     fn every_row_says_where_it_comes_from() {
         let (runtime, graphics, audio, gameplay) = loaded();
         for page in [Page::Line, Page::Loco] {
-            for entry in entries(page, &runtime, &graphics, &audio, &gameplay) {
+            for entry in entries(page, false, &runtime, &graphics, &audio, &gameplay) {
                 assert!(
                     !entry.chip.is_empty(),
                     "{page:?}: {} has no chip",
@@ -2070,7 +2336,7 @@ mod tests {
     #[test]
     fn the_detail_pane_reads_the_content() {
         let (runtime, graphics, audio, gameplay) = loaded();
-        let lines = entries(Page::Line, &runtime, &graphics, &audio, &gameplay);
+        let lines = entries(Page::Line, false, &runtime, &graphics, &audio, &gameplay);
         let line = facts(Page::Line, &lines[0], &runtime).expect("the built-in line has facts");
         assert!(!line.rows.is_empty());
         assert!(
@@ -2078,19 +2344,29 @@ mod tests {
             "the example line is km long"
         );
 
-        let locos = entries(Page::Loco, &runtime, &graphics, &audio, &gameplay);
+        let locos = entries(Page::Loco, false, &runtime, &graphics, &audio, &gameplay);
         let loco = facts(Page::Loco, &locos[0], &runtime).expect("the BR 101 has facts");
         assert_eq!(loco.rows.len(), 5);
         // Mods and settings have nothing to show beside the list.
-        let settings = entries(Page::Settings, &runtime, &graphics, &audio, &gameplay);
+        let settings = entries(
+            Page::Settings,
+            false,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+        );
         assert!(facts(Page::Settings, &settings[1], &runtime).is_none());
     }
 
-    /// The whole flow without a window: three confirmations pick line, vehicle and
-    /// scenario and hand over to `Driving`; Esc walks back the same way.
+    /// The whole flow without a window: the title screen opens the first step, three
+    /// confirmations pick line, vehicle and scenario and hand over to `Driving`; Esc
+    /// walks back the same way and ends at the title screen.
     #[test]
     fn the_start_flow_reaches_driving_and_esc_walks_back() {
         let mut app = app();
+        assert_eq!(page(&app), Page::Root, "the menu opens on the title screen");
+        key(&mut app, KeyCode::Enter);
         assert_eq!(page(&app), Page::Line);
 
         key(&mut app, KeyCode::Enter);
@@ -2120,16 +2396,102 @@ mod tests {
         assert!(selection.scenario_id.is_none(), "no scenario was picked");
     }
 
-    /// Tab walks the navigation column; the mods page is reachable and Esc leads home.
+    /// Every verb of the title screen leads somewhere, and Esc from anywhere leads back
+    /// to it — without a navigation rail that is the only way home.
     #[test]
-    fn tab_walks_the_navigation_column() {
+    fn every_verb_opens_its_page_and_esc_leads_home() {
+        for (index, expected) in [(1, Page::Mods), (2, Page::Settings)] {
+            let mut app = app();
+            for _ in 0..index {
+                key(&mut app, KeyCode::ArrowDown);
+            }
+            key(&mut app, KeyCode::Enter);
+            assert_eq!(page(&app), expected);
+            key(&mut app, KeyCode::Escape);
+            assert_eq!(page(&app), Page::Root);
+        }
+        // The last verb is the one that has no page: it leaves.
         let mut app = app();
-        key(&mut app, KeyCode::Tab);
-        assert_eq!(page(&app), Page::Mods);
-        key(&mut app, KeyCode::Tab);
+        for _ in 0..3 {
+            key(&mut app, KeyCode::ArrowDown);
+        }
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Root, "quitting does not open a page");
+    }
+
+    /// The pause overlay: Esc resumes, the settings are reachable from it and come back
+    /// to it, and the page it shows is shorter than the front end's.
+    #[test]
+    fn the_pause_overlay_resumes_and_holds_the_settings() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<MenuState>()
+            .init_resource::<Selection>()
+            .init_resource::<ModManager>()
+            .init_resource::<Graphics>()
+            .init_resource::<Audio>()
+            .init_resource::<Gameplay>()
+            .init_resource::<Fonts>()
+            .init_resource::<Wallpaper>()
+            .insert_resource(Mods(mod_runtime::ModRuntime::load("../../mods")))
+            .insert_state(GameState::Paused)
+            .add_systems(OnEnter(GameState::Paused), spawn_pause)
+            .add_systems(Update, menu.run_if(in_state(GameState::Paused)));
+        app.update();
+        assert_eq!(page(&app), Page::Pause);
+
+        // Esc on the overlay's root is the way out — back into the run, not to a title
+        // screen that would have to tear the world down.
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Driving
+        );
+
+        // Row 1 is the settings, and Esc from there comes back to the overlay.
+        app.world_mut()
+            .insert_resource(NextState::Pending(GameState::Paused));
+        app.update();
+        key(&mut app, KeyCode::ArrowDown);
+        key(&mut app, KeyCode::Enter);
         assert_eq!(page(&app), Page::Settings);
         key(&mut app, KeyCode::Escape);
-        assert_eq!(page(&app), Page::Line);
+        assert_eq!(page(&app), Page::Pause);
+    }
+
+    /// What "abgespeckt" means: the overlay's settings page leaves the language and the
+    /// reset out, and nothing else.
+    #[test]
+    fn the_overlay_settings_are_shorter_by_exactly_two_rows() {
+        let (runtime, graphics, audio, gameplay) = loaded();
+        let front = entries(
+            Page::Settings,
+            false,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+        );
+        let paused = entries(Page::Settings, true, &runtime, &graphics, &audio, &gameplay);
+        let settings = |items: &[Entry]| -> Vec<Setting> {
+            items.iter().filter_map(|entry| entry.setting).collect()
+        };
+        let missing: Vec<Setting> = settings(&front)
+            .into_iter()
+            .filter(|setting| !settings(&paused).contains(setting))
+            .collect();
+        assert_eq!(missing, vec![Setting::Language, Setting::Reset]);
+        // Every group that still has rows keeps its heading, and no group is left empty.
+        assert!(paused.iter().any(|entry| entry.heading));
+        for (index, entry) in paused.iter().enumerate() {
+            if entry.heading {
+                assert!(
+                    paused.get(index + 1).is_some_and(|next| !next.heading),
+                    "an empty group kept its heading"
+                );
+            }
+        }
     }
 
     /// The settings page opens on a value, not on the heading above it, and ← / → dial
@@ -2137,7 +2499,7 @@ mod tests {
     #[test]
     fn the_settings_page_skips_headings_and_dials_values() {
         let mut app = app();
-        app.world_mut().resource_mut::<MenuState>().nav_click = Some(2);
+        app.world_mut().resource_mut::<MenuState>().page = Page::Settings;
         app.update();
         assert_eq!(page(&app), Page::Settings);
         assert_eq!(
@@ -2157,6 +2519,7 @@ mod tests {
         let selected = app.world().resource::<MenuState>().selected;
         let items = entries(
             Page::Settings,
+            false,
             &app.world().resource::<Mods>().0,
             app.world().resource::<Graphics>(),
             app.world().resource::<Audio>(),

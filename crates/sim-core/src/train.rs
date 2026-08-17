@@ -428,7 +428,8 @@ impl Default for VehicleSpec {
                 c: 5.0,
             },
             brake: BrakeSpec::from_brake_weight(40.0, BrakeKind::Disc),
-            traction: None,
+            drives: Vec::new(),
+            legacy_traction: None,
             coupler: CouplerSpec::screw(),
             adhesive_mass_fraction: 0.0,
             slip_protection: SlipProtection::None,
@@ -545,7 +546,7 @@ impl Vehicle {
     }
 
     pub fn is_powered(&self) -> bool {
-        self.spec.traction.is_some()
+        self.spec.powered()
     }
 }
 

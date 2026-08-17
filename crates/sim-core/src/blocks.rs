@@ -16,11 +16,13 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::brakes::{BrakeKind, BrakePosition, BrakeSpec, ControlValve, LoadBraking, SlipProtection};
+use crate::brakes::{
+    BrakeKind, BrakePosition, BrakeSpec, ControlValve, LoadBraking, SlipProtection,
+};
 use crate::doors::DoorSystem;
 use crate::drive::{
-    Circuit, DieselEngine, DynamicBrake, Governor, HydrodynamicBrake, SeriesMotor, TractionSpec,
-    Transmission,
+    Circuit, DieselEngine, DriveSpec, DynamicBrake, Governor, HydrodynamicBrake, SeriesMotor,
+    TractionSpec, Transmission,
 };
 use crate::safety::SafetyEquipment;
 use crate::safety::de::{PzbVariant, SifaKind, TrainType};
@@ -139,7 +141,10 @@ pub enum ParamKind {
     Choice(Vec<String>),
     Text,
     /// Units label the axes of the curve editor.
-    Curve { x_unit: String, y_unit: String },
+    Curve {
+        x_unit: String,
+        y_unit: String,
+    },
     List,
     Circuits,
 }
@@ -506,7 +511,15 @@ impl Registry {
                 Energy,
                 vec![],
                 vec![port("out", "port-fuel", Fuel)],
-                vec![num("capacity", "drv-fuel-capacity", "l", 0.0, 20_000.0, 10.0, 3000.0)],
+                vec![num(
+                    "capacity",
+                    "drv-fuel-capacity",
+                    "l",
+                    0.0,
+                    20_000.0,
+                    10.0,
+                    3000.0,
+                )],
             ),
             def("pantograph", Energy, vec![], vec![elec_out()], vec![]),
             def(
@@ -515,15 +528,39 @@ impl Registry {
                 vec![port("fuel", "port-fuel", Fuel), ctrl_in()],
                 vec![shaft_out()],
                 vec![
-                    num("max_force", "drv-start-force-diesel", "N", 0.0, 2.0e6, 500.0, 235_000.0),
-                    num("max_power", "drv-power", "W", 0.0, 20.0e6, 5000.0, 900_000.0),
+                    num(
+                        "max_force",
+                        "drv-start-force-diesel",
+                        "N",
+                        0.0,
+                        2.0e6,
+                        500.0,
+                        235_000.0,
+                    ),
+                    num(
+                        "max_power",
+                        "drv-power",
+                        "W",
+                        0.0,
+                        20.0e6,
+                        5000.0,
+                        900_000.0,
+                    ),
                     num("v_max", "drv-vmax", "km/h", 0.0, 500.0, 1.0, 140.0),
                     num("ramp_time", "drv-ramp", "s", 0.1, 60.0, 0.1, 8.0),
                     num("start_time", "drv-crank-time", "s", 0.0, 60.0, 0.1, 8.0),
                     flag("engine_map", "eng-map", true),
                     num("idle_rpm", "eng-idle", "1/min", 0.0, 3000.0, 5.0, 650.0),
                     num("rated_rpm", "eng-rated", "1/min", 0.0, 3000.0, 5.0, 1500.0),
-                    num("max_rpm", "eng-overspeed", "1/min", 0.0, 3500.0, 5.0, 1600.0),
+                    num(
+                        "max_rpm",
+                        "eng-overspeed",
+                        "1/min",
+                        0.0,
+                        3500.0,
+                        5.0,
+                        1600.0,
+                    ),
                     curve(
                         "torque_curve",
                         "eng-torque-curve",
@@ -554,9 +591,25 @@ impl Registry {
                     num("fill_steps", "trm-fill-steps", "", 0.0, 40.0, 1.0, 0.0),
                     num("fill_time", "trm-fill-time", "s", 0.05, 10.0, 0.05, 1.2),
                     num("drain_time", "trm-drain-time", "s", 0.0, 10.0, 0.05, 0.0),
-                    num("hysteresis_kmh", "trm-hysteresis", "km/h", 0.0, 30.0, 0.5, 8.0),
+                    num(
+                        "hysteresis_kmh",
+                        "trm-hysteresis",
+                        "km/h",
+                        0.0,
+                        30.0,
+                        0.5,
+                        8.0,
+                    ),
                     num("final_ratio", "trm-final-ratio", "", 0.1, 20.0, 0.01, 1.9),
-                    num("wheel_diameter", "drv-wheel-diameter", "m", 0.3, 2.0, 0.01, 1.0),
+                    num(
+                        "wheel_diameter",
+                        "drv-wheel-diameter",
+                        "m",
+                        0.3,
+                        2.0,
+                        0.01,
+                        1.0,
+                    ),
                     num("count", "trm-count", "", 1.0, 8.0, 1.0, 1.0),
                     num("efficiency", "trm-efficiency", "", 0.5, 1.0, 0.01, 0.96),
                 ],
@@ -569,14 +622,44 @@ impl Registry {
                 vec![
                     num("absorption", "ret-absorption", "", 0.0, 10.0, 0.01, 0.4),
                     num("ratio", "ret-ratio", "", 0.1, 10.0, 0.01, 2.0),
-                    num("wheel_diameter", "drv-wheel-diameter", "m", 0.3, 2.0, 0.01, 1.0),
-                    num("max_force", "ret-brake-force", "N", 0.0, 500_000.0, 500.0, 80_000.0),
-                    num("max_power", "ret-brake-power", "W", 0.0, 5.0e6, 5000.0, 1.0e6),
+                    num(
+                        "wheel_diameter",
+                        "drv-wheel-diameter",
+                        "m",
+                        0.3,
+                        2.0,
+                        0.01,
+                        1.0,
+                    ),
+                    num(
+                        "max_force",
+                        "ret-brake-force",
+                        "N",
+                        0.0,
+                        500_000.0,
+                        500.0,
+                        80_000.0,
+                    ),
+                    num(
+                        "max_power",
+                        "ret-brake-power",
+                        "W",
+                        0.0,
+                        5.0e6,
+                        5000.0,
+                        1.0e6,
+                    ),
                     num("fill_time", "ret-fill-time", "s", 0.05, 10.0, 0.05, 1.5),
                     num("fade_out_kmh", "drv-fade", "km/h", 0.0, 100.0, 1.0, 10.0),
                 ],
             ),
-            def("generator", Drivetrain, vec![shaft_in()], vec![elec_out()], vec![]),
+            def(
+                "generator",
+                Drivetrain,
+                vec![shaft_in()],
+                vec![elec_out()],
+                vec![],
+            ),
             def(
                 "traction-motor",
                 Drivetrain,
@@ -592,19 +675,71 @@ impl Registry {
                 vec![
                     num("count", "mot-count", "", 1.0, 16.0, 1.0, 4.0),
                     num("resistance", "mot-resistance", "Ω", 0.001, 5.0, 0.001, 0.05),
-                    num("flux_constant", "mot-machine-constant", "V·s/A", 0.001, 1.0, 0.001, 0.011),
-                    num("saturation_current", "mot-saturation", "A", 10.0, 5000.0, 5.0, 550.0),
-                    num("max_current", "mot-max-current", "A", 10.0, 5000.0, 5.0, 620.0),
-                    num("max_voltage", "mot-max-voltage", "V", 10.0, 5000.0, 5.0, 590.0),
+                    num(
+                        "flux_constant",
+                        "mot-machine-constant",
+                        "V·s/A",
+                        0.001,
+                        1.0,
+                        0.001,
+                        0.011,
+                    ),
+                    num(
+                        "saturation_current",
+                        "mot-saturation",
+                        "A",
+                        10.0,
+                        5000.0,
+                        5.0,
+                        550.0,
+                    ),
+                    num(
+                        "max_current",
+                        "mot-max-current",
+                        "A",
+                        10.0,
+                        5000.0,
+                        5.0,
+                        620.0,
+                    ),
+                    num(
+                        "max_voltage",
+                        "mot-max-voltage",
+                        "V",
+                        10.0,
+                        5000.0,
+                        5.0,
+                        590.0,
+                    ),
                     list("field_steps", "mot-field-steps", vec![1.0]),
                     num("gear_ratio", "mot-gear-ratio", "", 0.5, 10.0, 0.01, 3.17),
-                    num("wheel_diameter", "drv-wheel-diameter", "m", 0.3, 2.0, 0.01, 1.25),
+                    num(
+                        "wheel_diameter",
+                        "drv-wheel-diameter",
+                        "m",
+                        0.3,
+                        2.0,
+                        0.01,
+                        1.25,
+                    ),
                     num("efficiency", "mot-efficiency", "", 0.5, 1.0, 0.01, 0.9),
                 ],
             ),
             // --- Electric ---------------------------------------------------
-            def("main-switch", Electric, vec![elec_in()], vec![elec_out()], vec![]),
-            def("transformer", Electric, vec![elec_in()], vec![elec_out()], vec![]),
+            def(
+                "main-switch",
+                Electric,
+                vec![elec_in()],
+                vec![elec_out()],
+                vec![],
+            ),
+            def(
+                "transformer",
+                Electric,
+                vec![elec_in()],
+                vec![elec_out()],
+                vec![],
+            ),
             def(
                 "tap-changer",
                 Electric,
@@ -612,7 +747,15 @@ impl Registry {
                 vec![elec_out()],
                 vec![
                     num("steps", "tap-steps", "", 1.0, 60.0, 1.0, 28.0),
-                    num("max_force", "drv-start-force", "N", 0.0, 2.0e6, 500.0, 275_000.0),
+                    num(
+                        "max_force",
+                        "drv-start-force",
+                        "N",
+                        0.0,
+                        2.0e6,
+                        500.0,
+                        275_000.0,
+                    ),
                     num("max_power", "drv-power", "W", 0.0, 20.0e6, 5000.0, 3.7e6),
                     num("v_max", "drv-vmax", "km/h", 0.0, 500.0, 1.0, 150.0),
                     num("step_time", "tap-step-time", "s", 0.01, 5.0, 0.01, 0.6),
@@ -624,7 +767,15 @@ impl Registry {
                 vec![elec_in(), ctrl_in()],
                 vec![elec_out()],
                 vec![
-                    num("max_force", "drv-start-force", "N", 0.0, 2.0e6, 500.0, 300_000.0),
+                    num(
+                        "max_force",
+                        "drv-start-force",
+                        "N",
+                        0.0,
+                        2.0e6,
+                        500.0,
+                        300_000.0,
+                    ),
                     num("max_power", "drv-power", "W", 0.0, 20.0e6, 5000.0, 6.4e6),
                     num("v_max", "drv-vmax", "km/h", 0.0, 500.0, 1.0, 220.0),
                     num("ramp_time", "drv-ramp", "s", 0.1, 60.0, 0.1, 2.5),
@@ -637,9 +788,33 @@ impl Registry {
                 vec![elec_in()],
                 vec![],
                 vec![
-                    num("max_force", "drv-brake-force", "N", 0.0, 1.0e6, 500.0, 150_000.0),
-                    num("max_power", "drv-brake-power", "W", 0.0, 10.0e6, 5000.0, 4.0e6),
-                    num("fade_out_kmh", "drv-brake-fade", "km/h", 0.0, 100.0, 1.0, 5.0),
+                    num(
+                        "max_force",
+                        "drv-brake-force",
+                        "N",
+                        0.0,
+                        1.0e6,
+                        500.0,
+                        150_000.0,
+                    ),
+                    num(
+                        "max_power",
+                        "drv-brake-power",
+                        "W",
+                        0.0,
+                        10.0e6,
+                        5000.0,
+                        4.0e6,
+                    ),
+                    num(
+                        "fade_out_kmh",
+                        "drv-brake-fade",
+                        "km/h",
+                        0.0,
+                        100.0,
+                        1.0,
+                        5.0,
+                    ),
                     flag("regenerative", "drv-regenerative", false),
                     num("ramp_time", "drv-ramp", "s", 0.1, 60.0, 0.1, 2.5),
                 ],
@@ -684,7 +859,15 @@ impl Registry {
                 Brake,
                 vec![air_in()],
                 vec![air_out()],
-                vec![num("volume", "brk-main-volume", "l", 0.0, 5000.0, 10.0, 1000.0)],
+                vec![num(
+                    "volume",
+                    "brk-main-volume",
+                    "l",
+                    0.0,
+                    5000.0,
+                    10.0,
+                    1000.0,
+                )],
             ),
             def(
                 "driver-brake-valve",
@@ -727,7 +910,15 @@ impl Registry {
                         "none",
                     ),
                     num("empty_share", "brk-load-empty", "", 0.0, 1.0, 0.01, 0.6),
-                    num("changeover_mass", "brk-load-mass", "t", 0.0, 200.0, 0.5, 0.0),
+                    num(
+                        "changeover_mass",
+                        "brk-load-mass",
+                        "t",
+                        0.0,
+                        200.0,
+                        0.5,
+                        0.0,
+                    ),
                 ],
             ),
             def(
@@ -774,7 +965,14 @@ impl Registry {
                     choice(
                         "kind",
                         "brk-friction",
-                        &["block", "disc", "composite-k", "composite-ll", "magnetic", "custom"],
+                        &[
+                            "block",
+                            "disc",
+                            "composite-k",
+                            "composite-ll",
+                            "magnetic",
+                            "custom",
+                        ],
                         "block",
                     ),
                     curve("friction_curve", "brk-friction-points", "km/h", "µ", vec![]),
@@ -786,7 +984,15 @@ impl Registry {
                 Brake,
                 vec![port("supply", "port-supply", Pneumatic), ctrl_in()],
                 vec![air_out()],
-                vec![num("max_cylinder", "brk-direct-cylinder", "bar", 0.0, 10.0, 0.05, 0.0)],
+                vec![num(
+                    "max_cylinder",
+                    "brk-direct-cylinder",
+                    "bar",
+                    0.0,
+                    10.0,
+                    0.05,
+                    0.0,
+                )],
             ),
             def(
                 "parking-brake",
@@ -803,7 +1009,15 @@ impl Registry {
                 Brake,
                 vec![air_in()],
                 vec![force_out()],
-                vec![num("force", "brk-mg-force", "N", 0.0, 500_000.0, 500.0, 90_000.0)],
+                vec![num(
+                    "force",
+                    "brk-mg-force",
+                    "N",
+                    0.0,
+                    500_000.0,
+                    500.0,
+                    90_000.0,
+                )],
             ),
             def(
                 "wheel-slide-protection",
@@ -879,7 +1093,15 @@ impl Registry {
                     choice(
                         "variant",
                         "eq-pzb",
-                        &["i54", "i60", "i60m", "i60r", "pzb60", "pzb90-v15", "pzb90-v20"],
+                        &[
+                            "i54",
+                            "i60",
+                            "i60m",
+                            "i60r",
+                            "pzb60",
+                            "pzb90-v15",
+                            "pzb90-v20",
+                        ],
                         "pzb90-v20",
                     ),
                     choice("train_type", "eq-train-type", &["o", "m", "u"], "o"),
@@ -892,11 +1114,22 @@ impl Registry {
                 vec![],
                 vec![],
                 vec![
-                    choice("system", "eq-doors", &["none", "tb0", "tav", "uic-wtb"], "tav"),
+                    choice(
+                        "system",
+                        "eq-doors",
+                        &["none", "tb0", "tav", "uic-wtb"],
+                        "tav",
+                    ),
                     flag("passenger_doors", "eq-passenger-doors", true),
                 ],
             ),
-            def("script", Equipment, vec![], vec![], vec![text("script", "veh-script")]),
+            def(
+                "script",
+                Equipment,
+                vec![],
+                vec![],
+                vec![text("script", "veh-script")],
+            ),
         ];
         Registry { defs }
     }
@@ -988,7 +1221,8 @@ impl<'a> Baker<'a> {
         if let (Some(f), Some(_)) = (self.find(from), self.find(to))
             && !self.wired(from, to)
         {
-            self.issues.push(BakeIssue::warn(Some(f.id), "bake-missing-wire"));
+            self.issues
+                .push(BakeIssue::warn(Some(f.id), "bake-missing-wire"));
         }
     }
 }
@@ -1007,11 +1241,13 @@ pub fn bake(graph: &VehicleGraph, reg: &Registry, spec: &mut VehicleSpec) -> Vec
     let mut seen: BTreeMap<&str, u32> = BTreeMap::new();
     for block in &graph.blocks {
         let Some(kind) = reg.base_kind(&block.kind) else {
-            b.issues.push(BakeIssue::error(Some(block.id), "bake-unknown-block"));
+            b.issues
+                .push(BakeIssue::error(Some(block.id), "bake-unknown-block"));
             continue;
         };
         if seen.insert(kind, block.id).is_some() {
-            b.issues.push(BakeIssue::error(Some(block.id), "bake-duplicate-block"));
+            b.issues
+                .push(BakeIssue::error(Some(block.id), "bake-duplicate-block"));
         }
     }
 
@@ -1042,7 +1278,8 @@ pub fn bake(graph: &VehicleGraph, reg: &Registry, spec: &mut VehicleSpec) -> Vec
             .iter()
             .any(|w| w.from == block.id || w.to == block.id);
         if has_ports && !touched {
-            b.issues.push(BakeIssue::warn(Some(block.id), "bake-unconnected"));
+            b.issues
+                .push(BakeIssue::warn(Some(block.id), "bake-unconnected"));
         }
     }
 
@@ -1074,7 +1311,12 @@ fn dynamic_brake_from(b: &Baker, block: &GraphBlock) -> DynamicBrake {
 }
 
 fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
-    let drives = ["traction-curve", "tap-changer", "traction-converter", "diesel-engine"];
+    let drives = [
+        "traction-curve",
+        "tap-changer",
+        "traction-converter",
+        "diesel-engine",
+    ];
     let present: Vec<&str> = drives
         .iter()
         .copied()
@@ -1086,10 +1328,13 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
     }
     let dynamic = b.find("dynamic-brake");
 
-    spec.traction = match present.first().copied() {
+    // ponytail: the graph holds one traction chain — a second drive block is an error
+    // above. Bake a Vec of chains once the diagram can express more than one.
+    let traction = match present.first().copied() {
         None => {
             if let Some(blk) = dynamic {
-                b.issues.push(BakeIssue::warn(Some(blk.id), "bake-brake-needs-drive"));
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-brake-needs-drive"));
             }
             None
         }
@@ -1105,7 +1350,8 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
         Some("tap-changer") => {
             let blk = b.find("tap-changer").unwrap();
             if b.find("pantograph").is_none() {
-                b.issues.push(BakeIssue::warn(Some(blk.id), "bake-no-pantograph"));
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-no-pantograph"));
             }
             let motor = b.find("series-motor").map(|m| SeriesMotor {
                 count: b.num(m, "count").max(1.0) as u32,
@@ -1132,7 +1378,8 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
         Some("traction-converter") => {
             let blk = b.find("traction-converter").unwrap();
             if b.find("pantograph").is_none() {
-                b.issues.push(BakeIssue::warn(Some(blk.id), "bake-no-pantograph"));
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-no-pantograph"));
             }
             let brake = dynamic.map(|d| dynamic_brake_from(b, d));
             Some(TractionSpec::Converter {
@@ -1170,14 +1417,17 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
                 efficiency: b.num(t, "efficiency"),
             });
             if transmission.is_some() && engine.is_none() {
-                b.issues.push(BakeIssue::warn(Some(blk.id), "bake-transmission-needs-map"));
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-transmission-needs-map"));
             }
             if transmission.is_some() && b.find("generator").is_some() {
-                b.issues.push(BakeIssue::warn(Some(blk.id), "bake-hydro-and-generator"));
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-hydro-and-generator"));
             }
             if dynamic.is_some() && b.find("generator").is_none() {
                 let id = dynamic.map(|d| d.id);
-                b.issues.push(BakeIssue::warn(id, "bake-brake-needs-generator"));
+                b.issues
+                    .push(BakeIssue::warn(id, "bake-brake-needs-generator"));
             }
             Some(TractionSpec::Diesel {
                 max_force: b.num(blk, "max_force"),
@@ -1201,10 +1451,12 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
         }
         Some(_) => unreachable!(),
     };
+    spec.drives = traction.into_iter().map(DriveSpec::new).collect();
 
     if b.find("series-motor").is_some() && b.find("tap-changer").is_none() {
         let id = b.find("series-motor").map(|m| m.id);
-        b.issues.push(BakeIssue::warn(id, "bake-series-motor-unused"));
+        b.issues
+            .push(BakeIssue::warn(id, "bake-series-motor-unused"));
     }
 
     // The chains the canvas should show as connected.
@@ -1242,15 +1494,18 @@ fn control_valve_from(value: &str) -> ControlValve {
 
 fn bake_brakes(b: &mut Baker, spec: &mut VehicleSpec) {
     let Some(cv) = b.find("control-valve") else {
-        b.issues.push(BakeIssue::error(None, "bake-no-control-valve"));
+        b.issues
+            .push(BakeIssue::error(None, "bake-no-control-valve"));
         return;
     };
     let Some(cylinder) = b.find("brake-cylinder") else {
-        b.issues.push(BakeIssue::error(None, "bake-no-brake-cylinder"));
+        b.issues
+            .push(BakeIssue::error(None, "bake-no-brake-cylinder"));
         return;
     };
     let Some(rigging) = b.find("brake-rigging") else {
-        b.issues.push(BakeIssue::error(None, "bake-no-brake-rigging"));
+        b.issues
+            .push(BakeIssue::error(None, "bake-no-brake-rigging"));
         return;
     };
     let Some(pipe) = b.find("brake-pipe") else {
@@ -1259,7 +1514,8 @@ fn bake_brakes(b: &mut Baker, spec: &mut VehicleSpec) {
     };
     let aux = b.find("aux-reservoir");
     if aux.is_none() {
-        b.issues.push(BakeIssue::warn(Some(cv.id), "bake-no-aux-reservoir"));
+        b.issues
+            .push(BakeIssue::warn(Some(cv.id), "bake-no-aux-reservoir"));
     }
     let main = b.find("main-reservoir");
     let relay = b.find("relay-valve");
@@ -1309,20 +1565,31 @@ fn bake_brakes(b: &mut Baker, spec: &mut VehicleSpec) {
     };
 
     if mg.is_some() && !spec.brake.behaviour().rapid_position {
-        b.issues.push(BakeIssue::warn(mg.map(|m| m.id), "bake-mg-needs-r"));
+        b.issues
+            .push(BakeIssue::warn(mg.map(|m| m.id), "bake-mg-needs-r"));
     }
     if relay.is_some() && main.is_none() {
-        b.issues.push(BakeIssue::warn(relay.map(|r| r.id), "bake-needs-main-reservoir"));
+        b.issues.push(BakeIssue::warn(
+            relay.map(|r| r.id),
+            "bake-needs-main-reservoir",
+        ));
     }
     if direct.is_some() && main.is_none() {
-        b.issues.push(BakeIssue::warn(direct.map(|d| d.id), "bake-needs-main-reservoir"));
+        b.issues.push(BakeIssue::warn(
+            direct.map(|d| d.id),
+            "bake-needs-main-reservoir",
+        ));
     }
     if b.find("compressor").is_some() && main.is_none() {
         let id = b.find("compressor").map(|c| c.id);
-        b.issues.push(BakeIssue::warn(id, "bake-needs-main-reservoir"));
+        b.issues
+            .push(BakeIssue::warn(id, "bake-needs-main-reservoir"));
     }
     if spec.brake.spring_parking && parking.is_some() && main.is_none() {
-        b.issues.push(BakeIssue::warn(parking.map(|p| p.id), "bake-needs-main-reservoir"));
+        b.issues.push(BakeIssue::warn(
+            parking.map(|p| p.id),
+            "bake-needs-main-reservoir",
+        ));
     }
 
     b.expect_wire("compressor", "main-reservoir");
@@ -1473,9 +1740,13 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
     // Wheels first — traction and brakes both end here.
     let wheelset = s.add(reg, "wheelset", 4.0, 1.0);
     s.set_num(wheelset, "axles", spec.axles as f64);
-    s.set_num(wheelset, "adhesive_mass_fraction", spec.adhesive_mass_fraction);
+    s.set_num(
+        wheelset,
+        "adhesive_mass_fraction",
+        spec.adhesive_mass_fraction,
+    );
 
-    let cab = spec.traction.is_some().then(|| {
+    let cab = spec.powered().then(|| {
         let cab = s.add(reg, "cab", 0.0, 0.0);
         let battery = s.add(reg, "battery", 0.0, 1.0);
         s.wire(battery, "out", cab, "elec");
@@ -1498,7 +1769,9 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
         }
     };
 
-    match &spec.traction {
+    // ponytail: only the first chain reaches the diagram; the rest of a multi-engine
+    // vehicle stays in the spec until the graph can hold more than one drive.
+    match spec.traction() {
         None => {}
         Some(TractionSpec::Curve {
             force,
@@ -1545,7 +1818,11 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
                     s.set_num(m, "saturation_current", motor.saturation_current);
                     s.set_num(m, "max_current", motor.max_current);
                     s.set_num(m, "max_voltage", motor.max_voltage);
-                    s.set(m, "field_steps", ParamValue::List(motor.field_steps.clone()));
+                    s.set(
+                        m,
+                        "field_steps",
+                        ParamValue::List(motor.field_steps.clone()),
+                    );
                     s.set_num(m, "gear_ratio", motor.gear_ratio);
                     s.set_num(m, "wheel_diameter", motor.wheel_diameter);
                     s.set_num(m, "efficiency", motor.efficiency);
@@ -1633,7 +1910,11 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
                     s.set_num(eng, "idle_rpm", map.idle_rpm);
                     s.set_num(eng, "rated_rpm", map.rated_rpm);
                     s.set_num(eng, "max_rpm", map.max_rpm);
-                    s.set(eng, "torque_curve", ParamValue::Curve(map.torque_curve.clone()));
+                    s.set(
+                        eng,
+                        "torque_curve",
+                        ParamValue::Curve(map.torque_curve.clone()),
+                    );
                     match map.governor {
                         Governor::Fill => {
                             s.set(eng, "governor", ParamValue::Choice("fill".to_string()));
@@ -1709,7 +1990,13 @@ fn synth_dynamic_brake(s: &mut Synth, id: u32, brake: &DynamicBrake) {
     s.set_num(id, "ramp_time", brake.ramp_time);
 }
 
-fn synth_brakes(s: &mut Synth, reg: &Registry, spec: &VehicleSpec, wheelset: u32, cab: Option<u32>) {
+fn synth_brakes(
+    s: &mut Synth,
+    reg: &Registry,
+    spec: &VehicleSpec,
+    wheelset: u32,
+    cab: Option<u32>,
+) {
     let brake = &spec.brake;
     let row = 3.0;
 
@@ -1765,7 +2052,11 @@ fn synth_brakes(s: &mut Synth, reg: &Registry, spec: &VehicleSpec, wheelset: u32
 
     let cylinder = s.add(reg, "brake-cylinder", 3.0, row);
     s.set_num(cylinder, "max_cylinder", brake.max_cylinder);
-    s.set_num(cylinder, "cylinder_to_reservoir", brake.cylinder_to_reservoir);
+    s.set_num(
+        cylinder,
+        "cylinder_to_reservoir",
+        brake.cylinder_to_reservoir,
+    );
 
     let rigging = s.add(reg, "brake-rigging", 4.0, row);
     let (kind, friction) = match &brake.kind {
@@ -1796,7 +2087,7 @@ fn synth_brakes(s: &mut Synth, reg: &Registry, spec: &VehicleSpec, wheelset: u32
     }
 
     // A vehicle with traction gets the driver's brake valve; wagons run on the pipe alone.
-    if spec.traction.is_some() {
+    if spec.powered() {
         let fbv = s.add(reg, "driver-brake-valve", 0.0, row);
         s.set(fbv, "angleicher", ParamValue::Bool(brake.angleicher));
         s.wire(fbv, "out", pipe, "pipe");
@@ -1810,7 +2101,11 @@ fn synth_brakes(s: &mut Synth, reg: &Registry, spec: &VehicleSpec, wheelset: u32
 
     if brake.pilot_controlled {
         let relay = s.add(reg, "relay-valve", 2.0, row + 1.0);
-        s.set(relay, "supplement", ParamValue::Bool(brake.supplement_brake));
+        s.set(
+            relay,
+            "supplement",
+            ParamValue::Bool(brake.supplement_brake),
+        );
         s.wire(cv, "out", relay, "pilot");
         s.wire(relay, "out", cylinder, "air");
         if let Some(main) = main {
@@ -1868,7 +2163,7 @@ fn synth_brakes(s: &mut Synth, reg: &Registry, spec: &VehicleSpec, wheelset: u32
         s.wire(wheelset, "slip", wsp, "slip");
     }
 
-    if spec.traction.is_some() {
+    if spec.powered() {
         let sander = s.add(reg, "sander", 5.0, row + 2.0);
         if let Some(main) = main {
             s.wire(main, "out", sander, "air");
@@ -1961,7 +2256,11 @@ fn synth_equipment(s: &mut Synth, reg: &Registry, spec: &VehicleSpec) {
                 .to_string(),
             ),
         );
-        s.set(id, "passenger_doors", ParamValue::Bool(spec.passenger_doors));
+        s.set(
+            id,
+            "passenger_doors",
+            ParamValue::Bool(spec.passenger_doors),
+        );
     }
 
     if let Some(script) = &spec.script {
@@ -1994,7 +2293,11 @@ mod tests {
                         | (ParamKind::List, ParamValue::List(_))
                         | (ParamKind::Circuits, ParamValue::Circuits(_))
                 );
-                assert!(matches, "default of {}::{} has the wrong type", def.id, param.id);
+                assert!(
+                    matches,
+                    "default of {}::{} has the wrong type",
+                    def.id, param.id
+                );
                 if let (ParamKind::Choice(options), ParamValue::Choice(value)) =
                     (&param.kind, &param.default)
                 {
@@ -2032,7 +2335,10 @@ mod tests {
             params: BTreeMap::from([("final_ratio".to_string(), ParamValue::Number(2.7))]),
         };
         reg.add_mod_block("example", preset).unwrap();
-        assert_eq!(reg.base_kind("example:voith-l620"), Some("hydro-transmission"));
+        assert_eq!(
+            reg.base_kind("example:voith-l620"),
+            Some("hydro-transmission")
+        );
         assert_eq!(
             reg.default_of("example:voith-l620", "final_ratio"),
             Some(ParamValue::Number(2.7))
@@ -2074,7 +2380,8 @@ mod tests {
                 c: 6.0,
             },
             brake: BrakeSpec::from_brake_weight(80.0, BrakeKind::Disc),
-            traction: None,
+            drives: Vec::new(),
+            legacy_traction: None,
             coupler: crate::train::CouplerSpec::screw(),
             adhesive_mass_fraction: 1.0,
             slip_protection: SlipProtection::None,
@@ -2104,7 +2411,7 @@ mod tests {
         let graph = from_spec(spec, &reg);
         let mut baked = spec.clone();
         // Scramble the owned fields so the test fails when bake does not write them.
-        baked.traction = None;
+        baked.drives.clear();
         baked.brake = BrakeSpec::from_brake_weight(1.0, BrakeKind::Block);
         baked.safety = SafetyEquipment::None;
         baked.afb = false;
@@ -2119,7 +2426,7 @@ mod tests {
             "{}: from_spec left an expected wire out",
             spec.name
         );
-        assert_eq!(baked.traction, spec.traction, "{}", spec.name);
+        assert_eq!(baked.drives, spec.drives, "{}", spec.name);
         assert_eq!(baked.brake, spec.brake, "{}", spec.name);
         assert_eq!(baked.safety, spec.safety, "{}", spec.name);
         assert_eq!(baked.doors, spec.doors, "{}", spec.name);
@@ -2143,12 +2450,12 @@ mod tests {
     #[test]
     fn round_trip_curve_drive() {
         let mut spec = test_spec();
-        spec.traction = Some(TractionSpec::Curve {
+        spec.drives = vec![DriveSpec::new(TractionSpec::Curve {
             force: vec![(0.0, 150_000.0), (120.0, 60_000.0)],
             v_max: 120.0,
             brake: vec![(0.0, 0.0), (50.0, 80_000.0)],
             ramp_time: 2.0,
-        });
+        })];
         spec.brake = BrakeSpec::from_brake_weight(70.0, BrakeKind::Block)
             .as_traction_unit(ControlValve::KeTm, 30_000.0);
         spec.adhesive_mass_fraction = 1.0;
@@ -2158,7 +2465,7 @@ mod tests {
     #[test]
     fn round_trip_diesel_electric_with_dynamic_brake() {
         let mut spec = test_spec();
-        spec.traction = Some(TractionSpec::Diesel {
+        spec.drives = vec![DriveSpec::new(TractionSpec::Diesel {
             max_force: 400_000.0,
             max_power: 2_460_000.0,
             v_max: 120.0,
@@ -2174,7 +2481,7 @@ mod tests {
                 regenerative: false,
                 ramp_time: 4.0,
             }),
-        });
+        })];
         spec.brake = BrakeSpec::from_brake_weight(100.0, BrakeKind::Block)
             .as_traction_unit(ControlValve::KeGp, 60_000.0);
         assert_round_trip(&spec);

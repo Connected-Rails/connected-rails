@@ -5,8 +5,8 @@ use sim_core::brakes::{
 };
 use sim_core::doors::DoorSystem;
 use sim_core::drive::{
-    Circuit, CircuitKind, DieselEngine, Governor, HydrodynamicBrake, SeriesMotor, TractionSpec,
-    Transmission,
+    Circuit, CircuitKind, DieselEngine, DriveSpec, Governor, HydrodynamicBrake, SeriesMotor,
+    TractionSpec, Transmission,
 };
 use sim_core::safety::SafetyEquipment;
 use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
@@ -16,6 +16,8 @@ use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, VehicleSpec};
 /// the built-in palette — the graph is authoritative for drive, brake and equipment.
 pub fn load_vehicle(ron_text: &str) -> Result<VehicleSpec, ron::error::SpannedError> {
     let mut spec: VehicleSpec = ron::from_str(ron_text)?;
+    // A file written before the multi-drive split carries a single `traction`.
+    spec.normalise();
     if let Some(graph) = spec.graph.clone() {
         sim_core::blocks::bake(&graph, &sim_core::blocks::Registry::builtin(), &mut spec);
     }
@@ -45,7 +47,7 @@ pub fn br101() -> VehicleSpec {
             // Two cylinder pressure stages, changed over by speed; pre-controlled,
             // with an air supplement brake behind the regenerative brake.
             .as_traction_unit(ControlValve::KeL2a, 90_000.0),
-        traction: Some(TractionSpec::Converter {
+        drives: vec![DriveSpec::new(TractionSpec::Converter {
             max_force: 300_000.0,
             max_power: 6_400_000.0,
             v_max: 220.0,
@@ -56,7 +58,8 @@ pub fn br101() -> VehicleSpec {
             v_pullout: 150.0,
             regenerative: true,
             brake_fade_kmh: 10.0,
-        }),
+        })],
+        legacy_traction: None,
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
         slip_protection: SlipProtection::CreepControl,
@@ -107,7 +110,7 @@ pub fn br110() -> VehicleSpec {
         brake: BrakeSpec::from_brake_weight(85.0, BrakeKind::Block)
             .with_position(BrakePosition::P)
             .as_traction_unit(ControlValve::KeGp, 85_000.0),
-        traction: Some(TractionSpec::TapChanger {
+        drives: vec![DriveSpec::new(TractionSpec::TapChanger {
             steps: 28,
             max_force: 275_000.0,
             max_power: 3_620_000.0,
@@ -129,7 +132,8 @@ pub fn br110() -> VehicleSpec {
             }),
             // The BR 110 has no electric brake.
             dynamic_brake: None,
-        }),
+        })],
+        legacy_traction: None,
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
         // Older loco: the wheel slip brake takes the spinning wheelset down.
@@ -179,7 +183,7 @@ pub fn br218() -> VehicleSpec {
         brake: BrakeSpec::from_brake_weight(78.0, BrakeKind::Block)
             .with_position(BrakePosition::P)
             .as_traction_unit(ControlValve::KeTm, 78_000.0),
-        traction: Some(TractionSpec::Diesel {
+        drives: vec![DriveSpec::new(TractionSpec::Diesel {
             max_force: 235_000.0,
             max_power: 1_840_000.0,
             v_max: 140.0,
@@ -247,7 +251,8 @@ pub fn br218() -> VehicleSpec {
             }),
             hydrodynamic_brake: None,
             dynamic_brake: None,
-        }),
+        })],
+        legacy_traction: None,
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
         slip_protection: SlipProtection::SlipBrake,
@@ -294,7 +299,8 @@ pub fn passenger_coach() -> VehicleSpec {
         brake: BrakeSpec::from_brake_weight(45.0, BrakeKind::Disc)
             .with_position(BrakePosition::P)
             .with_valve(ControlValve::KeGpr),
-        traction: None,
+        drives: Vec::new(),
+        legacy_traction: None,
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 0.0,
         slip_protection: SlipProtection::CreepControl,
@@ -344,7 +350,8 @@ pub fn freight_wagon() -> VehicleSpec {
                 empty_share: 22.0 / 55.0,
                 changeover_mass_t: 40.0,
             }),
-        traction: None,
+        drives: Vec::new(),
+        legacy_traction: None,
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 0.0,
         slip_protection: SlipProtection::None,
@@ -401,7 +408,7 @@ pub fn railcar() -> VehicleSpec {
             .with_mg(60_000.0)
             .with_load_braking(LoadBraking::Weighing)
             .as_traction_unit(ControlValve::KeGpr, 60_000.0),
-        traction: Some(TractionSpec::Diesel {
+        drives: vec![DriveSpec::new(TractionSpec::Diesel {
             max_force: 65_000.0,
             max_power: 630_000.0,
             v_max: 120.0,
@@ -469,7 +476,8 @@ pub fn railcar() -> VehicleSpec {
                 fade_out_kmh: 15.0,
             }),
             dynamic_brake: None,
-        }),
+        })],
+        legacy_traction: None,
         coupler: CouplerSpec::center_buffer(),
         // Two of six axles driven.
         adhesive_mass_fraction: 0.34,
@@ -520,7 +528,7 @@ mod tests {
             let back = load_vehicle(&text).expect("RON readable");
             assert_eq!(back.name, spec.name);
             assert_eq!(back.mass_empty, spec.mass_empty);
-            assert_eq!(back.traction, spec.traction);
+            assert_eq!(back.drives, spec.drives);
             assert_eq!(back.brake, spec.brake);
         }
     }
@@ -540,7 +548,7 @@ mod tests {
         ] {
             let graph = from_spec(&spec, &reg);
             let mut baked = spec.clone();
-            baked.traction = None;
+            baked.drives.clear();
             baked.brake = BrakeSpec::from_brake_weight(1.0, BrakeKind::Block);
             baked.safety = SafetyEquipment::None;
             let issues = bake(&graph, &reg, &mut baked);
@@ -554,7 +562,7 @@ mod tests {
                 "{}: expected wire missing",
                 spec.name
             );
-            assert_eq!(baked.traction, spec.traction, "{}", spec.name);
+            assert_eq!(baked.drives, spec.drives, "{}", spec.name);
             assert_eq!(baked.brake, spec.brake, "{}", spec.name);
             assert_eq!(baked.safety, spec.safety, "{}", spec.name);
             assert_eq!(baked.doors, spec.doors, "{}", spec.name);

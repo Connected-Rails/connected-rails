@@ -409,12 +409,7 @@ pub fn afb_control(train: &Train, cab: &CabInputs) -> Option<AfbCommand> {
     } else {
         (error / AFB_BAND).clamp(-1.0, 1.0)
     };
-    let dynamic_band = if train.vehicles.iter().any(|v| {
-        v.spec
-            .traction
-            .as_ref()
-            .is_some_and(|t| t.has_dynamic_brake())
-    }) {
+    let dynamic_band = if train.vehicles.iter().any(|v| v.spec.has_dynamic_brake()) {
         AFB_BAND
     } else {
         0.0
@@ -737,12 +732,15 @@ mod tests {
     fn train() -> Train {
         let spec = VehicleSpec {
             v_max: 200.0,
-            traction: Some(crate::drive::TractionSpec::Curve {
-                force: vec![(0.0, 100_000.0)],
-                v_max: 200.0,
-                brake: vec![],
-                ramp_time: 5.0,
-            }),
+            drives: vec![crate::drive::DriveSpec::new(
+                crate::drive::TractionSpec::Curve {
+                    force: vec![(0.0, 100_000.0)],
+                    v_max: 200.0,
+                    brake: vec![],
+                    ramp_time: 5.0,
+                },
+            )],
+            legacy_traction: None,
             ..VehicleSpec::default()
         };
         Train {
@@ -826,8 +824,8 @@ mod tests {
         let mut train = train();
         train.vehicles[0].spec.afb = true;
         // Give the drive a dynamic brake, so the air brake is the supplement.
-        if let Some(crate::drive::TractionSpec::Curve { brake, .. }) =
-            &mut train.vehicles[0].spec.traction
+        if let crate::drive::TractionSpec::Curve { brake, .. } =
+            &mut train.vehicles[0].spec.drives[0].traction
         {
             *brake = vec![(0.0, 100_000.0)];
         }
@@ -864,8 +862,8 @@ mod tests {
         assert_eq!(cmd.throttle, 0.0);
         assert_eq!(cmd.valve, DriverBrakeValve::Service(1.2));
         // Without a dynamic brake the air brake steps in right at the target.
-        if let Some(crate::drive::TractionSpec::Curve { brake, .. }) =
-            &mut train.vehicles[0].spec.traction
+        if let crate::drive::TractionSpec::Curve { brake, .. } =
+            &mut train.vehicles[0].spec.drives[0].traction
         {
             *brake = Vec::new();
         }

@@ -35,7 +35,7 @@ fn new_sim() -> Sim {
 /// Make the vehicles ready for service (battery, pantograph, main switch).
 fn power_up(sim: &mut Sim, train: usize) {
     for v in &mut sim.trains[train].vehicles {
-        if v.spec.traction.is_some() {
+        if v.spec.powered() {
             v.traction.battery = true;
             v.traction.pantograph_command = true;
             v.traction.main_switch_command = true;

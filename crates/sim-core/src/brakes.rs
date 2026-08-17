@@ -711,7 +711,12 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
         };
         let behaviour = spec.behaviour();
         let state = &mut veh.brake;
-        state.dynamic_force = veh.traction.dynamic_force.max(0.0);
+        state.dynamic_force = veh
+            .traction
+            .drives
+            .iter()
+            .map(|d| d.dynamic_force.max(0.0))
+            .sum();
 
         let before_aux = state.aux_reservoir;
         let before_cylinder = state.cylinder;
@@ -737,7 +742,7 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
 
         // Direct (additional) brake — acts on every powered vehicle of the consist, fed
         // from that vehicle's main reservoir.
-        if spec.has_direct && (veh.spec.traction.is_some() || i == cab_index) {
+        if spec.has_direct && (veh.spec.powered() || i == cab_index) {
             let ceiling = if spec.direct_max_cylinder > 0.0 {
                 spec.direct_max_cylinder
             } else {

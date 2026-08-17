@@ -153,30 +153,37 @@ pub fn step(state: &mut TractionState, specs: &[DriveSpec], v: f64, dt: f64) {
     update_vehicle_power(state, specs, dt);
 
     let count = specs.len().min(MAX_DRIVES);
+    let (notch, mode, main_switch, line_voltage) = (
+        state.notch,
+        state.mode,
+        state.main_switch,
+        state.line_voltage,
+    );
     let mut total = 0.0;
-    for i in 0..count {
-        let drive = &specs[i];
+    for (drive, chain) in specs.iter().zip(state.drives.iter_mut()) {
         // A chain of the mode that is not selected is dead, whatever its own switch says.
-        let selected = drive.mode == state.mode;
+        let selected = drive.mode == mode;
         // Chains on the shared handle follow the cab's power controller.
         if drive.throttle == 0 {
-            state.drives[i].notch = state.notch;
+            chain.notch = notch;
         }
-        let live = selected && state.drives[i].enabled;
+        let live = selected && chain.enabled;
         step_drive(
-            &mut state.drives[i],
+            chain,
             &drive.traction,
-            state.main_switch,
-            state.line_voltage,
+            main_switch,
+            line_voltage,
             live,
             v,
             dt,
         );
-        total += state.drives[i].force - state.drives[i].dynamic_force;
+        // `force` already carries the dynamic brake as a negative effort — the blending in
+        // `brakes` reads `dynamic_force` separately.
+        total += chain.force;
     }
     // Chains the vehicle does not have must not keep old force around.
-    for i in count..MAX_DRIVES {
-        state.drives[i] = DriveState::new();
+    for chain in &mut state.drives[count..] {
+        *chain = DriveState::new();
     }
     state.force = total;
 }
@@ -622,6 +629,17 @@ mod tests {
     use super::*;
     use crate::drive::{Circuit, CircuitKind, SeriesMotor};
 
+    /// Every test here drives a vehicle with one chain on the shared power controller —
+    /// these two shadow the real functions so the tests read as they did before the split.
+    fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
+        super::step(state, &[DriveSpec::new(spec.clone())], v, dt);
+    }
+
+    fn start_engine(state: &mut TractionState, spec: &TractionSpec) {
+        let battery = state.battery;
+        super::start_engine(&mut state.drives[0], spec, battery);
+    }
+
     fn diesel_hydraulic() -> TractionSpec {
         TractionSpec::Diesel {
             max_force: 235_000.0,
@@ -707,11 +725,11 @@ mod tests {
     fn the_engine_idles_after_starting() {
         let spec = diesel_hydraulic();
         let state = running(&spec);
-        assert!(state.engine_running);
+        assert!(state.drives[0].engine_running);
         assert!(
-            (560.0..660.0).contains(&state.engine_rpm),
+            (560.0..660.0).contains(&state.drives[0].engine_rpm),
             "idle {:.0} 1/min",
-            state.engine_rpm
+            state.drives[0].engine_rpm
         );
         assert!(state.force.abs() < 1.0, "no effort at the zero notch");
     }
@@ -730,8 +748,12 @@ mod tests {
             state.force
         );
         // The converter is at stall and the governor holds the engine near rated speed.
-        assert!(state.circuit_nu.abs() < 0.05);
-        assert!(state.engine_rpm > 1300.0, "{:.0} 1/min", state.engine_rpm);
+        assert!(state.drives[0].circuit_nu.abs() < 0.05);
+        assert!(
+            state.drives[0].engine_rpm > 1300.0,
+            "{:.0} 1/min",
+            state.drives[0].engine_rpm
+        );
     }
 
     #[test]
@@ -743,17 +765,23 @@ mod tests {
         for _ in 0..400 {
             step(&mut state, &spec, 80.0 / 3.6, 1.0 / 200.0);
         }
-        assert_eq!(state.circuit, 1, "must be in the running converter");
+        assert_eq!(
+            state.drives[0].circuit, 1,
+            "must be in the running converter"
+        );
         // Just below the change-up point it stays there — that is the hysteresis.
         for _ in 0..400 {
             step(&mut state, &spec, 68.0 / 3.6, 1.0 / 200.0);
         }
-        assert_eq!(state.circuit, 1, "no hunting inside the hysteresis");
+        assert_eq!(
+            state.drives[0].circuit, 1,
+            "no hunting inside the hysteresis"
+        );
         // Well below it, it changes back.
         for _ in 0..400 {
             step(&mut state, &spec, 50.0 / 3.6, 1.0 / 200.0);
         }
-        assert_eq!(state.circuit, 0);
+        assert_eq!(state.drives[0].circuit, 0);
     }
 
     #[test]
@@ -807,7 +835,7 @@ mod tests {
             step(&mut state, &spec, 100.0 / 3.6, 1.0 / 200.0);
         }
         assert!(state.force < -20_000.0, "retarder {:.0} N", state.force);
-        assert!(state.dynamic_force > 20_000.0);
+        assert!(state.drives[0].dynamic_force > 20_000.0);
     }
 
     /// The one thing that tells a hydraulic drive from a stepped gearbox with a soft jolt:
@@ -854,7 +882,7 @@ mod tests {
             step(&mut state, &spec, 60.0 / 3.6, 1.0 / 200.0);
         }
         assert!(state.force.abs() < 1.0, "drag {:.0} N", state.force);
-        assert!(state.circuit_fill.iter().all(|fill| *fill < 0.01));
+        assert!(state.drives[0].circuit_fill.iter().all(|fill| *fill < 0.01));
     }
 
     #[test]
@@ -882,15 +910,15 @@ mod tests {
         }
         // The isochronous governor holds its set speed of 600 + 0.5·900 exactly.
         assert!(
-            (b.engine_rpm - 1050.0).abs() < 5.0,
+            (b.drives[0].engine_rpm - 1050.0).abs() < 5.0,
             "{:.0} 1/min",
-            b.engine_rpm
+            b.drives[0].engine_rpm
         );
         assert!(
-            a.engine_rpm < b.engine_rpm - 10.0,
+            a.drives[0].engine_rpm < b.drives[0].engine_rpm - 10.0,
             "droop {:.0} vs isochronous {:.0} 1/min",
-            a.engine_rpm,
-            b.engine_rpm
+            a.drives[0].engine_rpm,
+            b.drives[0].engine_rpm
         );
     }
 
@@ -907,7 +935,7 @@ mod tests {
         for _ in 0..600 {
             step(&mut state, &spec, 0.0, 1.0 / 200.0);
         }
-        let loaded = state.engine_rpm;
+        let loaded = state.drives[0].engine_rpm;
         // With the rack wide open at stall the converter holds the engine below rated speed.
         assert!(loaded > 600.0, "engine must not stall: {loaded:.0} 1/min");
         assert!(state.force > 100_000.0);
@@ -948,13 +976,17 @@ mod tests {
         for _ in 0..160 {
             step(&mut state, &spec, 0.0, 1.0 / 200.0);
         }
-        assert!(state.step < 28.0, "tap changer at {:.1}", state.step);
+        assert!(
+            state.drives[0].step < 28.0,
+            "tap changer at {:.1}",
+            state.drives[0].step
+        );
         for _ in 0..8000 {
             step(&mut state, &spec, 0.0, 1.0 / 200.0);
         }
-        assert!((state.step - 28.0).abs() < 0.1);
+        assert!((state.drives[0].step - 28.0).abs() < 0.1);
         assert!(state.force > 200_000.0, "{:.0} N", state.force);
-        assert!(state.motor_current <= 1600.0 + 1.0);
+        assert!(state.drives[0].motor_current <= 1600.0 + 1.0);
     }
 
     #[test]
@@ -982,12 +1014,16 @@ mod tests {
         for _ in 0..1000 {
             step(&mut state, &spec, 120.0 / 3.6, 1.0 / 200.0);
         }
-        assert!(state.dynamic_force > 50_000.0);
+        assert!(state.drives[0].dynamic_force > 50_000.0);
         // Neutral section: the main switch drops out and the brake goes with it.
         state.line_voltage = 0.0;
         for _ in 0..1000 {
             step(&mut state, &spec, 120.0 / 3.6, 1.0 / 200.0);
         }
-        assert!(state.dynamic_force < 1.0, "{:.0} N", state.dynamic_force);
+        assert!(
+            state.drives[0].dynamic_force < 1.0,
+            "{:.0} N",
+            state.drives[0].dynamic_force
+        );
     }
 }

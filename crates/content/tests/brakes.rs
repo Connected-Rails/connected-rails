@@ -39,7 +39,7 @@ fn train(sim: &mut Sim, specs: Vec<VehicleSpec>) -> usize {
     let train = Train::assemble(vehicles, head, &sim.net);
     let index = sim.add_train(train);
     for v in &mut sim.trains[index].vehicles {
-        if v.spec.traction.is_some() {
+        if v.spec.powered() {
             v.traction.battery = true;
             v.traction.pantograph_command = true;
             v.traction.main_switch_command = true;
@@ -270,9 +270,9 @@ fn the_air_supplement_brake_fills_up_what_the_dynamic_brake_lacks() {
     let loco = &sim.trains[t].vehicles[0];
     let coach = &sim.trains[t].vehicles[1];
     assert!(
-        loco.traction.dynamic_force > 50_000.0,
+        loco.traction.drives[0].dynamic_force > 50_000.0,
         "the regenerative brake must work at 120 km/h: {:.0} N",
-        loco.traction.dynamic_force
+        loco.traction.drives[0].dynamic_force
     );
     // The pneumatic part gets out of the way — the loco's cylinder force is what is left
     // over after the dynamic brake, and the coach behind brakes purely pneumatically.
@@ -347,7 +347,7 @@ fn the_diesel_hydraulic_loco_starts_a_train_and_changes_up() {
     run(&mut sim, 0.1);
     sim.controls[t].engine_start = false;
     run(&mut sim, 15.0);
-    assert!(sim.trains[t].vehicles[0].traction.engine_running);
+    assert!(sim.trains[t].vehicles[0].traction.any_engine_running());
 
     sim.controls[t].reverser = 1;
     sim.controls[t].throttle = 1.0;
@@ -358,13 +358,13 @@ fn the_diesel_hydraulic_loco_starts_a_train_and_changes_up() {
     let kmh = sim.trains[t].speed_kmh();
     assert!(kmh > 70.0, "diesel-hydraulic train too slow: {kmh:.1} km/h");
     assert_eq!(
-        loco.traction.circuit, 1,
+        loco.traction.drives[0].circuit, 1,
         "must have changed to the second converter"
     );
     assert!(
-        loco.traction.engine_rpm > 1300.0,
+        loco.traction.drives[0].engine_rpm > 1300.0,
         "governor must hold the engine speed up: {:.0} 1/min",
-        loco.traction.engine_rpm
+        loco.traction.drives[0].engine_rpm
     );
 }
 
@@ -383,14 +383,14 @@ fn the_railcar_brakes_hydrodynamically_before_the_air_brake() {
 
     let unit = &sim.trains[t].vehicles[0];
     assert!(
-        unit.traction.retarder_fill > 0.9,
+        unit.traction.drives[0].retarder_fill > 0.9,
         "the retarder must be filled: {:.2}",
-        unit.traction.retarder_fill
+        unit.traction.drives[0].retarder_fill
     );
     assert!(
-        unit.traction.dynamic_force > 20_000.0,
+        unit.traction.drives[0].dynamic_force > 20_000.0,
         "hydrodynamic braking force {:.0} N",
-        unit.traction.dynamic_force
+        unit.traction.drives[0].dynamic_force
     );
     let before = sim.trains[t].speed_kmh();
     run(&mut sim, 10.0);

@@ -181,7 +181,7 @@ pub fn player_input(
     // Preparation: battery, pantograph, main switch, compressor.
     let train = &mut sim.0.trains[index];
     for v in &mut train.vehicles {
-        if v.spec.traction.is_none() {
+        if !v.spec.powered() {
             continue;
         }
         if keys.just_pressed(KeyCode::Digit1) {
@@ -421,26 +421,28 @@ pub fn update_hud(
         parking = onoff(loco.brake.parking_applied),
     ));
     // Whatever the drive of this vehicle has to say about itself.
-    match &loco.spec.traction {
+    // ponytail: the HUD reads the first chain — one drive block per vehicle in the UI.
+    let drive = loco.traction.drives[0];
+    match loco.spec.traction() {
         Some(sim_core::drive::TractionSpec::TapChanger { steps, .. }) => lines.push(t!(
             "hud-tap",
-            step = format!("{:4.1}", loco.traction.step),
+            step = format!("{:4.1}", drive.step),
             steps = steps,
-            current = format!("{:5.0}", loco.traction.motor_current),
-            field = format!("{:3.0}", loco.traction.field * 100.0),
-            force = format!("{:5.0}", loco.traction.dynamic_force / 1000.0),
+            current = format!("{:5.0}", drive.motor_current),
+            field = format!("{:3.0}", drive.field * 100.0),
+            force = format!("{:5.0}", drive.dynamic_force / 1000.0),
         )),
         Some(sim_core::drive::TractionSpec::Diesel { .. }) => lines.push(t!(
             "hud-diesel",
-            rpm = format!("{:5.0}", loco.traction.engine_rpm),
-            fill = format!("{:3.0}", loco.traction.engine_fill * 100.0),
-            circuit = loco.traction.circuit + 1,
-            nu = format!("{:4.2}", loco.traction.circuit_nu),
-            retarder = format!("{:3.0}", loco.traction.retarder_fill * 100.0),
+            rpm = format!("{:5.0}", drive.engine_rpm),
+            fill = format!("{:3.0}", drive.engine_fill * 100.0),
+            circuit = drive.circuit + 1,
+            nu = format!("{:4.2}", drive.circuit_nu),
+            retarder = format!("{:3.0}", drive.retarder_fill * 100.0),
         )),
         Some(_) => lines.push(t!(
             "hud-dynamic",
-            force = format!("{:5.0}", loco.traction.dynamic_force / 1000.0)
+            force = format!("{:5.0}", drive.dynamic_force / 1000.0)
         )),
         None => {}
     }

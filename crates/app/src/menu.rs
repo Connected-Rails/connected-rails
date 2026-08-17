@@ -2178,7 +2178,7 @@ fn facts(page: Page, entry: &Entry, runtime: &mod_runtime::ModRuntime) -> Option
                     t!("veh-vmax"),
                     t!("menu-fact-kmh", value = i18n::decimal(spec.v_max, 0)),
                 ),
-                (t!("menu-fact-drive"), t!(traction_key(&spec.traction))),
+                (t!("menu-fact-drive"), t!(traction_key(spec.traction()))),
                 (t!("menu-fact-brake"), t!(friction_key(&spec.brake.kind))),
             ]))
         }
@@ -2223,7 +2223,7 @@ fn facts(page: Page, entry: &Entry, runtime: &mod_runtime::ModRuntime) -> Option
 }
 
 /// The same mapping the vehicle editor uses, so a drive is named identically in both.
-fn traction_key(traction: &Option<TractionSpec>) -> &'static str {
+fn traction_key(traction: Option<&TractionSpec>) -> &'static str {
     match traction {
         None => "traction-none",
         Some(TractionSpec::Curve { .. }) => "traction-curve",

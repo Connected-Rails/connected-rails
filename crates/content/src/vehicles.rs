@@ -385,6 +385,8 @@ pub fn railcar() -> VehicleSpec {
         // Air suspension: the weighing valve reads the bellow pressure, so the brake
         // follows how full the railcar is.
         brake: BrakeSpec::from_brake_weight(66.0, BrakeKind::Disc)
+            // Anscribed "R + Mg": the R position plus the magnetic track brake.
+            .with_position(BrakePosition::R)
             .with_mg(60_000.0)
             .with_load_braking(LoadBraking::Weighing)
             .as_traction_unit(ControlValve::KeGpr, 60_000.0),

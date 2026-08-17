@@ -108,13 +108,19 @@ pub fn brake_panel(
     }
 
     subheading(ui, t!("group-additional-brakes"));
-    ui.checkbox(&mut brake.has_mg, t!("brk-mg"));
+    ui.checkbox(&mut brake.has_mg, t!("brk-mg"))
+        .on_hover_text(t!("brk-mg-hint"));
     if brake.has_mg {
         form_grid("mg").show(ui, |ui| {
             form_label(ui, t!("label-force"));
             field(ui, &mut brake.mg_force, 500.0, 0.0..=400_000.0, "N");
             ui.end_row();
         });
+        // The pair is what the anscription calls "R + Mg" — without the R position the
+        // brake is fitted but never applies, and that is not visible anywhere else.
+        if !brake.position.is_rapid() {
+            ui.colored_label(colors::WARN, t!("brk-mg-needs-r"));
+        }
     }
     ui.checkbox(&mut brake.has_direct, t!("brk-direct"));
     if brake.has_direct {
@@ -213,18 +219,12 @@ fn valve_combo(ui: &mut egui::Ui, valve: &mut ControlValve) {
 }
 
 fn position_combo(ui: &mut egui::Ui, position: &mut BrakePosition) {
-    let options = [
-        BrakePosition::G,
-        BrakePosition::P,
-        BrakePosition::R,
-        BrakePosition::RMg,
-    ];
+    let options = [BrakePosition::G, BrakePosition::P, BrakePosition::R];
     combo(ui, "position", position, &options, |p| {
         match p {
             BrakePosition::G => "G",
             BrakePosition::P => "P",
             BrakePosition::R => "R",
-            BrakePosition::RMg => "R + Mg",
         }
         .into()
     });

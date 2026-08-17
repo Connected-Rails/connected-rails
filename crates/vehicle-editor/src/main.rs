@@ -701,6 +701,8 @@ fn confirm_close(
     mut requests: MessageReader<bevy::window::WindowCloseRequested>,
     mut editor: ResMut<Editor>,
     mut exit: MessageWriter<AppExit>,
+    // Opens a native dialog — main thread only, see `ui::draw`.
+    _main_thread: bevy::ecs::system::NonSendMarker,
 ) {
     if requests.read().next().is_none() {
         return;

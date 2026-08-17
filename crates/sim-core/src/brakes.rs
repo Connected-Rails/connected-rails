@@ -41,10 +41,10 @@ pub enum BrakePosition {
     /// Passenger train.
     #[default]
     P,
-    /// Rapid brake position, higher brake force in the upper speed range.
+    /// Rapid brake position, higher brake force in the upper speed range. A vehicle
+    /// fitted with a magnetic track brake (`BrakeSpec::has_mg`) uses it here — that
+    /// pair is the "R + Mg" of the anscription.
     R,
-    /// R with magnetic track brake.
-    RMg,
 }
 
 impl BrakePosition {
@@ -64,18 +64,14 @@ impl BrakePosition {
         }
     }
 
-    pub fn has_mg(self) -> bool {
-        matches!(self, BrakePosition::RMg)
-    }
-
     pub fn is_rapid(self) -> bool {
-        matches!(self, BrakePosition::R | BrakePosition::RMg)
+        matches!(self, BrakePosition::R)
     }
 
     /// Force bonus in the R range above 60 km/h.
     pub fn high_speed_factor(self, v_kmh: f64) -> f64 {
         match self {
-            BrakePosition::R | BrakePosition::RMg if v_kmh > 60.0 => 1.35,
+            BrakePosition::R if v_kmh > 60.0 => 1.35,
             _ => 1.0,
         }
     }
@@ -397,7 +393,7 @@ pub struct BrakeSpec {
     pub max_cylinder: f64,
     /// Volume ratio brake cylinder / auxiliary reservoir (exhaustibility).
     pub cylinder_to_reservoir: f64,
-    /// Magnetic track brake fitted.
+    /// Magnetic track brake fitted. It works in brake position `R` only.
     #[serde(default)]
     pub has_mg: bool,
     /// Force of the magnetic track brake [N].
@@ -503,7 +499,6 @@ impl BrakeSpec {
     pub fn with_mg(mut self, force: f64) -> Self {
         self.has_mg = true;
         self.mg_force = force;
-        self.position = BrakePosition::RMg;
         self
     }
 
@@ -767,7 +762,7 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
         update_parking_brake(state, spec, cab, dt);
 
         state.mg_applied = spec.has_mg
-            && spec.effective_position().has_mg()
+            && spec.effective_position().is_rapid()
             && v_kmh > 50.0
             && state.pipe < PIPE_NOMINAL - 1.0;
 

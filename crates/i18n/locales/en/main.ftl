@@ -194,7 +194,7 @@ group-brake = Brake
 brk-valve = Control valve
 brk-valve-hint = which control valve is fitted
 brk-position = Brake position
-brk-position-hint = G freight · P passenger · R rapid · R+Mg with magnetic track brake
+brk-position-hint = G freight · P passenger · R rapid; R plus a magnetic track brake is the anscribed "R + Mg"
 brk-friction = Friction pairing
 brk-friction-hint = how the friction coefficient runs over speed
 brk-friction-points = Friction coefficient (km/h → µ)
@@ -219,6 +219,8 @@ brk-percentage = Braked weight percentage of the empty vehicle: { $percent } %
 group-additional-brakes = Additional brakes
 label-force = Force
 brk-mg = Magnetic track brake
+brk-mg-hint = Fitted equipment. It applies in brake position R — the anscribed "R + Mg" is that pair
+brk-mg-needs-r = Applies in brake position R only; the vehicle is set to G or P
 brk-direct = Direct (additional) brake
 brk-direct-cylinder-hint = bar; 0 = same as the automatic brake
 brk-parking = Parking brake

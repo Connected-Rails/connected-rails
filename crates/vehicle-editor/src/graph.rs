@@ -240,9 +240,8 @@ fn shortcuts(
         return false;
     }
     use egui::{Key, KeyboardShortcut, Modifiers};
-    let consume = |m: Modifiers, k: Key| {
-        ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)))
-    };
+    let consume =
+        |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
     let selected: Vec<u32> = selection
         .iter()
         .filter_map(|n| editor.snarl.get_node(*n).copied())
@@ -251,7 +250,7 @@ fn shortcuts(
 
     if consume(Modifiers::COMMAND, Key::A) {
         let all: Vec<egui_snarl::NodeId> = editor.snarl.node_ids().map(|(id, _)| id).collect();
-        let _ = set_selected_nodes(snarl_id, &ctx, &all);
+        set_selected_nodes(snarl_id, &ctx, &all);
     }
     if consume(Modifiers::COMMAND, Key::C) && !selected.is_empty() {
         editor.clipboard = clip(editor, &selected);
@@ -292,7 +291,9 @@ fn shortcuts(
         if bb.is_finite()
             && let Some(graph) = editor.spec.graph.as_mut()
         {
-            let bb = bb.expand2(egui::vec2(24.0, 24.0)).translate(egui::vec2(0.0, -14.0));
+            let bb = bb
+                .expand2(egui::vec2(24.0, 24.0))
+                .translate(egui::vec2(0.0, -14.0));
             let id = graph.next_group_id();
             graph.groups.push(sim_core::blocks::GraphGroup {
                 id,
@@ -352,23 +353,19 @@ fn paste(editor: &mut Editor, ui: &egui::Ui) -> bool {
     let Some(graph) = editor.spec.graph.as_mut() else {
         return false;
     };
-    let anchor = blocks
-        .iter()
-        .fold(egui::pos2(f32::MAX, f32::MAX), |a, b| {
-            egui::pos2(a.x.min(b.pos.0), a.y.min(b.pos.1))
-        });
+    let anchor = blocks.iter().fold(egui::pos2(f32::MAX, f32::MAX), |a, b| {
+        egui::pos2(a.x.min(b.pos.0), a.y.min(b.pos.1))
+    });
     let target = ui
         .ctx()
         .pointer_latest_pos()
         .map(|p| editor.canvas_transform.inverse() * p)
         .unwrap_or_else(|| anchor + egui::vec2(32.0, 32.0));
-    let mut next = graph.next_id();
     let mut ids = std::collections::BTreeMap::new();
-    for block in &blocks {
+    for (next, block) in (graph.next_id()..).zip(blocks.iter()) {
         let mut copy = block.clone();
         copy.id = next;
         ids.insert(block.id, next);
-        next += 1;
         copy.pos = (
             target.x + (block.pos.0 - anchor.x),
             target.y + (block.pos.1 - anchor.y),
@@ -498,25 +495,29 @@ fn add_menu_ui(ui: &mut egui::Ui, editor: &mut Editor) {
                         .hint_text(t!("graph-search")),
                 );
                 let filter = editor.palette_filter.to_lowercase();
-                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                    let defs: Vec<(String, String)> = editor
-                        .registry
-                        .defs
-                        .iter()
-                        .map(|d| (d.id.clone(), block_name(d)))
-                        .filter(|(_, n)| filter.is_empty() || n.to_lowercase().contains(&filter))
-                        .collect();
-                    for (kind, name) in defs {
-                        if ui.button(name).clicked() {
-                            let at = editor.canvas_transform.inverse() * pos;
-                            if let Some(graph) = editor.spec.graph.as_mut() {
-                                add_block(graph, &editor.registry, &kind, (at.x, at.y));
-                                editor.graph_sync = true;
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        let defs: Vec<(String, String)> = editor
+                            .registry
+                            .defs
+                            .iter()
+                            .map(|d| (d.id.clone(), block_name(d)))
+                            .filter(|(_, n)| {
+                                filter.is_empty() || n.to_lowercase().contains(&filter)
+                            })
+                            .collect();
+                        for (kind, name) in defs {
+                            if ui.button(name).clicked() {
+                                let at = editor.canvas_transform.inverse() * pos;
+                                if let Some(graph) = editor.spec.graph.as_mut() {
+                                    add_block(graph, &editor.registry, &kind, (at.x, at.y));
+                                    editor.graph_sync = true;
+                                }
+                                close = true;
                             }
-                            close = true;
                         }
-                    }
-                });
+                    });
             });
         });
     if area.response.clicked_elsewhere() {
@@ -553,7 +554,9 @@ impl Viewer<'_> {
     }
 
     fn output_port(&self, pin: OutPinId, snarl: &Snarl<u32>) -> Option<&PortDef> {
-        self.def(*snarl.get_node(pin.node)?)?.outputs.get(pin.output)
+        self.def(*snarl.get_node(pin.node)?)?
+            .outputs
+            .get(pin.output)
     }
 }
 
@@ -628,7 +631,7 @@ impl egui_snarl::ui::SnarlViewer<u32> for Viewer<'_> {
     }
 
     fn title(&mut self, block_id: &u32) -> String {
-        self.def(*block_id).map(|d| block_name(d)).unwrap_or_else(|| {
+        self.def(*block_id).map(block_name).unwrap_or_else(|| {
             self.graph
                 .block(*block_id)
                 .map(|b| b.kind.clone())
@@ -914,7 +917,7 @@ fn issue_row(ui: &mut egui::Ui, editor: &mut Editor, issue: &BakeIssue) {
         .block
         .and_then(|id| editor.spec.graph.as_ref()?.block(id))
         .and_then(|b| editor.registry.get(&b.kind))
-        .map(|d| block_name(d));
+        .map(block_name);
     let text = match block_name {
         Some(name) => format!("{name}: {}", t!(issue.key)),
         None => t!(issue.key),
@@ -1042,12 +1045,8 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor) {
 /// Rules for parameters that only make sense in a given setting — the diesel map behind
 /// its switch, the changeover figures behind the changeover, the µ table behind "custom".
 fn param_visible(base_kind: &str, block: &GraphBlock, param: &str) -> bool {
-    let choice_is = |id: &str, value: &str| {
-        block
-            .params
-            .get(id)
-            .is_some_and(|v| v.choice() == value)
-    };
+    let choice_is =
+        |id: &str, value: &str| block.params.get(id).is_some_and(|v| v.choice() == value);
     match (base_kind, param) {
         ("diesel-engine", "governor_steps" | "governor_droop") => {
             block.params.get("engine_map").is_some_and(|v| v.flag())
@@ -1067,7 +1066,12 @@ fn param_visible(base_kind: &str, block: &GraphBlock, param: &str) -> bool {
 }
 
 /// One grid row for a scalar parameter. Curves and circuits draw below the grid.
-fn param_row(ui: &mut egui::Ui, block_id: u32, param: &sim_core::blocks::ParamDef, value: &mut ParamValue) {
+fn param_row(
+    ui: &mut egui::Ui,
+    block_id: u32,
+    param: &sim_core::blocks::ParamDef,
+    value: &mut ParamValue,
+) {
     match (&param.kind, value) {
         (
             ParamKind::Number {
@@ -1099,7 +1103,11 @@ fn param_row(ui: &mut egui::Ui, block_id: u32, param: &sim_core::blocks::ParamDe
                     .selected_text(option_label(&param.key, v))
                     .show_ui(ui, |ui| {
                         for option in options {
-                            ui.selectable_value(v, option.clone(), option_label(&param.key, option));
+                            ui.selectable_value(
+                                v,
+                                option.clone(),
+                                option_label(&param.key, option),
+                            );
                         }
                     });
             });

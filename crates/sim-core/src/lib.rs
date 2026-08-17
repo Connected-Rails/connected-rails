@@ -194,9 +194,9 @@ impl Sim {
             let train = &mut self.trains[index];
             let neutral = self.runtime[index].neutral_section_left > 0.0;
             for veh in &mut train.vehicles {
-                let Some(spec) = veh.spec.traction.clone() else {
+                if veh.spec.drives.is_empty() {
                     continue;
-                };
+                }
                 veh.traction.line_voltage = if neutral {
                     0.0
                 } else {
@@ -210,9 +210,16 @@ impl Sim {
                 };
                 veh.sanding = cab.sanding;
                 if cab.engine_start {
-                    electric::start_engine(&mut veh.traction, &spec);
+                    let battery = veh.traction.battery;
+                    for (i, drive) in veh.spec.drives.iter().enumerate() {
+                        electric::start_engine(
+                            &mut veh.traction.drives[i],
+                            &drive.traction,
+                            battery,
+                        );
+                    }
                 }
-                electric::step(&mut veh.traction, &spec, veh.v, dt);
+                electric::step(&mut veh.traction, &veh.spec.drives, veh.v, dt);
             }
         }
 

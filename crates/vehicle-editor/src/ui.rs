@@ -32,6 +32,7 @@ const SHORTCUT_REDO_ALT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
 ///
 /// Since egui 0.35 panels live inside a `Ui`, not on the context: the whole viewport
 /// becomes one background `Ui` into which the panels are docked.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut contexts: EguiContexts,
     mut editor: ResMut<Editor>,

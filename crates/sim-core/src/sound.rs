@@ -298,12 +298,16 @@ impl SoundState {
             }
             _ => 0.0,
         };
+        // ponytail: the first chain speaks for the vehicle — one sound source per vehicle,
+        // so a two-engine railcar is heard through its engine 1. Split it up as soon as
+        // sounds are placed per chain.
+        let drive = vehicle.traction.drives[0];
         Self {
             speed: vehicle.v.abs() * 3.6,
             distance: vehicle.x.abs(),
-            engine_rpm: vehicle.traction.engine_rpm,
-            tap_changer_step: vehicle.traction.step,
-            circuit: vehicle.traction.circuit as f64,
+            engine_rpm: drive.engine_rpm,
+            tap_changer_step: drive.step,
+            circuit: drive.circuit as f64,
             tractive_effort: vehicle.tractive_effort.abs() / 1000.0,
             brake_effort: vehicle.brake_effort.abs() / 1000.0,
             brake_pipe: pipe,

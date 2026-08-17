@@ -616,7 +616,6 @@ impl SnarlWidget {
 ///
 /// Only works if [`SnarlWidget::id`] was used.
 /// For other cases construct [`SnarlWidget`] and use [`SnarlWidget::get_selected_nodes`] or [`SnarlWidget::get_selected_nodes_at`].
-#[must_use]
 #[inline]
 /// Replaces the selection of the snarl with the given widget `id`.
 ///

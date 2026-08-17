@@ -132,8 +132,10 @@ pub struct Mods {
 impl Mods {
     /// Reads all mods below `root`. A missing directory is not an error.
     pub fn load(root: impl AsRef<Path>) -> Self {
-        let mut mods = Mods::default();
-        mods.blocks = sim_core::blocks::Registry::builtin();
+        let mut mods = Mods {
+            blocks: sim_core::blocks::Registry::builtin(),
+            ..Default::default()
+        };
         let Ok(entries) = std::fs::read_dir(root.as_ref()) else {
             return mods;
         };
@@ -188,6 +190,8 @@ impl Mods {
         // Bake block graphs with the complete palette — after every mod's presets are in.
         let mut warnings = Vec::new();
         for (key, spec) in mods.vehicles.iter_mut() {
+            // A file written before the multi-drive split carries a single `traction`.
+            spec.normalise();
             let Some(graph) = spec.graph.clone() else {
                 continue;
             };
@@ -273,9 +277,7 @@ impl Mods {
         for path in files(&dir.join("blocks"), "ron") {
             let result = std::fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
-                .and_then(|t| {
-                    sim_core::blocks::parse_mod_block(&t).map_err(|e| e.to_string())
-                })
+                .and_then(|t| sim_core::blocks::parse_mod_block(&t).map_err(|e| e.to_string()))
                 .and_then(|def| self.blocks.add_mod_block(id, def));
             if let Err(e) = result {
                 self.warnings.push(format!("{}: {e}", path.display()));
@@ -617,7 +619,7 @@ mod tests {
         assert_eq!(loco.script.as_deref(), Some("example:afb"));
         // The physical data stay declarative — no script involved.
         assert!(loco.mass_empty > 80_000.0);
-        assert!(loco.traction.is_some());
+        assert!(loco.powered());
         // Train protection and door control are equipment of the vehicle, from the RON.
         assert!(
             matches!(
@@ -770,7 +772,11 @@ mod tests {
             Some(sim_core::blocks::ParamValue::Number(2.73))
         );
         assert_eq!(mods.warnings.len(), 1, "{:?}", mods.warnings);
-        assert!(mods.warnings[0].contains("warp-drive"), "{:?}", mods.warnings);
+        assert!(
+            mods.warnings[0].contains("warp-drive"),
+            "{:?}",
+            mods.warnings
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -174,7 +174,7 @@ impl Sounds {
     fn table<'a>(&'a self, spec: &'a VehicleSpec) -> &'a [SoundSpec] {
         if !spec.sounds.is_empty() {
             &spec.sounds
-        } else if spec.traction.is_some() {
+        } else if spec.powered() {
             &self.default
         } else {
             &[]

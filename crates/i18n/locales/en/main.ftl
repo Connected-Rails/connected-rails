@@ -924,19 +924,103 @@ hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZ
 hud-keys-lights = 9 headlights  0 cab light  ,/. instrument dimmer
 
 ## Main menu
+#
+# The navigation column on the left, then the pages it opens. A -hint key is the
+# second, dimmer line under the entry of the same name.
 
-menu-start = Start driving
+menu-tagline = German railway simulation
+menu-drive = Drive
+menu-drive-hint = Line, vehicle and scenario
 menu-mods = Mods
+menu-mods-hint = Switch installed content on and off
+menu-settings = Settings
+menu-settings-hint = Picture, sound and controls
 menu-quit = Quit
-menu-keys = ↑/↓ or mouse select   Enter or click confirm
-menu-keys-back = ↑/↓ or mouse select   Enter or click confirm   Esc back
+menu-quit-hint = Leave the simulator
+# The Esc overlay over a run that is standing still.
+menu-paused = Paused
+menu-resume = Resume
+menu-resume-hint = Carry on where the train stands
+menu-step = Step { $step } of { $total }
 menu-select-line = Select line
+menu-select-line-hint = Where the run takes place.
 menu-select-loco = Select vehicle
+menu-select-loco-hint = What is at the head of the train.
 menu-select-scenario = Select scenario
-# The built-in content the simulator falls back on when nothing is picked.
-menu-line-builtin = Example line (built-in)
-menu-loco-builtin = BR 101 (built-in)
+menu-select-scenario-hint = A timetable and a task, or free rein.
+# The built-in content the simulator falls back on when nothing is picked. The chip on
+# the row says so, so the name itself no longer has to.
+menu-chip-builtin = Built in
+menu-chip-composition = Composition
+menu-line-builtin = Example line
+menu-loco-builtin = BR 101
 menu-scenario-none = No scenario — free run
+menu-free-run = No timetable and no scoring: the line, the vehicle, and wherever you take it.
+# The key hints in the footer bar: one chip per key.
+menu-hint-select = select
+menu-hint-confirm = confirm
+menu-hint-toggle = on/off
+menu-hint-start = start run
+menu-hint-change = change
+menu-hint-next = next value
+menu-hint-back = back
+menu-hint-open = open
+menu-hint-resume = resume
+# The button at the foot of the detail pane — the same thing Enter does.
+menu-action-next = Continue
+menu-action-start = Start run
+# The second line of a row — figures read off the content itself.
+menu-meta-line = { $length } km · { $signals } signals
+menu-meta-vehicle = { $mass } t · { $speed } km/h
+# The detail pane beside the list.
+menu-fact-length = Length
+menu-fact-signals = Signals
+menu-fact-scenery = Scenery objects
+menu-fact-drive = Drive
+menu-fact-brake = Brake
+menu-fact-start = Start
+menu-fact-timetable = Timetable
+menu-fact-line = Line
+menu-fact-events = Events
+menu-fact-km = { $value } km
+menu-fact-m = { $value } m
+menu-fact-t = { $value } t
+menu-fact-kmh = { $value } km/h
+
+## Settings
+#
+# One page of the main menu, stored as TOML in the operating system's settings
+# directory. A -hint key is the description under the setting's name.
+
+set-graphics = Graphics
+set-audio = Audio
+set-gameplay = Gameplay
+set-stored = Kept between runs in the settings file of your user account.
+set-view-distance = View distance
+set-view-distance-hint = How far terrain is built and drawn — the biggest single cost.
+set-shadows = Shadows
+set-shadows-hint = Shadow maps of the sun.
+set-bloom = Bloom
+set-bloom-hint = Makes lamps and signals glow after dark.
+set-fullscreen = Fullscreen
+set-fullscreen-hint = Borderless, on the monitor the window is on.
+set-vsync = Vertical sync
+set-vsync-hint = Caps the frame rate at the monitor's, against tearing.
+set-volume = Master volume
+set-volume-hint = Loudness of everything the simulator plays.
+set-language = Language
+set-language-hint = Applies right away, to the menu as well as to the cab.
+set-language-system = System
+set-hud = HUD
+set-hud-hint = The readout of speed, brakes and train protection while driving.
+set-look-speed = Look sensitivity
+set-look-speed-hint = How far the view turns while the right mouse button is held.
+set-reset = Reset to defaults
+set-reset-hint = Puts every setting on this page back to how it shipped.
+# Units of the values on the right of a settings row.
+set-metres = { $value } m
+set-percent = { $value } %
+set-factor = { $value } ×
 
 ## Mod manager
 
@@ -947,7 +1031,6 @@ mods-content = Content: { $vehicles } vehicles, { $lines } lines, { $composition
 mods-log = Warnings:
 mods-restart = Change takes effect after a restart.
 mods-keys = ↑/↓ select   Enter on/off   F9 close
-mods-keys-menu = ↑/↓ or mouse select   Enter or click on/off   Esc back
 
 ## Scoring
 

@@ -4,6 +4,7 @@
 //! 3D controls are added in M6.
 
 use crate::mods_ui::ModManager;
+use crate::settings::Gameplay;
 use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -231,6 +232,7 @@ pub fn camera_control(
     origin: Res<Origin>,
     player: Res<PlayerTrain>,
     manager: Res<ModManager>,
+    gameplay: Res<Gameplay>,
     mut state: ResMut<CameraState>,
     mut camera: Query<&mut Transform, With<CabCamera>>,
 ) {
@@ -270,8 +272,9 @@ pub fn camera_control(
     }
     // Right-drag looks around; the left button stays free for the cab controls.
     if buttons.pressed(MouseButton::Right) {
-        state.yaw -= motion.delta.x * 0.003;
-        state.pitch = (state.pitch - motion.delta.y * 0.003).clamp(-1.2, 1.2);
+        let speed = 0.003 * gameplay.look_speed;
+        state.yaw -= motion.delta.x * speed;
+        state.pitch = (state.pitch - motion.delta.y * speed).clamp(-1.2, 1.2);
     }
 
     let Ok(mut transform) = camera.single_mut() else {
@@ -347,11 +350,22 @@ pub fn update_hud(
     streamer: Res<TerrainStreamer>,
     view: Res<ViewDistance>,
     mouse: Res<crate::cab::CabMouse>,
-    mut query: Query<&mut Text, With<HudText>>,
+    gameplay: Res<Gameplay>,
+    mut query: Query<(&mut Text, &mut Visibility), With<HudText>>,
 ) {
-    let Ok(mut text) = query.single_mut() else {
+    let Ok((mut text, mut visibility)) = query.single_mut() else {
         return;
     };
+    // Switched off in the settings: hide it and skip the whole readout — nothing else
+    // reads the text node.
+    *visibility = if gameplay.hud {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    if !gameplay.hud {
+        return;
+    }
     let sim = &sim.0;
     let train = &sim.trains[player.0];
     let loco = &train.vehicles[0];

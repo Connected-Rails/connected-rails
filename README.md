@@ -7,26 +7,37 @@ Current state and open points: [STATUS.md](STATUS.md).
 
 This project is designed from the ground up for modding — your own locomotives, your own
 signals, your own lines. See [Mods](#mods) for the guide. The main menu offers a clickable
-interface to choose your line, vehicle and scenario from the loaded mods.
+interface to choose your line, vehicle and scenario from the loaded mods, to switch mods on
+and off, and to change [settings](#settings) that are kept between runs.
 
 ## Build and run
 
 ```bash
 cargo test --workspace     # all acceptance tests (headless, no GPU)
-cargo run -p app           # start the simulator (main menu: line/vehicle/scenario, mods, quit)
+cargo run -p app           # start the simulator (main menu: drive, mods, settings, quit)
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
+cargo run -p app -- --menu --screenshot screenshots/menu.png   # …of the menu instead
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
 cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 ```
 
-Without arguments the simulator starts on the main menu: select line, vehicle and scenario from
-the loaded mods (keyboard ↑/↓, mouse click), or toggle mods on and off. `Enter` or a left click
-confirms, `Esc` goes back, `F9` opens the mod manager in-game. Any run flag (`--line`, `--loco`,
-`--scenario`, `--frames`, `--screenshot`, …) skips the menu entirely, so the invocations above stay
-non-interactive.
+Without arguments the simulator opens on a title screen: wordmark over the backdrop, and four
+verbs — **Drive**, **Mods**, **Settings**, **Quit**. Drive walks line → vehicle → scenario in
+three steps, shown as a numbered rail across the top with what was picked under each. Beside
+the list a detail pane reads the highlighted entry out of the loaded content: length, permitted
+speed and signals of a line; mass, running-gear limit, drive and brake of a vehicle; start time,
+timetable and events of a scenario. `↑`/`↓` or the mouse select, `Enter` or a left click
+confirms, `←`/`→` dial a setting, `Esc` goes one step back and leaves at the title screen; `F9`
+opens the mod manager in-game. Any run flag (`--line`, `--loco`, `--scenario`, `--frames`,
+`--screenshot`, …) skips the menu entirely, so the invocations above stay non-interactive —
+`--menu` puts it back in front, optionally on a named page (`--menu settings`, also `root`,
+`line`, `loco`, `scenario`, `mods`), which is the only way to photograph the menu itself.
+
+The picture behind the menu lives in `crates/app/images/` and is compiled into the binary. The
+one checked in today is a **placeholder that is not ours to distribute** — see the README there.
 
 For a faster edit-compile-run loop, add `--features dev` to any of the four binaries
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
@@ -43,6 +54,39 @@ board.
 
 `--screenshot` is available in the editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).
+
+## Settings
+
+The **Settings** section of the main menu writes a TOML file into the operating system's
+settings directory for the current user (`%LOCALAPPDATA%\dev.vanlueck.connected-rails\settings.toml`
+on Windows, `~/.config/dev.vanlueck.connected-rails/settings.toml` on Linux). It is Bevy's own
+`bevy::settings`, so the file is plain text and can be edited by hand; an unknown or malformed
+key falls back to the built-in default instead of taking the program down.
+
+Every setting applies the moment it is changed — none of them waits for a restart or for
+the next run. View distance moves the streamer's load radius while tiles are in the air,
+bloom is added to and taken off the live camera, and the rest is re-read where it is used.
+
+`Esc` during a run raises the **pause overlay** — the world stands still under it — with
+**Resume**, **Settings** and **Quit**. Its settings page is the same one, minus the language
+(not a driving decision) and the reset (too blunt to have under the cursor while a train is
+standing on a gradient); everything on it takes effect while you watch. `Esc` on the overlay
+resumes.
+
+| Section | Setting | Effect |
+|---|---|---|
+| `[graphics]` | `view_distance` | How far terrain is built and drawn [m], 1000 … 12000. The biggest single cost. |
+| | `shadows` | Shadow maps of the sun. |
+| | `bloom` | Glow around lamps and signals after dark. |
+| | `fullscreen` | Borderless, on the monitor the window is on. |
+| | `vsync` | Caps the frame rate at the monitor's. |
+| `[audio]` | `master` | Linear master volume, 0 … 1. |
+| `[gameplay]` | `language` | `en`, `de`, or empty for the system's. |
+| | `hud` | Draw the readout while driving. |
+| | `look_speed` | Factor on the mouse look speed, 0.2 … 3.0. |
+
+`TRAINSIM_LANG` stays the outermost override: where it is set, the stored `language` is
+ignored, so scripted and CI runs are not steered by whatever was last picked in the menu.
 
 ## Mods
 
@@ -203,7 +247,7 @@ or the whole corridor.
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, track objects, floating-origin anchoring |
-| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13); text in Fira Mono (`fonts/`, SIL OFL 1.1) |
+| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down view over aerial imagery — track, equipment, objects, vegetation, terrain (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, glTF import, LOD, moving parts (ch. 15) |
@@ -236,6 +280,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `6` / `7` / `8` | AFB on/off / dial down / dial up (in 10 km/h steps) |
 | `9` / `0` | Headlights / cab light |
 | `,` / `.` | Instrument backlighting dimmer down / up |
+| `Esc` | Pause: resume, settings, quit — the world stands still under the overlay |
 | `F1`–`F3` | Camera: cab / external / lineside |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |

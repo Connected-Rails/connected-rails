@@ -73,6 +73,19 @@ pub fn language() -> String {
     current().to_string()
 }
 
+/// A number with the decimal separator of the current language — German writes
+/// `7,0 km` where English writes `7.0 km`.
+///
+/// Numbers are formatted in Rust and handed to Fluent as text (that is what keeps the
+/// HUD's columns lined up), so the separator cannot come out of the message itself.
+pub fn decimal(value: f64, decimals: usize) -> String {
+    let text = format!("{value:.decimals$}");
+    match language().as_str() {
+        "de" => text.replace('.', ","),
+        _ => text,
+    }
+}
+
 /// Looks a message up; use [`t!`] instead.
 pub fn lookup(key: &str) -> String {
     LOCALES
@@ -152,8 +165,10 @@ mod tests {
         set_language("de-DE");
         assert_eq!(language(), "de");
         assert_eq!(t!("status-loaded", file = "br101.ron"), "br101.ron geladen");
+        assert_eq!(decimal(7.0, 1), "7,0", "German writes the comma");
         set_language("fr");
         assert_eq!(language(), "en", "unknown languages fall back to English");
+        assert_eq!(decimal(7.0, 1), "7.0");
         assert_eq!(t!("no-such-key"), "no-such-key");
     }
 }

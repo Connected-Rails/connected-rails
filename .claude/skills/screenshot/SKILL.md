@@ -22,6 +22,7 @@ Danach das PNG mit **Read** ansehen — das Bild ist die Antwort, nicht die Loga
 |---|---|
 | `--screenshot <datei.png>` | Aufnahme des Fensters, danach Ende. Verzeichnis wird angelegt. |
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
+| `--menu [seite]` | Nur Simulator: fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe, Titelbildschirm), `line`, `loco`, `scenario`, `mods`, `settings`. |
 
 `--frames` ist der einzige Hebel auf den Zeitpunkt: mehr Frames = mehr Simulationszeit vor dem Bild
 (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für geladenes Overlay, 60 reichen
@@ -40,6 +41,7 @@ Editor zusätzlich: Streckendatei als erstes Argument (ohne: Beispielstrecke), `
 
 - Es wird immer der **Startzustand plus N Frames** aufgenommen: keine Tastatureingaben, also
   Führerstandskamera (F2/F3 und Fahrschalter sind nur interaktiv erreichbar) und Zug im Anfangszustand.
-  Fahrdynamik prüft man über `cargo test`, nicht über Bilder.
+  Fahrdynamik prüft man über `cargo test`, nicht über Bilder. Im Menü ersetzt `--menu <seite>` die
+  fehlende Tastatur; die Auswahl steht dabei immer auf der ersten Zeile.
 - Braucht eine GPU und eine Desktop-Sitzung. In headless-CI schlägt es fehl — dort bleibt `--frames` als
   reiner Rendering-Smoke-Test.

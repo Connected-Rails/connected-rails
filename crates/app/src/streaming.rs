@@ -69,10 +69,20 @@ impl TerrainStreamer {
             pending: HashMap::new(),
             empty: HashSet::new(),
             load_radius,
+            // Hysteresis; kept in step by `set_load_radius`.
             unload_radius: load_radius * 1.25,
             missing: 0,
             tile_loads: 0,
         }
+    }
+
+    /// Moves the load radius while the run is going, keeping the hysteresis with it —
+    /// the view distance is a setting, and a setting that needs a restart is an excuse.
+    /// Raising it streams the new ring in; lowering it lets `stream_terrain` discard
+    /// whatever now falls outside the unload radius.
+    pub fn set_load_radius(&mut self, radius: f64) {
+        self.load_radius = radius;
+        self.unload_radius = radius * 1.25;
     }
 
     /// Tiles being built right now.

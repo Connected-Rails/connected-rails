@@ -23,6 +23,11 @@ use std::f64::consts::TAU;
 /// (Voith transmissions have at most three: starting converter, running converter, coupling.)
 pub const MAX_CIRCUITS: usize = 4;
 
+/// Traction chains a vehicle can carry. Four covers the multi-engine railcars (BR 245)
+/// and every dual-mode loco; like [`MAX_CIRCUITS`] it keeps the drive state `Copy` and
+/// allocation-free, which the determinism test relies on.
+pub const MAX_DRIVES: usize = 4;
+
 /// Linear interpolation over a table of `(x, y)` pairs sorted by `x`.
 /// Outside the table the first / last value is held.
 pub fn interpolate(points: &[(f64, f64)], x: f64) -> f64 {
@@ -494,6 +499,61 @@ fn default_ramp_time() -> f64 {
     2.0
 }
 
+/// Where a drive takes its power from. A vehicle whose drives disagree is a dual-mode
+/// vehicle and gets a mode selector; one where they all agree has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DriveMode {
+    /// Contact line over the pantograph.
+    #[default]
+    Electric,
+    /// Diesel engine carried on board.
+    Diesel,
+}
+
+impl DriveMode {
+    /// Translation key of the mode's name.
+    pub fn key(self) -> &'static str {
+        match self {
+            DriveMode::Electric => "drv-mode-electric",
+            DriveMode::Diesel => "drv-mode-diesel",
+        }
+    }
+}
+
+/// One traction chain of a vehicle, with what it needs to run and who commands it.
+///
+/// A vehicle carries a list of these: two diesel engines, four traction motors, or a
+/// diesel and an electric chain side by side on a dual-mode loco.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DriveSpec {
+    /// The chain itself.
+    pub traction: TractionSpec,
+    /// Power source it needs. Defaults to what the chain implies.
+    #[serde(default)]
+    pub mode: DriveMode,
+    /// Which power controller commands it: `0` is the shared one every cab has, `1..`
+    /// picks the separate handle of that number. The vehicle builder decides — one lever
+    /// for the whole loco, or one per engine.
+    #[serde(default)]
+    pub throttle: u8,
+    /// Name in the cab and in the editor ("Engine 1"). Empty = numbered by position.
+    #[serde(default)]
+    pub name: String,
+}
+
+impl DriveSpec {
+    /// A chain on the shared power controller, in the mode its type implies — what a
+    /// single-drive vehicle has always been.
+    pub fn new(traction: TractionSpec) -> Self {
+        Self {
+            mode: traction.implied_mode(),
+            traction,
+            throttle: 0,
+            name: String::new(),
+        }
+    }
+}
+
 /// Traction chain of a powered vehicle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TractionSpec {
@@ -579,6 +639,15 @@ pub enum TractionSpec {
 }
 
 impl TractionSpec {
+    /// Power source the chain implies. `Curve` is the abstract one and could be either —
+    /// it counts as electric, and a diesel railcar built from it says so in `DriveSpec`.
+    pub fn implied_mode(&self) -> DriveMode {
+        match self {
+            TractionSpec::Diesel { .. } => DriveMode::Diesel,
+            _ => DriveMode::Electric,
+        }
+    }
+
     pub fn v_max(&self) -> f64 {
         match self {
             TractionSpec::Curve { v_max, .. }

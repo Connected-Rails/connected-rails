@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use egui::{
-    Align, Color32, CornerRadius, Frame, Id, LayerId, Layout, Margin, Modifiers, PointerButton,
+    Align, Color32, CornerRadius, CursorIcon, Frame, Id, LayerId, Layout, Margin, Modifiers,
+    PointerButton,
     Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Style, Ui, UiBuilder, UiKind, UiStackInfo,
     Vec2,
     collapsing_header::paint_default_icon,
@@ -1645,11 +1646,14 @@ where
         let builder = UiBuilder::new().layout(pin_layout).max_rect(inner_rect);
 
         outputs_ui.scope_builder(builder, |pin_ui| {
-            // Allocate space for pin shape.
+            // Allocate space for pin shape. The layout runs right-to-left, so the
+            // reserved rect has to grow leftwards from the cursor — anchoring it at
+            // `min` puts it outside the region and only the item spacing gets
+            // consumed, which lets the label run under the pin.
             if let Some(output_spacing) = output_spacing {
-                let min = pin_ui.next_widget_position();
+                let right = pin_ui.next_widget_position();
                 pin_ui.advance_cursor_after_rect(Rect::from_min_size(
-                    min,
+                    right - vec2(output_spacing, 0.0),
                     vec2(output_spacing, pin_size),
                 ));
             }
@@ -1901,6 +1905,8 @@ where
 
     if !modifiers.shift && !modifiers.command && r.dragged_by(PointerButton::Primary) {
         node_moved = Some((node, r.drag_delta()));
+        // Connected Rails patch: the pointer says what the drag does.
+        node_ui.ctx().set_cursor_icon(CursorIcon::Move);
     }
 
     // Connected Rails patch — blueprint-style selection: a plain click selects

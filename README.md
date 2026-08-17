@@ -395,7 +395,9 @@ component as a block — pantograph, transformer, tap changer, traction converte
 and three-phase motors, diesel engine, hydraulic transmission and retarder, the complete
 air brake from compressor to brake rigging, wheelset, cab, AFB, Sifa, PZB, LZB, doors and
 the Lua script hook — plus the **presets installed mods bring** (`blocks/*.ron`, e.g. a
-Voith L 620 as a preset of the hydraulic transmission). A right click on the canvas adds a
+Voith L 620 as a preset of the hydraulic transmission). A block is dragged out of the
+palette onto the canvas and lands where the pointer lets go; a click on it appends it below
+the diagram instead. A right click on the canvas adds a
 block, a right click on a node removes it, a drag from pin to pin wires them; pins are
 colour- **and** shape-coded by domain (shaft, force, electrical, pneumatic, signal, fuel),
 and only like connects to like. Clicking a node puts its data sheet below the palette —

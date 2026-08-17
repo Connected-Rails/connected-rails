@@ -66,6 +66,10 @@ pub mod space {
     /// Width of every control in a value column: numeric fields and combo
     /// boxes share it, so the column has one clean right edge.
     pub const FIELD: f32 = 150.0;
+    /// Narrowest a resizable form panel may be dragged: the panel's own margins,
+    /// the section indent, the label column and one field. Below this a form row
+    /// no longer fits and the rows break out over the panel's edge.
+    pub const PANEL_MIN: f32 = M + M + L + LABEL_COL + M + FIELD;
 }
 
 /// Name of the semibold font family registered by [`apply`].

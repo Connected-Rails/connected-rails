@@ -8,7 +8,7 @@
 use bevy_egui::egui;
 use editor_ui::{colors, space};
 use egui_snarl::ui::{
-    BackgroundPattern, PinInfo, SnarlStyle, get_selected_nodes, set_selected_nodes,
+    BackgroundPattern, PinInfo, SelectionStyle, SnarlStyle, get_selected_nodes, set_selected_nodes,
 };
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use i18n::t;
@@ -156,11 +156,14 @@ pub fn canvas(ui: &mut egui::Ui, editor: &mut Editor) {
         0.0,
     )));
     style.min_scale = Some(0.3);
+    // No selection halo around the node — `node_frame` gives selected nodes an accent
+    // border, and two rings around the same block only add noise.
+    style.select_style = Some(SelectionStyle::default());
 
     let mut changed = false;
     editor.node_rects.clear();
     {
-        let selected = editor.selected_block;
+        let selected = get_selected_nodes(ui.make_persistent_id("vehicle-graph"), ui.ctx());
         let Editor {
             spec,
             registry,
@@ -183,6 +186,18 @@ pub fn canvas(ui: &mut egui::Ui, editor: &mut Editor) {
             node_rects,
         };
         snarl.show(&mut viewer, &style, "vehicle-graph", ui);
+    }
+
+    // A block dragged out of the palette lands where the pointer let go.
+    if ui.input(|i| i.pointer.any_released())
+        && let Some(pos) = ui.ctx().pointer_latest_pos()
+        && ui.max_rect().contains(pos)
+        && let Some(kind) = egui::DragAndDrop::take_payload::<String>(ui.ctx())
+        && let Some(graph) = editor.spec.graph.as_mut()
+    {
+        let target = editor.canvas_transform.inverse() * pos;
+        add_block(graph, &editor.registry, &kind, (target.x, target.y));
+        changed = true;
     }
 
     // Positions live in the snarl while dragging; the spec follows every frame so undo
@@ -519,8 +534,9 @@ struct Viewer<'a> {
     registry: &'a Registry,
     changed: &'a mut bool,
     status: &'a mut Status,
-    /// Block whose parameters the sidebar shows — its node wears the accent.
-    selected: Option<u32>,
+    /// Selected nodes — they wear the accent border. The snarl's own selection halo is
+    /// switched off in `canvas`, one border per node is enough.
+    selected: Vec<NodeId>,
     /// Canvas transform, written back for paste/add-menu placement.
     transform: &'a mut egui::emath::TSTransform,
     /// Node rects in graph space — comment frames form around them.
@@ -602,10 +618,9 @@ impl egui_snarl::ui::SnarlViewer<u32> for Viewer<'_> {
         node: NodeId,
         _inputs: &[InPin],
         _outputs: &[OutPin],
-        snarl: &Snarl<u32>,
+        _snarl: &Snarl<u32>,
     ) -> egui::Frame {
-        // The block being edited in the sidebar wears the accent.
-        if snarl.get_node(node).copied() == self.selected {
+        if self.selected.contains(&node) {
             default.stroke(egui::Stroke::new(2.0, colors::ACCENT))
         } else {
             default
@@ -802,8 +817,9 @@ fn add_block(graph: &mut VehicleGraph, registry: &Registry, kind: &str, pos: (f3
 /// The data panel while the canvas is shown: block palette, the selected block's
 /// parameters, and what baking has to say about the graph.
 pub fn side_panel(ui: &mut egui::Ui, editor: &mut Editor) {
-    // Palette: search plus one collapsible per category. A click drops the block near
-    // the last one, the canvas menu (right click) places it exactly.
+    // Palette: search plus one collapsible per category. A drag carries the block onto
+    // the canvas, a click drops it near the last one, the canvas menu (right click)
+    // places it exactly.
     editor_ui::section(ui, "palette", t!("graph-palette"), |ui| {
         ui.add(
             egui::TextEdit::singleline(&mut editor.palette_filter)
@@ -827,11 +843,23 @@ pub fn side_panel(ui: &mut egui::Ui, editor: &mut Editor) {
             ui.label(editor_ui::section_title(t!(category.key())));
             ui.horizontal_wrapped(|ui| {
                 for def in defs {
-                    let button = ui.add(egui::Button::new(block_name(def)).small());
+                    let button = ui.add(
+                        egui::Button::new(block_name(def))
+                            .small()
+                            .sense(egui::Sense::click_and_drag()),
+                    );
                     let button = match block_hint(def) {
                         Some(hint) => button.on_hover_text(hint),
                         None => button,
                     };
+                    // Dragging carries the block onto the canvas and drops it under the
+                    // pointer; a plain click appends it below the diagram. No drag ghost
+                    // — `dnd_drag_source` wraps the button in a scope, and a nested
+                    // layout no longer wraps inside `horizontal_wrapped`.
+                    button.dnd_set_drag_payload(def.id.clone());
+                    if button.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    }
                     if button.clicked() {
                         added = Some(def.id.clone());
                     }

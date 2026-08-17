@@ -597,6 +597,7 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
     let cap = (root.available_rect_before_wrap().width() - 360.0).max(240.0);
     egui::Panel::left("data")
         .default_size(width)
+        .min_size(space::PANEL_MIN)
         .max_size(cap)
         .resizable(true)
         .frame(editor_ui::panel_frame())
@@ -886,10 +887,18 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
     let cap = (root.available_rect_before_wrap().width() - 360.0).max(240.0);
     egui::Panel::right("model")
         .default_size(width)
+        .min_size(space::PANEL_MIN)
         .max_size(cap)
         .resizable(true)
         .frame(editor_ui::panel_frame())
         .show(root, |ui| {
+            // The panel frame wraps the content, not the panel rect — egui only
+            // gives the content `min_size` minus margins. On a right panel the
+            // content sits at the resizable edge, so a narrower content would
+            // drag the whole visible panel away from the window's edge and snap
+            // back on release. Pinning the content to the panel's width also
+            // stops the panel from adopting an over-wide row.
+            ui.set_width(ui.available_width());
             // Heading and file stay put like the left panel's do: a model with
             // a few hundred nodes scrolls for pages, and which file is being
             // edited must not be one of the things that scrolls away.

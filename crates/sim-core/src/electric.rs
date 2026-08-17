@@ -6,8 +6,8 @@
 
 use crate::brakes::approach;
 use crate::drive::{
-    DieselEngine, DynamicBrake, Governor, HydrodynamicBrake, MAX_CIRCUITS, TractionSpec,
-    Transmission, quantise,
+    DieselEngine, DriveMode, DriveSpec, DynamicBrake, Governor, HydrodynamicBrake, MAX_CIRCUITS,
+    MAX_DRIVES, TractionSpec, Transmission, quantise,
 };
 use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
@@ -18,6 +18,58 @@ pub const NOMINAL_LINE_VOLTAGE: f64 = 15_000.0;
 pub const LINE_FREQUENCY: f64 = 16.7;
 /// From this contact wire voltage upwards the main switch may close [V].
 pub const MIN_LINE_VOLTAGE: f64 = 10_000.0;
+
+/// State of one traction chain. Everything here belongs to a single drive — a vehicle
+/// with two engines has two of these; what the whole vehicle shares stays in
+/// [`TractionState`].
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct DriveState {
+    /// Power controller of this chain: −1 … +1 (negative = dynamic brake). Chains on the
+    /// shared handle get it copied in from [`TractionState::notch`] every step.
+    pub notch: f64,
+    /// Switched on by the driver. A shut-down chain delivers nothing.
+    pub enabled: bool,
+    /// Current tap changer notch (only `TapChanger`).
+    pub step: f64,
+    /// Diesel engine running.
+    pub engine_running: bool,
+    /// Remaining cranking time [s].
+    pub start_timer: f64,
+    /// Current tractive effort [N], positive = traction, negative = dynamic brake.
+    pub force: f64,
+    /// Engine speed [1/min] (diesel with an engine map).
+    pub engine_rpm: f64,
+    /// Fuel rack 0…1 (diesel with an engine map).
+    pub engine_fill: f64,
+    /// Engaged hydraulic circuit (diesel-hydraulic).
+    pub circuit: usize,
+    /// Filling of the hydraulic circuits 0…1.
+    pub circuit_fill: [f64; MAX_CIRCUITS],
+    /// Speed ratio ν of the engaged circuit — the transmission's working point.
+    pub circuit_nu: f64,
+    /// Filling of the hydrodynamic brake 0…1.
+    pub retarder_fill: f64,
+    /// Armature current [A] (series-wound drive).
+    pub motor_current: f64,
+    /// Field stage in use as a share of the full field (series-wound drive).
+    pub field: f64,
+    /// Braking force the dynamic brake is actually delivering [N], positive.
+    pub dynamic_force: f64,
+    /// Ramped force of the electric brake of a diesel-electric drive [N] — its own state,
+    /// because `dynamic_force` also carries the retarder's share.
+    pub electric_brake: f64,
+}
+
+impl DriveState {
+    /// A chain as it sits before the driver touches anything: switched on, shut down.
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            field: 1.0,
+            ..Self::default()
+        }
+    }
+}
 
 /// State of the on-board electrical system and drive of a vehicle.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -33,51 +85,24 @@ pub struct TractionState {
     /// Contact wire voltage at the pantograph [V] — set by the line
     /// (0 in neutral sections or without catenary).
     pub line_voltage: f64,
-    /// Power controller: −1 … +1 (negative = dynamic brake).
+    /// Shared power controller: −1 … +1 (negative = dynamic brake). Commands every chain
+    /// with `throttle == 0`; chains with their own handle read `DriveState::notch`.
     pub notch: f64,
-    /// Current tap changer notch (only `TapChanger`).
-    pub step: f64,
-    /// Diesel engine running.
-    pub engine_running: bool,
-    /// Remaining cranking time [s].
-    pub start_timer: f64,
     /// Air compressor switched on.
     pub compressor: bool,
     /// Train line (heating) switched on.
     pub train_line: bool,
-    /// Current tractive effort [N], positive = traction, negative = dynamic brake.
+    /// Total tractive effort of the vehicle [N], the sum over the chains that are
+    /// delivering. Positive = traction, negative = dynamic brake.
     pub force: f64,
-    /// Engine speed [1/min] (diesel with an engine map).
+    /// Selected power source. On a dual-mode vehicle only the chains of this mode work;
+    /// where every chain agrees it is simply that mode.
     #[serde(default)]
-    pub engine_rpm: f64,
-    /// Fuel rack 0…1 (diesel with an engine map).
+    pub mode: DriveMode,
+    /// State of each traction chain, in the order of `VehicleSpec::drives`. Entries past
+    /// the vehicle's chain count are unused.
     #[serde(default)]
-    pub engine_fill: f64,
-    /// Engaged hydraulic circuit (diesel-hydraulic).
-    #[serde(default)]
-    pub circuit: usize,
-    /// Filling of the hydraulic circuits 0…1.
-    #[serde(default)]
-    pub circuit_fill: [f64; MAX_CIRCUITS],
-    /// Speed ratio ν of the engaged circuit — the transmission's working point.
-    #[serde(default)]
-    pub circuit_nu: f64,
-    /// Filling of the hydrodynamic brake 0…1.
-    #[serde(default)]
-    pub retarder_fill: f64,
-    /// Armature current [A] (series-wound drive).
-    #[serde(default)]
-    pub motor_current: f64,
-    /// Field stage in use as a share of the full field (series-wound drive).
-    #[serde(default)]
-    pub field: f64,
-    /// Braking force the dynamic brake is actually delivering [N], positive.
-    #[serde(default)]
-    pub dynamic_force: f64,
-    /// Ramped force of the electric brake of a diesel-electric drive [N] — its own state,
-    /// because `dynamic_force` also carries the retarder's share.
-    #[serde(default)]
-    pub electric_brake: f64,
+    pub drives: [DriveState; MAX_DRIVES],
 }
 
 impl Default for TractionState {
@@ -90,22 +115,11 @@ impl Default for TractionState {
             main_switch: false,
             line_voltage: 0.0,
             notch: 0.0,
-            step: 0.0,
-            engine_running: false,
-            start_timer: 0.0,
             compressor: false,
             train_line: false,
             force: 0.0,
-            engine_rpm: 0.0,
-            engine_fill: 0.0,
-            circuit: 0,
-            circuit_fill: [0.0; MAX_CIRCUITS],
-            circuit_nu: 0.0,
-            retarder_fill: 0.0,
-            motor_current: 0.0,
-            field: 1.0,
-            dynamic_force: 0.0,
-            electric_brake: 0.0,
+            mode: DriveMode::default(),
+            drives: [DriveState::new(); MAX_DRIVES],
         }
     }
 }
@@ -113,19 +127,81 @@ impl Default for TractionState {
 impl TractionState {
     /// Started up and ready to run?
     pub fn ready(&self) -> bool {
-        self.battery && (self.main_switch || self.engine_running)
+        self.battery && (self.main_switch || self.any_engine_running())
+    }
+
+    /// Is any diesel engine of the vehicle running?
+    pub fn any_engine_running(&self) -> bool {
+        self.drives.iter().any(|d| d.engine_running)
+    }
+
+    /// The chains of the selected mode that the driver has switched on, as indices into
+    /// `VehicleSpec::drives`.
+    pub fn active<'a>(&'a self, specs: &'a [DriveSpec]) -> impl Iterator<Item = usize> + 'a {
+        specs
+            .iter()
+            .enumerate()
+            .take(MAX_DRIVES)
+            .filter(move |(i, s)| s.mode == self.mode && self.drives[*i].enabled)
+            .map(|(i, _)| i)
     }
 }
 
-/// One simulation step for the on-board electrical system and drive of a vehicle.
-pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
+/// One simulation step for the on-board electrical system and every traction chain of a
+/// vehicle. `state.force` comes out as the sum over the chains.
+pub fn step(state: &mut TractionState, specs: &[DriveSpec], v: f64, dt: f64) {
+    update_vehicle_power(state, specs, dt);
+
+    let count = specs.len().min(MAX_DRIVES);
+    let mut total = 0.0;
+    for i in 0..count {
+        let drive = &specs[i];
+        // A chain of the mode that is not selected is dead, whatever its own switch says.
+        let selected = drive.mode == state.mode;
+        // Chains on the shared handle follow the cab's power controller.
+        if drive.throttle == 0 {
+            state.drives[i].notch = state.notch;
+        }
+        let live = selected && state.drives[i].enabled;
+        step_drive(
+            &mut state.drives[i],
+            &drive.traction,
+            state.main_switch,
+            state.line_voltage,
+            live,
+            v,
+            dt,
+        );
+        total += state.drives[i].force - state.drives[i].dynamic_force;
+    }
+    // Chains the vehicle does not have must not keep old force around.
+    for i in count..MAX_DRIVES {
+        state.drives[i] = DriveState::new();
+    }
+    state.force = total;
+}
+
+/// One simulation step of a single traction chain.
+///
+/// `live` is false for a chain that is switched off or belongs to the mode that is not
+/// selected — it then coasts down exactly like one without power.
+fn step_drive(
+    state: &mut DriveState,
+    spec: &TractionSpec,
+    main_switch: bool,
+    line_voltage: f64,
+    live: bool,
+    v: f64,
+    dt: f64,
+) {
     update_power(state, spec, dt);
 
-    let electric_ok = state.main_switch && state.line_voltage >= MIN_LINE_VOLTAGE;
-    let powered = match spec {
-        TractionSpec::Diesel { .. } => state.engine_running,
-        _ => electric_ok,
-    };
+    let electric_ok = main_switch && line_voltage >= MIN_LINE_VOLTAGE;
+    let powered = live
+        && match spec {
+            TractionSpec::Diesel { .. } => state.engine_running,
+            _ => electric_ok,
+        };
 
     if !powered {
         // Force decays, the tap changer runs back to the zero notch, the circuits empty.
@@ -237,7 +313,7 @@ pub fn step(state: &mut TractionState, spec: &TractionSpec, v: f64, dt: f64) {
 
 /// Dynamic brake: the effort follows the demand with the drive's ramp time.
 fn apply_dynamic_brake(
-    state: &mut TractionState,
+    state: &mut DriveState,
     brake: Option<&DynamicBrake>,
     electric_ok: bool,
     v: f64,
@@ -268,7 +344,7 @@ fn apply_dynamic_brake(
 /// engine and pump wheel; without them the notch scales the hyperbola as before.
 #[allow(clippy::too_many_arguments)]
 fn step_diesel(
-    state: &mut TractionState,
+    state: &mut DriveState,
     spec: &TractionSpec,
     engine: Option<&DieselEngine>,
     transmission: Option<&Transmission>,
@@ -387,7 +463,7 @@ fn step_diesel(
 /// Hydraulic transmission: change point with hysteresis, filling, torque conversion.
 /// Returns (torque taken from the engine [N·m], tractive effort at the wheel [N]).
 fn step_transmission(
-    state: &mut TractionState,
+    state: &mut DriveState,
     transmission: &Transmission,
     engine: &DieselEngine,
     demand: f64,
@@ -465,7 +541,9 @@ fn step_transmission(
 }
 
 /// Start-up chain: battery → pantograph → main switch (plan 8, start-up procedure).
-fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
+/// Battery, pantograph and main switch — the part of the electrical system the whole
+/// vehicle shares, whatever its chains are.
+fn update_vehicle_power(state: &mut TractionState, specs: &[DriveSpec], dt: f64) {
     if !state.battery {
         state.pantograph_command = false;
         state.main_switch_command = false;
@@ -491,6 +569,17 @@ fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
     let voltage_ok = contact && state.line_voltage >= MIN_LINE_VOLTAGE;
     state.main_switch = state.main_switch_command && state.battery && voltage_ok;
 
+    // A vehicle whose chains all agree has no mode selector; keep the mode on whatever it
+    // can actually run on, so a diesel railcar does not sit dead in `Electric`.
+    if let Some(first) = specs.first()
+        && !specs.iter().any(|s| s.mode == state.mode)
+    {
+        state.mode = first.mode;
+    }
+}
+
+/// Cranking and shutdown of one chain's diesel engine.
+fn update_power(state: &mut DriveState, spec: &TractionSpec, dt: f64) {
     if let TractionSpec::Diesel { engine, .. } = spec {
         if state.start_timer > 0.0 {
             state.start_timer -= dt;
@@ -509,10 +598,10 @@ fn update_power(state: &mut TractionState, spec: &TractionSpec, dt: f64) {
     }
 }
 
-/// Crank the diesel engine (needs the battery).
-pub fn start_engine(state: &mut TractionState, spec: &TractionSpec) {
+/// Crank the diesel engine of one chain (needs the battery, which the caller checks).
+pub fn start_engine(state: &mut DriveState, spec: &TractionSpec, battery: bool) {
     if let TractionSpec::Diesel { start_time, .. } = spec
-        && state.battery
+        && battery
         && !state.engine_running
         && state.start_timer <= 0.0
     {
@@ -521,7 +610,7 @@ pub fn start_engine(state: &mut TractionState, spec: &TractionSpec) {
 }
 
 /// Shut the diesel engine down.
-pub fn stop_engine(state: &mut TractionState) {
+pub fn stop_engine(state: &mut DriveState) {
     state.engine_running = false;
     state.start_timer = 0.0;
     state.engine_rpm = 0.0;

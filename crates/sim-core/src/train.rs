@@ -2,7 +2,7 @@
 
 use crate::brakes::{BrakeKind, BrakeSpec, BrakeState, SlipProtection};
 use crate::doors::{DoorControl, DoorSystem, VehicleDoors};
-use crate::drive::TractionSpec;
+use crate::drive::{DriveMode, DriveSpec, MAX_DRIVES, TractionSpec};
 use crate::electric::TractionState;
 use crate::safety::{SafetyEquipment, SafetySystems};
 use crate::sound::SoundSpec;
@@ -220,8 +220,14 @@ pub struct VehicleSpec {
     pub rotating_mass_factor: f64,
     pub davis: Davis,
     pub brake: BrakeSpec,
-    #[serde(default)]
-    pub traction: Option<TractionSpec>,
+    /// Traction chains of the vehicle. Empty = unpowered. More than one is a
+    /// multi-engine vehicle or, where the modes differ, a dual-mode one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drives: Vec<DriveSpec>,
+    /// The single chain older vehicle files carry. [`VehicleSpec::normalise`] folds it
+    /// into `drives`; nothing reads it afterwards and it is never written back.
+    #[serde(default, rename = "traction", skip_serializing)]
+    pub legacy_traction: Option<TractionSpec>,
     pub coupler: CouplerSpec,
     /// Share of the vehicle mass on driven axles (loco: 1.0; coach: 0.0).
     #[serde(default)]
@@ -302,6 +308,70 @@ pub struct VehicleSpec {
 }
 
 impl VehicleSpec {
+    /// Folds a legacy `traction` field into `drives`. Every loader calls it; running it
+    /// twice is harmless.
+    pub fn normalise(&mut self) {
+        if let Some(traction) = self.legacy_traction.take()
+            && self.drives.is_empty()
+        {
+            self.drives.push(DriveSpec::new(traction));
+        }
+        self.drives.truncate(MAX_DRIVES);
+    }
+
+    /// Does the vehicle drive at all?
+    pub fn powered(&self) -> bool {
+        !self.drives.is_empty()
+    }
+
+    /// The first traction chain — what single-drive code used to read as `traction`.
+    pub fn traction(&self) -> Option<&TractionSpec> {
+        self.drives.first().map(|d| &d.traction)
+    }
+
+    /// Highest speed any of the chains allows [km/h]; 0 without a drive.
+    pub fn drive_v_max(&self) -> f64 {
+        self.drives
+            .iter()
+            .map(|d| d.traction.v_max())
+            .fold(0.0, f64::max)
+    }
+
+    /// Tractive effort of all chains of `mode` together at `v` [m/s].
+    pub fn available_force(&self, mode: DriveMode, v: f64) -> f64 {
+        self.drives
+            .iter()
+            .filter(|d| d.mode == mode)
+            .map(|d| d.traction.available_force(v))
+            .sum()
+    }
+
+    /// Dynamic brake force of all chains of `mode` together at `v` [m/s].
+    pub fn available_brake_force(&self, mode: DriveMode, v: f64) -> f64 {
+        self.drives
+            .iter()
+            .filter(|d| d.mode == mode)
+            .map(|d| d.traction.available_brake_force(v))
+            .sum()
+    }
+
+    /// Does any chain have a dynamic brake?
+    pub fn has_dynamic_brake(&self) -> bool {
+        self.drives.iter().any(|d| d.traction.has_dynamic_brake())
+    }
+
+    /// The power sources the vehicle can run on, in the order the chains are listed.
+    /// More than one means it has a mode selector.
+    pub fn modes(&self) -> Vec<DriveMode> {
+        let mut modes: Vec<DriveMode> = Vec::new();
+        for drive in &self.drives {
+            if !modes.contains(&drive.mode) {
+                modes.push(drive.mode);
+            }
+        }
+        modes
+    }
+
     /// Braked weight percentage of the empty vehicle: braked weight / mass · 100.
     ///
     /// The figure a German brake sheet is written in.

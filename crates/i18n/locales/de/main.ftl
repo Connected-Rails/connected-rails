@@ -588,7 +588,20 @@ overlay-offline = Offline-Modus (L)
 overlay-clear-cache = Cache leeren (C)
 overlay-retry = Fehlversuche zurücksetzen (R)
 action-show-terrain = Gelände anzeigen (T)
+action-perspective-view = 3D-Ansicht (F4)
+
+# Viewport bar — icon buttons above the map, tooltips only.
+view-top-down = Draufsicht (F4)
+view-perspective = 3D-Ansicht (F4)
+gizmo-move = Verschiebegriffe (W)
+gizmo-rotate = Drehgriff (E)
+view-imagery = Luftbild (T)
+view-terrain = Gelände (T)
+camera-speed = Kamerageschwindigkeit der 3D-Ansicht
+
 help-pan = WASD/Pfeile oder mittlere Maustaste schwenken · Mausrad oder Bild↑/Bild↓ Höhe
+help-fly = 3D-Ansicht (F4): rechte Maustaste halten zum Umsehen, WASD fliegt, Q/E runter/hoch, Umschalt schneller · Alt+links umkreist · F rückt die Auswahl ins Bild
+help-gizmo = W Verschiebegriffe, E Drehgriff · Pfeil ziehen verschiebt die Auswahl längs des Gleises, quer dazu oder nach oben
 help-opacity = [ ] Deckkraft · , . Zoomstufe · Z automatisch
 help-offset = Ziffernblock 4/6/8/2 Bildversatz, 5 zurücksetzen
 help-draw = Gleis zeichnen: Punkte klicken · Enter schließt ab · Esc bricht ab

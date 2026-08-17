@@ -94,9 +94,13 @@ pub fn panel(ui: &mut egui::Ui, editor: &mut Editor) {
                     }
                 });
             });
+            // Right to left, so the row can never add up wider than the card —
+            // the node combo takes exactly what the motion combo leaves.
             ui.horizontal(|ui| {
-                node_combo(ui, i, &mut control.node, &names, missing, &mut changed);
-                changed |= motion_combo(ui, ("cab", i), &mut control.motion);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    changed |= motion_combo(ui, ("cab", i), &mut control.motion);
+                    node_combo(ui, i, &mut control.node, &names, missing, &mut changed);
+                });
             });
             changed |= motion_params(ui, &mut control.motion);
             // Transient preview value — moves the node in the viewport, not saved.
@@ -160,10 +164,11 @@ fn node_combo(
     } else {
         selected
     };
-    let width = ui.available_width() - crate::ui::MOTION_COMBO_W - space::S;
+    let width = ui.available_width();
     let response = egui::ComboBox::from_id_salt(("cab-node", id))
         .selected_text(selected)
         .width(width)
+        .truncate()
         .show_ui(ui, |ui| {
             for name in names {
                 if ui

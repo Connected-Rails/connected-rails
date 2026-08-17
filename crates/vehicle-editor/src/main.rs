@@ -13,8 +13,8 @@
 
 mod cab;
 mod displays;
+mod graph;
 mod model;
-mod powertrain;
 mod settings;
 mod sounds;
 mod ui;
@@ -103,6 +103,35 @@ pub struct Editor {
     pub window: Option<bevy::window::RawHandleWrapper>,
     /// What survives between runs.
     pub settings: settings::Settings,
+    /// Block palette: the built-in blocks plus the presets of the installed mods.
+    pub registry: sim_core::blocks::Registry,
+    /// Node canvas — mirrors `spec.graph`, rebuilt from it when `graph_sync` is set.
+    pub snarl: egui_snarl::Snarl<u32>,
+    /// Block selected on the canvas; the data panel edits its parameters.
+    pub selected_block: Option<u32>,
+    /// Search text of the block palette.
+    pub palette_filter: String,
+    /// Findings of the last bake, shown below the palette.
+    pub bake_issues: Vec<sim_core::blocks::BakeIssue>,
+    /// The centre shows the node canvas instead of the 3D model.
+    pub graph_view: bool,
+    /// Rebuild the canvas from `spec.graph` (after open, new, undo, redo).
+    pub graph_sync: bool,
+    /// Copied blocks with their internal wires (Ctrl+C on the canvas).
+    pub clipboard: Option<(
+        Vec<sim_core::blocks::GraphBlock>,
+        Vec<sim_core::blocks::GraphWire>,
+    )>,
+    /// Comment frame being edited in the sidebar.
+    pub selected_group: Option<u32>,
+    /// Canvas transform (graph → screen) of the last frame.
+    pub canvas_transform: bevy_egui::egui::emath::TSTransform,
+    /// Node rects in graph space, captured last frame — comment frames form around them.
+    pub node_rects: Vec<(u32, bevy_egui::egui::Rect)>,
+    /// Blocks a comment frame carries while its title bar is being dragged.
+    pub group_drag: Option<Vec<u32>>,
+    /// Screen position of the Shift+A add menu, `None` when closed.
+    pub add_menu: Option<bevy_egui::egui::Pos2>,
 }
 
 /// How many steps back the editor remembers. A spec is a few hundred bytes;
@@ -131,6 +160,19 @@ impl Default for Editor {
             warned_about_comments: false,
             window: None,
             settings,
+            registry: graph::load_registry(),
+            snarl: egui_snarl::Snarl::new(),
+            selected_block: None,
+            palette_filter: String::new(),
+            bake_issues: Vec::new(),
+            graph_view: false,
+            graph_sync: true,
+            clipboard: None,
+            selected_group: None,
+            canvas_transform: bevy_egui::egui::emath::TSTransform::IDENTITY,
+            node_rects: Vec::new(),
+            group_drag: None,
+            add_menu: None,
         }
     }
 }
@@ -153,6 +195,8 @@ impl Editor {
                 self.gltf = None;
                 self.loaded_file.clear();
                 self.cab_test.clear();
+                self.selected_block = None;
+                self.graph_sync = true;
                 self.forget_history();
                 if let Some(path) = &self.path {
                     self.settings.remember(&path.clone());
@@ -164,8 +208,12 @@ impl Editor {
         }
     }
 
-    /// Writes the vehicle back as RON.
+    /// Writes the vehicle back as RON. The graph is baked first, so the file's runtime
+    /// fields always match its diagram.
     pub fn save(&mut self, path: PathBuf) {
+        if let Some(graph) = self.spec.graph.clone() {
+            sim_core::blocks::bake(&graph, &self.registry, &mut self.spec);
+        }
         let text = ron::ser::to_string_pretty(&self.spec, ron::ser::PrettyConfig::default())
             .expect("vehicle is serializable");
         match std::fs::write(&path, text) {
@@ -208,6 +256,7 @@ impl Editor {
             // running. Without this the next edit counts as a continuation of
             // it and records no step of its own.
             self.changing = false;
+            self.graph_sync = true;
         }
     }
 
@@ -216,6 +265,7 @@ impl Editor {
             self.undo.push(std::mem::replace(&mut self.spec, state));
             self.dirty = true;
             self.changing = false;
+            self.graph_sync = true;
         }
     }
 
@@ -318,6 +368,8 @@ fn main() {
     if let Some(file) = args.first().filter(|a| !a.starts_with("--")) {
         editor.open(PathBuf::from(file));
     }
+    // `--graph` opens on the block diagram — CI screenshots of the canvas.
+    editor.graph_view = args.iter().any(|a| a == "--graph");
 
     let mut app = App::new();
     // Models come out of the mods, exactly as the simulator reads them later:

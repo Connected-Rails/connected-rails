@@ -570,6 +570,11 @@ pub enum TractionSpec {
         /// Hydrodynamic brake in the transmission.
         #[serde(default)]
         hydrodynamic_brake: Option<HydrodynamicBrake>,
+        /// Electric brake of a diesel-electric drive: the traction motors feed braking
+        /// resistors. Independent of the transmission path — a `regenerative` flag is
+        /// ignored, a diesel loco has no line to feed back into.
+        #[serde(default)]
+        dynamic_brake: Option<DynamicBrake>,
     },
 }
 
@@ -651,8 +656,13 @@ impl TractionSpec {
                 brake_force.min(brake_power / v.abs().max(0.5)) * fade
             }
             TractionSpec::Diesel {
-                hydrodynamic_brake, ..
-            } => hydrodynamic_brake.map_or(0.0, |b| b.force(v, 1.0)),
+                hydrodynamic_brake,
+                dynamic_brake,
+                ..
+            } => {
+                hydrodynamic_brake.map_or(0.0, |b| b.force(v, 1.0))
+                    + dynamic_brake.map_or(0.0, |b| b.available(v))
+            }
         }
     }
 
@@ -663,8 +673,10 @@ impl TractionSpec {
             TractionSpec::TapChanger { dynamic_brake, .. } => dynamic_brake.is_some(),
             TractionSpec::Converter { brake_force, .. } => *brake_force > 0.0,
             TractionSpec::Diesel {
-                hydrodynamic_brake, ..
-            } => hydrodynamic_brake.is_some(),
+                hydrodynamic_brake,
+                dynamic_brake,
+                ..
+            } => hydrodynamic_brake.is_some() || dynamic_brake.is_some(),
         }
     }
 }

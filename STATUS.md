@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and fmt clean.
+As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -11,7 +11,7 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v3 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout facing or trailing with its throw time in the panel, the signal/section/route tables of the interlocking as forms, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v3 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout facing or trailing with its throw time in the panel, the signal/section/route tables of the interlocking as forms, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, drive/brake/equipment as a block diagram (see the 2026-08-17 entry), glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather rendering**: `Sim::weather` (clear/rain/snow/fog) set by the `SetWeather` scenario action — overcast sky, dimmed sun, distance fog from the weather's visibility, rain/snow particle fields around the camera (their streaks slanted by the relative wind of the player's speed), a `Rain` sound quantity for the sound table, and the implied rail condition on every train (`mods/example/scenarios/regenfahrt.ron` shows it); terrain from the DGM; **day/night cycle**: scenario start clock (date + time), sun and moon computed from the georeferenced location, lighting/sky follow the sun's elevation; **seasons** (ch. 14 "seasons v2"): the same start date colours ground textures and placeholder vegetation — meadows turn through October, ground, gravel and foliage go under snow from November to March — and a mod may add optional `autumn_model`/`winter_model` variants to its track objects, falling back to the year-round model where it ships none; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, red tail lamps (Zg 101) mark the opposite end, **mods' `_NIGHT` nodes** (lit windows, glowing signs) switch at dusk in every model, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0) and **instrument backlighting on its own dimmer** (`CabControl::InstrumentLight`, keys `,`/`.`) — a part on the new `Motion::Emissive`, which scales the emissive colour of the mod's own material by the dimmer instead of switching the node, so the dials come up out of the dark continuously (content per vehicle; the example BR 101 carries a backlit panel); **terrain texturing and vegetation** (ch. 14): texture splatting — per-vertex weights from slope and track distance blend three generated ground textures (grass/rock/gravel) in a `StandardMaterial` extension — and vegetation as **line content**: every tree its own `LineSource::trees` entry (3D objects from mods' `objects/*.ron`, placeholder for the unnamed), spawned as children of their terrain tile so they stream with it and batch into instanced draws; woods are baked into single trees by the editor, so each one stays individually editable; no recorded samples (the sources are generated — content, not code) |
@@ -393,18 +393,14 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
   1/2/3/4); device payloads come from one-click RON templates serialised from the
   `sim-core` types;
   `vehicle-editor` edits the vehicle base data (LÜP, gauge,
-  v max, mass, rotating mass, axles, axle base sum, rolling and air resistance, tilt angle,
-  hunting, payload, curve resistance factor), the complete brake equipment (control valve,
-  friction pairing, brake position, load braking, forces and pressures, additional brakes,
-  reservoir volumes,
-  compressor, leakage, wheel slip protection), the drive with all its detailed data (motor,
-  engine map, converter circuits with change points and hysteresis, retarder) and the
+  v max, mass, rotating mass, axle base sum, rolling and air resistance, tilt angle,
+  hunting, payload, curve resistance factor), the complete brake equipment and the drive
+  **as a block diagram** (see the 2026-08-17 entry below — control valve, friction
+  pairing, load braking, additional brakes, air data and slip protection, engine map,
+  converter circuits, motor data as block parameters) and the
   **sound table** — one card per entry with its trigger, its conditions and its dependency
   curves, each curve a sparkline over its support points that opens the shared modal
-  curve editor (draggable points plus an exact-value table). A hydraulic
-  transmission is fitted rather than entered: the drive panel plots the tractive effort curve
-  the parameters actually produce, and a suggestion turns five data sheet figures into a
-  starting set to fit from. It also imports glTF
+  curve editor (draggable points plus an exact-value table). It also imports glTF
   models, reads their levels of detail from the node names
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
@@ -479,6 +475,31 @@ As of 2026-08-16 · `cargo test --workspace`: **383 tests green** · clippy and 
   `--menu` puts the menu back in front, which is the only way to photograph it.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
+- **Block diagram (2026-08-17, `sim_core::blocks` + vehicle editor):** drive, brake and
+  equipment of a vehicle as a **node graph of connected blocks**. A palette of 37 built-in
+  blocks — every physical component of the simulation, from pantograph, transformer,
+  tap changer, traction converter and motors through diesel engine, hydraulic
+  transmission and retarder and the complete air brake down to wheelset, cab, AFB, Sifa,
+  PZB, LZB, doors and the Lua script hook — wired over colour- and shape-coded port
+  domains (shaft, force, electrical, pneumatic, signal, fuel; only like connects to
+  like). The diagram is stored in the vehicle file (`VehicleSpec::graph`, optional) and
+  **baked** on load and save (`blocks::bake`): the graph is authoritative for
+  `traction`, `brake`, `safety`, `doors`, `passenger_doors`, `afb`, `slip_protection`,
+  `axles`, `adhesive_mass_fraction` and `script`; every other field stays hand-edited,
+  and a vehicle without a graph is untouched — the editor synthesises its diagram from
+  the spec on open (`blocks::from_spec`) and writes it on save. The baker recognises the
+  drive chains of all four traction models, diesel-electric included:
+  `TractionSpec::Diesel` gained an optional, serde-defaulted `dynamic_brake` — the
+  rheostatic brake of a Class 66/BR 232-style loco (a `regenerative` flag is ignored on
+  a diesel, no line to feed into). Mods extend the palette with **presets**
+  (`mods/<id>/blocks/*.ron`: a built-in `base` plus overridden parameter defaults,
+  addressed as `<mod>:<id>`; an unknown base or a wrongly-typed parameter warns instead
+  of crashing — `mods/example/blocks/voith-l620.ron`, a Voith L 620 reU2 on the
+  hydraulic transmission, is the worked example). In the editor the centre toggles
+  between 3D model and diagram (chips top left; `--graph` starts on the diagram); the
+  former Brake/Drive/Equipment/Behaviour forms are replaced by the palette (searchable,
+  grouped by category), per-block properties and **live bake findings** (a click selects
+  the offending block), and axle count and adhesive mass moved onto the wheelset block.
 
 ## Deliberately deferred
 

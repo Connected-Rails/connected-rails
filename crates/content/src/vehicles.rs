@@ -12,9 +12,14 @@ use sim_core::safety::SafetyEquipment;
 use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
 use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, VehicleSpec};
 
-/// Loads a vehicle definition from RON.
+/// Loads a vehicle definition from RON. A vehicle carrying a block graph is baked with
+/// the built-in palette — the graph is authoritative for drive, brake and equipment.
 pub fn load_vehicle(ron_text: &str) -> Result<VehicleSpec, ron::error::SpannedError> {
-    ron::from_str(ron_text)
+    let mut spec: VehicleSpec = ron::from_str(ron_text)?;
+    if let Some(graph) = spec.graph.clone() {
+        sim_core::blocks::bake(&graph, &sim_core::blocks::Registry::builtin(), &mut spec);
+    }
+    Ok(spec)
 }
 
 /// Serializes a vehicle definition (for the editor).
@@ -83,6 +88,7 @@ pub fn br101() -> VehicleSpec {
         // No table of its own: the vehicle runs on the generated loops
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
+        graph: None,
     }
 }
 
@@ -154,6 +160,7 @@ pub fn br110() -> VehicleSpec {
         // No table of its own: the vehicle runs on the generated loops
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
+        graph: None,
     }
 }
 
@@ -239,6 +246,7 @@ pub fn br218() -> VehicleSpec {
                 efficiency: 0.95,
             }),
             hydrodynamic_brake: None,
+            dynamic_brake: None,
         }),
         coupler: CouplerSpec::screw(),
         adhesive_mass_fraction: 1.0,
@@ -267,6 +275,7 @@ pub fn br218() -> VehicleSpec {
         // No table of its own: the vehicle runs on the generated loops
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
+        graph: None,
     }
 }
 
@@ -310,6 +319,7 @@ pub fn passenger_coach() -> VehicleSpec {
         // No table of its own: the vehicle runs on the generated loops
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
+        graph: None,
     }
 }
 
@@ -357,6 +367,7 @@ pub fn freight_wagon() -> VehicleSpec {
         // No table of its own: the vehicle runs on the generated loops
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
+        graph: None,
     }
 }
 
@@ -457,6 +468,7 @@ pub fn railcar() -> VehicleSpec {
                 fill_time: 1.0,
                 fade_out_kmh: 15.0,
             }),
+            dynamic_brake: None,
         }),
         coupler: CouplerSpec::center_buffer(),
         // Two of six axles driven.
@@ -487,6 +499,7 @@ pub fn railcar() -> VehicleSpec {
         // No table of its own: the vehicle runs on the generated loops
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
+        graph: None,
     }
 }
 
@@ -509,6 +522,45 @@ mod tests {
             assert_eq!(back.mass_empty, spec.mass_empty);
             assert_eq!(back.traction, spec.traction);
             assert_eq!(back.brake, spec.brake);
+        }
+    }
+
+    #[test]
+    fn every_reference_vehicle_survives_the_block_graph_round_trip() {
+        use sim_core::blocks::{Registry, Severity, bake, from_spec};
+        let reg = Registry::builtin();
+        for spec in [
+            br101(),
+            br110(),
+            br218(),
+            passenger_coach(),
+            freight_wagon(),
+            freight_wagon_k_valve(),
+            railcar(),
+        ] {
+            let graph = from_spec(&spec, &reg);
+            let mut baked = spec.clone();
+            baked.traction = None;
+            baked.brake = BrakeSpec::from_brake_weight(1.0, BrakeKind::Block);
+            baked.safety = SafetyEquipment::None;
+            let issues = bake(&graph, &reg, &mut baked);
+            let errors: Vec<_> = issues
+                .iter()
+                .filter(|i| i.severity == Severity::Error)
+                .collect();
+            assert!(errors.is_empty(), "{}: {errors:?}", spec.name);
+            assert!(
+                !issues.iter().any(|i| i.key == "bake-missing-wire"),
+                "{}: expected wire missing",
+                spec.name
+            );
+            assert_eq!(baked.traction, spec.traction, "{}", spec.name);
+            assert_eq!(baked.brake, spec.brake, "{}", spec.name);
+            assert_eq!(baked.safety, spec.safety, "{}", spec.name);
+            assert_eq!(baked.doors, spec.doors, "{}", spec.name);
+            assert_eq!(baked.afb, spec.afb, "{}", spec.name);
+            assert_eq!(baked.slip_protection, spec.slip_protection, "{}", spec.name);
+            assert_eq!(baked.axles, spec.axles, "{}", spec.name);
         }
     }
 

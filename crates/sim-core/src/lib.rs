@@ -3,6 +3,7 @@
 //! Order per step (plan 3.2): electrics → traction/brake → longitudinal dynamics →
 //! position on the track graph → train protection → interlocking → AI.
 
+pub mod blocks;
 pub mod brakes;
 pub mod cab;
 pub mod doors;

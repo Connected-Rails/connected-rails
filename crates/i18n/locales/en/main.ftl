@@ -1043,3 +1043,211 @@ score-forced-brakes = { $count } forced brake application(s)
 score-overspeed = { $seconds } s too fast (max. { $excess } km/h)
 score-energy = { $energy } kWh traction energy
 score-scenario = Scenario score
+
+## Vehicle editor: block diagram — views and canvas
+
+view-model = 3D model
+view-blocks = Block diagram
+graph-palette = Blocks
+graph-search = Search blocks…
+graph-inspector = Properties
+graph-issues = Findings
+graph-no-selection = Select a block on the canvas to edit its values.
+graph-no-params = This block has no values of its own.
+graph-add-block = Add block
+graph-remove-block = Remove block
+graph-domain-mismatch = Only ports of the same colour can be connected.
+graph-circuit-add = Add circuit
+graph-circuit-remove = Remove circuit
+
+## Vehicle editor: block diagram — port domains (wire colours)
+
+domain-mech = Shaft (torque)
+domain-force = Force
+domain-elec = Electrical
+domain-air = Compressed air
+domain-signal = Control signal
+domain-fuel = Fuel
+
+## Vehicle editor: block diagram — pin labels
+
+port-shaft = Shaft
+port-elec = Electrical
+port-air = Air
+port-brake-pipe = Brake pipe
+port-force = Force
+port-ctrl = Control
+port-throttle = Throttle
+port-brake-demand = Brake valve
+port-direct = Direct brake
+port-sanding = Sanding
+port-slip = Slip
+port-pilot = Pilot
+port-supply = Supply
+port-aux = Auxiliary reservoir
+port-fuel = Fuel
+
+## Vehicle editor: block diagram — palette categories
+
+blkcat-energy = Energy
+blkcat-drivetrain = Drivetrain
+blkcat-electric = Electrics
+blkcat-brake = Brake
+blkcat-running-gear = Running gear
+blkcat-control = Control
+blkcat-equipment = Equipment
+
+## Vehicle editor: block diagram — block names and tooltips
+
+blk-battery = Battery
+blk-battery-hint = Vehicle battery: control power for pantograph, engine start and lighting
+blk-fuel-tank = Fuel tank
+blk-fuel-tank-hint = Diesel supply of the engine
+blk-pantograph = Pantograph
+blk-pantograph-hint = Collects power from the contact line (15 kV 16.7 Hz)
+blk-diesel-engine = Diesel engine
+blk-diesel-engine-hint = Prime mover: torque map, governor and cranking — the head of every diesel chain
+blk-hydro-transmission = Hydraulic transmission
+blk-hydro-transmission-hint = Torque converters and couplings, engaged by filling and emptying — the Voith principle
+blk-retarder = Hydrodynamic brake
+blk-retarder-hint = Retarder in the transmission: wear-free braking, strong at speed, useless at a stand
+blk-generator = Main generator
+blk-generator-hint = Diesel-electric chain: the engine turns it, the traction motors take its power — set the power on the diesel engine
+blk-traction-motor = Traction motor
+blk-traction-motor-hint = Traction motor behind converter or generator; the chain's figures sit on those blocks
+blk-series-motor = Series-wound motor
+blk-series-motor-hint = The classic DC motor (BR 110/140) by its machine equations: saturating flux, field weakening
+blk-main-switch = Main switch
+blk-main-switch-hint = Connects the vehicle to the supply; closes only with the pantograph up and line voltage present
+blk-transformer = Main transformer
+blk-transformer-hint = Steps the line voltage down for tap changer, converter and auxiliaries
+blk-tap-changer = Tap changer
+blk-tap-changer-hint = Notch by notch along the transformer winding — the control of the classic AC locomotive
+blk-traction-converter = Traction converter
+blk-traction-converter-hint = Three-phase drive: tractive effort along the force/power hyperbola, pull-out limit above
+blk-dynamic-brake = Dynamic brake
+blk-dynamic-brake-hint = Motors as generators: into the braking resistors, or back into the line when regenerative
+blk-traction-curve = Tractive effort curve
+blk-traction-curve-hint = Simplified drive straight off the data sheet's diagram — knows nothing of motors or gearboxes
+blk-compressor = Compressor
+blk-compressor-hint = Charges the main reservoir between cut-in and cut-out pressure
+blk-main-reservoir = Main reservoir
+blk-main-reservoir-hint = Air store of the traction unit: direct brake, relay valve and spring parking brake take from it
+blk-driver-brake-valve = Driver's brake valve
+blk-driver-brake-valve-hint = Sets the brake pipe pressure: release, lap, service, emergency
+blk-brake-pipe = Brake pipe
+blk-brake-pipe-hint = The train-long control line at 5 bar: a pressure drop applies the brake — fail-safe
+blk-control-valve = Control valve
+blk-control-valve-hint = Compares brake pipe and reference pressure and fills the cylinder accordingly
+blk-aux-reservoir = Auxiliary reservoir
+blk-aux-reservoir-hint = Per-vehicle store charged from the brake pipe; supplies the brake cylinder
+blk-relay-valve = Relay valve
+blk-relay-valve-hint = Pre-control: reproduces the pilot pressure with main reservoir air — fast, inexhaustible, and the path of the EP application
+blk-brake-cylinder = Brake cylinder
+blk-brake-cylinder-hint = Pressure becomes piston force
+blk-brake-rigging = Brake rigging
+blk-brake-rigging-hint = Leverage and friction pairing: cylinder force becomes retardation at the wheel
+blk-direct-brake = Direct brake
+blk-direct-brake-hint = Loco-only additional brake fed straight from the main reservoir
+blk-parking-brake = Parking brake
+blk-parking-brake-hint = Spring-applied or hand brake — holds without air
+blk-mg-brake = Magnetic track brake
+blk-mg-brake-hint = Presses onto the rail head, independent of wheel adhesion; applies in position R on a rapid braking
+blk-wheel-slide-protection = Wheel slide protection
+blk-wheel-slide-protection-hint = Watches the slip and answers with slip brake, cutback or creep control
+blk-sander = Sander
+blk-sander-hint = Sand before the driven wheels raises the adhesion
+blk-wheelset = Wheelset
+blk-wheelset-hint = Where traction and brake force meet the rail: axle count and adhesive mass
+blk-cab = Cab
+blk-cab-hint = The driver's controls: throttle, brake valve, direct brake, sanding
+blk-afb = AFB
+blk-afb-hint = Automatic driving/braking control between the throttle and the drive
+blk-sifa = Sifa
+blk-sifa-hint = Driver's safety device
+blk-pzb = PZB
+blk-pzb-hint = Indusi/PZB train protection, with the initial position of the train type switch
+blk-lzb = LZB
+blk-lzb-hint = Continuous train control on lines with a conductor cable
+blk-doors = Door control
+blk-doors-hint = Door system of the vehicle, and whether its doors follow the train's release
+blk-script = Lua script
+blk-script-hint = Behaviour hook of a mod: tap changer logic, AFB, start-up procedure
+
+## Vehicle editor: block diagram — new parameters
+
+eng-map = Engine map
+eng-map-hint = with the map the torque balance decides; without it the effort follows the hyperbola
+eng-torque-curve = Full load torque (1/min → N·m)
+eng-notches = Notches
+eng-notches-hint = of the power controller; 0 = continuous
+eng-droop = Droop
+eng-droop-hint = share of the rated speed the set speed sags by between no load and full rack
+eng-governor-speed = Speed-governed
+eng-governor-fill = Fill-governed
+drv-brake-curve = Dynamic brake (km/h → N)
+drv-fuel-capacity = Tank capacity
+cir-kind = Type
+cir-kind-hint = a converter multiplies the torque, a coupling transmits it one to one
+cir-kind-converter = Torque converter
+cir-kind-coupling = Fluid coupling
+brk-compressor-delivery = Delivery
+brk-compressor-delivery-hint = l/min of free air
+brk-main-volume = Volume
+brk-pipe-volume = Pipe share
+brk-pipe-volume-hint = this vehicle's share of the brake pipe volume
+brk-leakage = Leakage
+brk-leakage-hint = l/min of free air lost from the pipe
+brk-aux-volume = Volume
+brk-direct-cylinder = Cylinder pressure
+brk-mg-force = Force
+brk-mg-force-hint = N on the rail head
+brk-load-none = None
+brk-load-weighing = Weighing valve
+brk-load-changeover = Empty/loaded changeover
+brk-friction-block = Cast iron blocks
+brk-friction-disc = Disc
+brk-friction-composite-k = Composite K
+brk-friction-composite-ll = Composite LL
+brk-friction-magnetic = Magnetic
+brk-friction-custom = Own curve
+brk-slip-slip-brake = Wheel slip brake
+brk-slip-traction-cutback = Traction cutback
+brk-slip-creep-control = Creep control
+eq-train-type = Train type
+eq-train-type-hint = initial position of the train type switch (Zugartschalter)
+eq-sifa-time-time = Time-time
+eq-sifa-time-distance = Time-distance
+eq-sifa-rzm = Reaction time measurement (RZM)
+eq-doors-none = None
+
+## Vehicle editor: block diagram — baking findings
+
+bake-unknown-block = Unknown block type — the mod that defines it is not installed
+bake-duplicate-block = This block may only appear once per vehicle
+bake-bad-wire = A wire joins ports that do not fit each other
+bake-unconnected = Not connected to anything
+bake-missing-wire = An expected connection is missing
+bake-multiple-drives = More than one drive — a vehicle takes one drive chain
+bake-brake-needs-drive = A dynamic brake needs a drive to work with
+bake-no-pantograph = An electric drive expects a pantograph
+bake-transmission-needs-map = A hydraulic transmission needs the engine map
+bake-hydro-and-generator = Hydraulic transmission and generator on the same engine — the transmission wins
+bake-brake-needs-generator = A diesel dynamic brake needs the generator chain
+bake-series-motor-unused = A series-wound motor only works behind a tap changer
+bake-no-control-valve = No control valve — the vehicle cannot brake
+bake-no-brake-cylinder = No brake cylinder — the vehicle cannot brake
+bake-no-brake-rigging = No brake rigging — the cylinder force reaches no wheel
+bake-no-brake-pipe = No brake pipe — the train brake has no control line
+bake-no-aux-reservoir = No auxiliary reservoir — the default of 100 l is used
+bake-needs-main-reservoir = Needs a main reservoir as its air supply
+bake-mg-needs-r = The magnetic track brake applies in position R only — the control valve has no R position
+bake-no-wheelset = No wheelset — nothing carries the forces to the rail
+
+## Vehicle editor: block diagram — comment frames and canvas shortcuts
+
+graph-group = Comment frame
+graph-group-default = Comment
+graph-group-name = Title
+graph-group-color = Colour
+graph-group-remove = Remove comment frame

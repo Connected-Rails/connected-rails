@@ -4,14 +4,11 @@
 //! forms. Every labelled field goes through [`row`], every section through
 //! `editor_ui::section`, so labels and fields line up across the whole panel.
 
-use crate::{Editor, Status, model, powertrain, sounds};
+use crate::{Editor, Status, graph, model, sounds};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use editor_ui::{colors, field, space};
 use i18n::t;
-use sim_core::doors::DoorSystem;
-use sim_core::safety::SafetyEquipment;
-use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
 use sim_core::train::{CouplerSpec, Motion, Part, VehicleSpec};
 
 const SHORTCUT_NEW: egui::KeyboardShortcut =
@@ -82,6 +79,12 @@ pub fn draw(
             .max_rect(ctx.viewport_rect()),
     );
     menu_bar(&mut root, &mut editor, &mut assets);
+    // Every vehicle gets its block diagram: a file without one is synthesised
+    // from its spec — before the snapshot below, because opening is not an edit.
+    if editor.spec.graph.is_none() {
+        editor.spec.graph = Some(sim_core::blocks::from_spec(&editor.spec, &editor.registry));
+        editor.graph_sync = true;
+    }
     // Snapshot after the menu bar: opening a file or starting a new vehicle
     // replaces the spec wholesale, which is not an edit and has no business in
     // the history. Everything below is.
@@ -91,13 +94,59 @@ pub fn draw(
     let right = model_panel(&mut root, &mut editor, &mut assets);
     // In memory only; written when the user leaves.
     editor.settings.panels = Some((left, right));
-    track_changes(&mut editor, before);
-    // What the panels left free is the 3D viewport; the camera in
-    // `orbit_camera` only takes the mouse inside this rect.
+    // What the panels left free is the centre: a slim mode bar on top, the node
+    // canvas or the 3D viewport below it. The bar gets its own strip — laid over
+    // the canvas it would lose every click to the canvas's pan/select handling.
     let free = root.available_rect_before_wrap();
-    view.viewport = Rect::new(free.min.x, free.min.y, free.max.x, free.max.y);
-    viewport_hint(&ctx, &root, &view);
+    let bar = egui::Rect::from_min_max(free.min, egui::pos2(free.max.x, free.min.y + 36.0));
+    let rest = egui::Rect::from_min_max(egui::pos2(free.min.x, bar.max.y), free.max);
+    center_toggle(&ctx, bar, &mut editor);
+    if editor.graph_view {
+        // The canvas takes the mouse; an empty rect keeps the orbit camera out.
+        view.viewport = Rect::default();
+        let mut canvas = egui::Ui::new(
+            ctx.clone(),
+            "graph-canvas".into(),
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::background())
+                .max_rect(rest),
+        );
+        canvas.painter().rect_filled(rest, 0.0, colors::BG_INPUT);
+        graph::canvas(&mut canvas, &mut editor);
+    } else {
+        view.viewport = Rect::new(rest.min.x, rest.min.y, rest.max.x, rest.max.y);
+        viewport_hint(&ctx, &root, &view);
+    }
+    // The canvas edits the spec too, so the tracking comes last.
+    track_changes(&mut editor, before);
     Ok(())
+}
+
+/// Chips in the strip above the centre area: 3D model or block diagram.
+fn center_toggle(ctx: &egui::Context, bar: egui::Rect, editor: &mut Editor) {
+    let mut ui = egui::Ui::new(
+        ctx.clone(),
+        "center-toggle".into(),
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(bar.shrink2(egui::vec2(space::M, space::XS))),
+    );
+    ui.horizontal(|ui| {
+        for (graph_view, key) in [(false, "view-model"), (true, "view-blocks")] {
+            let here = editor.graph_view == graph_view;
+            let mut label = egui::RichText::new(t!(key));
+            if here {
+                label = label.color(colors::TEXT_STRONG);
+            }
+            let mut chip = egui::Button::new(label).small();
+            if here {
+                chip = chip.fill(colors::BG_ACTIVE);
+            }
+            if ui.add(chip).clicked() {
+                editor.graph_view = graph_view;
+            }
+        }
+    });
 }
 
 /// Says how to move the camera, in the viewport, until the user has done it.
@@ -498,16 +547,12 @@ fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
 /// The sections of the data panel, in the order they are drawn: id and the
 /// i18n key of the title. The jump bar sits above the scroll area and has to
 /// name them before the first one has been laid out.
-const SECTIONS: [(&str, &str); 9] = [
+const SECTIONS: [(&str, &str); 5] = [
     ("base", "group-base-data"),
     ("gear", "group-running-gear"),
     ("coupler", "group-coupler"),
     ("resistance", "group-resistance"),
-    ("brake", "group-brake"),
-    ("drive", "group-drive"),
-    ("equipment", "group-equipment"),
     ("sounds", "group-sounds"),
-    ("behaviour", "group-behaviour"),
 ];
 
 /// A section of the data panel that the jump bar can scroll to.
@@ -546,8 +591,13 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
         .panels
         .map(|(left, _)| left)
         .unwrap_or(450.0);
+    // Whatever the panel wants, the centre keeps a working width — a cap, because
+    // egui panels adopt their content's width, and one over-wide row per frame
+    // would otherwise walk the panel across the whole window.
+    let cap = (root.available_rect_before_wrap().width() - 360.0).max(240.0);
     egui::Panel::left("data")
         .default_size(width)
+        .max_size(cap)
         .resizable(true)
         .frame(editor_ui::panel_frame())
         .show(root, |ui| {
@@ -564,6 +614,14 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                     .desired_width(f32::INFINITY),
             );
             ui.add_space(space::S);
+            // On the canvas the panel is palette and inspector; the forms keep
+            // to the vehicle-level data the graph does not own.
+            if editor.graph_view {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| graph::side_panel(ui, editor));
+                return;
+            }
             let mut jump = None;
             ui.horizontal_wrapped(|ui| {
                 for (id, key) in SECTIONS {
@@ -618,15 +676,8 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                             row(ui, "veh-rotating-mass", |ui| {
                                 field(ui, &mut spec.rotating_mass_factor, 0.005, 0.0..=0.5, "");
                             });
-                            row(ui, "veh-axles", |ui| {
-                                field(ui, &mut spec.axles, 1.0, 0.0..=32.0, "");
-                            });
-                            // Nothing offered this before, and it defaults to
-                            // zero: a locomotive built entirely in the editor
-                            // could not transmit a newton.
-                            row(ui, "veh-adhesive", |ui| {
-                                field(ui, &mut spec.adhesive_mass_fraction, 0.05, 0.0..=1.0, "");
-                            });
+                            // Axle count and adhesive mass live on the wheelset
+                            // block — baking owns those fields now.
                             row(ui, "veh-axle-base", |ui| {
                                 field(ui, &mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m");
                             });
@@ -778,79 +829,11 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                         },
                     );
 
-                    nav_section(ui, jump, &mut current, "brake", "group-brake", |ui| {
-                        let top = if spec.v_max > 0.0 { spec.v_max } else { 160.0 };
-                        // The tare vehicle — the load belongs to the consist, not
-                        // to the data sheet.
-                        let axle_load = spec.axle_load_t(spec.mass_empty);
-                        powertrain::brake_panel(
-                            ui,
-                            &mut spec.brake,
-                            &mut spec.slip_protection,
-                            top,
-                            axle_load,
-                        );
-                        ui.add_space(space::XS);
-                        // Braked weight and mass sit in different sections, and
-                        // the figure a brake sheet is actually read in is
-                        // neither of them. The editor should not leave that
-                        // division to the user.
-                        ui.label(
-                            egui::RichText::new(t!(
-                                "brk-percentage",
-                                percent = format!("{:.0}", spec.brake_percentage())
-                            ))
-                            .small()
-                            .color(colors::TEXT_SECONDARY),
-                        );
-                    });
-
-                    nav_section(ui, jump, &mut current, "drive", "group-drive", |ui| {
-                        powertrain::drive_panel(ui, &mut spec.traction);
-                    });
-
-                    nav_section(
-                        ui,
-                        jump,
-                        &mut current,
-                        "equipment",
-                        "group-equipment",
-                        |ui| {
-                            equipment_panel(ui, spec);
-                        },
-                    );
-
+                    // Brake, drive, equipment and behaviour are blocks on the
+                    // canvas now — see the block diagram toggle in the centre.
                     nav_section(ui, jump, &mut current, "sounds", "group-sounds", |ui| {
                         sounds::panel(ui, spec);
                     });
-
-                    nav_section(
-                        ui,
-                        jump,
-                        &mut current,
-                        "behaviour",
-                        "group-behaviour",
-                        |ui| {
-                            // A labelled row like every other value in the panel.
-                            // Free-floating, it was the one control the eye could
-                            // not find at the column it has learnt.
-                            editor_ui::form_grid("behaviour").show(ui, |ui| {
-                                row(ui, "veh-script", |ui| {
-                                    let mut script = spec.script.clone().unwrap_or_default();
-                                    if ui
-                                        .add(
-                                            egui::TextEdit::singleline(&mut script)
-                                                .hint_text(t!("field-script-hint"))
-                                                .desired_width(space::FIELD),
-                                        )
-                                        .changed()
-                                    {
-                                        spec.script = (!script.is_empty()).then_some(script);
-                                    }
-                                });
-                            });
-                        },
-                    );
                 });
             // Above the first header nothing has reported in yet.
             *active = current.or(Some(SECTIONS[0].0));
@@ -858,93 +841,6 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
         .response
         .rect
         .width()
-}
-
-/// Equipment of the vehicle: train protection and door control (plan 9.1, 9.5a).
-///
-/// What the equipment achieves also depends on the line — the LZB needs a conductor cable,
-/// the PZB needs track magnets.
-fn equipment_panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
-    let mut fitted = matches!(spec.safety, SafetyEquipment::De { .. });
-    if ui
-        .checkbox(&mut fitted, t!("eq-german-protection"))
-        .on_hover_text(t!("eq-german-protection-hint"))
-        .changed()
-    {
-        spec.safety = if fitted {
-            SafetyEquipment::De {
-                pzb: Some(PzbVariant::Pzb90V20),
-                lzb: false,
-                sifa: Some(SifaKind::TimeTime),
-                train_type: TrainType::O,
-            }
-        } else {
-            SafetyEquipment::None
-        };
-    }
-    // The train category (Zugart) is deliberately not vehicle data here: the
-    // driver sets it in the cab from the brake sheet (train type switch).
-    if let SafetyEquipment::De { pzb, lzb, sifa, .. } = &mut spec.safety {
-        editor_ui::form_grid("safety").show(ui, |ui| {
-            row(ui, "eq-pzb", |ui| {
-                // Type designations of the equipment are names, not prose — they stay as they are.
-                combo(
-                    ui,
-                    "pzb",
-                    pzb,
-                    &[
-                        (None, t!("opt-not-fitted")),
-                        (Some(PzbVariant::I54), "Indusi I 54".into()),
-                        (Some(PzbVariant::I60), "Indusi I 60".into()),
-                        (Some(PzbVariant::I60M), "Indusi I 60M".into()),
-                        (Some(PzbVariant::I60R), "Indusi I 60R".into()),
-                        (Some(PzbVariant::Pzb60), "ÖBB PZB 60".into()),
-                        (Some(PzbVariant::Pzb90V15), "PZB 90 V1.5".into()),
-                        (Some(PzbVariant::Pzb90V20), "PZB 90 V2.0".into()),
-                    ],
-                );
-            });
-            row(ui, "eq-sifa", |ui| {
-                combo(
-                    ui,
-                    "sifa",
-                    sifa,
-                    &[
-                        (None, t!("opt-not-fitted")),
-                        (Some(SifaKind::TimeTime), t!("sifa-time-time")),
-                        (Some(SifaKind::TimeDistance), t!("sifa-time-distance")),
-                        (Some(SifaKind::Rzm), "RZM".into()),
-                    ],
-                );
-            });
-            editor_ui::form_label(ui, t!("eq-lzb"));
-            ui.checkbox(lzb, t!("eq-lzb-on-board"))
-                .on_hover_text(t!("eq-lzb-hint"));
-            ui.end_row();
-        });
-        ui.add_space(space::XS);
-    }
-
-    // AFB is vehicle equipment like the door control, not a train protection system.
-    ui.checkbox(&mut spec.afb, t!("eq-afb"))
-        .on_hover_text(t!("eq-afb-hint"));
-    ui.checkbox(&mut spec.passenger_doors, t!("eq-passenger-doors"))
-        .on_hover_text(t!("eq-passenger-doors-hint"));
-    editor_ui::form_grid("doors").show(ui, |ui| {
-        row(ui, "eq-doors", |ui| {
-            combo(
-                ui,
-                "doors",
-                &mut spec.doors,
-                &[
-                    (DoorSystem::None, t!("opt-not-fitted")),
-                    (DoorSystem::Tb0, "TB0".into()),
-                    (DoorSystem::Tav, "TAV".into()),
-                    (DoorSystem::UicWtb, "UIC-WTB".into()),
-                ],
-            );
-        });
-    });
 }
 
 /// The two standard couplers, or "own values" when the numbers match neither.
@@ -979,24 +875,6 @@ fn coupler_combo(ui: &mut egui::Ui, coupler: &mut CouplerSpec) {
         });
 }
 
-/// Combo box over a fixed set of values.
-fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, String)]) {
-    let selected = options
-        .iter()
-        .find(|(v, _)| v == value)
-        .map(|(_, label)| label.as_str())
-        .unwrap_or("—");
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            for (v, label) in options {
-                if ui.selectable_label(value == v, label).clicked() {
-                    *value = *v;
-                }
-            }
-        });
-}
-
 /// Right panel: model file, levels of detail, moving parts.
 fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) -> f32 {
     let width = editor
@@ -1004,8 +882,11 @@ fn model_panel(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServe
         .panels
         .map(|(_, right)| right)
         .unwrap_or(400.0);
+    // Same cap as the data panel: the centre view stays usable.
+    let cap = (root.available_rect_before_wrap().width() - 360.0).max(240.0);
     egui::Panel::right("model")
         .default_size(width)
+        .max_size(cap)
         .resizable(true)
         .frame(editor_ui::panel_frame())
         .show(root, |ui| {
@@ -1167,7 +1048,9 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
                     } else {
                         name
                     };
-                    let label = ui.label(name);
+                    // Truncated: an over-long node name must shorten itself, not
+                    // the panel's idea of its own width.
+                    let label = ui.add(egui::Label::new(name).truncate());
                     if missing {
                         label.on_hover_text(t!("part-node-missing-hint"));
                     }
@@ -1177,20 +1060,26 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
                         }
                     });
                 });
+                // Right to left: the combo sits at the edge whatever width its
+                // label needs, the function field takes exactly what is left.
+                // A row that adds up wider than the panel would otherwise grow
+                // the panel a little every frame — egui remembers the content
+                // width as the new panel width — until it covers the screen.
                 ui.horizontal(|ui| {
-                    // The function field takes what the motion combo leaves.
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut part.function)
-                                .desired_width(ui.available_width() - MOTION_COMBO_W - space::S)
-                                .hint_text(t!("part-function-placeholder")),
-                        )
-                        // The naming conventions are on screen only while no
-                        // model is loaded — that is, everywhere except where
-                        // this field asks the user to follow them.
-                        .on_hover_text(t!("part-function-hint"))
-                        .changed();
-                    changed |= motion_combo(ui, i, &mut part.motion);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        changed |= motion_combo(ui, i, &mut part.motion);
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut part.function)
+                                    .desired_width(ui.available_width())
+                                    .hint_text(t!("part-function-placeholder")),
+                            )
+                            // The naming conventions are on screen only while no
+                            // model is loaded — that is, everywhere except where
+                            // this field asks the user to follow them.
+                            .on_hover_text(t!("part-function-hint"))
+                            .changed();
+                    });
                 });
                 changed |= motion_params(ui, &mut part.motion);
             });
@@ -1293,6 +1182,7 @@ pub(crate) fn motion_combo(
     egui::ComboBox::from_id_salt(("motion", id))
         .selected_text(t!(key))
         .width(MOTION_COMBO_W)
+        .truncate()
         .show_ui(ui, |ui| {
             if ui
                 .selectable_label(key == "motion-visible", t!("motion-visible"))

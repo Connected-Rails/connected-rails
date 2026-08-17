@@ -50,6 +50,7 @@ pub fn draw(
     mut state: ResMut<EditorState>,
     mut ghost: ResMut<Ghost>,
     mut terrain: ResMut<crate::terrain::TerrainView>,
+    mut gizmo: ResMut<crate::gizmo::GizmoState>,
     types: Res<TrackTypes>,
     objects: Res<TrackObjects>,
     mut themed: Local<bool>,
@@ -84,6 +85,7 @@ pub fn draw(
         &mut overlay,
         &mut request,
         &mut terrain,
+        &mut focus,
         &mut exit,
     );
     status_bar(&mut root, &line, &state, &overlay, &focus, &terrain);
@@ -100,13 +102,17 @@ pub fn draw(
         &mut active,
     );
 
+    // Docked into the space the side panel leaves, so it takes its width from
+    // the viewport and its clicks never reach the tools underneath.
+    viewport_bar(&mut root, &mut focus, &mut gizmo, &mut terrain, &mut line);
+
     // The rect the panels leave free, and whether a text field owns the
     // keyboard — the input systems read both from here: the hand-built panel
     // layout is invisible to egui's own pointer hit test.
     let free = root.available_rect_before_wrap();
     state.viewport = Rect::new(free.min.x, free.min.y, free.max.x, free.max.y);
     state.typing = ctx.memory(|m| m.focused().is_some());
-    viewport_hint(&ctx, &root, &state);
+    viewport_hint(&ctx, &root, &state, &focus);
     Ok(())
 }
 
@@ -116,7 +122,7 @@ pub fn draw(
 /// control at all; middle-drag and wheel zoom are map conventions, not
 /// something a modder arriving from a text editor knows. Once the map has
 /// moved or a tool has been used, the hint has done its job and goes.
-fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState) {
+fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState, focus: &Focus) {
     let free = root.available_rect_before_wrap();
     if state.map_used || free.width() < 240.0 {
         return;
@@ -128,16 +134,92 @@ fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState) {
             .layer_id(egui::LayerId::background())
             .max_rect(free.shrink(space::M)),
     );
+    // Each view is moved differently, so each says its own way.
+    let key = match focus.mode {
+        crate::view::ViewMode::TopDown => "help-map",
+        crate::view::ViewMode::Perspective => "help-fly",
+    };
     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
         // On the panel background, not bare: the hint sits on the aerial
         // imagery, and secondary grey vanishes over a sunlit field.
         ui.label(
-            egui::RichText::new(t!("help-map"))
+            egui::RichText::new(t!(key))
                 .small()
                 .color(colors::TEXT_SECONDARY)
                 .background_color(colors::BG_PANEL),
         );
     });
+}
+
+/// The viewport's own toolbar: view angle, gizmo mode, what the ground shows,
+/// and the camera speed. These belong to *looking* rather than to the document,
+/// so they sit on the viewport instead of in the form panel — and docking the
+/// bar into the free space rather than floating it over the map means
+/// `state.viewport` shrinks by itself, so a click on it can never also reach
+/// the tool underneath.
+fn viewport_bar(
+    root: &mut egui::Ui,
+    focus: &mut Focus,
+    gizmo: &mut crate::gizmo::GizmoState,
+    terrain: &mut crate::terrain::TerrainView,
+    line: &mut Line,
+) {
+    use crate::gizmo::GizmoMode;
+    use crate::view::ViewMode;
+    use editor_ui::{Icon, bar_divider, bar_value, icon_button, icon_label};
+
+    egui::Panel::top("viewport-bar")
+        .frame(editor_ui::bar_frame())
+        .show(root, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = space::XS;
+                // Which way the camera looks.
+                for (icon, mode, key) in [
+                    (Icon::TopDown, ViewMode::TopDown, "view-top-down"),
+                    (Icon::Perspective, ViewMode::Perspective, "view-perspective"),
+                ] {
+                    if icon_button(ui, icon, focus.mode == mode, t!(key)).clicked()
+                        && focus.mode != mode
+                    {
+                        crate::view::toggle_mode(focus);
+                    }
+                }
+                bar_divider(ui);
+                // What the selection's handles do.
+                for (icon, mode, key) in [
+                    (Icon::Move, GizmoMode::Translate, "gizmo-move"),
+                    (Icon::Rotate, GizmoMode::Rotate, "gizmo-rotate"),
+                ] {
+                    if icon_button(ui, icon, gizmo.mode == mode, t!(key)).clicked() {
+                        gizmo.mode = mode;
+                    }
+                }
+                bar_divider(ui);
+                // Imagery and terrain lie in the same place, so only one of
+                // them is drawn — and each draws track and signals its own way,
+                // which is why the switch costs a rebuild.
+                for (icon, enabled, key) in [
+                    (Icon::Imagery, false, "view-imagery"),
+                    (Icon::Terrain, true, "view-terrain"),
+                ] {
+                    if icon_button(ui, icon, terrain.enabled == enabled, t!(key)).clicked()
+                        && terrain.enabled != enabled
+                    {
+                        terrain.enabled = enabled;
+                        line.needs_rebuild = true;
+                    }
+                }
+                // The speed dial only means something while there is something
+                // to fly.
+                if focus.mode == ViewMode::Perspective {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        bar_value(ui, &mut focus.fly_speed, 0.05, 0.05..=20.0, "×")
+                            .on_hover_text(t!("camera-speed"));
+                        icon_label(ui, Icon::Speed);
+                    });
+                }
+            });
+        });
 }
 
 fn handle_shortcuts(
@@ -615,6 +697,7 @@ fn menu_bar(
     overlay: &mut Overlay,
     request: &mut Request,
     terrain: &mut crate::terrain::TerrainView,
+    focus: &mut Focus,
     exit: &mut MessageWriter<AppExit>,
 ) {
     egui::Panel::top("menu")
@@ -723,12 +806,26 @@ fn menu_bar(
                     }
                 });
                 ui.menu_button(t!("menu-view"), |ui| {
+                    // The map is a view angle, not a different editor: the
+                    // same document, seen from straight above or flown through.
+                    let mut perspective = focus.mode == crate::view::ViewMode::Perspective;
+                    if ui
+                        .checkbox(&mut perspective, t!("action-perspective-view"))
+                        .changed()
+                    {
+                        crate::view::toggle_mode(focus);
+                        ui.close();
+                    }
+                    ui.separator();
                     // The terrain replaces the imagery under the track: both
-                    // lie on the map plane, only one of them is drawn.
+                    // lie on the map plane, only one of them is drawn — and
+                    // each draws track and signals its own way, so the switch
+                    // has to reach the rebuild.
                     if ui
                         .checkbox(&mut terrain.enabled, t!("action-show-terrain"))
                         .changed()
                     {
+                        line.needs_rebuild = true;
                         ui.close();
                     }
                     ui.separator();
@@ -736,6 +833,8 @@ fn menu_bar(
                 });
                 ui.menu_button(t!("menu-help"), |ui| {
                     ui.label(t!("help-pan"));
+                    ui.label(t!("help-fly"));
+                    ui.label(t!("help-gizmo"));
                     ui.label(t!("help-opacity"));
                     ui.label(t!("help-offset"));
                     ui.label(t!("help-draw"));

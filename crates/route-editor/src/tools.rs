@@ -504,9 +504,80 @@ pub fn object_pos(net: &TrackNetwork, object: &ObjectSource) -> Option<EcefPos> 
     ))
 }
 
-/// How close a click has to come, scaled with the view height.
+/// How close a click has to come, scaled with the view height. Still the
+/// measure for what a click *places* (ghost snapping, tile picking) — what a
+/// click *selects* is measured on screen, see [`ScreenPick`].
 fn pick_radius(focus: &Focus) -> f64 {
     (focus.height * 0.02).max(8.0)
+}
+
+/// How near the cursor an item has to be to be picked [logical pixels].
+const PICK_PIXELS: f32 = 12.0;
+
+/// Selection measured on screen instead of in the world: in the 3D view a
+/// metre at the horizon is a fraction of a pixel, so a world-space radius
+/// picks half a hillside there while barely reaching the nearest signal. What
+/// is under the cursor is a question about pixels.
+pub struct ScreenPick<'a> {
+    camera: &'a Camera,
+    transform: &'a GlobalTransform,
+    origin: &'a RenderOrigin,
+    cursor: Vec2,
+}
+
+impl ScreenPick<'_> {
+    /// Pixels between the cursor and `p`; `None` when it is off screen.
+    pub fn distance(&self, p: EcefPos) -> Option<f32> {
+        self.camera
+            .world_to_viewport(self.transform, self.origin.to_render(p))
+            .ok()
+            .map(|screen| screen.distance(self.cursor))
+    }
+
+    /// The same, but only within grabbing distance.
+    pub fn hits(&self, p: EcefPos) -> Option<f32> {
+        self.distance(p).filter(|d| *d <= PICK_PIXELS)
+    }
+}
+
+/// Where the selection sits — what the gizmo stands on and `F` frames.
+pub fn selection_pos(line: &Line, selection: Selection, focus: &Focus) -> Option<EcefPos> {
+    match selection {
+        Selection::Edge(i) => {
+            let edge = line.net.edges().get(i)?;
+            Some(edge.eval(edge.length() / 2.0).pos)
+        }
+        Selection::Device(i) => device_pos(&line.net, line.source.devices.get(i)?),
+        Selection::Object(i) => object_pos(&line.net, line.source.objects.get(i)?),
+        Selection::Tree(i) => Some(tree_pos(line.source.trees.get(i)?, focus)),
+        Selection::Marker(i) => Some(marker_pos(line.source.markers.get(i)?, focus)),
+        Selection::TerrainEdit(i) => Some(terrain_pos(line.source.terrain.get(i)?, focus)),
+        Selection::None => None,
+    }
+}
+
+/// The edge whose ribbon runs nearest the cursor, within grabbing distance.
+///
+/// ponytail: samples every edge every 5 m and projects the samples — a linear
+/// scan per click, like [`nearest_on_network`]; a screen-space index steps in
+/// when a whole federal state feels sluggish.
+fn nearest_edge(line: &Line, pick: &ScreenPick) -> Option<usize> {
+    line.net
+        .edges()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, edge)| {
+            let steps = ((edge.length() / 5.0).ceil() as usize).max(1);
+            let nearest = (0..=steps)
+                .filter_map(|j| {
+                    pick.distance(edge.eval(edge.length() * j as f64 / steps as f64).pos)
+                })
+                .min_by(f32::total_cmp)?;
+            Some((i, nearest))
+        })
+        .filter(|(_, d)| *d <= PICK_PIXELS)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
 }
 
 /// World position of a source node — where its first edge starts or ends.
@@ -573,13 +644,12 @@ pub fn first_draggable(source: &LineSource, edge: usize) -> usize {
 }
 
 /// Handle under the cursor: index into the selected edge's support points.
-fn pick_support_point(line: &Line, edge: usize, p: EcefPos, radius: f64) -> Option<usize> {
+fn pick_support_point(line: &Line, edge: usize, pick: &ScreenPick) -> Option<usize> {
     support_points(line, edge)
         .iter()
         .enumerate()
         .skip(first_draggable(&line.source, edge))
-        .map(|(k, q)| (k, q.distance(p)))
-        .filter(|(_, d)| *d <= radius)
+        .filter_map(|(k, q)| Some((k, pick.hits(*q)?)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(k, _)| k)
 }
@@ -935,6 +1005,7 @@ pub fn tool_input(
     focus: Res<Focus>,
     ghost: Res<Ghost>,
     objects: Res<TrackObjects>,
+    gizmo: Res<crate::gizmo::GizmoState>,
     mut state: ResMut<EditorState>,
     mut line: ResMut<Line>,
     mut overlay: ResMut<crate::overlay::Overlay>,
@@ -961,20 +1032,29 @@ pub fn tool_input(
     if stale {
         state.marked.clear();
     }
-    if state.typing {
+    // A gizmo handle owns the mouse while it is dragged — a click that is
+    // moving a signal must not also reselect what lies under it.
+    if state.typing || gizmo.is_dragging() {
         return;
     }
 
-    // Ground point under the cursor, while it is over the free viewport.
-    let picked = windows
+    let cursor = windows
         .single()
         .ok()
         .and_then(|w| w.cursor_position())
-        .filter(|c| state.viewport.contains(*c))
-        .and_then(|c| {
-            let (camera, camera_transform) = camera.single().ok()?;
-            pick_ground(camera, camera_transform, c, &origin.0, &focus)
-        });
+        .filter(|c| state.viewport.contains(*c));
+    let view = cursor.zip(camera.single().ok());
+    // Ground point under the cursor, while it is over the free viewport.
+    let picked = view.and_then(|(c, (camera, camera_transform))| {
+        pick_ground(camera, camera_transform, c, &origin.0, &focus)
+    });
+    // …and the same cursor as a screen-space probe, for selecting.
+    let pick = view.map(|(cursor, (camera, transform))| ScreenPick {
+        camera,
+        transform,
+        origin: &origin.0,
+        cursor,
+    });
 
     // An active support-point drag owns the mouse until the button goes up.
     if let Some((edge, point)) = state.drag {
@@ -1191,10 +1271,12 @@ pub fn tool_input(
             state.selection = Selection::Marker(line.source.markers.len() - 1);
         }
         Tool::Select => {
-            let radius = pick_radius(&focus);
+            let Some(pick) = pick.as_ref() else {
+                return;
+            };
             // A handle of the selected edge outranks reselection.
             if let Selection::Edge(i) = state.selection
-                && let Some(k) = pick_support_point(&line, i, p, radius)
+                && let Some(k) = pick_support_point(&line, i, pick)
             {
                 state.drag = Some((i, k));
                 return;
@@ -1244,16 +1326,12 @@ pub fn tool_input(
                 .chain(trees)
                 .chain(markers)
                 .chain(terrain)
-                .map(|(sel, pos)| (sel, pos.distance(p)))
-                .filter(|(_, d)| *d <= radius)
+                .filter_map(|(sel, pos)| Some((sel, pick.hits(pos)?)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             // Point candidates first, the track last.
             state.selection = match nearest {
                 Some((sel, _)) => sel,
-                None => match nearest_on_network(&line.net, p) {
-                    Some((i, _, d)) if d <= radius => Selection::Edge(i),
-                    _ => Selection::None,
-                },
+                None => nearest_edge(&line, pick).map_or(Selection::None, Selection::Edge),
             };
         }
         // Handled above — the brush owns the whole press, not just the click.

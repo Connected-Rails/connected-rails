@@ -8,11 +8,13 @@
 //! Without a line file the example line is loaded. The overlay configuration is created
 //! on first start and can be reloaded at runtime (F5).
 
+mod gizmo;
 mod overlay;
 mod signals;
 mod terrain;
 mod tools;
 mod ui;
+mod view;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -41,12 +43,22 @@ pub fn focus_degrees(position: EcefPos) -> (f64, f64) {
 #[derive(Resource)]
 pub struct Origin(pub RenderOrigin);
 
-/// View point of the editor in world coordinates.
+/// What the viewport looks at: a pivot, a distance and a direction. The
+/// top-down map and the 3D view are the same orbit at different angles — see
+/// [`view`].
 #[derive(Resource)]
 pub struct Focus {
     pub position: EcefPos,
-    /// Camera height above the view point [m].
+    /// Distance from the camera to the view point [m] — the map's height above
+    /// it, because there the camera stands straight overhead.
     pub height: f64,
+    pub mode: view::ViewMode,
+    /// Compass heading of the camera [rad], 0 = north, clockwise.
+    pub yaw: f64,
+    /// How far the camera looks down [rad]; the map is straight down.
+    pub pitch: f64,
+    /// Multiplier on the 3D view's fly speed — Unreal's camera speed dial.
+    pub fly_speed: f64,
 }
 
 /// The document: the line in source form, its compilation, and the save state.
@@ -309,12 +321,16 @@ fn main() {
     .init_resource::<Request>()
     .init_resource::<EditorState>()
     .init_resource::<Ghost>()
+    .init_resource::<gizmo::GizmoState>()
     .add_systems(Startup, setup)
     .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
         Update,
         (
-            camera_control,
+            view::camera_control,
+            // Before the tools: a handle drag takes the click the select tool
+            // would otherwise read as "reselect whatever is underneath".
+            gizmo::input,
             tools::tool_input,
             track_changes,
             terrain::update,
@@ -329,6 +345,7 @@ fn main() {
             signals::show_finest_lod,
             rebase_origin,
             tools::draw_gizmos,
+            gizmo::draw,
             scale_markers,
             update_title,
             confirm_close,
@@ -434,6 +451,10 @@ fn setup(
     commands.insert_resource(Focus {
         position: focus_position,
         height: 900.0,
+        mode: default(),
+        yaw: 0.0,
+        pitch: std::f64::consts::FRAC_PI_2,
+        fly_speed: 1.0,
     });
     commands.insert_resource(Origin(origin));
     let mods_dir = std::path::Path::new("mods");
@@ -787,88 +808,6 @@ fn scale_markers(focus: Res<Focus>, mut markers: Query<&mut Transform, With<Devi
     for mut transform in markers.iter_mut() {
         transform.scale = Vec3::splat(scale);
     }
-}
-
-/// Move the view point and change the height — keyboard as before, plus the
-/// map conventions every modder expects: wheel zooms, middle button drags.
-#[allow(clippy::too_many_arguments)]
-fn camera_control(
-    keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
-    mut motion: MessageReader<bevy::input::mouse::MouseMotion>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    time: Res<Time>,
-    origin: Res<Origin>,
-    mut state: ResMut<EditorState>,
-    mut focus: ResMut<Focus>,
-    mut camera: Query<&mut Transform, With<Camera3d>>,
-) {
-    let dt = time.delta_secs_f64();
-    let frame = EnuFrame::at(focus.position);
-    // While a text field has focus, WASD is typing, not panning.
-    if !state.typing {
-        // Movement scales with the height: far up, panning is generous.
-        let speed = focus.height * 0.8 * dt;
-        let mut shift = DVec3::ZERO;
-        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-            shift += frame.north * speed;
-        }
-        if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-            shift -= frame.north * speed;
-        }
-        if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
-            shift -= frame.east * speed;
-        }
-        if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
-            shift += frame.east * speed;
-        }
-        if shift != DVec3::ZERO {
-            focus.position = EcefPos(focus.position.0 + shift);
-            state.map_used = true;
-        }
-        if keys.pressed(KeyCode::PageUp) || keys.pressed(KeyCode::NumpadSubtract) {
-            focus.height = (focus.height * (1.0 + dt)).min(20_000.0);
-        }
-        if keys.pressed(KeyCode::PageDown) || keys.pressed(KeyCode::NumpadAdd) {
-            focus.height = (focus.height * (1.0 - dt)).max(60.0);
-        }
-    }
-
-    // Mouse input only inside the viewport rect the panels leave free — the
-    // hand-built panel layout is invisible to egui's own hit test, so the
-    // check is ours (see `EditorState::viewport`).
-    let over_map = windows
-        .single()
-        .ok()
-        .and_then(|w| w.cursor_position())
-        .is_some_and(|p| state.viewport.contains(p));
-    let scroll: f32 = wheel.read().map(|w| w.y).sum();
-    if over_map && scroll != 0.0 {
-        focus.height = (focus.height * (1.0 - scroll as f64 * 0.15)).clamp(60.0, 20_000.0);
-        state.map_used = true;
-    }
-    let drag: Vec2 = motion.read().map(|m| m.delta).sum();
-    if over_map && buttons.pressed(MouseButton::Middle) && drag != Vec2::ZERO {
-        // Metres per pixel on the focus plane (45° vertical fov), so the map
-        // sticks to the cursor while it is dragged.
-        let metres_per_px = focus.height * 2.0 * (std::f64::consts::FRAC_PI_8).tan()
-            / (state.viewport.height().max(1.0) as f64);
-        let shift = frame.east * (drag.x as f64 * metres_per_px)
-            - frame.north * (drag.y as f64 * metres_per_px);
-        focus.position = EcefPos(focus.position.0 - shift);
-        state.map_used = true;
-    }
-
-    let Ok(mut transform) = camera.single_mut() else {
-        return;
-    };
-    let frame = EnuFrame::at(focus.position);
-    let center = origin.0.to_render(focus.position);
-    let up = origin.0.dir_to_render(frame.up);
-    let north = origin.0.dir_to_render(frame.north);
-    transform.translation = center + up * focus.height as f32;
-    transform.look_at(center, north);
 }
 
 /// All overlay settings via keys.

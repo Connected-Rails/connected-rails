@@ -585,7 +585,20 @@ overlay-offline = Offline mode (L)
 overlay-clear-cache = Clear cache (C)
 overlay-retry = Reset failed attempts (R)
 action-show-terrain = Show terrain (T)
+action-perspective-view = 3D view (F4)
+
+# Viewport bar — icon buttons above the map, tooltips only.
+view-top-down = Top-down map (F4)
+view-perspective = 3D view (F4)
+gizmo-move = Move handles (W)
+gizmo-rotate = Rotate handle (E)
+view-imagery = Aerial imagery (T)
+view-terrain = Terrain (T)
+camera-speed = Camera speed of the 3D view
+
 help-pan = WASD/arrows or middle mouse drag pan · wheel or PgUp/PgDn height
+help-fly = 3D view (F4): hold right mouse to look, WASD to fly, Q/E down/up, Shift faster · Alt+left orbits · F frames the selection
+help-gizmo = W move handles, E rotate handle · drag an arrow to move the selection along the track, across it or upwards
 help-opacity = [ ] opacity · , . zoom level · Z automatic
 help-offset = Numpad 4/6/8/2 image offset, 5 reset
 help-draw = Draw track: click points · Enter finishes · Esc cancels

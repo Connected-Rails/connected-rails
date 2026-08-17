@@ -66,6 +66,36 @@ Reading the free rect this way is fine; what follows is not.
 the UI is squeezed into the viewport along with the 3D scene and the whole
 window collapses into a strip. Separating the two would need a second camera.
 
+## Viewport bar and icons
+
+Controls that belong to *looking* rather than to the document — view angle,
+gizmo mode, what the ground shows, camera speed — sit in a bar above the
+viewport (`viewport_bar` in the route editor), not in the form panel. Build it
+as an `egui::Panel::top` **after** the side panel, inside the same background
+`Ui`: it then takes its width from the free space, and `state.viewport`
+shrinks by itself, so a click on the bar can never also reach the tool
+underneath. Floating it over the map would need its own rect excluded from
+every hit test.
+
+Icons are **drawn, not typed** (`editor_ui::Icon` + `icon_button`): Inter
+carries no symbol set and the emoji fallback renders tofu on some machines —
+the same reason `×` is spelled U+00D7. Drawn shapes also take the theme
+colours, so an active button's icon turns with its fill. New icons go into
+`crates/editor-ui/src/icon.rs` as unit-coordinate line segments; keep them to
+the existing `Stroke` width so a row of them has one weight.
+
+- `icon_button(ui, icon, active, tooltip)` — 26×22, pressed-in (`ACCENT_BG` +
+  `ACCENT_TEXT`) while active, so a pair reads as a choice rather than as two
+  commands. The tooltip is the only text an icon has: name the function *and*
+  its key (`view-top-down = Draufsicht (F4)`).
+- `icon_label(ui, icon)` — the icon alone in `TEXT_SECONDARY`, as the label of
+  the control beside it. Never an `icon_button` that ignores its click.
+- `bar_divider(ui)` — hairline between groups. `ui.separator()` in a
+  horizontal layout stretches to the full row height and reads as a panel edge.
+- `bar_value(ui, …)` — the compact numeric control of a bar. `field` is a
+  fixed 150 px, which is a column width, not a toolbar width; use `field` in
+  forms and `bar_value` only in bars.
+
 ## Typography
 
 Inter, bundled in `crates/editor-ui/fonts/` (OFL license file next to it).

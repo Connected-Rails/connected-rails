@@ -171,7 +171,13 @@ pub fn update(
     // flight from asking for a whole line.
     let options = view.options;
     let center = terrain::to_utm(focus.position, &options);
-    let radius = (focus.height * 0.8).clamp(700.0, 3_000.0);
+    let radius = match focus.mode {
+        crate::view::ViewMode::TopDown => (focus.height * 0.8).clamp(700.0, 3_000.0),
+        // A shallow 3D view looks to the horizon however near its pivot is —
+        // tying the radius to that distance would end the ground at the
+        // camera's feet.
+        crate::view::ViewMode::Perspective => 3_000.0,
+    };
     let wanted = wanted_keys(center, radius, &options);
 
     // Discard what has left the view.

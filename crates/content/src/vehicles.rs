@@ -44,7 +44,7 @@ pub fn br101() -> VehicleSpec {
             c: 6.5,
         },
         brake: BrakeSpec::from_brake_weight(90.0, BrakeKind::Disc)
-            .with_position(BrakePosition::R)
+            .with_default_position(BrakePosition::R)
             // Two cylinder pressure stages, changed over by speed; pre-controlled,
             // with an air supplement brake behind the regenerative brake.
             .as_traction_unit(ControlValve::KeL2a, 90_000.0),
@@ -114,7 +114,7 @@ pub fn br110() -> VehicleSpec {
             c: 7.0,
         },
         brake: BrakeSpec::from_brake_weight(85.0, BrakeKind::Block)
-            .with_position(BrakePosition::P)
+            .with_default_position(BrakePosition::P)
             .as_traction_unit(ControlValve::KeGp, 85_000.0),
         drives: vec![DriveSpec::new(TractionSpec::TapChanger {
             steps: 28,
@@ -193,7 +193,7 @@ pub fn br218() -> VehicleSpec {
             c: 7.2,
         },
         brake: BrakeSpec::from_brake_weight(78.0, BrakeKind::Block)
-            .with_position(BrakePosition::P)
+            .with_default_position(BrakePosition::P)
             .as_traction_unit(ControlValve::KeTm, 78_000.0),
         drives: vec![DriveSpec::new(TractionSpec::Diesel {
             max_force: 235_000.0,
@@ -224,7 +224,7 @@ pub fn br218() -> VehicleSpec {
             }),
             // Two converters, changed over by filling and emptying — the starting
             // converter multiplies almost two and a half times at stall.
-            transmission: Some(Transmission {
+            transmission: Some(Box::new(Transmission {
                 circuits: vec![
                     Circuit {
                         kind: CircuitKind::Converter,
@@ -257,11 +257,15 @@ pub fn br218() -> VehicleSpec {
                 drain_time: 0.7,
                 hysteresis_kmh: 10.0,
                 final_ratio: 1.0,
+                shunting_ratio: 0.0,
                 wheel_diameter: 1.0,
                 count: 1,
+                speed_controlled: false,
                 efficiency: 0.95,
-            }),
+            })),
             electric: None,
+            gearbox: None,
+            hydrostatic: None,
             hydrodynamic_brake: None,
             dynamic_brake: None,
         })],
@@ -318,7 +322,7 @@ pub fn br232() -> VehicleSpec {
             c: 9.4,
         },
         brake: BrakeSpec::from_brake_weight(120.0, BrakeKind::Block)
-            .with_position(BrakePosition::P)
+            .with_default_position(BrakePosition::P)
             .as_traction_unit(ControlValve::KeTm, 120_000.0),
         drives: vec![DriveSpec::new(TractionSpec::Diesel {
             max_force: 353_000.0,
@@ -377,6 +381,8 @@ pub fn br232() -> VehicleSpec {
                 }),
                 blower_idle_share: 0.25,
             }),
+            gearbox: None,
+            hydrostatic: None,
             hydrodynamic_brake: None,
             dynamic_brake: None,
         })],
@@ -432,7 +438,7 @@ pub fn br52() -> VehicleSpec {
             c: 10.5,
         },
         brake: BrakeSpec::from_brake_weight(96.0, BrakeKind::Block)
-            .with_position(BrakePosition::G)
+            .with_default_position(BrakePosition::G)
             .as_traction_unit(ControlValve::KeGp, 90_000.0),
         drives: vec![DriveSpec::new(TractionSpec::Steam {
             loco: Box::new(SteamLoco::default()),
@@ -480,7 +486,7 @@ pub fn passenger_coach() -> VehicleSpec {
             c: 4.8,
         },
         brake: BrakeSpec::from_brake_weight(45.0, BrakeKind::Disc)
-            .with_position(BrakePosition::P)
+            .with_default_position(BrakePosition::P)
             .with_valve(ControlValve::KeGpr),
         drives: Vec::new(),
         legacy_traction: None,
@@ -531,7 +537,7 @@ pub fn freight_wagon() -> VehicleSpec {
         // The anscription of the wagon: braked weight 22 t empty, 55 t loaded, changed
         // over by the lever at 40 t total mass.
         brake: BrakeSpec::from_brake_weight(55.0, BrakeKind::Block)
-            .with_position(BrakePosition::G)
+            .with_default_position(BrakePosition::G)
             .with_valve(ControlValve::KeGp)
             .with_load_braking(LoadBraking::Changeover {
                 empty_share: 22.0 / 55.0,
@@ -595,7 +601,7 @@ pub fn railcar() -> VehicleSpec {
         // follows how full the railcar is.
         brake: BrakeSpec::from_brake_weight(66.0, BrakeKind::Disc)
             // Anscribed "R + Mg": the R position plus the magnetic track brake.
-            .with_position(BrakePosition::R)
+            .with_default_position(BrakePosition::R)
             .with_mg(60_000.0)
             .with_load_braking(LoadBraking::Weighing)
             .as_traction_unit(ControlValve::KeGpr, 60_000.0),
@@ -622,7 +628,7 @@ pub fn railcar() -> VehicleSpec {
                 inertia: 8.0,
                 response_time: 0.8,
             }),
-            transmission: Some(Transmission {
+            transmission: Some(Box::new(Transmission {
                 circuits: vec![
                     Circuit {
                         kind: CircuitKind::Converter,
@@ -653,11 +659,15 @@ pub fn railcar() -> VehicleSpec {
                 drain_time: 0.5,
                 hysteresis_kmh: 12.0,
                 final_ratio: 1.0,
+                shunting_ratio: 0.0,
                 wheel_diameter: 0.77,
                 count: 2,
+                speed_controlled: false,
                 efficiency: 0.95,
-            }),
+            })),
             electric: None,
+            gearbox: None,
+            hydrostatic: None,
             hydrodynamic_brake: Some(HydrodynamicBrake {
                 absorption: 0.046,
                 ratio: 4.0,

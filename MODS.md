@@ -72,7 +72,7 @@ without a matching rule shows stop.
 | `mass_empty` | tare mass [kg] |
 | `rotating_mass_factor` | allowance for rotating masses (0.05 coach … 0.25 powered vehicle) |
 | `davis` | running resistance `R = a + b·v + c·v²` [N], `v` in m/s |
-| `brake` | control valve, friction pairing, brake position, braked weight [t], forces, pressures, reservoir volumes, additional brakes |
+| `brake` | control valve, friction pairing, default brake position, braked weight [t], forces, pressures, reservoir volumes, additional brakes |
 | `traction` | `Curve` / `TapChanger` / `Converter` / `Diesel` — or `None`; see below |
 | `coupler` | slack, stiffnesses, damping, breaking force |
 | `adhesive_mass_fraction` | share of the mass on driven axles (loco 1.0, coach 0.0) |
@@ -222,7 +222,7 @@ graph: Some((
     blocks: [
         (id: 0, kind: "diesel-engine", pos: (-320.0, 0.0),
          params: { "max_power": Number(1840000.0), "governor": Choice("speed") }),
-        (id: 1, kind: "example:voith-l620", pos: (-80.0, 0.0)),
+        (id: 1, kind: "hydro-transmission", pos: (-80.0, 0.0)),
         (id: 2, kind: "wheelset", pos: (160.0, 0.0),
          params: { "axles": Number(4.0), "adhesive_mass_fraction": Number(1.0) }),
     ],
@@ -267,6 +267,8 @@ The baker recognises the drive chains of all five traction models:
 | … + `rheostat` / `chopper` + `series-parallel-switch` | `TapChanger` with `starter` — contactor drive |
 | … + `traction-converter` + `traction-motor` or `async-motor` (+ `dynamic-brake`) | `Converter` |
 | `diesel-engine` + `hydro-transmission` (+ `retarder`) | `Diesel`, diesel-hydraulic |
+| `diesel-engine` + `mechanical-gearbox` | `Diesel` with `gearbox` — diesel-mechanical |
+| `diesel-engine` + `hydrostatic-drive` | `Diesel` with `hydrostatic` |
 | `diesel-engine` + `generator` + `load-regulator` (+ `rectifier`) + `series-motor` or `async-motor` | `Diesel` with `electric` — diesel-electric |
 | `firebox` + `boiler` + `steam-cylinders` (+ `injector` + `tender`) | `Steam` |
 
@@ -275,8 +277,15 @@ drive: `series-motor` is the classic DC machine, `async-motor` the modern invert
 A `cooling` block wired to the **heat** pin of a motor, a rheostat or the dynamic brake
 gives that component a thermal model — without one it never gets hot.
 
+One engine drives one path: a hydraulic transmission, a mechanical gearbox, a hydrostatic
+drive or a generator. Wiring two of them warns and the transmission wins. A shunter's
+two-range gearbox is not a block of its own — it is the `shunting_ratio` of the
+transmission, and the cab's range selector (`CabControl::RoadGear`) changes it at a stand.
+
 The brake blocks map onto the `BrakeSpec` fields above: the `control-valve` carries
-valve type, brake position, braked weight and load braking; the `brake-rigging` the
+valve type, default brake position, braked weight and load braking (the position is
+only the setting the changeover handle starts in — what actually brakes is
+`BrakeState::position`, set on the vehicle when the train is made up); the `brake-rigging` the
 friction pairing and its maximum force; a `relay-valve` is the pre-controlled cylinder
 (`pilot_controlled`; its `supplement` flag is the air supplement brake); the
 `driver-brake-valve` carries the equalising device; reservoirs, pipe and compressor
@@ -311,7 +320,9 @@ The built-in palette:
 | `voltage-source` | stands in for the contact line where there is none | voltage |
 | `diesel-engine` | diesel engine, optionally with the full engine map | force/power/v max hyperbola, ramp and cranking time; engine map: idle/rated/overspeed rpm, torque curve, speed or fill governor with notches and droop, inertia, rack time |
 | **Drivetrain** | | |
-| `hydro-transmission` | converters and couplings engaged by filling | circuits, fill steps, fill/drain time, hysteresis, final drive, wheel diameter, count, efficiency |
+| `hydro-transmission` | converters and couplings engaged by filling | circuits, power control (filling / engine speed), fill steps, fill/drain time, hysteresis, final drive, shunting gear, wheel diameter, count, efficiency |
+| `mechanical-gearbox` | friction clutch and gears, no torque conversion (Köf, railbus) | gear ratios, final drive, wheel diameter, efficiency, clutch torque and travel time, change time, change-up and change-down speed |
+| `hydrostatic-drive` | variable-displacement pump and hydraulic motor, stepless | effort limit of the relief valve, efficiency, swash plate travel time |
 | `retarder` | hydrodynamic brake in the transmission | absorption, ratio, wheel diameter, force, power, fill time, fade-out |
 | `generator` | main generator of a diesel-electric | electrical power, efficiency, maximum voltage and current |
 | `traction-motor` | motor without data behind converter or generator | — |
@@ -386,11 +397,12 @@ The built-in palette:
 #### Block presets (`blocks/*.ron`)
 
 A mod extends the palette with **presets**: a built-in block under a new name with new
-parameter defaults — a data sheet, not new physics. `mods/example/blocks/voith-l620.ron`:
+parameter defaults — a data sheet, not new physics. A `mods/<id>/blocks/l620.ron`
+holding the figures of a Voith L 620 reU2:
 
 ```ron
 (
-    id: "voith-l620",
+    id: "l620",
     name: "Voith L 620 reU2",
     description: "Two-circuit hydraulic transmission of the DB class 218: starting converter and travel converter, 2 700 kW input.",
     base: "hydro-transmission",
@@ -413,8 +425,8 @@ parameter defaults — a data sheet, not new physics. `mods/example/blocks/voith
 ```
 
 `base` names the built-in block, `params` overrides its defaults with the same typed
-values a graph uses. The preset appears in the editor palette as "Voith L 620 reU2",
-a vehicle's `graph` addresses it as `example:voith-l620`, and it bakes exactly like
+values a graph uses. The preset appears in the editor palette under its `name`,
+a vehicle's `graph` addresses it as `<mod>:<id>`, and it bakes exactly like
 its base block with those defaults. An unknown `base` or a wrongly-typed parameter is
 a loading warning, never a crash. Behaviour beyond the built-in physics still goes
 through the `script` block — the Lua hook, as everywhere else.

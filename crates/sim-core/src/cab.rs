@@ -55,6 +55,10 @@ pub struct CabInputs {
     /// Starter button of the diesel engine.
     #[serde(default)]
     pub engine_start: bool,
+    /// Range selector of a two-range gearbox: `true` = road gear, `false` = shunting gear.
+    /// Only a shunter with the gearbox has it, and it only changes at a stand.
+    #[serde(default = "on")]
+    pub road_gear: bool,
     /// Emergency valve of the cab pulled. It vents the brake pipe and the driver's own
     /// valve cannot make it up — that is what "emergency" means.
     #[serde(default)]
@@ -124,6 +128,7 @@ impl Default for CabInputs {
             parking_brake: false,
             ep_brake: false,
             engine_start: false,
+            road_gear: true,
             emergency_valve: false,
             steam: crate::steam::SteamControls::default(),
             shovel: 0.0,
@@ -313,6 +318,8 @@ pub enum CabControl {
     Sanding,
     BrakeRelease,
     EngineStart,
+    /// Range selector of a two-range gearbox: shunting gear – road gear, standstill only.
+    RoadGear,
     DoorReleaseLeft,
     DoorReleaseRight,
     DoorClose,
@@ -464,7 +471,7 @@ fn afb_scale(train: &Train) -> f64 {
 }
 
 impl CabControl {
-    pub const ALL: [CabControl; 39] = [
+    pub const ALL: [CabControl; 40] = [
         CabControl::Throttle,
         CabControl::Reverser,
         CabControl::BrakeValve,
@@ -481,6 +488,7 @@ impl CabControl {
         CabControl::Sanding,
         CabControl::BrakeRelease,
         CabControl::EngineStart,
+        CabControl::RoadGear,
         CabControl::DoorReleaseLeft,
         CabControl::DoorReleaseRight,
         CabControl::DoorClose,
@@ -535,6 +543,7 @@ impl CabControl {
             CabControl::Pantograph => "cab-input-pantograph",
             CabControl::MainSwitch => "cab-input-main-switch",
             CabControl::Compressor => "cab-input-compressor",
+            CabControl::RoadGear => "cab-input-road-gear",
             CabControl::TrainType => "cab-input-train-type",
             CabControl::Wipers => "cab-input-wipers",
             CabControl::Headlights => "cab-input-headlights",
@@ -617,6 +626,7 @@ impl CabControl {
             CabControl::Sanding => f64::from(cab.sanding),
             CabControl::BrakeRelease => f64::from(cab.brake_release),
             CabControl::EngineStart => f64::from(cab.engine_start),
+            CabControl::RoadGear => f64::from(cab.road_gear),
             CabControl::DoorReleaseLeft => f64::from(cab.door_release_left),
             CabControl::DoorReleaseRight => f64::from(cab.door_release_right),
             CabControl::DoorClose => f64::from(cab.door_close),
@@ -698,6 +708,7 @@ impl CabControl {
             CabControl::Sanding => cab.sanding = on,
             CabControl::BrakeRelease => cab.brake_release = on,
             CabControl::EngineStart => cab.engine_start = on,
+            CabControl::RoadGear => cab.road_gear = on,
             CabControl::DoorReleaseLeft => cab.door_release_left = on,
             CabControl::DoorReleaseRight => cab.door_release_right = on,
             CabControl::DoorClose => cab.door_close = on,

@@ -23,8 +23,8 @@ use crate::brakes::{
 use crate::doors::DoorSystem;
 use crate::drive::{
     AsyncMotor, Circuit, DieselElectric, DieselEngine, DriveSpec, DynamicBrake, ElectricMotor,
-    Governor, HydrodynamicBrake, MotorGroup, SeriesMotor, Starter, Thermal, TractionSpec,
-    Transmission,
+    Governor, HydrodynamicBrake, HydrostaticDrive, MechanicalGearbox, MotorGroup, SeriesMotor,
+    Starter, Thermal, TractionSpec, Transmission,
 };
 use crate::electric::{PowerSupply, SupplySystem};
 use crate::safety::SafetyEquipment;
@@ -682,6 +682,12 @@ impl Registry {
                         kind: ParamKind::Circuits,
                         default: ParamValue::Circuits(vec![]),
                     },
+                    choice(
+                        "power_control",
+                        "trm-power-control",
+                        &["filling", "engine-speed"],
+                        "filling",
+                    ),
                     num("fill_steps", "trm-fill-steps", "", 0.0, 40.0, 1.0, 0.0),
                     num("fill_time", "trm-fill-time", "s", 0.05, 10.0, 0.05, 1.2),
                     num("drain_time", "trm-drain-time", "s", 0.0, 10.0, 0.05, 0.0),
@@ -696,6 +702,15 @@ impl Registry {
                     ),
                     num("final_ratio", "trm-final-ratio", "", 0.1, 20.0, 0.01, 1.9),
                     num(
+                        "shunting_ratio",
+                        "trm-shunting-ratio",
+                        "",
+                        0.0,
+                        20.0,
+                        0.01,
+                        0.0,
+                    ),
+                    num(
                         "wheel_diameter",
                         "drv-wheel-diameter",
                         "m",
@@ -706,6 +721,82 @@ impl Registry {
                     ),
                     num("count", "trm-count", "", 1.0, 8.0, 1.0, 1.0),
                     num("efficiency", "trm-efficiency", "", 0.5, 1.0, 0.01, 0.96),
+                ],
+            ),
+            def(
+                "mechanical-gearbox",
+                Drivetrain,
+                vec![shaft_in()],
+                vec![shaft_out()],
+                vec![
+                    list("gears", "gbx-gears", vec![5.5, 3.0, 1.8, 1.0]),
+                    num("final_ratio", "trm-final-ratio", "", 0.1, 20.0, 0.01, 3.0),
+                    num(
+                        "wheel_diameter",
+                        "drv-wheel-diameter",
+                        "m",
+                        0.3,
+                        2.0,
+                        0.01,
+                        0.9,
+                    ),
+                    num("efficiency", "trm-efficiency", "", 0.5, 1.0, 0.01, 0.95),
+                    num(
+                        "clutch_torque",
+                        "gbx-clutch-torque",
+                        "N·m",
+                        0.0,
+                        20_000.0,
+                        10.0,
+                        1_200.0,
+                    ),
+                    num("clutch_time", "gbx-clutch-time", "s", 0.05, 5.0, 0.05, 1.0),
+                    num("shift_time", "gbx-shift-time", "s", 0.0, 5.0, 0.05, 1.5),
+                    num(
+                        "shift_up_rpm",
+                        "gbx-shift-up",
+                        "1/min",
+                        0.0,
+                        4000.0,
+                        10.0,
+                        1_800.0,
+                    ),
+                    num(
+                        "shift_down_rpm",
+                        "gbx-shift-down",
+                        "1/min",
+                        0.0,
+                        4000.0,
+                        10.0,
+                        900.0,
+                    ),
+                ],
+            ),
+            def(
+                "hydrostatic-drive",
+                Drivetrain,
+                vec![shaft_in()],
+                vec![shaft_out()],
+                vec![
+                    num(
+                        "max_force",
+                        "hst-max-force",
+                        "N",
+                        0.0,
+                        400_000.0,
+                        500.0,
+                        60_000.0,
+                    ),
+                    num("efficiency", "trm-efficiency", "", 0.3, 1.0, 0.01, 0.8),
+                    num(
+                        "response_time",
+                        "hst-response-time",
+                        "s",
+                        0.05,
+                        10.0,
+                        0.05,
+                        1.5,
+                    ),
                 ],
             ),
             def(
@@ -1397,7 +1488,7 @@ impl Registry {
                         &["k-gp", "ke-gp", "ke-gpr", "ke-tm", "ke-l2a", "ke-l2d"],
                         "ke-gp",
                     ),
-                    choice("position", "brk-position", &["g", "p", "r"], "p"),
+                    choice("position", "brk-default-position", &["g", "p", "r"], "p"),
                     num("brake_weight", "brk-weight", "t", 0.0, 500.0, 1.0, 50.0),
                     choice(
                         "load_braking",
@@ -2266,17 +2357,52 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
                 inertia: b.num(blk, "inertia"),
                 response_time: b.num(blk, "response_time"),
             });
-            let transmission = b.find("hydro-transmission").map(|t| Transmission {
-                circuits: b.param(t, "circuits").circuits().to_vec(),
-                fill_steps: b.num(t, "fill_steps").max(0.0) as u32,
-                fill_time: b.num(t, "fill_time"),
-                drain_time: b.num(t, "drain_time"),
-                hysteresis_kmh: b.num(t, "hysteresis_kmh"),
-                final_ratio: b.num(t, "final_ratio"),
-                wheel_diameter: b.num(t, "wheel_diameter"),
-                count: b.num(t, "count").max(1.0) as u32,
-                efficiency: b.num(t, "efficiency"),
+            let transmission = b.find("hydro-transmission").map(|t| {
+                Box::new(Transmission {
+                    circuits: b.param(t, "circuits").circuits().to_vec(),
+                    speed_controlled: b.param(t, "power_control").choice() == "engine-speed",
+                    fill_steps: b.num(t, "fill_steps").max(0.0) as u32,
+                    fill_time: b.num(t, "fill_time"),
+                    drain_time: b.num(t, "drain_time"),
+                    hysteresis_kmh: b.num(t, "hysteresis_kmh"),
+                    final_ratio: b.num(t, "final_ratio"),
+                    shunting_ratio: b.num(t, "shunting_ratio"),
+                    wheel_diameter: b.num(t, "wheel_diameter"),
+                    count: b.num(t, "count").max(1.0) as u32,
+                    efficiency: b.num(t, "efficiency"),
+                })
             });
+            let gearbox = b.find("mechanical-gearbox").map(|g| {
+                Box::new(MechanicalGearbox {
+                    gears: b.param(g, "gears").list().to_vec(),
+                    final_ratio: b.num(g, "final_ratio"),
+                    wheel_diameter: b.num(g, "wheel_diameter"),
+                    efficiency: b.num(g, "efficiency"),
+                    clutch_torque: b.num(g, "clutch_torque"),
+                    clutch_time: b.num(g, "clutch_time"),
+                    shift_time: b.num(g, "shift_time"),
+                    shift_up_rpm: b.num(g, "shift_up_rpm"),
+                    shift_down_rpm: b.num(g, "shift_down_rpm"),
+                })
+            });
+            let hydrostatic = b.find("hydrostatic-drive").map(|h| HydrostaticDrive {
+                max_force: b.num(h, "max_force"),
+                efficiency: b.num(h, "efficiency"),
+                response_time: b.num(h, "response_time"),
+            });
+            // One drive path per chain: a vehicle has a transmission, a gearbox, a
+            // hydrostatic drive or a generator, never two of them.
+            let paths = u8::from(transmission.is_some())
+                + u8::from(gearbox.is_some())
+                + u8::from(hydrostatic.is_some());
+            if paths > 1 {
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-two-drive-paths"));
+            }
+            if gearbox.is_some() && engine.is_none() {
+                b.issues
+                    .push(BakeIssue::warn(Some(blk.id), "bake-gearbox-needs-map"));
+            }
             if transmission.is_some() && engine.is_none() {
                 b.issues
                     .push(BakeIssue::warn(Some(blk.id), "bake-transmission-needs-map"));
@@ -2302,7 +2428,7 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
             let dynamic_brake = dynamic.map(|d| dynamic_brake_from(b, d));
             // The generator branch is the diesel-electric one; without a transmission it is
             // what the drive runs on.
-            let electric = if transmission.is_none() {
+            let electric = if transmission.is_none() && gearbox.is_none() && hydrostatic.is_none() {
                 diesel_electric_from(b)
             } else {
                 None
@@ -2317,6 +2443,8 @@ fn bake_traction(b: &mut Baker, spec: &mut VehicleSpec) {
                 engine,
                 transmission,
                 electric,
+                gearbox,
+                hydrostatic,
                 hydrodynamic_brake,
                 dynamic_brake,
             })
@@ -2440,7 +2568,7 @@ fn bake_brakes(b: &mut Baker, spec: &mut VehicleSpec) {
         },
         _ => LoadBraking::None,
     };
-    let position = match b.param(cv, "position").choice() {
+    let default_position = match b.param(cv, "position").choice() {
         "g" => BrakePosition::G,
         "r" => BrakePosition::R,
         _ => BrakePosition::P,
@@ -2448,7 +2576,7 @@ fn bake_brakes(b: &mut Baker, spec: &mut VehicleSpec) {
 
     spec.brake = BrakeSpec {
         kind: brake_kind_from(b, rigging),
-        position,
+        default_position,
         valve: control_valve_from(b.param(cv, "valve").choice()),
         valve_params: None,
         brake_weight: b.num(cv, "brake_weight"),
@@ -3101,6 +3229,8 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
             engine,
             transmission,
             electric,
+            gearbox,
+            hydrostatic,
             hydrodynamic_brake,
             dynamic_brake,
         }) => {
@@ -3143,11 +3273,24 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
                 Some(t) => {
                     let trans = s.add(reg, "hydro-transmission", 2.0, 1.0);
                     s.set(trans, "circuits", ParamValue::Circuits(t.circuits.clone()));
+                    s.set(
+                        trans,
+                        "power_control",
+                        ParamValue::Choice(
+                            if t.speed_controlled {
+                                "engine-speed"
+                            } else {
+                                "filling"
+                            }
+                            .to_string(),
+                        ),
+                    );
                     s.set_num(trans, "fill_steps", t.fill_steps as f64);
                     s.set_num(trans, "fill_time", t.fill_time);
                     s.set_num(trans, "drain_time", t.drain_time);
                     s.set_num(trans, "hysteresis_kmh", t.hysteresis_kmh);
                     s.set_num(trans, "final_ratio", t.final_ratio);
+                    s.set_num(trans, "shunting_ratio", t.shunting_ratio);
                     s.set_num(trans, "wheel_diameter", t.wheel_diameter);
                     s.set_num(trans, "count", t.count as f64);
                     s.set_num(trans, "efficiency", t.efficiency);
@@ -3163,6 +3306,34 @@ pub fn from_spec(spec: &VehicleSpec, reg: &Registry) -> VehicleGraph {
                         s.set_num(ret, "fill_time", r.fill_time);
                         s.set_num(ret, "fade_out_kmh", r.fade_out_kmh);
                         s.wire(trans, "out", ret, "shaft");
+                    }
+                }
+                // Mechanical gearbox and hydrostatic drive sit in the same place as the
+                // transmission and are drawn the same way: engine → box → wheelset.
+                None if gearbox.is_some() => {
+                    if let Some(g) = gearbox {
+                        let box_id = s.add(reg, "mechanical-gearbox", 2.0, 1.0);
+                        s.set(box_id, "gears", ParamValue::List(g.gears.clone()));
+                        s.set_num(box_id, "final_ratio", g.final_ratio);
+                        s.set_num(box_id, "wheel_diameter", g.wheel_diameter);
+                        s.set_num(box_id, "efficiency", g.efficiency);
+                        s.set_num(box_id, "clutch_torque", g.clutch_torque);
+                        s.set_num(box_id, "clutch_time", g.clutch_time);
+                        s.set_num(box_id, "shift_time", g.shift_time);
+                        s.set_num(box_id, "shift_up_rpm", g.shift_up_rpm);
+                        s.set_num(box_id, "shift_down_rpm", g.shift_down_rpm);
+                        s.wire(eng, "out", box_id, "shaft");
+                        s.wire(box_id, "out", wheelset, "shaft");
+                    }
+                }
+                None if hydrostatic.is_some() => {
+                    if let Some(h) = hydrostatic {
+                        let hyd = s.add(reg, "hydrostatic-drive", 2.0, 1.0);
+                        s.set_num(hyd, "max_force", h.max_force);
+                        s.set_num(hyd, "efficiency", h.efficiency);
+                        s.set_num(hyd, "response_time", h.response_time);
+                        s.wire(eng, "out", hyd, "shaft");
+                        s.wire(hyd, "out", wheelset, "shaft");
                     }
                 }
                 None => match electric {
@@ -3477,7 +3648,7 @@ fn synth_brakes(
         cv,
         "position",
         ParamValue::Choice(
-            match brake.position {
+            match brake.default_position {
                 BrakePosition::G => "g",
                 BrakePosition::P => "p",
                 BrakePosition::R => "r",
@@ -3902,7 +4073,7 @@ mod tests {
     /// saying so in `MODS.md` and `STATUS.md` fails rather than drifts.
     #[test]
     fn the_palette_has_the_documented_number_of_blocks() {
-        assert_eq!(Registry::builtin().defs.len(), 69);
+        assert_eq!(Registry::builtin().defs.len(), 71);
         // Every category is actually used — an empty group in the palette is a mistake.
         for category in BlockCategory::ALL {
             assert!(
@@ -4202,6 +4373,8 @@ mod tests {
             engine: None,
             transmission: None,
             electric: Some(DieselElectric::default()),
+            gearbox: None,
+            hydrostatic: None,
             hydrodynamic_brake: None,
             dynamic_brake: None,
         })];
@@ -4390,6 +4563,8 @@ mod tests {
             engine: None,
             transmission: None,
             electric: None,
+            gearbox: None,
+            hydrostatic: None,
             hydrodynamic_brake: None,
             dynamic_brake: Some(DynamicBrake {
                 max_force: 200_000.0,

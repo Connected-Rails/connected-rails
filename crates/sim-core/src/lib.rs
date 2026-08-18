@@ -237,6 +237,8 @@ impl Sim {
                     cab.throttle.min(0.0)
                 };
                 veh.sanding = cab.sanding;
+                // The range selector goes to the drive, which only lets it take at a stand.
+                veh.traction.road_gear = cab.road_gear;
                 // Steam: the fireman's and the driver's hands go straight through.
                 veh.traction.steam_controls = cab.steam;
                 if cab.shovel > 0.0

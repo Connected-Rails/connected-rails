@@ -7,8 +7,8 @@
 use crate::brakes::approach;
 use crate::drive::{
     AsyncMotor, DieselElectric, DieselEngine, DriveMode, DriveSpec, DynamicBrake, ElectricMotor,
-    Governor, HydrodynamicBrake, MAX_CIRCUITS, MAX_DRIVES, MotorGroup, SeriesMotor, Starter,
-    Thermal, TractionSpec, Transmission, quantise,
+    Governor, HydrodynamicBrake, HydrostaticDrive, MAX_CIRCUITS, MAX_DRIVES, MechanicalGearbox,
+    MotorGroup, SeriesMotor, Starter, Thermal, TractionSpec, Transmission, quantise,
 };
 use crate::steam::{SteamControls, SteamLoco, SteamState};
 use serde::{Deserialize, Serialize};
@@ -102,6 +102,12 @@ pub const NOMINAL_LINE_VOLTAGE: f64 = 15_000.0;
 /// Frequency of the German railway power network [Hz].
 pub const LINE_FREQUENCY: f64 = 16.7;
 
+/// Serde default for the range selector: a vehicle without a two-range gearbox is
+/// always in the road gear, and so is one whose save file predates the selector.
+fn yes() -> bool {
+    true
+}
+
 /// State of one traction chain. Everything here belongs to a single drive — a vehicle
 /// with two engines has two of these; what the whole vehicle shares stays in
 /// [`TractionState`].
@@ -130,8 +136,24 @@ pub struct DriveState {
     pub circuit_fill: [f64; MAX_CIRCUITS],
     /// Speed ratio ν of the engaged circuit — the transmission's working point.
     pub circuit_nu: f64,
+    /// Road gear engaged (as opposed to the shunting gear of a two-range gearbox). A
+    /// vehicle without one stays in it. See [`TractionState::road_gear`].
+    #[serde(default = "yes")]
+    pub road_gear: bool,
     /// Filling of the hydrodynamic brake 0…1.
     pub retarder_fill: f64,
+    /// Engaged gear of a mechanical gearbox.
+    #[serde(default)]
+    pub gear: usize,
+    /// Clutch of a mechanical gearbox, 0 = out, 1 = fully in.
+    #[serde(default)]
+    pub clutch: f64,
+    /// Time left of the gear change in progress [s].
+    #[serde(default)]
+    pub shift_timer: f64,
+    /// Swash plate of a hydrostatic drive, 0…1.
+    #[serde(default)]
+    pub displacement: f64,
     /// Armature current [A] (series-wound drive).
     pub motor_current: f64,
     /// Field stage in use as a share of the full field (series-wound drive).
@@ -182,6 +204,7 @@ impl DriveState {
     pub fn new() -> Self {
         Self {
             enabled: true,
+            road_gear: true,
             field: 1.0,
             motor_temp: AMBIENT_TEMP,
             resistor_temp: AMBIENT_TEMP,
@@ -235,6 +258,11 @@ pub struct TractionState {
     /// wrong system.
     #[serde(default)]
     pub line_system: track_model::Electrification,
+    /// Range selector of a two-range gearbox: `true` = road gear, `false` = shunting gear.
+    /// Only a vehicle with `Transmission::shunting_ratio` has one, and the change only
+    /// takes at a stand — the dog clutch cannot be shifted under load.
+    #[serde(default = "yes")]
+    pub road_gear: bool,
     /// Shared power controller: −1 … +1 (negative = dynamic brake). Commands every chain
     /// with `throttle == 0`; chains with their own handle read `DriveState::notch`.
     pub notch: f64,
@@ -273,6 +301,7 @@ impl Default for TractionState {
             line_voltage: 0.0,
             line_system: None,
             notch: 0.0,
+            road_gear: true,
             compressor: false,
             // A vehicle is put into service with a charged battery.
             battery_charge: 1.0,
@@ -314,11 +343,12 @@ pub fn step(state: &mut TractionState, specs: &[DriveSpec], supply: &PowerSupply
     update_vehicle_power(state, specs, supply, dt);
 
     let count = specs.len().min(MAX_DRIVES);
-    let (notch, mode, main_switch, steam_controls) = (
+    let (notch, mode, main_switch, steam_controls, road_gear) = (
         state.notch,
         state.mode,
         state.main_switch,
         state.steam_controls,
+        state.road_gear,
     );
     let mut total = 0.0;
     for (drive, chain) in specs.iter().zip(state.drives.iter_mut()) {
@@ -327,6 +357,10 @@ pub fn step(state: &mut TractionState, specs: &[DriveSpec], supply: &PowerSupply
         // Chains on the shared handle follow the cab's power controller.
         if drive.throttle == 0 {
             chain.notch = notch;
+        }
+        // The range change is a dog clutch: it goes in at a stand and nowhere else.
+        if v.abs() < 0.3 {
+            chain.road_gear = road_gear;
         }
         let live = selected && chain.enabled;
         step_drive(
@@ -521,7 +555,7 @@ fn step_drive(
                 state,
                 spec,
                 engine.as_ref(),
-                transmission.as_ref(),
+                transmission.as_deref(),
                 electric.as_ref(),
                 hydrodynamic_brake.as_ref(),
                 dynamic_brake.as_ref(),
@@ -763,6 +797,17 @@ fn step_diesel(
         return;
     };
 
+    // Gearbox and hydrostatic drive come straight off the spec — the signature carries
+    // enough already.
+    let (gearbox, hydrostatic) = match spec {
+        TractionSpec::Diesel {
+            gearbox,
+            hydrostatic,
+            ..
+        } => (gearbox.as_ref(), hydrostatic.as_ref()),
+        _ => (None, None),
+    };
+
     let demand = notch.max(0.0);
     // Speed governor: the notch is a target engine speed, the governor holds it by opening
     // the rack. Fill governor: the notch *is* the rack, the speed follows from the load.
@@ -798,17 +843,25 @@ fn step_diesel(
         TractionSpec::Diesel { max_force, .. } => *max_force,
         _ => f64::INFINITY,
     };
-    let (load, force) = match (transmission, electric) {
-        (Some(transmission), _) => {
+    let (load, force) = match (transmission, electric, gearbox, hydrostatic) {
+        (Some(transmission), ..) => {
             step_transmission(state, transmission, engine, demand, v, omega, dt)
         }
-        (None, Some(electric)) => {
+        (None, Some(electric), ..) => {
             // The motors would pull harder than the running gear may; `max_force` is the
             // figure the works plate carries and it caps them.
             let (load, force) = step_diesel_electric(state, electric, demand, v, omega, dt);
             (load, force.min(max_force))
         }
-        (None, None) => {
+        (None, None, Some(gearbox), _) => {
+            let (load, force) = step_gearbox(state, gearbox, engine, demand, v, dt);
+            (load, force.min(max_force))
+        }
+        (None, None, None, Some(hydrostatic)) => {
+            let (load, force) = step_hydrostatic(state, hydrostatic, engine, demand, v, omega, dt);
+            (load, force.min(max_force))
+        }
+        (None, None, None, None) => {
             let target = demand * spec.available_force(v);
             let rate = spec.available_force(v).max(1.0) / ramp_time.max(0.1);
             approach(&mut state.force, target, rate, dt);
@@ -832,6 +885,119 @@ fn step_diesel(
     } else {
         force
     };
+}
+
+/// Slip [1/min] at which the clutch is passing everything its lining can hold.
+const CLUTCH_FULL_SLIP: f64 = 60.0;
+
+/// Mechanical gearbox: clutch, gear change and the hole each change tears in the effort.
+///
+/// The driver goes by the engine speed, as he does in a railbus — up at the top of the
+/// range, down when the engine starts to labour. Nothing multiplies the torque, so getting
+/// away from a stand is the clutch slipping and nothing else.
+///
+/// Returns (torque taken from the engine [N·m], tractive effort at the wheel [N]).
+fn step_gearbox(
+    state: &mut DriveState,
+    gearbox: &MechanicalGearbox,
+    engine: &DieselEngine,
+    demand: f64,
+    v: f64,
+    dt: f64,
+) -> (f64, f64) {
+    let count = gearbox.gears.len();
+    if count == 0 {
+        return (0.0, 0.0);
+    }
+    state.gear = state.gear.min(count - 1);
+
+    if state.shift_timer > 0.0 {
+        state.shift_timer -= dt;
+    } else if state.gear + 1 < count && state.engine_rpm > gearbox.shift_up_rpm {
+        state.gear += 1;
+        state.shift_timer = gearbox.shift_time;
+    } else if state.gear > 0 && state.engine_rpm < gearbox.shift_down_rpm {
+        state.gear -= 1;
+        state.shift_timer = gearbox.shift_time;
+    }
+    let gear = state.gear;
+    let sync_rpm = gearbox.sync_rpm(gear, v);
+
+    // The clutch is out while the gear is being changed. Getting away, it comes in with the
+    // engine speed — nothing below the take-up speed, everything at rated speed, which is
+    // what a centrifugal clutch does and what a driver's foot does. Once the gear turns the
+    // engine faster than its idle the clutch is simply in, and that gives the engine brake.
+    let rolling = sync_rpm > engine.idle_rpm;
+    let take_up = engine.idle_rpm * 1.3;
+    let by_speed =
+        ((state.engine_rpm - take_up) / (engine.rated_rpm - take_up).max(1.0)).clamp(0.0, 1.0);
+    let target = if state.shift_timer > 0.0 {
+        0.0
+    } else if rolling {
+        1.0
+    } else if demand > 0.02 {
+        by_speed
+    } else {
+        0.0
+    };
+    approach(
+        &mut state.clutch,
+        target,
+        1.0 / gearbox.clutch_time.max(0.05),
+        dt,
+    );
+
+    // Torque across the clutch grows with the slip until the lining passes all it can hold.
+    // ponytail: linear up to CLUTCH_FULL_SLIP, flat above — a friction model per lining
+    // would need figures nobody has.
+    let slip = (state.engine_rpm - sync_rpm) / CLUTCH_FULL_SLIP;
+    let torque = state.clutch * gearbox.clutch_torque * slip.clamp(-1.0, 1.0);
+    let radius = (gearbox.wheel_diameter / 2.0).max(0.05);
+    let force = torque * gearbox.total_ratio(gear) * gearbox.efficiency / radius;
+
+    // Stalling it is part of the deal: with the clutch in, the load can drag the engine
+    // below the speed at which it keeps itself alight.
+    if state.clutch > 0.05 && state.engine_rpm < engine.idle_rpm * 0.6 {
+        state.engine_running = false;
+        state.engine_rpm = 0.0;
+    }
+    (torque, force)
+}
+
+/// Hydrostatic drive: the swash plate follows the controller, the relief valve caps the
+/// effort at a stand and the engine's power caps it above.
+///
+/// Returns (torque taken from the engine [N·m], tractive effort at the wheel [N]).
+fn step_hydrostatic(
+    state: &mut DriveState,
+    drive: &HydrostaticDrive,
+    engine: &DieselEngine,
+    demand: f64,
+    v: f64,
+    omega_engine: f64,
+    dt: f64,
+) -> (f64, f64) {
+    approach(
+        &mut state.displacement,
+        demand.clamp(0.0, 1.0),
+        1.0 / drive.response_time.max(0.05),
+        dt,
+    );
+    // Limiting-load control: the swash plate goes back as the engine starts to labour, so
+    // the drive settles on a working point instead of pulling its engine down and dying.
+    let held = ((state.engine_rpm - engine.idle_rpm)
+        / (engine.rated_rpm - engine.idle_rpm).max(1.0))
+    .clamp(0.0, 1.0);
+    let power = engine.full_load_torque(state.engine_rpm) * omega_engine * held;
+    let force = drive.force(power, v, state.displacement);
+    // What the pump takes off the engine. At a stand the oil goes over the relief valve
+    // instead of into motion, so the load is figured at walking pace rather than at zero.
+    let load = if omega_engine > 1.0 {
+        force * v.abs().max(1.0) / (omega_engine * drive.efficiency.max(0.1))
+    } else {
+        0.0
+    };
+    (load, force)
 }
 
 /// Diesel-electric drive: the load regulator holds the generator on the power the notch
@@ -932,8 +1098,13 @@ fn step_transmission(
     // Filling is the power control: quantised into as many steps as the original has.
     // The change itself needs no clutch — the old circuit runs empty while the new one
     // fills, and it does so at its own rate, which is what tears the hole in the tractive
-    // effort at the change point.
-    let target_fill = quantise(demand, transmission.fill_steps);
+    // effort at the change point. A speed-controlled transmission fills once and stays
+    // full; there the notch moves the engine, not the oil.
+    let target_fill = if transmission.speed_controlled {
+        f64::from(demand > 0.02)
+    } else {
+        quantise(demand, transmission.fill_steps)
+    };
     let fill_rate = 1.0 / transmission.fill_time.max(0.05);
     let drain_rate = 1.0 / transmission.drain_time().max(0.05);
     for (i, fill) in state.circuit_fill.iter_mut().enumerate().take(count) {
@@ -953,7 +1124,7 @@ fn step_transmission(
         if fill <= 1e-3 {
             continue;
         }
-        let (nu, force_per_torque) = transmission.geometry(i, v, omega_engine);
+        let (nu, force_per_torque) = transmission.geometry(i, v, omega_engine, state.road_gear);
         let element = transmission.circuits[i];
         let pump = element.pump_torque(omega_engine, nu, fill);
         pump_torque += pump;
@@ -1302,7 +1473,7 @@ mod tests {
                 inertia: 60.0,
                 response_time: 1.0,
             }),
-            transmission: Some(Transmission {
+            transmission: Some(Box::new(Transmission {
                 circuits: vec![
                     Circuit {
                         kind: CircuitKind::Converter,
@@ -1330,11 +1501,15 @@ mod tests {
                 drain_time: 0.7,
                 hysteresis_kmh: 10.0,
                 final_ratio: 1.0,
+                shunting_ratio: 0.0,
                 wheel_diameter: 1.0,
                 count: 1,
+                speed_controlled: false,
                 efficiency: 0.95,
-            }),
+            })),
             electric: None,
+            gearbox: None,
+            hydrostatic: None,
             hydrodynamic_brake: Some(HydrodynamicBrake {
                 absorption: 0.35,
                 ratio: 4.0,
@@ -1344,6 +1519,75 @@ mod tests {
                 fill_time: 1.5,
                 fade_out_kmh: 12.0,
             }),
+            dynamic_brake: None,
+        }
+    }
+
+    /// A railbus: 150 kW petrol-sized diesel, four gears, friction clutch.
+    fn diesel_mechanical() -> TractionSpec {
+        TractionSpec::Diesel {
+            max_force: 25_000.0,
+            max_power: 150_000.0,
+            v_max: 90.0,
+            ramp_time: 4.0,
+            start_time: 5.0,
+            engine: Some(DieselEngine {
+                idle_rpm: 600.0,
+                rated_rpm: 1900.0,
+                max_rpm: 2100.0,
+                torque_curve: vec![(600.0, 500.0), (1400.0, 780.0), (1900.0, 750.0)],
+                governor: Governor::Fill,
+                inertia: 6.0,
+                response_time: 0.6,
+            }),
+            transmission: None,
+            electric: None,
+            gearbox: Some(Box::new(MechanicalGearbox {
+                gears: vec![5.5, 3.0, 1.8, 1.0],
+                final_ratio: 3.0,
+                wheel_diameter: 0.9,
+                efficiency: 0.95,
+                clutch_torque: 1_200.0,
+                clutch_time: 1.0,
+                shift_time: 1.5,
+                shift_up_rpm: 1800.0,
+                shift_down_rpm: 900.0,
+            })),
+            hydrostatic: None,
+            hydrodynamic_brake: None,
+            dynamic_brake: None,
+        }
+    }
+
+    /// A small shunter on a hydrostatic drive.
+    fn diesel_hydrostatic() -> TractionSpec {
+        TractionSpec::Diesel {
+            max_force: 60_000.0,
+            max_power: 250_000.0,
+            v_max: 40.0,
+            ramp_time: 4.0,
+            start_time: 5.0,
+            engine: Some(DieselEngine {
+                idle_rpm: 700.0,
+                rated_rpm: 2000.0,
+                max_rpm: 2200.0,
+                torque_curve: vec![(700.0, 900.0), (1500.0, 1_300.0), (2000.0, 1_200.0)],
+                governor: Governor::Speed {
+                    steps: 0,
+                    droop: 0.03,
+                },
+                inertia: 8.0,
+                response_time: 0.8,
+            }),
+            transmission: None,
+            electric: None,
+            gearbox: None,
+            hydrostatic: Some(HydrostaticDrive {
+                max_force: 60_000.0,
+                efficiency: 0.8,
+                response_time: 1.5,
+            }),
+            hydrodynamic_brake: None,
             dynamic_brake: None,
         }
     }
@@ -1522,6 +1766,163 @@ mod tests {
         }
         assert!(state.force.abs() < 1.0, "drag {:.0} N", state.force);
         assert!(state.drives[0].circuit_fill.iter().all(|fill| *fill < 0.01));
+    }
+
+    #[test]
+    fn the_gearbox_gets_away_on_its_clutch_and_changes_up() {
+        let spec = diesel_mechanical();
+        let mut state = running(&spec);
+        state.notch = 1.0;
+        // Getting away: the clutch slips, and that slip is the tractive effort.
+        let mut v: f64 = 0.0;
+        for _ in 0..200 {
+            step(&mut state, &spec, v, 1.0 / 200.0);
+        }
+        let drive = state.drives[0];
+        assert_eq!(drive.gear, 0, "must get away in first gear");
+        assert!(drive.clutch > 0.0 && drive.clutch <= 1.0);
+        assert!(state.force > 5_000.0, "effort {:.0} N", state.force);
+
+        // Running up through the gears — the schedule goes by engine speed.
+        for step_index in 0..12_000 {
+            v = (step_index as f64 / 12_000.0) * 80.0 / 3.6;
+            step(&mut state, &spec, v, 1.0 / 200.0);
+        }
+        assert!(
+            state.drives[0].gear >= 2,
+            "still in gear {}",
+            state.drives[0].gear + 1
+        );
+    }
+
+    #[test]
+    fn a_mechanical_gearbox_can_be_stalled() {
+        let mut spec = diesel_mechanical();
+        if let TractionSpec::Diesel {
+            gearbox: Some(g), ..
+        } = &mut spec
+        {
+            // One gear, so there is nothing to change down into: braking to a stand with
+            // the clutch still in drags the engine below its idle and kills it — which is
+            // exactly what happens to a driver who forgets to declutch.
+            g.gears = vec![1.0];
+        }
+        let mut state = running(&spec);
+        state.notch = 0.3;
+        for _ in 0..1200 {
+            step(&mut state, &spec, 40.0 / 3.6, 1.0 / 200.0);
+        }
+        assert!(
+            state.drives[0].clutch > 0.9,
+            "clutch should be in when rolling"
+        );
+        // Braked to a stand inside a second.
+        for i in 0..200 {
+            let v = (40.0 / 3.6) * (1.0 - i as f64 / 200.0);
+            step(&mut state, &spec, v, 1.0 / 200.0);
+        }
+        for _ in 0..200 {
+            step(&mut state, &spec, 0.0, 1.0 / 200.0);
+        }
+        assert!(!state.drives[0].engine_running, "engine survived");
+    }
+
+    #[test]
+    fn the_hydrostatic_drive_is_flat_then_hyperbolic() {
+        let spec = diesel_hydrostatic();
+        let force_at = |kmh: f64| {
+            let mut state = running(&spec);
+            state.notch = 1.0;
+            for _ in 0..2000 {
+                step(&mut state, &spec, kmh / 3.6, 1.0 / 200.0);
+            }
+            state.force
+        };
+        // Pressure-limited at the bottom, power-limited at the top.
+        let low = force_at(2.0);
+        let high = force_at(30.0);
+        assert!(
+            low > 55_000.0,
+            "relief valve should cap at 60 kN: {low:.0} N"
+        );
+        assert!(high < low * 0.5, "{low:.0} N → {high:.0} N over speed");
+        assert!(high > 5_000.0, "still pulling: {high:.0} N");
+    }
+
+    #[test]
+    fn the_shunting_gear_pulls_harder_and_only_changes_at_a_stand() {
+        let mut spec = diesel_hydraulic();
+        if let TractionSpec::Diesel {
+            transmission: Some(t),
+            ..
+        } = &mut spec
+        {
+            // Twice the final drive: the shunting gear of a V 90 in round figures.
+            t.shunting_ratio = t.final_ratio * 2.0;
+        }
+        let force_in = |road_gear: bool| {
+            let mut state = running(&spec);
+            state.notch = 1.0;
+            state.drives[0].road_gear = road_gear;
+            for _ in 0..1200 {
+                step(&mut state, &spec, 10.0 / 3.6, 1.0 / 200.0);
+            }
+            state.force
+        };
+        assert!(
+            force_in(false) > force_in(true) * 1.5,
+            "{:.0} kN shunting vs {:.0} kN road",
+            force_in(false) / 1000.0,
+            force_in(true) / 1000.0
+        );
+
+        // Under way the dog clutch stays where it is, however the driver turns the switch.
+        let mut state = running(&spec);
+        state.notch = 1.0;
+        state.road_gear = false;
+        for _ in 0..200 {
+            step(&mut state, &spec, 40.0 / 3.6, 1.0 / 200.0);
+        }
+        assert!(state.drives[0].road_gear, "changed under way");
+        for _ in 0..200 {
+            step(&mut state, &spec, 0.0, 1.0 / 200.0);
+        }
+        assert!(!state.drives[0].road_gear, "did not change at a stand");
+    }
+
+    #[test]
+    fn a_speed_controlled_transmission_stays_full_at_a_low_notch() {
+        let filling = diesel_hydraulic();
+        let mut mekydro = diesel_hydraulic();
+        if let TractionSpec::Diesel {
+            transmission: Some(t),
+            ..
+        } = &mut mekydro
+        {
+            t.speed_controlled = true;
+        }
+        let fill_at = |spec: &TractionSpec| {
+            let mut state = running(spec);
+            state.notch = 0.3;
+            for _ in 0..1200 {
+                step(&mut state, spec, 20.0 / 3.6, 1.0 / 200.0);
+            }
+            (
+                state.drives[0].circuit_fill[state.drives[0].circuit],
+                state.force,
+            )
+        };
+        let (voith_fill, voith_force) = fill_at(&filling);
+        let (mekydro_fill, mekydro_force) = fill_at(&mekydro);
+        // The Mekydro's converter knows full or empty; the notch moves the engine instead.
+        assert!(mekydro_fill > 0.99, "filling {mekydro_fill:.2}");
+        assert!(voith_fill < 0.5, "filling {voith_fill:.2}");
+        assert!(
+            mekydro_force > voith_force,
+            "{:.0} kN speed-controlled vs {:.0} kN by filling",
+            mekydro_force / 1000.0,
+            voith_force / 1000.0
+        );
     }
 
     #[test]

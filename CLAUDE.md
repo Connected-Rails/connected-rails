@@ -45,3 +45,30 @@ vehicle editor remembers the choice in its own `settings.rs`, the simulator in
 the settings file of `crates/app/src/settings.rs` (Bevy's `bevy::settings`). The
 route and signal editors do not — `i18n::set_language` sets an in-memory value,
 so a menu that calls it and nothing else throws the choice away at the next start.
+
+# Multiplayer
+
+The simulator runs single player and against a dedicated server out of the same binary
+(`crates/app/src/net.rs`, plan ch. 20). **Every new feature has to work in both.** That is
+not a porting step afterwards — it decides how the feature is built:
+
+- **State that matters to other players belongs in `sim-core`,** where the fixed 200 Hz step
+  makes it deterministic, and it is driven by values a client can send. Anything living only
+  in an ECS component or a Bevy resource exists on one machine.
+- **Replicate the setpoint, not the result.** A new control goes into `CabInputs` — that
+  struct is what travels, so a lever added there is networked with no further work. Never
+  replicate what the setpoint already implies (a position, a pressure, a lamp).
+- **Never replicate a `Transform`.** Positions travel as `(edge, s, dir, v, a)` on the track
+  graph; the pose is rebuilt from the spline locally.
+- **Never correct by setting a value.** A difference to the server is worked off gently
+  through the speed (`Train::nudge`, `client_correct`); setting a position is what rubber
+  banding is.
+- **Ask who owns it.** The server owns the interlocking, the AI drivers and the scenario; a
+  client owns nothing but its own levers. A feature that writes to the world from the client
+  needs a message to the server instead, and the server has to be able to say no.
+- **Watch the frequency.** Anything sent per frame per train has to survive a hundred trains
+  on a line hundreds of kilometres long. Send on the change, and let interest management
+  drop what is far away.
+
+If a feature genuinely cannot work over the network, say so in the commit and gate it — a
+feature that silently only works in single player is a bug report waiting to happen.

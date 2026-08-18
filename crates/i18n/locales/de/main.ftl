@@ -994,6 +994,9 @@ group-errors = Fehler
 ## Simulator-Anzeige
 
 hud-speed = v = { $speed } km/h   zul. { $limit } km/h   Weg { $distance } m   { $time }
+hud-network = Server { $state }   Zug { $train }   Latenz { $latency } ms   Korrektur { $correction } cm
+hud-network-joined = verbunden
+hud-network-connecting = verbinde …
 hud-brakes = HL { $pipe } bar   C { $cylinder } bar   R { $auxiliary } bar   HB { $main } bar   Zusatz { $direct } bar   Luft { $air } Nl
 hud-traction = Fahrschalter { $throttle }   Zugkraft { $tractive } kN   Bremskraft { $braking } kN   Bremse { $valve }
 hud-afb = AFB { $state }   Ziel { $target } km/h

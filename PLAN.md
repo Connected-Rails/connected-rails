@@ -638,7 +638,77 @@ scenario to fire events in.
 A `.crails` is a zip of the mod directory; the mod manager unpacks it to `<game>/mods/`.
 ---
 
-## 20. Risks
+## 20. Multiplayer (dedicated servers)
+
+Runs on [lightyear](https://github.com/cBournhonesque/lightyear) (netcode over UDP), in the
+shape SimRail uses: a dedicated server holds the line, players connect and take over one of
+the trains the timetable already knows. Single player is the same binary with nobody to talk
+to — no socket is opened at all.
+
+### 20.1 What goes over the wire
+
+A train moves in one dimension. That single fact decides the whole design:
+
+- **The position on the track, never a transform.** `(edge, s, dir, v, a)` is about 17 bytes;
+  the client rebuilds the pose, cant in curves included, from the spline it already has. A
+  replicated quaternion would cost more *and* shake the vehicle sideways off the rail — a
+  motion that cannot happen, which is exactly why the eye catches it.
+- **Setpoints, not results.** The driver's levers (`CabInputs`) travel as events on a
+  reliable channel; every peer runs the same deterministic `sim-core` on them. Positions
+  follow only as an occasional correction, because between two lever movements there is
+  nothing to say.
+- **Only the leading vehicle.** The rest of the consist follows from the couplers along the
+  spline, so a thirty-wagon freight costs one packet, and packet loss cannot pull it apart.
+
+### 20.2 Extrapolation and correction
+
+A train never changes direction abruptly, and its acceleration steps only at discrete events.
+Half a second of extrapolation from `(v, a)` is therefore worth centimetres, which is why
+latency can be made invisible here in a way it never can be for a player on foot.
+
+A correction is **never** applied as a position. What arrives becomes a distance and a speed
+the client still owes, and both are worked off gently: the speed difference is taken over at
+0.3 m/s² spread over every vehicle equally (so no coupler notices), the distance as a moment
+of running a fraction of a percent fast or slow. A train that jumps 30 cm looks broken; one
+that runs 0.3 % fast for two seconds is invisible. Rubber banding comes from setting the
+position, so the position is never set — except on a resync, when the train is more than
+50 m out or the state is the first this client has seen of it at all. Then there is nothing
+to smooth towards and the consist is placed.
+
+The server's simulation clock rides along in every correction packet. A client that joined
+late or lost a second to a stall takes it over and resyncs; drift below a quarter of a second
+is left alone, because the fixed 200 Hz step swallows it.
+
+### 20.3 Interest management
+
+A line runs for hundreds of kilometres. Trains within 3 km of a client are corrected at the
+full 10 Hz, out to 20 km at 1 Hz, and beyond that not at all — the client keeps simulating
+them off the last setpoints it heard, which for a train is enough. Setpoints go out on the
+movement, to every client that can see the train. A train entering a client's range is
+announced as *fresh*, so it is placed rather than smoothed towards.
+
+### 20.4 Integration points
+
+- **`sim-core`:** `Vehicle::a` (what the physics actually applied), `Train::nudge` and
+  `Train::place_head_at`. No networking — the core stays deterministic and Bevy-free.
+- **`track-model`:** `TrackPosition::distance_to`, which measures a correction along the
+  track rather than through the air.
+- **`app/src/net.rs`:** the protocol, both sides of it, and the dedicated server's own App.
+- **`app/src/world.rs`:** building line, trains and scenario — shared, because client and
+  server have to land on the same world. A fingerprint over line name and consists is
+  exchanged on joining and complained about when it differs.
+
+### 20.5 Running it
+
+```
+train-sim --dedicated 27015                    # or --dedicated 0.0.0.0:27015
+train-sim --connect example.org:27015 --line …  # same --line/--scenario as the server
+```
+
+Still open: a menu page for the server address (today it is the command line), a lobby that
+lists the free trains, and authentication beyond netcode's shared key.
+
+## 21. Risks
 
 | Risk | Countermeasure |
 |---|---|

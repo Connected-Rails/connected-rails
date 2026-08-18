@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and fmt clean.
+As of 2026-08-19 · `cargo test --workspace`: **520 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -647,6 +647,34 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
   checkbox-plus-value pairs reads exactly like the file. The rule check flags an area that covers nothing, sets nothing, lies off its
   track or names an unknown type; the track panel says when an area lies over the track
   being edited. Areas follow their track through a split and a deletion.
+
+- **Multiplayer over dedicated servers (ch. 20):** on
+  [lightyear](https://github.com/cBournhonesque/lightyear) 0.29 (netcode over UDP), in the shape
+  SimRail uses — the same binary is the server (`--dedicated <port>`, no window, no renderer, no
+  sound card) and the client (`--connect <host:port>`); without either flag no socket is opened
+  and single player is untouched. Client and server build the same world through the shared
+  `app/src/world.rs` and exchange a fingerprint over line name and consists on joining. A client
+  asks for the train its own scenario put it in and keeps it while it is free; a train a player
+  took over stops being driven by the AI and goes back to it when that player leaves.
+  What travels: the driver's levers (`CabInputs`) as events on a reliable channel — so the
+  setpoint is replicated, never the result — and ten times a second the position of each train
+  on the track, `(edge, s, dir, v, a)`, about 17 bytes and not a transform; the pose with its
+  cant in curves is rebuilt from the spline on every client, and only the leading vehicle is
+  sent because the rest of the consist follows from the couplers. A correction is **never**
+  applied as a position: what arrives becomes a distance and a speed still owed, the speed taken
+  over at 0.3 m/s² across every vehicle equally (so no coupler notices), the distance as a
+  moment of running a fraction of a percent fast or slow — a train is only ever *placed* when it
+  is more than 50 m out or the client has never seen it before, which is a resync, not a snap.
+  Received states are extrapolated over the measured one-way latency, capped at half a second,
+  which on a train is worth centimetres. Interest management: full 10 Hz within 3 km of a client,
+  1 Hz out to 20 km, nothing beyond. The server's simulation clock rides along in every packet,
+  so a client that joined late or stalled takes it over and resyncs. Measured against a
+  dedicated server on the example line: after the join resync the leading train tracks the
+  server to within ±0.3 m at 100 km/h with speeds matching to 0.01 m/s. New in `sim-core`:
+  `Vehicle::a`, `Train::nudge`, `Train::place_head_at`; in `track-model`:
+  `TrackPosition::distance_to`, which measures a correction along the track instead of through
+  the air. The HUD carries a **Server** line (connection, train, round trip time, pending
+  correction).
 
 ## Deliberately deferred
 

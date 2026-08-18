@@ -24,6 +24,9 @@ cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 cargo run -p app -- --loco example:br101_afb --camera walk      # start on foot (F4) instead of on the seat
 cargo run -p app -- --camera walk --character example/models/driver.glb   # with a body (seen from F2/F3)
+
+cargo run -p app -- --dedicated 27015                    # dedicated server, no window
+cargo run -p app -- --connect 127.0.0.1:27015            # join one
 ```
 
 Without arguments the simulator opens on a title screen: wordmark over the backdrop, and four
@@ -56,6 +59,30 @@ board.
 
 `--screenshot` is available in the editors as well; `--frames N` sets after how many frames
 the capture happens (60 frames ≈ 1 s of simulation time).
+
+## Multiplayer
+
+The same binary is the dedicated server. `--dedicated <port>` (or `<address>:<port>`) builds
+the world, opens a UDP socket and runs the simulation without a window, a renderer or a sound
+card; `--connect <host:port>` joins one. Without either flag nothing of it runs — single
+player never opens a socket.
+
+Both sides have to build the same world, so start them with the same `--line`/`--scenario`;
+a fingerprint over line name and consists is exchanged on joining and complained about in the
+log when it differs. On joining, a client asks for the train its own scenario put it in and
+gets it while it is still free — otherwise the first train nobody has taken. A train a player
+has taken over is no longer driven by the AI, and goes back to it when that player leaves.
+
+What travels is the driver's levers and, ten times a second, the position of each train on
+the track — `(edge, s, dir, v, a)`, about 17 bytes, not a transform. Every peer runs the same
+deterministic simulation on those levers; the positions only correct the drift, and they do it
+through the speed rather than by setting anything, so nothing ever jumps. Trains further than
+3 km away are corrected once a second, past 20 km not at all. The HUD line **Server** shows
+the connection, the train, the round trip time and the correction still pending — in normal
+running it stays under a handful of centimetres. See [PLAN.md](PLAN.md) ch. 20 for the why.
+
+Still open: choosing the server from the menu (today it is the command line), a lobby listing
+the free trains, and authentication beyond netcode's shared key.
 
 ## Settings
 
@@ -250,7 +277,7 @@ or the whole corridor.
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, track objects, floating-origin anchoring |
-| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
+| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); multiplayer and the dedicated server on lightyear (ch. 20); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down map over aerial imagery or a flown 3D view — track, equipment, objects, vegetation, terrain (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, block diagram (drive, brake, equipment), glTF import, LOD, moving parts (ch. 15) |

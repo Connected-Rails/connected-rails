@@ -197,11 +197,15 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
         let a = force / veh.inertial_mass();
         let v_new = veh.v + a * dt;
         // Do not let the brake force overshoot through zero.
+        let v_old = veh.v;
         veh.v = if dir != 0.0 && v_new * dir < 0.0 && traction.abs() < opposing {
             0.0
         } else {
             v_new
         };
+        // What was actually applied, not what the forces asked for — the standstill hold
+        // and the zero crossing above are part of the answer the network extrapolates with.
+        veh.a = (veh.v - v_old) / dt;
     }
 
     // 3. Advance the positions.
@@ -221,6 +225,7 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
     if report.blocked.is_some() {
         for v in &mut train.vehicles {
             v.v = 0.0;
+            v.a = 0.0;
         }
     }
     report

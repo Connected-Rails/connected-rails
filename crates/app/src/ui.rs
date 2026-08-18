@@ -461,6 +461,8 @@ pub fn update_hud(
     mouse: Res<crate::cab::CabMouse>,
     gameplay: Res<Gameplay>,
     camera: Res<CameraState>,
+    // Only present in a multiplayer run (`net.rs`); single player never sees the line.
+    session: Option<Res<crate::net::Session>>,
     mut query: Query<(&mut Text, &mut Visibility), With<HudText>>,
 ) {
     let Ok((mut text, mut visibility)) = query.single_mut() else {
@@ -496,6 +498,19 @@ pub fn update_hud(
             clock as u32 % 60
         ),
     ));
+    if let Some(session) = &session {
+        lines.push(t!(
+            "hud-network",
+            state = t!(if session.joined {
+                "hud-network-joined"
+            } else {
+                "hud-network-connecting"
+            }),
+            train = player.0,
+            latency = format!("{:4.0}", session.rtt * 1000.0),
+            correction = format!("{:+6.1}", session.correction(player.0) * 100.0),
+        ));
+    }
     lines.push(t!(
         "hud-brakes",
         pipe = format!("{:4.2}", loco.brake.pipe),

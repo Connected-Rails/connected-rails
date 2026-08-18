@@ -178,6 +178,12 @@ pub fn player_input(
         cab.afb_target = (cab.afb_target + 10.0).min(afb_max);
     }
 
+    // Range selector of a two-range gearbox: shunting gear ↔ road gear. The switch can be
+    // turned at any time; the drive only lets the change take at a stand.
+    if keys.just_pressed(KeyCode::Backquote) {
+        cab.road_gear = !cab.road_gear;
+    }
+
     // Preparation: battery, pantograph, main switch, compressor.
     let train = &mut sim.0.trains[index];
     for v in &mut train.vehicles {

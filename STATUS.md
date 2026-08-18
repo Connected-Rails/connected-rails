@@ -78,7 +78,13 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
   before the incoming one takes hold and the change point tears its hole in the tractive
   effort; change points with hysteresis and primary influence, so the change speed depends on
   the notch and not on speed alone; filling from on/off through partial stages to
-  quasi-continuous. Engine and pump find their working point against each other every time
+  quasi-continuous, or a transmission whose part load comes from the engine speed with the
+  circuit simply full (a Mekydro, whose gears sit behind the one converter); a two-range
+  gearbox behind it (shunting/road gear of a V 60 or V 90), changed at a stand from the
+  cab. Diesel-mechanical is its own path — friction clutch, gears by engine speed, the
+  hole each change tears in the effort, and an engine that can be stalled (Köf, railbus) —
+  and so is the hydrostatic drive of a small modern shunter, stepless behind its relief
+  valve and its limiting-load control. Engine and pump find their working point against each other every time
   step. Dynamic brakes come from the drive model: rheostatic, regenerative or hydrodynamic
   (retarder).
 - **Sound (ch. 13):** a **declarative sound table in the vehicle file**, after the model
@@ -494,14 +500,13 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
   a diesel, no line to feed into). Mods extend the palette with **presets**
   (`mods/<id>/blocks/*.ron`: a built-in `base` plus overridden parameter defaults,
   addressed as `<mod>:<id>`; an unknown base or a wrongly-typed parameter warns instead
-  of crashing — `mods/example/blocks/voith-l620.ron`, a Voith L 620 reU2 on the
-  hydraulic transmission, is the worked example). In the editor the centre toggles
+  of crashing). In the editor the centre toggles
   between 3D model and diagram (chips top left; `--graph` starts on the diagram); the
   former Brake/Drive/Equipment/Behaviour forms are replaced by the palette (searchable,
   grouped by category), per-block properties and **live bake findings** (a click selects
   the offending block), and axle count and adhesive mass moved onto the wheelset block.
 - **Palette completed (2026-08-18):** the block system now covers every component the
-  simulation has a model for — **69 built-in blocks** in nine groups, over nine port
+  simulation has a model for — **71 built-in blocks** in nine groups, over nine port
   domains (shaft, force, electrical, pneumatic, signal, fuel, steam, water, heat). What
   came with it, physics first:
   - **Diesel-electric drive** (`DieselElectric`): generator, rectifier and a **load

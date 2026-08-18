@@ -770,23 +770,43 @@ pub struct Transmission {
     pub hysteresis_kmh: f64,
     /// Final drive: transmission output : wheelset.
     pub final_ratio: f64,
+    /// Final drive of the shunting gear, where the vehicle has a two-range gearbox behind
+    /// the transmission (V 60, V 90 and most heavy shunters): more tractive effort, less
+    /// speed. 0 = no such gearbox. The change is a dog clutch and only takes at a stand.
+    #[serde(default)]
+    pub shunting_ratio: f64,
     /// Wheel diameter [m].
     pub wheel_diameter: f64,
     /// Number of transmissions in the vehicle.
     pub count: u32,
+    /// The power comes from the engine speed, not from the filling: the circuit is filled
+    /// as soon as the controller leaves the zero notch and stays full. That is how a
+    /// Mekydro works, whose converter knows only full or empty and whose gears sit behind
+    /// it; a Voith with filling control (the default) sets its part load in the circuit.
+    #[serde(default)]
+    pub speed_controlled: bool,
     /// Mechanical efficiency of the gearing behind the circuit.
     pub efficiency: f64,
 }
 
 impl Transmission {
+    /// Final drive in effect: the shunting gear where one is fitted and engaged.
+    pub fn final_ratio(&self, road_gear: bool) -> f64 {
+        if !road_gear && self.shunting_ratio > 0.0 {
+            self.shunting_ratio
+        } else {
+            self.final_ratio
+        }
+    }
+
     /// Speed ratio ν and tractive effort per unit of pump torque, for circuit `index`.
-    pub fn geometry(&self, index: usize, v: f64, omega_engine: f64) -> (f64, f64) {
+    pub fn geometry(&self, index: usize, v: f64, omega_engine: f64, road_gear: bool) -> (f64, f64) {
         let circuit = self.circuits[index];
         let radius = (self.wheel_diameter / 2.0).max(0.05);
         // Rolling backwards, the turbine stands still as far as the converter is concerned:
         // stall, and that is exactly where it delivers its maximum torque.
         let omega_wheel = (v / radius).max(0.0);
-        let total = circuit.ratio * self.final_ratio;
+        let total = circuit.ratio * self.final_ratio(road_gear);
         let omega_turbine = omega_wheel * total;
         let nu = if omega_engine > 1.0 {
             omega_turbine / omega_engine
@@ -841,7 +861,8 @@ impl Transmission {
         let transmissions = self.count.max(1) as f64;
         let working_point = |rpm: f64| {
             let omega = rpm * TAU / 60.0;
-            let (nu, per_torque) = self.geometry(index, v, omega);
+            // The nominal curve is the one of the data sheet: road gear.
+            let (nu, per_torque) = self.geometry(index, v, omega, true);
             let pump = circuit.pump_torque(omega, nu, 1.0) * transmissions;
             (pump, nu, per_torque)
         };
@@ -907,6 +928,91 @@ impl Transmission {
             };
         }
         out
+    }
+}
+
+/// Mechanical gearbox with a friction clutch — the drive of the small shunters (Köf I
+/// and II) and the railbuses (VT 95/98).
+///
+/// Nothing multiplies the torque here: the tractive effort is the engine's torque times
+/// the gear, and getting away from a stand is the clutch slipping. That also means the
+/// engine hangs rigidly on the wheels once the clutch is in — the speed follows the road
+/// speed, not the notch — and that it can be stalled.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MechanicalGearbox {
+    /// Gear ratios engine : gearbox output, first gear first.
+    pub gears: Vec<f64>,
+    /// Final drive: gearbox output : wheelset.
+    pub final_ratio: f64,
+    /// Wheel diameter [m].
+    pub wheel_diameter: f64,
+    /// Mechanical efficiency of the gearing.
+    pub efficiency: f64,
+    /// Torque the clutch can hold before it slips [N·m].
+    pub clutch_torque: f64,
+    /// Time the clutch takes over its full travel [s].
+    pub clutch_time: f64,
+    /// Time a gear change takes — clutch out, gear, clutch in [s].
+    pub shift_time: f64,
+    /// Change up once the engine reaches this speed [1/min].
+    pub shift_up_rpm: f64,
+    /// Change down once it falls below this one [1/min].
+    pub shift_down_rpm: f64,
+}
+
+impl MechanicalGearbox {
+    /// Total ratio engine : wheelset of gear `index`.
+    pub fn total_ratio(&self, index: usize) -> f64 {
+        self.gears.get(index).copied().unwrap_or(1.0) * self.final_ratio
+    }
+
+    /// Engine speed [1/min] the gear ties to road speed `v` [m/s] with the clutch in.
+    pub fn sync_rpm(&self, index: usize, v: f64) -> f64 {
+        let radius = (self.wheel_diameter / 2.0).max(0.05);
+        v.abs() / radius * self.total_ratio(index) * 60.0 / TAU
+    }
+
+    /// Steady tractive effort [N] at full load in the gear the schedule picks for `v` —
+    /// the nominal curve, without clutch or change.
+    pub fn steady_force(&self, engine: &DieselEngine, v: f64) -> f64 {
+        let count = self.gears.len();
+        if count == 0 {
+            return 0.0;
+        }
+        // The gear the driver would be in: the highest one still turning below the
+        // change-up speed.
+        let index = (0..count)
+            .take_while(|&i| i + 1 < count && self.sync_rpm(i, v) > self.shift_up_rpm)
+            .count();
+        let rpm = self
+            .sync_rpm(index, v)
+            .clamp(engine.idle_rpm, engine.rated_rpm);
+        let radius = (self.wheel_diameter / 2.0).max(0.05);
+        engine.full_load_torque(rpm) * self.total_ratio(index) * self.efficiency / radius
+    }
+}
+
+/// Hydrostatic drive: a variable-displacement pump on the engine, a hydraulic motor on the
+/// axle. Stepless, so there is nothing to change — the swash plate does what a gearbox
+/// does. Modern small shunters and road-rail vehicles are built this way.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct HydrostaticDrive {
+    /// Tractive effort the pressure relief valve allows [N] — the flat part of the curve.
+    pub max_force: f64,
+    /// Overall efficiency of pump, lines and motor.
+    pub efficiency: f64,
+    /// Time the swash plate takes over its full travel [s].
+    pub response_time: f64,
+}
+
+impl HydrostaticDrive {
+    /// Tractive effort [N] at speed `v` [m/s] and displacement `displacement` (0…1), with
+    /// `power` [W] available at the pump. Pressure-limited at a stand, power-limited above.
+    pub fn force(&self, power: f64, v: f64, displacement: f64) -> f64 {
+        let limit = self.max_force * displacement.clamp(0.0, 1.0);
+        // Below walking pace the relief valve, not the power, sets the effort.
+        let by_power = power * self.efficiency / v.abs().max(1.0);
+        limit.min(by_power)
     }
 }
 
@@ -1096,12 +1202,21 @@ pub enum TractionSpec {
         #[serde(default)]
         engine: Option<DieselEngine>,
         /// Hydraulic transmission. Needs `engine`; without it the drive stays simplified.
+        /// Boxed, like the gearbox and the boiler: the drive paths are the bulky part of
+        /// this enum and every variant would carry their size.
         #[serde(default)]
-        transmission: Option<Transmission>,
+        transmission: Option<Box<Transmission>>,
         /// Generator, load regulator and traction motors of a diesel-electric drive.
         /// Mutually exclusive with `transmission` — a locomotive has one or the other.
         #[serde(default)]
         electric: Option<DieselElectric>,
+        /// Mechanical gearbox with a friction clutch (small shunters, railbuses). Boxed
+        /// for the same reason the boiler is: it would otherwise blow up every variant.
+        #[serde(default)]
+        gearbox: Option<Box<MechanicalGearbox>>,
+        /// Hydrostatic drive (modern small shunters, road-rail vehicles).
+        #[serde(default)]
+        hydrostatic: Option<HydrostaticDrive>,
         /// Hydrodynamic brake in the transmission.
         #[serde(default)]
         hydrodynamic_brake: Option<HydrodynamicBrake>,
@@ -1198,12 +1313,22 @@ impl TractionSpec {
                 engine,
                 transmission,
                 electric,
+                gearbox,
+                hydrostatic,
                 ..
             } => {
                 // With engine and transmission the curve is not a hyperbola but what the
                 // converters make of the engine map — change points and all.
                 if let (Some(engine), Some(transmission)) = (engine, transmission) {
                     return transmission.steady_force(engine, av).min(*max_force);
+                }
+                // Mechanical gearbox: torque times gear, gear by gear.
+                if let (Some(engine), Some(gearbox)) = (engine, gearbox) {
+                    return gearbox.steady_force(engine, av).min(*max_force);
+                }
+                // Hydrostatic: flat at the relief valve, hyperbolic above it.
+                if let Some(hydrostatic) = hydrostatic {
+                    return hydrostatic.force(*max_power, av, 1.0).min(*max_force);
                 }
                 // Diesel-electric: the load regulator holds the power, the motors decide
                 // where the current limit takes over from it.
@@ -1368,8 +1493,10 @@ mod tests {
             drain_time: 0.7,
             hysteresis_kmh: 10.0,
             final_ratio: 1.0,
+            shunting_ratio: 0.0,
             wheel_diameter: 1.0,
             count: 1,
+            speed_controlled: false,
             efficiency: 0.95,
         }
     }

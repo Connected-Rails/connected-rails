@@ -519,7 +519,10 @@ fn default_leakage() -> f64 {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BrakeSpec {
     pub kind: BrakeKind,
-    pub position: BrakePosition,
+    /// Position the changeover handle stands in when the vehicle is put into service —
+    /// the starting value of [`BrakeState::position`], which is what actually brakes.
+    #[serde(default, alias = "position")]
+    pub default_position: BrakePosition,
     /// Control valve type — decides how the cylinder pressure follows the brake pipe.
     #[serde(default)]
     pub valve: ControlValve,
@@ -629,7 +632,7 @@ impl BrakeSpec {
     pub fn from_brake_weight(brake_weight_t: f64, kind: BrakeKind) -> Self {
         Self {
             kind,
-            position: BrakePosition::P,
+            default_position: BrakePosition::P,
             valve: ControlValve::KeGp,
             valve_params: None,
             brake_weight: brake_weight_t,
@@ -675,8 +678,8 @@ impl BrakeSpec {
         self
     }
 
-    pub fn with_position(mut self, position: BrakePosition) -> Self {
-        self.position = position;
+    pub fn with_default_position(mut self, position: BrakePosition) -> Self {
+        self.default_position = position;
         self
     }
 
@@ -721,15 +724,6 @@ impl BrakeSpec {
     /// overrides it.
     pub fn behaviour(&self) -> ValveBehaviour {
         self.valve_params.unwrap_or_else(|| self.valve.behaviour())
-    }
-
-    /// Brake position actually in effect: a valve without an R position falls back to P.
-    pub fn effective_position(&self) -> BrakePosition {
-        if self.position.is_rapid() && !self.behaviour().rapid_position {
-            BrakePosition::P
-        } else {
-            self.position
-        }
     }
 
     /// Volume of the brake cylinder [l], derived from the exhaustibility ratio.
@@ -792,6 +786,10 @@ pub struct BrakeState {
     /// Setting of the retaining valve.
     #[serde(default)]
     pub retainer: Retainer,
+    /// Position of the changeover handle (G/P/R) — set when the train is made up, not a
+    /// property of the vehicle. Starts at `BrakeSpec::default_position`.
+    #[serde(default)]
+    pub position: BrakePosition,
     /// Cylinder pressure the EP brake is commanding [bar].
     #[serde(default)]
     pub ep_cylinder: f64,
@@ -825,8 +823,18 @@ impl BrakeState {
             cock_front: false,
             cock_rear: false,
             retainer: Retainer::Off,
+            position: spec.default_position,
             ep_cylinder: 0.0,
             emergency_pulled: false,
+        }
+    }
+
+    /// Brake position actually in effect: a valve without an R position falls back to P.
+    pub fn effective_position(&self, spec: &BrakeSpec) -> BrakePosition {
+        if self.position.is_rapid() && !spec.behaviour().rapid_position {
+            BrakePosition::P
+        } else {
+            self.position
         }
     }
 
@@ -1051,7 +1059,7 @@ pub fn step(train: &mut Train, cab: &CabInputs, valve: DriverBrakeValve, dt: f64
         update_parking_brake(state, spec, cab, dt);
 
         state.mg_applied = spec.has_mg
-            && spec.effective_position().is_rapid()
+            && state.effective_position(spec).is_rapid()
             && v_kmh > 50.0
             && state.pipe < PIPE_NOMINAL - 1.0;
 
@@ -1239,7 +1247,7 @@ fn update_control_valve(
     };
     target = target.max(retained);
 
-    let position = spec.effective_position();
+    let position = state.effective_position(spec);
     let rate = if target > state.cylinder {
         // 0 → 95 % in apply_time. A relay valve fills considerably faster.
         let base = spec.max_cylinder / position.apply_time() * 3.0;
@@ -1377,7 +1385,7 @@ fn brake_force(
         * spec.max_force
         * rigging_share
         * spec.kind.friction_factor_at(v_kmh, axle_load_t)
-        * spec.effective_position().high_speed_factor(v_kmh);
+        * state.effective_position(spec).high_speed_factor(v_kmh);
     // Air supplement brake: the air brake only fills up what the dynamic brake falls short
     // of, and gets out of the way again as soon as the dynamic brake can do it alone.
     // Without it, the two are blended in the longitudinal dynamics instead.
@@ -1505,11 +1513,25 @@ mod tests {
     #[test]
     fn a_valve_without_an_r_position_falls_back_to_p() {
         let spec = BrakeSpec::from_brake_weight(40.0, BrakeKind::Disc)
-            .with_position(BrakePosition::R)
+            .with_default_position(BrakePosition::R)
             .with_valve(ControlValve::KeGp);
-        assert_eq!(spec.effective_position(), BrakePosition::P);
+        let state = BrakeState::new(&spec);
+        // The handle starts in the vehicle's default position and is what gets asked.
+        assert_eq!(state.position, BrakePosition::R);
+        assert_eq!(state.effective_position(&spec), BrakePosition::P);
         let rapid = spec.clone().with_valve(ControlValve::KeGpr);
-        assert_eq!(rapid.effective_position(), BrakePosition::R);
+        assert_eq!(state.effective_position(&rapid), BrakePosition::R);
+    }
+
+    #[test]
+    fn the_changeover_handle_is_switched_on_the_vehicle_not_in_its_spec() {
+        let spec = BrakeSpec::from_brake_weight(40.0, BrakeKind::Disc)
+            .with_default_position(BrakePosition::P)
+            .with_valve(ControlValve::KeGpr);
+        let mut state = BrakeState::new(&spec);
+        state.position = BrakePosition::G;
+        assert_eq!(state.effective_position(&spec), BrakePosition::G);
+        assert_eq!(spec.default_position, BrakePosition::P);
     }
 
     #[test]

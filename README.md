@@ -275,6 +275,7 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `N` / `M` / `B` | LZB takeover / end / function test |
 | `Y` | Wipers: off → interval → slow → fast (cycles) |
 | `U` | Train type switch (Zugartschalter): O → M → U, at standstill |
+| `^` | Range selector of a two-range gearbox: shunting gear ↔ road gear, takes at a stand |
 | `H` | Horn |
 | `1`–`4` | Battery / pantograph / main switch / compressor |
 | `5` | Start the diesel engine |
@@ -393,7 +394,8 @@ editor: the vehicle is a circuit of components, and the physics follows from wha
 to what. The palette on the left (searchable, grouped by category) carries every physical
 component as a block — pantograph, transformer, tap changer, starting resistors, chopper
 and series/parallel switch, traction converter, series-wound and induction motors, diesel
-engine with hydraulic transmission and retarder or with generator and load regulator,
+engine with hydraulic transmission and retarder, with a mechanical gearbox and its clutch,
+with a hydrostatic drive or with generator and load regulator,
 boiler, firebox, cylinders, injector and tender of a steam locomotive, the complete air
 **or vacuum** brake from compressor to brake rigging including EP brake, angle cocks,
 limiting and retaining valve, cooling systems, wheelset with its bogies and axles, cab, AFB, the

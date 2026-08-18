@@ -157,15 +157,15 @@ fn a_k_valve_releases_in_one_go_a_ke_valve_graduates() {
         let mut sim = new_sim();
         let mut wagons = vec![br101()];
         for _ in 0..5 {
-            let mut w = if valve == ControlValve::KGp {
+            wagons.push(if valve == ControlValve::KGp {
                 freight_wagon_k_valve()
             } else {
                 freight_wagon()
-            };
-            w.brake.position = sim_core::brakes::BrakePosition::P;
-            wagons.push(w);
+            });
         }
         let t = train(&mut sim, wagons);
+        // Made up as a passenger train: the changeover handles go to P.
+        sim.trains[t].set_brake_position(sim_core::brakes::BrakePosition::P);
         run(&mut sim, 5.0);
         // Apply, then take one step of the application back again.
         sim.controls[t].brake_valve = DriverBrakeValve::Service(1.0);

@@ -1,6 +1,6 @@
 //! Vehicle and train consist model.
 
-use crate::brakes::{BrakeKind, BrakeSpec, BrakeState, SlipProtection};
+use crate::brakes::{BrakeKind, BrakePosition, BrakeSpec, BrakeState, SlipProtection};
 use crate::doors::{DoorControl, DoorSystem, VehicleDoors};
 use crate::drive::{DriveMode, DriveSpec, MAX_DRIVES, TractionSpec};
 use crate::electric::TractionState;
@@ -766,6 +766,16 @@ impl Train {
         self.vehicles.iter().map(Vehicle::mass).sum()
     }
 
+    /// Sets the changeover handle of every vehicle — what the shunter does when the train
+    /// is made up (a freight train on G, a passenger train on P or R). A vehicle whose
+    /// valve does not know the position falls back to P when it brakes, see
+    /// [`BrakeState::effective_position`].
+    pub fn set_brake_position(&mut self, position: BrakePosition) {
+        for vehicle in &mut self.vehicles {
+            vehicle.brake.position = position;
+        }
+    }
+
     /// Train length [m].
     pub fn length(&self) -> f64 {
         self.vehicles.iter().map(|v| v.spec.length).sum()
@@ -813,7 +823,7 @@ impl Train {
     pub fn brake_apply_time(&self) -> f64 {
         self.vehicles
             .iter()
-            .map(|v| v.spec.brake.effective_position().apply_time())
+            .map(|v| v.brake.effective_position(&v.spec.brake).apply_time())
             .fold(0.0, f64::max)
     }
 }

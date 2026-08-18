@@ -500,6 +500,117 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
   former Brake/Drive/Equipment/Behaviour forms are replaced by the palette (searchable,
   grouped by category), per-block properties and **live bake findings** (a click selects
   the offending block), and axle count and adhesive mass moved onto the wheelset block.
+- **Palette completed (2026-08-18):** the block system now covers every component the
+  simulation has a model for — **69 built-in blocks** in nine groups, over nine port
+  domains (shaft, force, electrical, pneumatic, signal, fuel, steam, water, heat). What
+  came with it, physics first:
+  - **Diesel-electric drive** (`DieselElectric`): generator, rectifier and a **load
+    regulator** that holds the engine on the power the notch asks for by adjusting the
+    excitation; the motors take whatever voltage and current that works out to, so the
+    curve is constant power with the current limit taking over at the bottom and the
+    voltage limit at the top. DC (`SeriesMotor`) or AC (`AsyncMotor`) behind it. The
+    `BR 232` is the worked example — 353 kN and 2.2 MW off the works plate.
+  - **Induction motor** (`AsyncMotor`, Kloss's equation): the three ranges of a modern
+    tractive effort curve now come out of the machine instead of out of the `v_pullout`
+    fudge — constant effort, constant power in the field-weakening range, and the
+    pull-out torque bending it down with 1/v² at the top.
+  - **Contactor drive** (`Starter`): starting resistors cut out step by step,
+    series/series-parallel/parallel regrouping, or a chopper in place of the lot. Every
+    regrouping is a step in the tractive effort curve, and the current limit relay is
+    why the last few notches feel like nothing at all.
+  - **Thermal model** (`Thermal`): one lumped mass with a cooling term on motors,
+    starting resistors and the braking resistors, wired up with the `cooling` block. A
+    rheostatic brake that is held long enough fades out, and a loco that has been
+    slogging derates.
+  - **Steam locomotive** (`sim_core::steam`, `TractionSpec::Steam`): coal on the grate,
+    water in the boiler, steam above it, and the exhaust closing the loop back onto the
+    draught. Mean effective pressure with expansion (so winding the cutoff back pays),
+    safety valves, injectors that cost pressure, priming, low water. The `BR 52` is the
+    worked example.
+  - **Brake system**: vacuum brake as a second medium (`BrakeMedium`, same handle
+    positions, its own numbers, exhauster instead of compressor), **EP brake**
+    (`EpBrake`) with or without venting the pipe, **angle cocks and hoses** per vehicle
+    end — a cock closed mid-train leaves everything behind it unbraked, one left open at
+    the end will not let the train charge — limiting valve, retaining valve and the
+    double check valve that was already implicit in `applied_cylinder`.
+  - **Signal graph** (`sim_core::signal`): the control wiring between the physical
+    blocks, compiled out of the Logic group by `bake` into a flat list of operations in
+    topological order and evaluated once per step before the drive. Reading, constant,
+    characteristic, combination, limiter, PID with anti-windup, notching, rate of change,
+    switch with hysteresis, and an output that takes hold of the power controller, the
+    brake, sanding, the blower or one of four free values for the cab displays. A cycle
+    is reported and dropped rather than run.
+  - **Running gear**: `bogie` and `axle` blocks refine the `wheelset` — drawn out, the
+    axle count, the driven share and the axle base sum follow from the blocks, and so does
+    the layout the physics runs on (see the per-axle entry below).
+  - **On-board electrical system** (`PowerSupply`): the supply system the vehicle is
+    built for (15/25 kV AC, 3/1.5 kV DC, third rail) — the main switch will not close on
+    one it is not, a shoe needs no rise time — a **battery with a charge state** that the
+    standing load drains and a running machine charges (a flat one cranks nothing and
+    switches everything off), and a `voltage-source` that stands in for the contact line
+    on a test rig.
+  - **Emergency valve** (`emergency-valve`, `CabInputs::emergency_valve`): vents the pipe
+    and the driver's valve cannot make it up. With it, the **brake pipe ends** became
+    data: a vehicle whose pipe stops short of an end cannot pass the brake through.
+  - **Sand rate**: `VehicleSpec::sand_rate`, the sander block's figure, scales the
+    adhesion bonus — more sand helps, but not past about twice the reference rate.
+
+  The HUD gained the generator, boiler, tender and temperature lines; both locales carry
+  every new key.
+- **Electrification is a line datum (2026-08-18, `track_model::power` + `sim_core`):**
+  what hangs over the track is stated by the line, not assumed by the vehicle.
+  `PowerSystem` (15/25 kV AC, 3/1.5 kV DC, third rail) lives in `track-model` so that both
+  sides name the same thing; `TrackNetwork::default_electrification` is the line's own
+  wire and `TrackEdge::electrification` overrides it section by section, so a line states
+  it once and names only its exceptions — a gap at a system boundary, an unelectrified
+  branch. `Sim::step_train` reads it at the pantograph into `TractionState::line_system`,
+  and the main switch closes only where `PowerSupply::accepts` says the vehicle was built
+  for it: **the volts alone no longer decide**, because 25 kV is plenty of volts for a
+  15 kV loco and still the wrong system. Multi-system vehicles carry a list of systems —
+  in the diagram, one `pantograph` block per system, as the real ones carry one head per
+  system. The route editor edits the line's wire in its properties and per-track sections
+  in the selection panel; lines saved before any of this read as the German main line, so
+  what ran on them keeps running.
+- **Per-axle running gear (2026-08-18, `sim_core::physics`):** the adhesion is worked out
+  axle by axle. `AxleSpec` gives every axle its share of the weight and says whether it is
+  driven; `AxleState` carries its own slip, tractive effort and brake force. A vehicle
+  that states nothing gets the even layout its axle count and adhesive mass imply
+  (`AxleSpec::layout`, exact for any fraction), so nothing calibrated against the lumped
+  model moved — all 36 test binaries passed the refactor unchanged.
+
+  What it buys is the thing a lumped model cannot have: **the leading axle runs on a
+  dirtier rail than the ones behind it** (`physics::rail_cleaning` — the first axle wipes
+  it as it goes, recovering over three or four axles, normalised against the vehicle's own
+  load distribution so the total adhesive force is unchanged). So the leading axle spins
+  first and the rest keep pulling, the wheel slide protection releases the sliding axle
+  alone, and the wheel slip brake takes down the one wheelset that is spinning instead of
+  the whole drive. `Vehicle::slip` stays the worst axle, which is what the HUD, the sound
+  table and the scoring read; the HUD gained a running-gear line that appears only when an
+  axle actually has something to say.
+
+- **Track areas (2026-08-18, `content::route` + route editor):** a stretch of track
+  marked by hand that carries properties — speed, cant, gradient, track type and
+  electrification — instead of editing a step profile per property per track.
+  `TrackAreaSource` has a name, a colour and a list of `AreaSpan`s (`[from, to)` on one
+  track); every property is an `Option`, and what an area does not state it does not
+  touch, so a speed restriction laid across an electrification boundary leaves the wire
+  alone. `compile` lays them over the tracks' own profiles in file order (a later one
+  wins) and bakes them down into the same step profiles as before — **nothing in the
+  simulation knows they exist**, and there is no run-time cost.
+
+  In the editor they are **painted**: **Mark area** is a brush — press on a track, drag
+  along it, release. The stroke is projected onto the track it started on, so it follows
+  that track even where the cursor wanders off it and never jumps to a neighbour halfway
+  through a station; with an area selected the next stroke joins it, which is how one area
+  comes to cover a whole station one track at a time. What it leaves behind is a **wide
+  coloured quad over the rails** (`spawn_areas`, half transparent, above the track ribbon
+  and a good deal wider than it), drawn all the time and not only while selected. The
+  stroke width belongs to the area, so it survives a save; the brush setting is what new
+  areas get. The live stroke under the cursor is a gizmo band, the selected area an accent
+  outline around its stroke. A panel lists them, and a property panel of
+  checkbox-plus-value pairs reads exactly like the file. The rule check flags an area that covers nothing, sets nothing, lies off its
+  track or names an unknown type; the track panel says when an area lies over the track
+  being edited. Areas follow their track through a split and a deletion.
 
 ## Deliberately deferred
 

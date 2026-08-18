@@ -82,6 +82,7 @@ pub fn musterbahn() -> LineSource {
     LineSource {
         name: "Musterbahn".into(),
         geoid_offset: 46.0,
+        electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
         nodes: vec![
             NodeSource::Buffer,
             NodeSource::Joint,
@@ -101,6 +102,7 @@ pub fn musterbahn() -> LineSource {
                 cant: vec![],
                 speed: vec![(0.0, 160.0)],
                 track_type: vec![],
+                electrification: Vec::new(),
             },
             EdgeSource {
                 from: 1,
@@ -115,6 +117,7 @@ pub fn musterbahn() -> LineSource {
                 cant: vec![(0.0, 0.0), (200.0, 80.0), (800.0, 0.0)],
                 speed: vec![(0.0, 130.0)],
                 track_type: vec![],
+                electrification: Vec::new(),
             },
             EdgeSource {
                 from: 2,
@@ -125,6 +128,7 @@ pub fn musterbahn() -> LineSource {
                 cant: vec![],
                 speed: vec![(0.0, 160.0)],
                 track_type: vec![],
+                electrification: Vec::new(),
             },
         ],
         devices: vec![
@@ -230,6 +234,7 @@ pub fn musterbahn() -> LineSource {
             SectionSource { edges: vec![1] },
             SectionSource { edges: vec![2] },
         ],
+        areas: Vec::new(),
         signals: vec![
             SignalSource {
                 kind: SignalKind::Distant,

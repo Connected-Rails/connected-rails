@@ -79,6 +79,9 @@ pub fn domain_color(domain: PortDomain) -> egui::Color32 {
         PortDomain::Pneumatic => egui::Color32::from_rgb(0x4D, 0xC3, 0xE6),
         PortDomain::Signal => egui::Color32::from_rgb(0xE0, 0x5C, 0x5C),
         PortDomain::Fuel => egui::Color32::from_rgb(0xC9, 0xA2, 0x27),
+        PortDomain::Steam => egui::Color32::from_rgb(0xE4, 0xE4, 0xEC),
+        PortDomain::Water => egui::Color32::from_rgb(0x5A, 0x8F, 0xD6),
+        PortDomain::Heat => egui::Color32::from_rgb(0xE5, 0x7C, 0x2F),
     }
 }
 
@@ -86,9 +89,9 @@ pub fn domain_color(domain: PortDomain) -> egui::Color32 {
 /// colour-blindness and screenshots in grey.
 fn domain_pin(domain: PortDomain) -> PinInfo {
     let info = match domain {
-        PortDomain::Mechanical | PortDomain::Pneumatic => PinInfo::circle(),
-        PortDomain::Force | PortDomain::Signal => PinInfo::square(),
-        PortDomain::Electrical | PortDomain::Fuel => PinInfo::triangle(),
+        PortDomain::Mechanical | PortDomain::Pneumatic | PortDomain::Steam => PinInfo::circle(),
+        PortDomain::Force | PortDomain::Signal | PortDomain::Water => PinInfo::square(),
+        PortDomain::Electrical | PortDomain::Fuel | PortDomain::Heat => PinInfo::triangle(),
     };
     info.with_fill(domain_color(domain))
 }
@@ -1243,6 +1246,10 @@ fn option_label(param_key: &str, option: &str) -> String {
         "tb0" => "TB0",
         "tav" => "TAV",
         "uic-wtb" => "UIC WTB",
+        "ac-15kv" => "AC 15 kV 16,7 Hz",
+        "ac-25kv" => "AC 25 kV 50 Hz",
+        "dc-3kv" => "DC 3 kV",
+        "dc-1.5kv" => "DC 1,5 kV",
         _ => "",
     };
     if !literal.is_empty() {

@@ -5,7 +5,8 @@
 
 use content::musterbahn;
 use content::vehicles::{
-    br101, br110, br218, freight_wagon, freight_wagon_k_valve, passenger_coach, railcar,
+    br52, br101, br110, br218, br232, freight_wagon, freight_wagon_k_valve, passenger_coach,
+    railcar,
 };
 use sim_core::Sim;
 use sim_core::brakes::{
@@ -439,6 +440,7 @@ fn the_pre_controlled_brake_applies_the_whole_train_at_once() {
             let mut coach = passenger_coach();
             // ep equipment on the coaches as well — otherwise there is nothing to control.
             coach.brake.pilot_controlled = true;
+            coach.brake.ep = Some(sim_core::brakes::EpBrake::default());
             specs.push(coach);
         }
         let t = train(&mut sim, specs);
@@ -446,7 +448,12 @@ fn the_pre_controlled_brake_applies_the_whole_train_at_once() {
         sim.controls[t].ep_brake = ep;
         sim.controls[t].brake_valve = DriverBrakeValve::Service(1.5);
         run(&mut sim, 2.0);
-        sim.trains[t].vehicles.last().unwrap().brake.cylinder
+        sim.trains[t]
+            .vehicles
+            .last()
+            .unwrap()
+            .brake
+            .applied_cylinder()
     };
     let pneumatic = brake_after(false);
     let electric = brake_after(true);
@@ -454,4 +461,351 @@ fn the_pre_controlled_brake_applies_the_whole_train_at_once() {
         electric > pneumatic + 0.5,
         "the pre-controlled brake must be at the rear sooner: {pneumatic:.2} vs {electric:.2} bar"
     );
+}
+
+#[test]
+fn a_closed_angle_cock_leaves_everything_behind_it_unbraked() {
+    let mut sim = new_sim();
+    let mut specs = vec![br101()];
+    specs.extend(std::iter::repeat_with(freight_wagon).take(8));
+    let t = train(&mut sim, specs);
+    run(&mut sim, 20.0);
+    // Someone has closed the cock between the third and the fourth wagon.
+    sim.trains[t].vehicles[3].brake.cock_rear = false;
+    sim.trains[t].vehicles[4].brake.cock_front = false;
+    sim.controls[t].brake_valve = DriverBrakeValve::Service(1.5);
+    run(&mut sim, 20.0);
+    let front = sim.trains[t].vehicles[2].brake.applied_cylinder();
+    let behind = sim.trains[t].vehicles[6].brake.applied_cylinder();
+    assert!(front > 2.0, "the front must brake: {front:.2} bar");
+    assert!(
+        behind < 0.2,
+        "behind the closed cock nothing may happen: {behind:.2} bar"
+    );
+}
+
+#[test]
+fn an_open_cock_at_the_end_of_the_train_will_not_let_it_charge() {
+    let mut sim = new_sim();
+    let mut specs = vec![br101()];
+    specs.extend(std::iter::repeat_with(freight_wagon).take(4));
+    let t = train(&mut sim, specs);
+    // Dump the pipe, then try to charge it with the last cock left open.
+    for v in &mut sim.trains[t].vehicles {
+        v.brake.pipe = 0.0;
+    }
+    sim.trains[t].vehicles.last_mut().unwrap().brake.cock_rear = true;
+    sim.controls[t].brake_valve = DriverBrakeValve::Release;
+    run(&mut sim, 60.0);
+    let rear = sim.trains[t].vehicles.last().unwrap().brake.pipe;
+    assert!(rear < 2.0, "the pipe must not charge: {rear:.2} bar");
+
+    // Shut it and the train charges as it should.
+    sim.trains[t].vehicles.last_mut().unwrap().brake.cock_rear = false;
+    run(&mut sim, 90.0);
+    let rear = sim.trains[t].vehicles.last().unwrap().brake.pipe;
+    assert!(rear > 4.5, "{rear:.2} bar");
+}
+
+#[test]
+fn a_vacuum_braked_train_stops_on_its_own_numbers() {
+    let mut sim = new_sim();
+    let specs: Vec<VehicleSpec> = std::iter::once(br101())
+        .chain(std::iter::repeat_with(passenger_coach).take(5))
+        .map(|mut spec| {
+            spec.brake = spec.brake.clone().as_vacuum();
+            spec
+        })
+        .collect();
+    let t = train(&mut sim, specs);
+    // Charge the pipe to full vacuum first — the exhauster is a slow pump.
+    run(&mut sim, 120.0);
+    let charged = sim.trains[t].vehicles.last().unwrap().brake.pipe;
+    assert!(
+        charged > sim_core::brakes::VACUUM_NOMINAL * 0.9,
+        "{charged:.2} bar of vacuum"
+    );
+    set_speed(&mut sim, t, 80.0);
+    sim.controls[t].brake_valve = DriverBrakeValve::Service(1.5);
+    run(&mut sim, 20.0);
+    for v in &sim.trains[t].vehicles {
+        assert!(
+            v.brake.applied_cylinder() > 1.5,
+            "{} did not brake: {:.2} bar",
+            v.spec.name,
+            v.brake.applied_cylinder()
+        );
+    }
+    assert!(sim.trains[t].speed_kmh() < 80.0, "the train must slow down");
+}
+
+#[test]
+fn the_diesel_electric_holds_its_power_across_the_speed_range() {
+    let mut sim = new_sim();
+    let t = train(&mut sim, vec![br232(), freight_wagon(), freight_wagon()]);
+    sim.controls[t].engine_start = true;
+    run(&mut sim, 20.0);
+    sim.controls[t].engine_start = false;
+    assert!(
+        sim.trains[t].vehicles[0].traction.any_engine_running(),
+        "the engine must be running"
+    );
+    sim.controls[t].reverser = 1;
+    sim.controls[t].throttle = 1.0;
+
+    let effort_at = |sim: &mut Sim, kmh: f64| {
+        set_speed(sim, t, kmh);
+        // Long enough for the load regulator to have travelled.
+        for _ in 0..(15.0 / Sim::DT) as usize {
+            sim.step(Sim::DT);
+            set_speed(sim, t, kmh);
+        }
+        sim.trains[t].vehicles[0].traction.force
+    };
+    let start = effort_at(&mut sim, 5.0);
+    let mid = effort_at(&mut sim, 40.0);
+    let fast = effort_at(&mut sim, 100.0);
+    assert!(
+        start > mid && mid > fast,
+        "{start:.0} / {mid:.0} / {fast:.0} N"
+    );
+    // A 2.2 MW machine: a few hundred kN at a stand.
+    assert!(
+        (150_000.0..420_000.0).contains(&start),
+        "{start:.0} N at a stand"
+    );
+    // The regulator holds the power, so effort × speed stays in the same order of
+    // magnitude once the current limit has let go.
+    let p_mid = mid * 40.0 / 3.6;
+    let p_fast = fast * 100.0 / 3.6;
+    assert!(
+        p_fast > p_mid * 0.6 && p_fast < p_mid * 1.6,
+        "{p_mid:.0} vs {p_fast:.0} W"
+    );
+}
+
+#[test]
+fn the_steam_locomotive_makes_effort_out_of_its_boiler_and_runs_out_of_it() {
+    let mut sim = new_sim();
+    let mut specs = vec![br52()];
+    specs.extend(std::iter::repeat_with(freight_wagon).take(10));
+    let t = train(&mut sim, specs);
+    run(&mut sim, 30.0);
+
+    // Regulator open, long cutoff, damper open: the loco pulls.
+    sim.controls[t].reverser = 1;
+    sim.controls[t].steam.regulator = 1.0;
+    sim.controls[t].steam.cutoff = 1.0;
+    sim.controls[t].steam.damper = 1.0;
+    run(&mut sim, 10.0);
+    let effort = sim.trains[t].vehicles[0].traction.force;
+    assert!(effort > 100_000.0, "{effort:.0} N");
+
+    // Working it hard without firing empties the boiler.
+    let before = sim.trains[t].vehicles[0].traction.drives[0]
+        .steam
+        .expect("boiler")
+        .pressure;
+    set_speed(&mut sim, t, 50.0);
+    for _ in 0..(600.0 / Sim::DT) as usize {
+        sim.step(Sim::DT);
+        set_speed(&mut sim, t, 50.0);
+    }
+    let boiler = sim.trains[t].vehicles[0].traction.drives[0]
+        .steam
+        .expect("boiler");
+    assert!(
+        boiler.pressure < before,
+        "{before:.1} → {:.1} bar",
+        boiler.pressure
+    );
+    assert!(
+        boiler.fire_mass < 260.0 * 0.6,
+        "the fire must burn what is on the grate: {:.0} kg",
+        boiler.fire_mass
+    );
+
+    // Firing and an injector bring it back.
+    sim.controls[t].steam.regulator = 0.0;
+    sim.controls[t].steam.blower = 1.0;
+    sim.controls[t].steam.injector_left = 1.0;
+    let low = boiler.pressure;
+    for i in 0..(900.0 / Sim::DT) as usize {
+        sim.controls[t].shovel = if i % (30.0 / Sim::DT) as usize == 0 {
+            3.0
+        } else {
+            0.0
+        };
+        sim.step(Sim::DT);
+    }
+    let boiler = sim.trains[t].vehicles[0].traction.drives[0]
+        .steam
+        .expect("boiler");
+    assert!(
+        boiler.pressure > low,
+        "{low:.1} → {:.1} bar",
+        boiler.pressure
+    );
+    assert!(
+        boiler.tender_water < 30_000.0,
+        "the injector must draw water"
+    );
+    assert!(
+        boiler.tender_coal < 10_000.0,
+        "the fireman must have used coal"
+    );
+}
+
+#[test]
+fn a_pulled_emergency_valve_stops_the_train_whatever_the_driver_does() {
+    let mut sim = new_sim();
+    let mut loco = br101();
+    loco.brake.has_emergency_valve = true;
+    let mut specs = vec![loco];
+    specs.extend(std::iter::repeat_with(passenger_coach).take(4));
+    let t = train(&mut sim, specs);
+    run(&mut sim, 30.0);
+    set_speed(&mut sim, t, 100.0);
+
+    // Driver's valve in release, emergency valve pulled.
+    sim.controls[t].brake_valve = DriverBrakeValve::Release;
+    sim.controls[t].emergency_valve = true;
+    run(&mut sim, 15.0);
+    let pipe = sim.trains[t].vehicles.last().unwrap().brake.pipe;
+    assert!(pipe < 1.0, "the pipe must be vented: {pipe:.2} bar");
+    for v in &sim.trains[t].vehicles {
+        assert!(
+            v.brake.applied_cylinder() > 2.0,
+            "{} must brake: {:.2} bar",
+            v.spec.name,
+            v.brake.applied_cylinder()
+        );
+    }
+
+    // Reset it and the train charges again.
+    sim.controls[t].emergency_valve = false;
+    run(&mut sim, 120.0);
+    assert!(
+        sim.trains[t].vehicles.last().unwrap().brake.pipe > 4.5,
+        "the pipe must charge again"
+    );
+}
+
+#[test]
+fn a_vehicle_whose_pipe_stops_short_cannot_pass_the_brake_on() {
+    let mut sim = new_sim();
+    let mut blocked = freight_wagon();
+    // A works vehicle with no brake pipe at its rear end.
+    blocked.brake.pipe_rear = false;
+    let specs = vec![
+        br101(),
+        freight_wagon(),
+        blocked,
+        freight_wagon(),
+        freight_wagon(),
+    ];
+    let t = train(&mut sim, specs);
+    run(&mut sim, 30.0);
+    sim.controls[t].brake_valve = DriverBrakeValve::Emergency;
+    run(&mut sim, 30.0);
+    assert!(
+        sim.trains[t].vehicles[1].brake.applied_cylinder() > 2.0,
+        "in front of it the brake works"
+    );
+    assert!(
+        sim.trains[t].vehicles[4].brake.applied_cylinder() < 0.2,
+        "behind it nothing reaches the wagons"
+    );
+}
+
+#[test]
+fn more_sand_is_more_adhesion_up_to_a_point() {
+    use sim_core::physics::{REFERENCE_SAND_RATE, adhesion_with_sand};
+    use sim_core::train::RailCondition;
+    let mu = |rate: f64| adhesion_with_sand(40.0, RailCondition::Wet, rate);
+    assert!(mu(0.0) < mu(REFERENCE_SAND_RATE));
+    assert!(mu(REFERENCE_SAND_RATE) < mu(REFERENCE_SAND_RATE * 1.4));
+    // Past that the extra sand is thrown away.
+    assert!((mu(REFERENCE_SAND_RATE * 1.4) - mu(REFERENCE_SAND_RATE * 4.0)).abs() < 1e-12);
+}
+
+/// The wire is a property of the line, and a locomotive works only under the system it
+/// was built for. Everything else is how a loco ends up stranded at a system boundary.
+mod electrification {
+    use super::*;
+    use sim_core::electric::SupplySystem;
+    use track_model::{PowerSystem, StepProfile};
+
+    /// Puts a BR 101 on the line and reports whether its main switch closes.
+    fn runs_under(line: Option<PowerSystem>, built_for: &[SupplySystem]) -> bool {
+        let mut sim = new_sim();
+        sim.net.set_default_electrification(line);
+        let mut loco = br101();
+        loco.supply.systems = built_for.to_vec();
+        let t = train(&mut sim, vec![loco, passenger_coach()]);
+        run(&mut sim, 20.0);
+        sim.trains[t].vehicles[0].traction.main_switch
+    }
+
+    #[test]
+    fn a_locomotive_only_works_under_the_wire_it_was_built_for() {
+        assert!(runs_under(
+            Some(PowerSystem::Ac15kv),
+            &[SupplySystem::Ac15kv]
+        ));
+        // The volts are there and the system is wrong — 25 kV would cook a 15 kV
+        // transformer, and the switch stays open.
+        assert!(!runs_under(
+            Some(PowerSystem::Ac25kv),
+            &[SupplySystem::Ac15kv]
+        ));
+        assert!(!runs_under(
+            Some(PowerSystem::Dc1500v),
+            &[SupplySystem::Ac15kv]
+        ));
+        // And a line under no wire at all runs nothing electric.
+        assert!(!runs_under(None, &[SupplySystem::Ac15kv]));
+    }
+
+    #[test]
+    fn a_multi_system_locomotive_runs_under_all_of_them() {
+        let built = [SupplySystem::Ac15kv, SupplySystem::Ac25kv];
+        assert!(runs_under(Some(PowerSystem::Ac15kv), &built));
+        assert!(runs_under(Some(PowerSystem::Ac25kv), &built));
+        assert!(!runs_under(Some(PowerSystem::Dc3kv), &built));
+    }
+
+    #[test]
+    fn running_off_the_end_of_the_wire_drops_the_main_switch() {
+        let mut sim = new_sim();
+        // The first 500 m are wired, everything past it is not.
+        let length = sim.net.edges()[0].length();
+        assert!(length > 600.0, "the test needs a long first edge");
+        sim.net.set_electrification(
+            EdgeId(0),
+            Some(StepProfile::new(vec![
+                (0.0, Some(PowerSystem::Ac15kv)),
+                (500.0, None),
+            ])),
+        );
+        let t = train(&mut sim, vec![br101(), passenger_coach()]);
+        run(&mut sim, 20.0);
+        assert!(
+            sim.trains[t].vehicles[0].traction.main_switch,
+            "under the wire it works"
+        );
+
+        // Roll on past the end of the electrification.
+        set_speed(&mut sim, t, 60.0);
+        run(&mut sim, 40.0);
+        assert!(
+            sim.trains[t].vehicles[0].pos.s > 500.0,
+            "the train has to leave the wired section"
+        );
+        assert!(
+            !sim.trains[t].vehicles[0].traction.main_switch,
+            "off the end of the wire the main switch drops"
+        );
+        assert_eq!(sim.trains[t].vehicles[0].traction.line_system, None);
+    }
 }

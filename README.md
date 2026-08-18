@@ -96,7 +96,7 @@ A mod is a directory below `mods/`; `mods/example/` is the reference to copy fro
 ```
 mods/<id>/mod.ron           id, name, version, author, depends, enabled
          /vehicles/*.ron    locomotives and coaches
-         /lines/*.ron       track, equipment, signals — a line, or a module with boundaries
+         /lines/*.ron       track, equipment, signals, electrification, track areas — a line, or a module with boundaries
          /compositions/*.ron modules chained into one line (georeferenced, auto-snapping)
          /scenarios/*.ron   triggers and actions
          /timetable/*.ron   timetables (stop scoring, referenced by a scenario)
@@ -241,7 +241,7 @@ or the whole corridor.
 | `i18n` | Translations of everything the user reads (Fluent `.ftl`, English and German) |
 | `world-coords` | ECEF f64 world coordinates, floating origin, geodesy (plan ch. 4) |
 | `track-model` | Track geometry (straight/curve/clothoid), topology, switches, lineside equipment (ch. 5) |
-| `sim-core` | Driving dynamics, air brake, electrics, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |
+| `sim-core` | Driving dynamics (adhesion axle by axle), air and vacuum brake, electrics, steam, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |
 | `content` | Vehicle database, line source format (RON) + compiler, scenarios, OSM/DGM importer (ch. 15) |
 | `mod-runtime` | Mod discovery, declarative content, Lua behaviour hooks (ch. 19) |
 | `html-display` | HTML/CSS/JS cab displays: parser, layout, script engine — in-engine, no browser (ch. 12) |
@@ -338,7 +338,7 @@ an assembly of shared parts.
 
 | Program | Purpose |
 |---|---|
-| `cargo run -p route-editor` | line: track, equipment, switches, objects, vegetation, terrain, aerial imagery overlay |
+| `cargo run -p route-editor` | line: track, equipment, switches, marked track areas, objects, vegetation, terrain, aerial imagery overlay |
 | `cargo run -p vehicle-editor` | vehicle: base data, block diagram (drive, brake, equipment), glTF model, LOD, moving parts, 3D cab, displays, sounds |
 | `cargo run -p signal-editor` | signal model: glTF parts on mount points, lamp bindings, lamp test |
 
@@ -391,16 +391,21 @@ wheel zooms. Chips at the top left of the centre switch it between the **3D mode
 **Drive, brake, equipment and behaviour are the block diagram** — a blueprint-style node
 editor: the vehicle is a circuit of components, and the physics follows from what is wired
 to what. The palette on the left (searchable, grouped by category) carries every physical
-component as a block — pantograph, transformer, tap changer, traction converter, series
-and three-phase motors, diesel engine, hydraulic transmission and retarder, the complete
-air brake from compressor to brake rigging, wheelset, cab, AFB, Sifa, PZB, LZB, doors and
-the Lua script hook — plus the **presets installed mods bring** (`blocks/*.ron`, e.g. a
-Voith L 620 as a preset of the hydraulic transmission). A block is dragged out of the
-palette onto the canvas and lands where the pointer lets go; a click on it appends it below
-the diagram instead. A right click on the canvas adds a
+component as a block — pantograph, transformer, tap changer, starting resistors, chopper
+and series/parallel switch, traction converter, series-wound and induction motors, diesel
+engine with hydraulic transmission and retarder or with generator and load regulator,
+boiler, firebox, cylinders, injector and tender of a steam locomotive, the complete air
+**or vacuum** brake from compressor to brake rigging including EP brake, angle cocks,
+limiting and retaining valve, cooling systems, wheelset with its bogies and axles, cab, AFB, the
+logic blocks (reading, characteristic, PID, notching, rate of change, switch, output),
+Sifa, PZB, LZB, doors and the Lua script hook — plus the **presets installed mods bring**
+(`blocks/*.ron`, e.g. a Voith L 620 as a preset of the hydraulic transmission). A block is
+dragged out of the palette onto the canvas and lands where the pointer lets go; a click on
+it appends it below the diagram instead. A right click on the canvas adds a
 block, a right click on a node removes it, a drag from pin to pin wires them; pins are
-colour- **and** shape-coded by domain (shaft, force, electrical, pneumatic, signal, fuel),
-and only like connects to like. Clicking a node puts its data sheet below the palette —
+colour- **and** shape-coded by domain (shaft, force, electrical, pneumatic, signal, fuel,
+steam, water, heat), and only like connects to like. Clicking a node puts its data sheet
+below the palette —
 control valve and friction pairing, engine map, converter circuits, motor data; axle count
 and adhesive mass sit on the wheelset block — together with the live **bake findings**:
 the diagram is stored in the vehicle file (`graph`) and baked into the runtime fields
@@ -471,6 +476,7 @@ instead. There is no scale handle, because nothing in the file format has a scal
 | `2` Draw track | Every click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction. `Enter` or right-click finishes, `Esc` cancels |
 | `3` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
 | `4` Place switch | Splits the track and draws the branch; facing or trailing and the throw time follow in the panel |
+| Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
 | `5` Place object | Drops a mod's 3D object at its predefined offset and rotation |
 | `6` / `7` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
 | `8` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
@@ -480,8 +486,10 @@ instead. There is no scale handle, because nothing in the file format has a scal
 
 `T` swaps the aerial imagery for the module's terrain, built exactly as the run builds it —
 so track types, objects and vegetation can be judged against the ground they sit on. The
-interlocking (signals, sections, routes) and the module boundaries are forms of their own,
-with a ghost of the neighbouring module at the boundary.
+interlocking (signals, sections, routes), the **track areas** and the module boundaries are
+forms of their own, with a ghost of the neighbouring module at the boundary. Every painted
+area lies on the map in its own colour, all the time — a marking that only shows while it
+is selected is a marking nobody trusts.
 
 The overlay configuration (`imagery.ron`) is created on first start and is fully editable:
 provider, opacity, zoom level or target resolution, load radius, tile limit, image offset

@@ -121,6 +121,7 @@ impl Composition {
         let mut merged = LineSource {
             name: self.name.clone(),
             geoid_offset: modules[0].1.geoid_offset,
+            electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
             nodes: Vec::new(),
             edges: Vec::new(),
             devices: Vec::new(),
@@ -130,6 +131,7 @@ impl Composition {
             terrain: Vec::new(),
             heights: Vec::new(),
             sections: Vec::new(),
+            areas: Vec::new(),
             signals: Vec::new(),
             routes: Vec::new(),
             boundaries: Vec::new(),
@@ -455,6 +457,7 @@ mod tests {
         LineSource {
             name: "module".into(),
             geoid_offset: geoid,
+            electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
             nodes: vec![NodeSource::Buffer, NodeSource::Buffer],
             edges: vec![EdgeSource {
                 from: 0,
@@ -468,6 +471,7 @@ mod tests {
                 cant: vec![],
                 speed: vec![(0.0, 120.0)],
                 track_type: vec![],
+                electrification: Vec::new(),
             }],
             devices: vec![
                 DeviceSource {
@@ -493,6 +497,7 @@ mod tests {
             terrain: vec![],
             heights: vec![],
             sections: vec![SectionSource { edges: vec![0] }],
+            areas: Vec::new(),
             signals: vec![SignalSource {
                 kind: SignalKind::Main,
                 system: SignalSystem::Ks,

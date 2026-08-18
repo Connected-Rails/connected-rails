@@ -16,7 +16,9 @@ pub mod rng;
 pub mod safety;
 pub mod scenario;
 pub mod score;
+pub mod signal;
 pub mod sound;
+pub mod steam;
 pub mod timetable;
 pub mod train;
 
@@ -176,6 +178,26 @@ impl Sim {
             cab.brake_valve = afb.valve;
         }
 
+        // 0a. Signal graph — the control logic the vehicle's diagram was built out of. It
+        // runs before everything else, so what it commands takes hold in this same step.
+        let extra_brake = self.step_signals(index, &cab, dt);
+        if let Some(throttle) = self.trains[index]
+            .vehicles
+            .get(
+                self.trains[index]
+                    .cab
+                    .min(self.trains[index].vehicles.len().saturating_sub(1)),
+            )
+            .and_then(|v| v.signal_out.throttle)
+        {
+            cab.throttle = throttle;
+        }
+        if extra_brake > 0.0
+            && let Some(target) = signal_brake_valve(cab.brake_valve, extra_brake)
+        {
+            cab.brake_valve = target;
+        }
+
         // 0. Doors — traction interlock and door loop act on this step already.
         let doors = doors::step(&mut self.trains[index], &cab, dt);
         self.runtime[index].doors = doors;
@@ -191,17 +213,23 @@ impl Sim {
 
         // 1. Electrics and drive.
         {
+            let net = &self.net;
             let train = &mut self.trains[index];
             let neutral = self.runtime[index].neutral_section_left > 0.0;
             for veh in &mut train.vehicles {
                 if veh.spec.drives.is_empty() {
                     continue;
                 }
-                veh.traction.line_voltage = if neutral {
-                    0.0
+                // What is over the vehicle is a property of the track, read at the
+                // pantograph — a section with no wire, or one carrying a system this
+                // vehicle was not built for, leaves its main switch open.
+                let system = if neutral {
+                    None
                 } else {
-                    electric::NOMINAL_LINE_VOLTAGE
+                    net.electrification_at(veh.pos.edge, veh.pos.s)
                 };
+                veh.traction.line_system = system;
+                veh.traction.line_voltage = system.map_or(0.0, |s| s.voltage());
                 veh.traction.notch = if traction_allowed {
                     cab.throttle * cab.reverser.max(0) as f64
                 } else {
@@ -209,8 +237,20 @@ impl Sim {
                     cab.throttle.min(0.0)
                 };
                 veh.sanding = cab.sanding;
+                // Steam: the fireman's and the driver's hands go straight through.
+                veh.traction.steam_controls = cab.steam;
+                if cab.shovel > 0.0
+                    && let Some(boiler) = veh.traction.drives[0].steam.as_mut()
+                    && let Some(drive::TractionSpec::Steam { loco, .. }) =
+                        veh.spec.drives.first().map(|d| &d.traction)
+                {
+                    steam::fire(boiler, loco, cab.shovel);
+                }
                 if cab.engine_start {
-                    let battery = veh.traction.battery;
+                    // Cranking is what empties a battery; a flat one will not turn the
+                    // engine over at all.
+                    let battery = veh.traction.battery
+                        && electric::crank_battery(&mut veh.traction, &veh.spec.supply, dt);
                     for (i, drive) in veh.spec.drives.iter().enumerate() {
                         electric::start_engine(
                             &mut veh.traction.drives[i],
@@ -219,7 +259,13 @@ impl Sim {
                         );
                     }
                 }
-                electric::step(&mut veh.traction, &veh.spec.drives, veh.v, dt);
+                electric::step(
+                    &mut veh.traction,
+                    &veh.spec.drives,
+                    &veh.spec.supply,
+                    veh.v,
+                    dt,
+                );
             }
         }
 
@@ -253,6 +299,47 @@ impl Sim {
             out = out.merge(veh.safety.update(dt, &state, &cab, &events));
         }
         self.runtime[index].protection = out;
+    }
+
+    /// Runs every vehicle's signal graph. Returns the largest extra brake demand any of
+    /// them asked for — the brake is a train-wide thing, so the strongest wins.
+    fn step_signals(&mut self, index: usize, cab: &CabInputs, dt: f64) -> f64 {
+        let train = &mut self.trains[index];
+        let mut extra_brake: f64 = 0.0;
+        for veh in &mut train.vehicles {
+            if veh.spec.signal.is_empty() {
+                continue;
+            }
+            let drive = veh.traction.drives[0];
+            let readings = signal::SignalReadings {
+                throttle: cab.throttle,
+                brake_demand: cab.brake_valve.demand(),
+                direct_brake: cab.direct_brake,
+                speed: veh.v,
+                target_speed_kmh: cab.afb_target,
+                cylinder: veh.brake.applied_cylinder(),
+                pipe: veh.brake.pipe,
+                main_reservoir: veh.brake.main_reservoir,
+                motor_current: drive.motor_current,
+                engine_rpm: drive.engine_rpm,
+                temperature: drive.peak_temp(),
+                tractive_effort: veh.tractive_effort,
+                reverser: f64::from(cab.reverser),
+                sanding: veh.sanding,
+            };
+            let out = signal::step(&veh.spec.signal, &mut veh.signal, &readings, dt);
+            veh.signal_out = out;
+            extra_brake = extra_brake.max(out.brake_demand);
+            if out.sanding {
+                veh.sanding = true;
+            }
+            if let Some(blower) = out.blower {
+                for chain in &mut veh.traction.drives {
+                    chain.blower = blower;
+                }
+            }
+        }
+        extra_brake
     }
 
     /// Builds the events for the train protection from the devices that were passed.
@@ -338,6 +425,17 @@ impl Sim {
         }
         mix(self.time.to_bits());
         h
+    }
+}
+
+/// The brake valve position a signal graph's extra demand asks for — never less than what
+/// the driver already has on, because a controller may add brake but must not take it off.
+fn signal_brake_valve(current: DriverBrakeValve, demand: f64) -> Option<DriverBrakeValve> {
+    let wanted = demand.clamp(0.0, 1.0) * brakes::FULL_SERVICE_DROP;
+    match current {
+        DriverBrakeValve::Emergency => None,
+        DriverBrakeValve::Service(drop) if drop >= wanted => None,
+        _ => Some(DriverBrakeValve::Service(wanted)),
     }
 }
 

@@ -243,12 +243,14 @@ the block's default.
 
 **Ports have domains, and only like connects to like** — the editor colour- *and*
 shape-codes the pins: mechanical (rotating shaft), force (at the wheel), electrical,
-pneumatic, signal (control values 0 … 1) and fuel. A drag between two pins wires them;
-a right click on the canvas adds a block, a right click on a node removes it.
+pneumatic, signal (control values 0 … 1), fuel, steam, water and heat. A drag between two
+pins wires them; a right click on the canvas adds a block, a right click on a node removes
+it.
 
 **When a vehicle file carries a `graph`, the graph is authoritative.** Loading bakes it
 and overwrites `traction`, `brake`, `safety`, `doors`, `passenger_doors`, `afb`,
-`slip_protection`, `axles`, `adhesive_mass_fraction` and `script`; every other field —
+`slip_protection`, `axles`, `adhesive_mass_fraction`, `script`, `signal`, `supply`,
+`sand_rate`, `running_gear` and — where the diagram draws bogies — `axle_base_sum`; every other field —
 mass, length, running resistance, coupler, sounds, model, … — stays hand-edited as
 before. A vehicle **without** a graph keeps working unchanged; the editor synthesises a
 diagram from the spec on open (`blocks::from_spec`) and writes it on save, so opening
@@ -256,15 +258,22 @@ and saving an old file upgrades it. While you wire, the editor lists the **bake
 findings** (errors and warnings) below the palette — a click selects the offending
 block.
 
-The baker recognises the drive chains of the four traction models:
+The baker recognises the drive chains of all five traction models:
 
 | Chain | Bakes to |
 |---|---|
 | `traction-curve` | `Curve` — tractive effort straight off the diagram |
 | `pantograph` + `main-switch` + `transformer` + `tap-changer` (+ `series-motor`) (+ `dynamic-brake`) | `TapChanger` |
-| … + `traction-converter` + `traction-motor` (+ `dynamic-brake`) | `Converter` |
+| … + `rheostat` / `chopper` + `series-parallel-switch` | `TapChanger` with `starter` — contactor drive |
+| … + `traction-converter` + `traction-motor` or `async-motor` (+ `dynamic-brake`) | `Converter` |
 | `diesel-engine` + `hydro-transmission` (+ `retarder`) | `Diesel`, diesel-hydraulic |
-| `diesel-engine` + `generator` + `traction-motor` (+ `dynamic-brake`) | `Diesel` with `dynamic_brake` — diesel-electric |
+| `diesel-engine` + `generator` + `load-regulator` (+ `rectifier`) + `series-motor` or `async-motor` | `Diesel` with `electric` — diesel-electric |
+| `firebox` + `boiler` + `steam-cylinders` (+ `injector` + `tender`) | `Steam` |
+
+Which motor block sits behind the generator decides the type of the diesel-electric
+drive: `series-motor` is the classic DC machine, `async-motor` the modern inverter one.
+A `cooling` block wired to the **heat** pin of a motor, a rheostat or the dynamic brake
+gives that component a thermal model — without one it never gets hot.
 
 The brake blocks map onto the `BrakeSpec` fields above: the `control-valve` carries
 valve type, brake position, braked weight and load braking; the `brake-rigging` the
@@ -272,35 +281,73 @@ friction pairing and its maximum force; a `relay-valve` is the pre-controlled cy
 (`pilot_controlled`; its `supplement` flag is the air supplement brake); the
 `driver-brake-valve` carries the equalising device; reservoirs, pipe and compressor
 their volumes and figures; `direct-brake`, `parking-brake`, `mg-brake` and
-`wheel-slide-protection` the additional brakes and the slip protection.
+`wheel-slide-protection` the additional brakes and the slip protection. The
+`brake-pipe` carries the **medium**: `air` or `vacuum` — a vacuum brake has no
+auxiliary reservoir and no relay valve, and its compressor is an exhauster.
+
+#### Logic blocks
+
+The **Logic** group is the control wiring between the physical blocks: it computes, it
+does not move anything. `bake` compiles that part of the diagram into a
+[`SignalProgram`](crates/sim-core/src/signal.rs) — a flat list of operations in
+evaluation order — which runs once per simulation step *before* the drive, so what it
+commands takes hold in the same step the driver's lever moved.
+
+A `value-in` reads something out of the vehicle, the blocks in between compute, and a
+`signal-out` decides what the result takes hold of: power controller, brake demand,
+sanding, blower, or one of four free values the cab displays can read. A cruise control
+is three blocks — speed, set speed, `pid` — and a load-shedding relay is a
+`rate-of-change` and a `value-switch`. Blocks that feed each other in a circle are
+reported (`bake-signal-cycle`) and dropped rather than run.
 
 The built-in palette:
 
 | Kind | What it is | Key parameters |
 |---|---|---|
 | **Energy** | | |
-| `battery` | on-board battery — the cab needs it | — |
+| `battery` | on-board battery — the cab needs it | voltage, capacity [Ah] |
 | `fuel-tank` | fuel supply of a diesel | capacity [l] |
-| `pantograph` | collects power from the contact line | — |
+| `pantograph` | collects power from the contact line — one block per supply system | supply system (AC 15/25 kV, DC 3/1.5 kV, third rail), rise time |
+| `voltage-source` | stands in for the contact line where there is none | voltage |
 | `diesel-engine` | diesel engine, optionally with the full engine map | force/power/v max hyperbola, ramp and cranking time; engine map: idle/rated/overspeed rpm, torque curve, speed or fill governor with notches and droop, inertia, rack time |
 | **Drivetrain** | | |
 | `hydro-transmission` | converters and couplings engaged by filling | circuits, fill steps, fill/drain time, hysteresis, final drive, wheel diameter, count, efficiency |
 | `retarder` | hydrodynamic brake in the transmission | absorption, ratio, wheel diameter, force, power, fill time, fade-out |
-| `generator` | main generator of a diesel-electric | — |
-| `traction-motor` | three-phase motor behind converter or generator | — |
-| `series-motor` | series-wound motor behind the tap changer | count, resistance, machine constant, saturation and maximum current, voltage, field weakening steps, gear ratio, wheel diameter, efficiency |
+| `generator` | main generator of a diesel-electric | electrical power, efficiency, maximum voltage and current |
+| `traction-motor` | motor without data behind converter or generator | — |
+| `series-motor` | series-wound motor behind the tap changer or the generator | count, resistance, machine constant, saturation and maximum current, voltage, field weakening steps, gear ratio, wheel diameter, efficiency |
+| `async-motor` | three-phase induction motor (Kloss) | count, pole pairs, rated and pull-out torque, pull-out slip, rated and maximum frequency, gear ratio, wheel diameter, efficiency |
 | `traction-curve` | the simplified model: effort straight off the diagram | force and brake curves [km/h → N], v max, ramp time |
 | **Electric** | | |
 | `main-switch` | main circuit breaker | — |
 | `transformer` | main transformer | — |
+| `rectifier` | generator alternating current into direct current | efficiency |
+| `load-regulator` | holds the generator on the notch's power | travel time, blower share at idle |
 | `tap-changer` | tap changer feeding series-wound motors | steps, step time, starting effort, power, v max |
+| `rheostat` | starting resistors, cut out step by step | resistance steps [Ω], time per step |
+| `series-parallel-switch` | regroups the motors as the speed rises | groupings (S→P, S→SP→P, S only, P only) |
+| `chopper` | continuous voltage instead of resistor steps | response time |
 | `traction-converter` | three-phase traction converter | starting effort, power, v max, ramp time, pull-out speed |
 | `dynamic-brake` | electric brake of the drive it hangs on | force, power, fade-out speed, regenerative flag, ramp time |
+| `cooling` | heat store and blower of what is wired to its **heat** pin | heat capacity, cooling, natural convection, derating and cut-out temperature, ambient |
+| **Steam** | | |
+| `boiler` | water, steam and pressure | water and steam space, working pressure, safety valves, heating surface, superheater |
+| `firebox` | grate, damper and blower | grate area and capacity, burning rate, blower draught, shovelful |
+| `steam-cylinders` | regulator and cutoff into tractive effort | count, bore, stroke, wheel diameter, longest cutoff, back pressure, efficiency, v max |
+| `injector` | feed water into the boiler against its pressure | delivery [l/s] |
+| `tender` | water and coal carried along | water [l], coal [kg] |
 | **Brake** | | |
-| `compressor` | air supply | delivery [l/min] |
+| `compressor` | air supply | delivery [l/min], type (compressor / exhauster) |
 | `main-reservoir` | main air reservoir | volume [l] |
 | `driver-brake-valve` | the driver's valve feeding the brake pipe | equalising device (Angleicher) |
-| `brake-pipe` | this vehicle's stretch of the pipe | volume, leakage |
+| `brake-pipe` | this vehicle's stretch of the pipe | volume, leakage, medium (air / vacuum) |
+| `angle-cock` | parts the brake pipe | end (front / rear) |
+| `air-hose` | couples the pipe to the neighbouring vehicle | end (front / rear) |
+| `emergency-valve` | vents the pipe from the compartment or the cab | — |
+| `limiting-valve` | caps the cylinder pressure whatever asked | limit pressure [bar] |
+| `double-check-valve` | passes the higher of two pressures | — |
+| `retainer-valve` | holds a residual pressure through the release | position (off / slow / low / high) |
+| `ep-brake` | electropneumatic brake — applies by wire | application and release rate, vents-the-pipe flag, steps |
 | `control-valve` | control valve reading the pipe | valve type (K-GP … KE-L2d), position G/P/R, braked weight [t], load braking (weighing / changeover) |
 | `aux-reservoir` | auxiliary reservoir | volume [l] |
 | `relay-valve` | pre-controlled cylinder fed from the main reservoir | supplement flag (air supplement brake) |
@@ -310,12 +357,25 @@ The built-in palette:
 | `parking-brake` | parking brake | force, spring accumulator flag |
 | `mg-brake` | magnetic track brake | force |
 | `wheel-slide-protection` | slip protection | mode: slip brake / traction cutback / creep control |
-| `sander` | sanding gear | — |
+| `sander` | sanding gear | sand rate [kg/min] |
 | **Running gear** | | |
 | `wheelset` | where force meets rail | axle count, adhesive mass fraction |
+| `bogie` | groups the axles it carries | wheelbase |
+| `axle` | one axle — drawn out to refine the wheelset | driven flag |
 | **Control** | | |
-| `cab` | the driver's desk: throttle, brake demand, direct brake, sanding | — |
+| `cab` | the driver's desk: throttle, brake demand, direct brake, sanding, regulator, cutoff | — |
 | `afb` | AFB in the throttle path | — |
+| **Logic** | | |
+| `value-in` | takes a reading out of the vehicle | reading (speed, brake pipe, motor current, temperature, …) |
+| `constant` | a fixed number | value |
+| `value-curve` | piecewise linear characteristic | table |
+| `combine` | two values into one | operation (sum, difference, product, smaller, larger) |
+| `clamp` | holds a value inside a range | lower and upper limit |
+| `pid` | controls the actual value onto the set point | proportional, integral, derivative, output limits |
+| `notch` | steps the output and limits its rate | notches (0 = continuous), rate |
+| `rate-of-change` | how fast the input is changing | smoothing [s] |
+| `value-switch` | picks one of two values, with hysteresis | threshold, hysteresis |
+| `signal-out` | where the logic takes hold | sink (power controller, brake, sanding, blower, free value 1–4) |
 | **Equipment** | | |
 | `sifa` | driver's safety device | kind: time-time / time-distance / RZM |
 | `pzb` | intermittent train protection | variant (I 54 … PZB 90 V2.0), train type O/M/U |
@@ -1005,6 +1065,99 @@ rolling entry carries a volume factor on it, see Sounds). The route editor edits
 sections in the selection panel (a color chip per section, the map tints the track ribbon
 to match) and its rule check flags names no installed mod has, and LZB types on a line
 that places no line conductor.
+
+### Electrification
+
+What hangs over the track is a property of the **line**, not an assumption of the vehicle.
+A line states its wire once and names only the exceptions:
+
+```ron
+electrification: "ac-15kv",   // the whole line, where a track says nothing
+```
+
+The ids are `"ac-15kv"` (15 kV 16.7 Hz), `"ac-25kv"` (25 kV 50 Hz), `"dc-3kv"`,
+`"dc-1.5kv"`, `"third-rail"` (750 V DC) and `"none"` for a line under no wire at all. A
+track overrides it section by section, in the same shape as the other profiles:
+
+```ron
+electrification: [(0.0, "ac-15kv"), (1200.0, "none"), (1260.0, "dc-1.5kv")],
+```
+
+That example is a system boundary: sixty metres with nothing over them, because the wire
+of two systems must not be bridged by a pantograph. A siding under no wire is the same
+thing with one entry.
+
+A vehicle states what it is **built for** — its `pantograph` blocks, one per system, and
+the main switch closes only where the line carries one of them. The volts alone do not
+decide: 25 kV is plenty of volts for a 15 kV locomotive and still the wrong system, and
+the switch stays open. Running off the end of the wire drops it, exactly like a neutral
+section.
+
+The route editor edits the line's wire in the properties at the top of the left panel and
+the per-track sections in the selection panel. A line file written before there was any
+electrification reads as the German main line, so what ran on it keeps running.
+
+### Track areas
+
+Step profiles per property are right for a compiler and wrong for a person. A 40 km/h
+restriction through a station means editing the speed steps of every track it touches, and
+changing it again means finding them all a second time.
+
+A **track area** is that job the way a builder thinks about it: mark the stretch, name it,
+and set the properties on it.
+
+```ron
+areas: [
+    (
+        name: "Bahnhof Musterstadt",
+        color: (0.95, 0.72, 0.25),
+        width: 2.5,               // half-width of the stroke it is painted with [m]
+        spans: [
+            (edge: 3, from: 0.0,   to: 850.0),
+            (edge: 4, from: 0.0,   to: 850.0),
+            (edge: 7, from: 120.0, to: 640.0),
+        ],
+        speed: Some(40.0),
+        track_type: Some("example:bahnhofsgleis"),
+        // cant, grade and electrification are left unset: what the area does not
+        // state, it does not touch.
+    ),
+]
+```
+
+A span is `[from, to)` along one track. What an area does not set it leaves alone — which
+is what lets a speed restriction run across an electrification boundary without disturbing
+the wire. Areas are laid over the tracks' own profiles **in file order**, so a later area
+wins where two overlap: that is what "drawn on top" means on the map.
+
+Nothing in the simulation knows about them. Loading bakes them down into the same step
+profiles the tracks have always carried, so an area is an authoring convenience with no
+run-time cost and no new concept downstream.
+
+| Property | Sets |
+|---|---|
+| `speed` | permitted speed [km/h] |
+| `cant` | cant [mm] |
+| `grade` | longitudinal gradient [‰] |
+| `track_type` | superstructure — model, texture, roughness, speed limit, LZB flag |
+| `electrification` | what hangs over it (see Electrification), or `"none"` |
+
+In the route editor the areas are **painted**: pick **Mark area**, press on a track and
+drag along it. The stroke follows that track until the button goes up — it never jumps to
+a neighbouring track halfway through a station — and what it leaves behind is a **wide
+coloured stroke over the rails**, half transparent so the track still reads underneath.
+With an area selected the next stroke joins it, which is how one area comes to cover a
+whole station, one track at a time. The stroke width is a property of the area, so a wide
+marking stays wide when the file is opened again; the brush setting is the width new areas
+get. The selected area keeps its colour and wears the editor accent as an outline. The
+**Track areas** panel lists them, and the selection panel edits the properties — each a checkbox and a value, so "set" and "left alone" are the same two
+states the file has. The rule check flags an area that covers nothing, sets nothing, lies
+off its track or names a type no installed mod defines; the track panel says when an area
+lies over the track being edited, so a value edited there that never reaches the line does
+not go unnoticed.
+
+Areas follow the track they are marked on: splitting a track splits a stretch that
+straddles the cut, and deleting a track takes its stretches with it.
 
 ### Track objects
 

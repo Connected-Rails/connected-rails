@@ -5,11 +5,12 @@ use sim_core::brakes::{
 };
 use sim_core::doors::DoorSystem;
 use sim_core::drive::{
-    Circuit, CircuitKind, DieselEngine, DriveSpec, Governor, HydrodynamicBrake, SeriesMotor,
-    TractionSpec, Transmission,
+    Circuit, CircuitKind, DieselElectric, DieselEngine, DriveSpec, ElectricMotor, Governor,
+    HydrodynamicBrake, SeriesMotor, Thermal, TractionSpec, Transmission,
 };
 use sim_core::safety::SafetyEquipment;
 use sim_core::safety::de::{PzbVariant, SifaKind, TrainType};
+use sim_core::steam::SteamLoco;
 use sim_core::train::{CouplerSpec, Davis, STANDARD_GAUGE, VehicleSpec};
 
 /// Loads a vehicle definition from RON. A vehicle carrying a block graph is baked with
@@ -57,6 +58,7 @@ pub fn br101() -> VehicleSpec {
             // Above this speed the pull-out torque of the induction motors takes over.
             v_pullout: 150.0,
             regenerative: true,
+            motor: None,
             brake_fade_kmh: 10.0,
         })],
         legacy_traction: None,
@@ -92,6 +94,10 @@ pub fn br101() -> VehicleSpec {
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
         graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
     }
 }
 
@@ -129,8 +135,10 @@ pub fn br110() -> VehicleSpec {
                 gear_ratio: 2.17,
                 wheel_diameter: 1.25,
                 efficiency: 0.95,
+                thermal: None,
             }),
             // The BR 110 has no electric brake.
+            starter: None,
             dynamic_brake: None,
         })],
         legacy_traction: None,
@@ -165,6 +173,10 @@ pub fn br110() -> VehicleSpec {
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
         graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
     }
 }
 
@@ -249,6 +261,7 @@ pub fn br218() -> VehicleSpec {
                 count: 1,
                 efficiency: 0.95,
             }),
+            electric: None,
             hydrodynamic_brake: None,
             dynamic_brake: None,
         })],
@@ -281,6 +294,176 @@ pub fn br218() -> VehicleSpec {
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
         graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
+    }
+}
+
+/// BR 232 "Ludmilla" — diesel-electric: engine, generator, load regulator, six DC motors.
+///
+/// The counterpart to the BR 218 and the type most of the world's diesel locos are: the
+/// load regulator holds the engine on the power the notch asks for, and the motors take
+/// whatever voltage and current that works out to.
+pub fn br232() -> VehicleSpec {
+    VehicleSpec {
+        name: "BR 232".into(),
+        length: 20.82,
+        mass_empty: 123_000.0,
+        rotating_mass_factor: 0.18,
+        davis: Davis {
+            a: 3_600.0,
+            b: 95.0,
+            c: 9.4,
+        },
+        brake: BrakeSpec::from_brake_weight(120.0, BrakeKind::Block)
+            .with_position(BrakePosition::P)
+            .as_traction_unit(ControlValve::KeTm, 120_000.0),
+        drives: vec![DriveSpec::new(TractionSpec::Diesel {
+            max_force: 353_000.0,
+            max_power: 2_206_000.0,
+            v_max: 120.0,
+            ramp_time: 5.0,
+            start_time: 12.0,
+            engine: Some(DieselEngine {
+                idle_rpm: 350.0,
+                rated_rpm: 1_000.0,
+                max_rpm: 1_100.0,
+                torque_curve: vec![
+                    (350.0, 12_000.0),
+                    (700.0, 25_500.0),
+                    (1_000.0, 22_500.0),
+                    (1_100.0, 19_000.0),
+                ],
+                governor: Governor::Speed {
+                    steps: 0,
+                    droop: 0.03,
+                },
+                inertia: 140.0,
+                response_time: 2.0,
+            }),
+            transmission: None,
+            electric: Some(DieselElectric {
+                generator_power: 2_206_000.0,
+                generator_efficiency: 0.94,
+                max_voltage: 1_150.0,
+                max_current: 6_000.0,
+                regulator_time: 4.0,
+                // Six nose-suspended motors, Co'Co'. Field weakening in two stages keeps
+                // the effort up to the top speed.
+                motor: ElectricMotor::Dc(SeriesMotor {
+                    count: 6,
+                    resistance: 0.026,
+                    // Fitted so the six motors together make the 353 kN of the works plate
+                    // at their current limit.
+                    flux_constant: 0.0107,
+                    saturation_current: 1_000.0,
+                    max_current: 1_250.0,
+                    max_voltage: 1_150.0,
+                    field_steps: vec![1.0, 0.72, 0.5],
+                    gear_ratio: 4.5,
+                    wheel_diameter: 1.05,
+                    efficiency: 0.92,
+                    // The blower runs off the engine; without it the motors cook.
+                    thermal: Some(Thermal {
+                        heat_capacity: 900_000.0,
+                        cooling: 2_400.0,
+                        natural_share: 0.1,
+                        warn_temp: 180.0,
+                        max_temp: 260.0,
+                        ambient: 20.0,
+                    }),
+                }),
+                blower_idle_share: 0.25,
+            }),
+            hydrodynamic_brake: None,
+            dynamic_brake: None,
+        })],
+        legacy_traction: None,
+        coupler: CouplerSpec::screw(),
+        adhesive_mass_fraction: 1.0,
+        slip_protection: SlipProtection::TractionCutback,
+        gauge: STANDARD_GAUGE,
+        v_max: 120.0,
+        axles: 6,
+        // Co'Co', 3.7 m axle base per bogie.
+        axle_base_sum: 7.4,
+        cw_a: None,
+        curve_resistance_factor: 1.0,
+        max_payload: 0.0,
+        tilt_angle_deg: 0.0,
+        passenger_doors: false,
+        safety: SafetyEquipment::De {
+            pzb: Some(PzbVariant::Pzb90V20),
+            lzb: false,
+            sifa: Some(SifaKind::TimeTime),
+            train_type: TrainType::M,
+        },
+        afb: false,
+        doors: DoorSystem::Tb0,
+        hunting: 0.0,
+        script: None,
+        model: None,
+        sounds: Vec::new(),
+        graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
+    }
+}
+
+/// BR 52 — war-time freight locomotive, 1'E h2, the reference steam engine.
+///
+/// Everything about it is in [`sim_core::steam`]: the fire feeds the boiler, the boiler
+/// feeds the cylinders, and the exhaust feeds the fire back. A curve cannot run out of
+/// steam, and running out of steam is what driving one is about.
+pub fn br52() -> VehicleSpec {
+    VehicleSpec {
+        name: "BR 52".into(),
+        // Locomotive and tender together — the pair runs as one vehicle here.
+        length: 22.98,
+        mass_empty: 140_000.0,
+        rotating_mass_factor: 0.20,
+        davis: Davis {
+            a: 4_200.0,
+            b: 110.0,
+            c: 10.5,
+        },
+        brake: BrakeSpec::from_brake_weight(96.0, BrakeKind::Block)
+            .with_position(BrakePosition::G)
+            .as_traction_unit(ControlValve::KeGp, 90_000.0),
+        drives: vec![DriveSpec::new(TractionSpec::Steam {
+            loco: Box::new(SteamLoco::default()),
+            v_max: 80.0,
+        })],
+        legacy_traction: None,
+        coupler: CouplerSpec::screw(),
+        adhesive_mass_fraction: 0.55,
+        slip_protection: SlipProtection::None,
+        gauge: STANDARD_GAUGE,
+        v_max: 80.0,
+        // Five coupled axles and a leading pony truck, plus the tender's four.
+        axles: 10,
+        axle_base_sum: 12.6,
+        cw_a: None,
+        curve_resistance_factor: 1.1,
+        max_payload: 0.0,
+        tilt_angle_deg: 0.0,
+        passenger_doors: false,
+        safety: SafetyEquipment::None,
+        afb: false,
+        doors: DoorSystem::None,
+        hunting: 0.3,
+        script: None,
+        model: None,
+        sounds: Vec::new(),
+        graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
     }
 }
 
@@ -326,6 +509,10 @@ pub fn passenger_coach() -> VehicleSpec {
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
         graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
     }
 }
 
@@ -375,6 +562,10 @@ pub fn freight_wagon() -> VehicleSpec {
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
         graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
     }
 }
 
@@ -466,6 +657,7 @@ pub fn railcar() -> VehicleSpec {
                 count: 2,
                 efficiency: 0.95,
             }),
+            electric: None,
             hydrodynamic_brake: Some(HydrodynamicBrake {
                 absorption: 0.046,
                 ratio: 4.0,
@@ -508,6 +700,10 @@ pub fn railcar() -> VehicleSpec {
         // (`sim_core::sound::default_table`).
         sounds: Vec::new(),
         graph: None,
+        signal: Default::default(),
+        supply: Default::default(),
+        sand_rate: 4.0,
+        running_gear: Vec::new(),
     }
 }
 
@@ -521,6 +717,8 @@ mod tests {
             br101(),
             br110(),
             br218(),
+            br232(),
+            br52(),
             passenger_coach(),
             freight_wagon(),
         ] {
@@ -541,6 +739,8 @@ mod tests {
             br101(),
             br110(),
             br218(),
+            br232(),
+            br52(),
             passenger_coach(),
             freight_wagon(),
             freight_wagon_k_valve(),

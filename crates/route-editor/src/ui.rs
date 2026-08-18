@@ -664,6 +664,7 @@ fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
     line.source = LineSource {
         name: "Line".into(),
         geoid_offset: 46.0,
+        electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
         nodes: vec![],
         edges: vec![],
         devices: vec![],
@@ -673,6 +674,7 @@ fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
         terrain: vec![],
         heights: vec![],
         sections: vec![],
+        areas: Vec::new(),
         signals: vec![],
         routes: vec![],
         boundaries: vec![],
@@ -903,9 +905,10 @@ fn status_bar(
 /// key of the title. The jump bar sits above the scroll area and has to name
 /// them before the first one has been laid out. Editing first, template
 /// configuration after, diagnostics last.
-const SECTIONS: [(&str, &str); 7] = [
+const SECTIONS: [(&str, &str); 8] = [
     ("tools", "heading-tools"),
     ("selection", "heading-selection"),
+    ("areas", "heading-areas"),
     ("interlock", "heading-interlock"),
     ("module", "heading-module"),
     ("checks", "heading-checks"),
@@ -972,6 +975,37 @@ fn left_panel(
                 .small()
                 .color(colors::TEXT_SECONDARY),
             );
+            ui.add_space(2.0);
+            // What the line is wired with. Every track follows it unless it says
+            // otherwise, so this one field electrifies a whole line.
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(t!("line-power")).small());
+                let current = track_model::electrification_from_id(&line.source.electrification);
+                egui::ComboBox::from_id_salt("line-power")
+                    .width(space::FIELD)
+                    .selected_text(power_label(current))
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(current.is_none(), power_label(None))
+                            .clicked()
+                        {
+                            line.source.electrification = "none".into();
+                        }
+                        for system in track_model::PowerSystem::ALL {
+                            if ui
+                                .selectable_label(
+                                    current == Some(system),
+                                    power_label(Some(system)),
+                                )
+                                .clicked()
+                            {
+                                line.source.electrification = system.id().into();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(t!("line-power-hint"));
+            });
             ui.add_space(space::S);
             // A row of another panel may have asked for a section last frame.
             let mut jump = state.jump_to.take();
@@ -1012,6 +1046,32 @@ fn left_panel(
                                     state.device_kind = Some(kind);
                                 });
                             });
+                        }
+                        if state.tool == Tool::MarkArea {
+                            ui.add_space(space::XS);
+                            ui.small(t!("tool-area-drag"));
+                            editor_ui::form_grid("area-brush").show(ui, |ui| {
+                                row(ui, "area-width", |ui| {
+                                    let mut width = state.area_width.unwrap_or(2.5);
+                                    if editor_ui::field(ui, &mut width, 0.1, 0.5..=20.0, "m")
+                                        .changed()
+                                    {
+                                        state.area_width = Some(width);
+                                    }
+                                });
+                            });
+                            if let Selection::TrackArea(i) = state.selection
+                                && let Some(area) = line.source.areas.get(i)
+                            {
+                                ui.small(t!(
+                                    "tool-area-joins",
+                                    name = if area.name.is_empty() {
+                                        t!("area-unnamed")
+                                    } else {
+                                        area.name.clone()
+                                    }
+                                ));
+                            }
                         }
                         if state.tool == Tool::PlaceSwitch {
                             ui.add_space(space::XS);
@@ -1188,6 +1248,10 @@ fn left_panel(
                         },
                     );
 
+                    nav_section(ui, jump, &mut current, "areas", "heading-areas", |ui| {
+                        crate::areas::area_list(ui, line, state, focus);
+                    });
+
                     nav_section(
                         ui,
                         jump,
@@ -1253,6 +1317,7 @@ fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
             (Tool::DrawTrack, "tool-draw"),
             (Tool::PlaceDevice, "tool-device"),
             (Tool::PlaceSwitch, "tool-switch"),
+            (Tool::MarkArea, "tool-area"),
             (Tool::PlaceObject, "tool-object"),
             (Tool::PlaceTree, "tool-tree"),
             (Tool::PlaceForest, "tool-forest"),
@@ -1310,6 +1375,9 @@ fn selection_panel(
         Selection::None => {
             ui.small(t!("sel-none"));
         }
+        Selection::TrackArea(i) => {
+            crate::areas::area_rows(ui, line, i, types, focus, state);
+        }
         Selection::Edge(i) => {
             let Some(edge) = line.source.edges.get(i) else {
                 return;
@@ -1334,7 +1402,29 @@ fn selection_panel(
             } else {
                 t!("sel-edge-handles")
             });
+            // What a marked area lays over this track wins on compile, so a value edited
+            // here that never shows up on the line is worth saying out loud.
+            let covering: Vec<String> = line
+                .source
+                .areas
+                .iter()
+                .filter(|a| a.sets_anything() && a.spans.iter().any(|s| s.edge as usize == i))
+                .map(|a| {
+                    if a.name.is_empty() {
+                        t!("area-unnamed")
+                    } else {
+                        a.name.clone()
+                    }
+                })
+                .collect();
+            if !covering.is_empty() {
+                ui.small(
+                    egui::RichText::new(t!("sel-edge-covered", areas = covering.join(", ")))
+                        .color(colors::TEXT_SECONDARY),
+                );
+            }
             track_type_rows(ui, line, i, length, types);
+            electrification_rows(ui, line, i, length);
             switch_rows(ui, line, i);
             ui.add_space(space::XS);
             ui.horizontal(|ui| {
@@ -1659,6 +1749,86 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
             .unwrap_or(0.0);
         let name = known.first().cloned().unwrap_or_else(|| "default".into());
         edge.track_type.push((s, name));
+    }
+}
+
+/// What hangs over the selected track: `(s, system)` rows over the arc length.
+/// No rows means the track says nothing and the line's own electrification
+/// applies — a line states its wire once and names only the exceptions.
+fn electrification_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64) {
+    editor_ui::subheading(ui, t!("sel-power"));
+    let default_label = power_label(track_model::electrification_from_id(
+        &line.source.electrification,
+    ));
+    let edge = &mut line.source.edges[i];
+    if edge.electrification.is_empty() {
+        ui.small(t!("sel-power-default", system = default_label));
+    }
+    let mut remove = None;
+    editor_ui::form_grid(&format!("edge-power-{i}"))
+        .num_columns(3)
+        .show(ui, |ui| {
+            for (k, step) in edge.electrification.iter_mut().enumerate() {
+                editor_ui::field(ui, &mut step.0, 10.0, 0.0..=length, "m")
+                    .on_hover_text(t!("sel-power-from"));
+                let current = track_model::electrification_from_id(&step.1);
+                egui::ComboBox::from_id_salt(("edge-power", i, k))
+                    .width(space::FIELD)
+                    .selected_text(power_label(current))
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(current.is_none(), power_label(None))
+                            .clicked()
+                        {
+                            step.1 = "none".into();
+                        }
+                        for system in track_model::PowerSystem::ALL {
+                            if ui
+                                .selectable_label(
+                                    current == Some(system),
+                                    power_label(Some(system)),
+                                )
+                                .clicked()
+                            {
+                                step.1 = system.id().into();
+                            }
+                        }
+                    });
+                if ui.small_button("×").clicked() {
+                    remove = Some(k);
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(k) = remove {
+        edge.electrification.remove(k);
+    }
+    if ui
+        .small_button(t!("action-add-power-section"))
+        .on_hover_text(t!("sel-power-hint"))
+        .clicked()
+    {
+        let s = edge
+            .electrification
+            .last()
+            .map(|(s, _)| (s + 100.0).min(length))
+            .unwrap_or(0.0);
+        // A new section is the useful one: the gap under a system boundary or a
+        // siding, which is what anybody adds a section for.
+        edge.electrification.push((s, "none".into()));
+    }
+}
+
+/// Name of a supply system for the editor — the systems are type designations,
+/// so only "no wire" needs translating.
+pub(crate) fn power_label(value: track_model::Electrification) -> String {
+    match value {
+        None => t!("power-none"),
+        Some(track_model::PowerSystem::Ac15kv) => "AC 15 kV 16,7 Hz".into(),
+        Some(track_model::PowerSystem::Ac25kv) => "AC 25 kV 50 Hz".into(),
+        Some(track_model::PowerSystem::Dc3kv) => "DC 3 kV".into(),
+        Some(track_model::PowerSystem::Dc1500v) => "DC 1,5 kV".into(),
+        Some(track_model::PowerSystem::ThirdRail) => "DC 750 V".into(),
     }
 }
 
@@ -2642,6 +2812,20 @@ fn issue_target(line: &Line, issue: &RuleIssue) -> (Option<EcefPos>, Selection) 
                 .map(|e| e.eval(e.length() / 2.0).pos),
             Selection::Edge(*edge as usize),
         ),
+        RuleIssue::AreaOffTrack { area }
+        | RuleIssue::AreaWithoutEffect { area }
+        | RuleIssue::AreaUnknownTrackType { area } => (
+            line.source
+                .areas
+                .get(*area as usize)
+                .and_then(|a| a.spans.first())
+                .and_then(|span| {
+                    let edge = line.net.edges().get(span.edge as usize)?;
+                    let s = ((span.from + span.to) / 2.0).clamp(0.0, edge.length());
+                    Some(edge.eval(s).pos)
+                }),
+            Selection::TrackArea(*area as usize),
+        ),
         RuleIssue::FlankGuardInvalid { route } => match line.source.routes.get(*route as usize) {
             Some(route) => match line.source.signals.get(route.entry as usize) {
                 Some(signal) => device_target(signal.device),
@@ -2676,6 +2860,9 @@ fn issue_text(issue: &RuleIssue) -> String {
             t!("check-boundary-invalid", boundary = boundary)
         }
         RuleIssue::UnknownTrackType { edge } => t!("check-unknown-track-type", edge = edge),
+        RuleIssue::AreaOffTrack { area } => t!("check-area-off-track", area = area),
+        RuleIssue::AreaWithoutEffect { area } => t!("check-area-no-effect", area = area),
+        RuleIssue::AreaUnknownTrackType { area } => t!("check-area-track-type", area = area),
         RuleIssue::LzbTypeWithoutConductor { edge } => t!("check-lzb-no-conductor", edge = edge),
         RuleIssue::ObjectOffEdge { object } => t!("check-object-off-edge", object = object),
         RuleIssue::UnknownObject { object } => t!("check-unknown-object", object = object),
@@ -2995,7 +3182,7 @@ fn cache_section(ui: &mut egui::Ui, overlay: &Overlay, request: &mut Request) {
 }
 
 /// Form row: i18n label (tooltip from `<key>-hint` when present), then the widget.
-fn row(ui: &mut egui::Ui, key: &str, widget: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn row(ui: &mut egui::Ui, key: &str, widget: impl FnOnce(&mut egui::Ui)) {
     let label = editor_ui::form_label(ui, t!(key));
     if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
         label.on_hover_text(hint);

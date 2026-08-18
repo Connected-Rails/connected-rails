@@ -2230,6 +2230,7 @@ fn traction_key(traction: Option<&TractionSpec>) -> &'static str {
         Some(TractionSpec::TapChanger { .. }) => "traction-tap",
         Some(TractionSpec::Converter { .. }) => "traction-converter",
         Some(TractionSpec::Diesel { .. }) => "traction-diesel",
+        Some(TractionSpec::Steam { .. }) => "traction-steam",
     }
 }
 

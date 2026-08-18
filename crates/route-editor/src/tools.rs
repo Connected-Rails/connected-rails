@@ -47,10 +47,13 @@ pub enum Tool {
     TerrainBrush,
     /// DGM tiles: clicks pick single terrain tiles for the height import.
     PickTile,
+    /// Marks a stretch of track: the first click sets one end, the second the other. The
+    /// stretch joins the selected area, or opens a new one where none is selected.
+    MarkArea,
 }
 
 /// What the Select tool holds.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Selection {
     #[default]
     None,
@@ -60,6 +63,28 @@ pub enum Selection {
     Tree(usize),
     Marker(usize),
     TerrainEdit(usize),
+    /// A marked stretch of track with properties.
+    TrackArea(usize),
+}
+
+/// The stroke the area brush is painting: one stretch of one track, growing under the
+/// cursor. It stays on the track it started on — a brush that jumped to the neighbouring
+/// track halfway through a station would paint the wrong one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AreaStroke {
+    pub edge: usize,
+    pub from: f64,
+    pub to: f64,
+}
+
+impl AreaStroke {
+    pub fn span(self) -> content::route::AreaSpan {
+        content::route::AreaSpan::new(self.edge as u32, self.from, self.to)
+    }
+
+    pub fn length(self) -> f64 {
+        (self.to - self.from).abs()
+    }
 }
 
 /// One item the marking brush swept over.
@@ -142,6 +167,12 @@ pub struct EditorState {
     pub marked: Vec<Mark>,
     /// Radius of the marking brush [m]; `None` = 30.
     pub brush_radius: Option<f64>,
+    /// The stroke the area brush is painting right now. Held while the button is down and
+    /// committed on release — a marking in progress, not saved state.
+    pub area_stroke: Option<AreaStroke>,
+    /// Half-width of the area brush stroke [m]; `None` = 2.5, a good deal wider than the
+    /// track it is painted over so it reads as laid on top of it.
+    pub area_width: Option<f64>,
     /// Repeat spacing of the object panel [m]; `None` = the 65 m of a
     /// standard catenary span.
     pub repeat_interval: Option<f64>,
@@ -414,36 +445,45 @@ pub fn pick_ground(
 pub fn nearest_on_network(net: &TrackNetwork, p: EcefPos) -> Option<(usize, f64, f64)> {
     let mut best: Option<(usize, f64, f64)> = None;
     for (i, edge) in net.edges().iter().enumerate() {
-        let length = edge.length();
-        let mut step = 10.0_f64.min(length.max(0.01));
-        let mut s_best = 0.0;
-        let mut d_best = f64::MAX;
-        let probe = |s: f64, d_best: &mut f64, s_best: &mut f64| {
-            let d = edge.eval(s).pos.distance(p);
-            if d < *d_best {
-                *d_best = d;
-                *s_best = s;
-            }
-        };
-        let coarse = (length / step).ceil() as usize;
-        for j in 0..=coarse {
-            probe((j as f64 * step).min(length), &mut d_best, &mut s_best);
-        }
-        for _ in 0..2 {
-            let fine = step / 10.0;
-            let mut s = (s_best - step).max(0.0);
-            let hi = (s_best + step).min(length);
-            while s <= hi {
-                probe(s, &mut d_best, &mut s_best);
-                s += fine;
-            }
-            step = fine;
-        }
-        if best.is_none_or(|(_, _, d)| d_best < d) {
-            best = Some((i, s_best, d_best));
+        let (s, d) = nearest_on_edge(edge, p);
+        if best.is_none_or(|(_, _, best)| d < best) {
+            best = Some((i, s, d));
         }
     }
     best
+}
+
+/// The arc length of one edge nearest `p`, and how far away it is [m].
+///
+/// Coarse scan then two refinements — the same probe `nearest_on_network` uses, pulled
+/// out so a brush that has hold of one track can keep asking that track alone.
+pub fn nearest_on_edge(edge: &track_model::TrackEdge, p: EcefPos) -> (f64, f64) {
+    let length = edge.length();
+    let mut step = 10.0_f64.min(length.max(0.01));
+    let mut s_best = 0.0;
+    let mut d_best = f64::MAX;
+    let probe = |s: f64, d_best: &mut f64, s_best: &mut f64| {
+        let d = edge.eval(s).pos.distance(p);
+        if d < *d_best {
+            *d_best = d;
+            *s_best = s;
+        }
+    };
+    let coarse = (length / step).ceil() as usize;
+    for j in 0..=coarse {
+        probe((j as f64 * step).min(length), &mut d_best, &mut s_best);
+    }
+    for _ in 0..2 {
+        let fine = step / 10.0;
+        let mut s = (s_best - step).max(0.0);
+        let hi = (s_best + step).min(length);
+        while s <= hi {
+            probe(s, &mut d_best, &mut s_best);
+            s += fine;
+        }
+        step = fine;
+    }
+    (s_best, d_best)
 }
 
 /// World position of a device, lateral offset included.
@@ -552,8 +592,41 @@ pub fn selection_pos(line: &Line, selection: Selection, focus: &Focus) -> Option
         Selection::Tree(i) => Some(tree_pos(line.source.trees.get(i)?, focus)),
         Selection::Marker(i) => Some(marker_pos(line.source.markers.get(i)?, focus)),
         Selection::TerrainEdit(i) => Some(terrain_pos(line.source.terrain.get(i)?, focus)),
+        // The middle of the first stretch it covers — where `F` frames it, and where the
+        // map jumps to from the list.
+        Selection::TrackArea(i) => {
+            let span = line.source.areas.get(i)?.spans.first()?;
+            let edge = line.net.edges().get(span.edge as usize)?;
+            let s = ((span.from + span.to) / 2.0).clamp(0.0, edge.length());
+            Some(edge.eval(s).pos)
+        }
         Selection::None => None,
     }
+}
+
+/// Commits the painted stroke: onto the selected area, or into a new one.
+fn commit_stroke(line: &mut Line, state: &mut EditorState, stroke: AreaStroke) -> Option<String> {
+    if stroke.length() < 1.0 {
+        return Some(t!("status-area-too-short"));
+    }
+    let span = stroke.span();
+    match state.selection {
+        // With an area selected the stroke joins it — that is how an area comes to cover
+        // several tracks, one stroke at a time.
+        Selection::TrackArea(i) if i < line.source.areas.len() => {
+            line.source.areas[i].spans.push(span);
+        }
+        _ => {
+            line.source.areas.push(content::route::TrackAreaSource {
+                name: t!("area-default-name", index = line.source.areas.len() + 1),
+                width: state.area_width.unwrap_or(AREA_WIDTH),
+                spans: vec![span],
+                ..Default::default()
+            });
+            state.selection = Selection::TrackArea(line.source.areas.len() - 1);
+        }
+    }
+    None
 }
 
 /// The edge whose ribbon runs nearest the cursor, within grabbing distance.
@@ -734,6 +807,12 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
         Selection::TerrainEdit(i) => {
             if i < line.source.terrain.len() {
                 line.source.terrain.remove(i);
+            }
+        }
+        // Nothing references an area by index; the properties go with the marking.
+        Selection::TrackArea(i) => {
+            if i < line.source.areas.len() {
+                line.source.areas.remove(i);
             }
         }
         Selection::None => {}
@@ -951,6 +1030,7 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
             cant: vec![],
             speed: vec![],
             track_type: vec![],
+            electrification: Vec::new(),
         });
         // Facing: a train reaches the fork over the first half, so that end is
         // the root. Trailing: it comes from the far side — the second half is
@@ -989,6 +1069,7 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
         cant: vec![],
         speed: vec![],
         track_type: vec![],
+        electrification: Vec::new(),
     });
     state.selection = Selection::Edge(line.source.edges.len() - 1);
     true
@@ -1122,6 +1203,43 @@ pub fn tool_input(
         return;
     }
 
+    // The area brush paints while the button is held: the press takes hold of a track,
+    // the drag stretches the stroke along it, the release lays it down.
+    if state.tool == Tool::MarkArea {
+        if buttons.just_pressed(MouseButton::Left)
+            && let Some(p) = picked
+        {
+            state.map_used = true;
+            match nearest_on_network(&line.net, p) {
+                Some((edge, s, d)) if d <= pick_radius(&focus) => {
+                    state.area_stroke = Some(AreaStroke {
+                        edge,
+                        from: s,
+                        to: s,
+                    });
+                }
+                _ => overlay.status = t!("status-no-track-hit"),
+            }
+        }
+        if buttons.pressed(MouseButton::Left)
+            && let Some(stroke) = &mut state.area_stroke
+            && let Some(p) = picked
+            && let Some(edge) = line.net.edges().get(stroke.edge)
+        {
+            // Projected onto the track the stroke started on, so it follows that track
+            // even where the cursor wanders off it — and never jumps to a neighbour
+            // halfway through a station.
+            stroke.to = nearest_on_edge(edge, p).0;
+        }
+        if !buttons.pressed(MouseButton::Left)
+            && let Some(stroke) = state.area_stroke.take()
+            && let Some(status) = commit_stroke(&mut line, &mut state, stroke)
+        {
+            overlay.status = status;
+        }
+        return;
+    }
+
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
@@ -1222,6 +1340,8 @@ pub fn tool_input(
         Tool::PlaceForest => {
             state.forest_points.push(p);
         }
+        // Handled above, where the button is held rather than only clicked.
+        Tool::MarkArea => {}
         Tool::PickTile => {
             let key = tile_of(p, state.terrain_options());
             match state.picked_tiles.iter().position(|k| *k == key) {
@@ -1358,12 +1478,125 @@ fn ground_circle(
 
 /// Track ribbon of one edge as a line on the ground.
 fn edge_line(gizmos: &mut Gizmos, origin: &RenderOrigin, edge: &track_model::TrackEdge, c: Color) {
-    let steps = ((edge.length() / 10.0).ceil() as usize).max(2);
+    span_line(
+        gizmos,
+        origin,
+        edge,
+        0.0,
+        edge.length(),
+        LineOffset {
+            lift: 1.0,
+            across: 0.0,
+        },
+        c,
+    );
+}
+
+/// Where a line is drawn relative to the track: metres above it and metres beside it.
+#[derive(Clone, Copy)]
+struct LineOffset {
+    lift: f64,
+    across: f64,
+}
+
+/// A stretch `[from, to]` of one edge, offset from the track — what a marked area is
+/// drawn as.
+fn span_line(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    edge: &track_model::TrackEdge,
+    from: f64,
+    to: f64,
+    offset: LineOffset,
+    c: Color,
+) {
+    let LineOffset { lift, across } = offset;
+    let (from, to) = (from.clamp(0.0, edge.length()), to.clamp(0.0, edge.length()));
+    if to <= from {
+        return;
+    }
+    let steps = (((to - from) / 10.0).ceil() as usize).max(2);
     let points = (0..=steps).map(|j| {
-        let pose = edge.eval(edge.length() * j as f64 / steps as f64);
-        origin.to_render(pose.pos) + origin.dir_to_render(pose.up)
+        let pose = edge.eval(from + (to - from) * j as f64 / steps as f64);
+        let side = pose.tangent.cross(pose.up).normalize_or_zero();
+        origin.to_render(pose.pos)
+            + origin.dir_to_render(pose.up) * lift as f32
+            + origin.dir_to_render(side) * across as f32
     });
     gizmos.linestrip(points, c);
+}
+
+/// Half-width the area brush paints with by default [m].
+pub use content::route::DEFAULT_AREA_WIDTH as AREA_WIDTH;
+
+/// How far above the track the stroke is painted [m] — above the ribbon (0.4) so it is
+/// never hidden by it, and low enough to still read as lying on the track.
+pub const AREA_LIFT: f64 = 0.7;
+
+/// The stroke under the cursor: a filled-looking band of parallel lines, which is as close
+/// to a painted stroke as a gizmo gets. It exists only while the button is down — once it
+/// is laid down it is a mesh like the rest of them.
+#[allow(clippy::too_many_arguments)]
+fn stroke_band(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    edge: &track_model::TrackEdge,
+    from: f64,
+    to: f64,
+    width: f64,
+    c: Color,
+) {
+    const LINES: usize = 7;
+    for i in 0..LINES {
+        let t = i as f64 / (LINES - 1) as f64 * 2.0 - 1.0;
+        span_line(
+            gizmos,
+            origin,
+            edge,
+            from,
+            to,
+            LineOffset {
+                lift: AREA_LIFT + 0.2,
+                across: t * width,
+            },
+            c,
+        );
+    }
+    stroke_outline(gizmos, origin, edge, from, to, width, c);
+}
+
+/// The outline of a stroke: both long sides and both ends, so a stretch reads as a
+/// stretch and not as a track that happens to be coloured.
+#[allow(clippy::too_many_arguments)]
+fn stroke_outline(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    edge: &track_model::TrackEdge,
+    from: f64,
+    to: f64,
+    width: f64,
+    c: Color,
+) {
+    let (from, to) = (from.min(to), from.max(to));
+    let lift = AREA_LIFT + 0.3;
+    for across in [-width, width] {
+        span_line(
+            gizmos,
+            origin,
+            edge,
+            from,
+            to,
+            LineOffset { lift, across },
+            c,
+        );
+    }
+    for s in [from, to] {
+        let s = s.clamp(0.0, edge.length());
+        let pose = edge.eval(s);
+        let side = origin.dir_to_render(pose.tangent.cross(pose.up).normalize_or_zero());
+        let base = origin.to_render(pose.pos) + origin.dir_to_render(pose.up) * lift as f32;
+        gizmos.line(base - side * width as f32, base + side * width as f32, c);
+    }
 }
 
 /// The section or route the interlocking panel points at, drawn where it
@@ -1479,6 +1712,23 @@ pub fn draw_gizmos(
         );
     }
 
+    // The painted areas are meshes (`spawn_areas`); what is left for the gizmos is the
+    // stroke under the cursor, which does not exist in the document yet.
+    if let Some(stroke) = state.area_stroke
+        && let Some(edge) = line.net.edges().get(stroke.edge)
+    {
+        let width = state.area_width.unwrap_or(AREA_WIDTH);
+        stroke_band(
+            &mut gizmos,
+            &origin.0,
+            edge,
+            stroke.from.min(stroke.to),
+            stroke.from.max(stroke.to),
+            width,
+            accent,
+        );
+    }
+
     match state.selection {
         Selection::Edge(i) => {
             if let Some(edge) = line.net.edges().get(i) {
@@ -1492,6 +1742,27 @@ pub fn draw_gizmos(
                     .skip(first_draggable(&line.source, i))
                 {
                     ground_circle(&mut gizmos, &origin.0, *p, handle_radius, accent);
+                }
+            }
+        }
+        // The selected area keeps the colour it was painted in; what marks it as selected
+        // is the accent outline around the stroke, the same one every other selection in
+        // the editor wears.
+        Selection::TrackArea(i) => {
+            if let Some(area) = line.source.areas.get(i) {
+                let width = area.width;
+                for span in &area.spans {
+                    if let Some(edge) = line.net.edges().get(span.edge as usize) {
+                        stroke_outline(
+                            &mut gizmos,
+                            &origin.0,
+                            edge,
+                            span.from,
+                            span.to,
+                            width,
+                            accent,
+                        );
+                    }
                 }
             }
         }
@@ -1713,6 +1984,7 @@ mod tests {
         let mut line = content::LineSource {
             name: "drawn".into(),
             geoid_offset: 46.0,
+            electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
             nodes: vec![],
             edges: vec![],
             devices: vec![],
@@ -1722,6 +1994,7 @@ mod tests {
             terrain: vec![],
             heights: vec![],
             sections: vec![],
+            areas: Vec::new(),
             signals: vec![],
             routes: vec![],
             boundaries: vec![],
@@ -1955,5 +2228,137 @@ mod tests {
         let start = compiled.net.edges()[2].eval(0.0).pos;
         let handover = compiled.net.edges()[1].end_pose().pos;
         assert!(start.distance(handover) < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod brush_tests {
+    use super::*;
+    use content::route::{AreaSpan, TrackAreaSource};
+
+    fn line() -> Line {
+        let source = content::musterbahn();
+        Line {
+            net: source.compile().expect("compiles").net,
+            source,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            recenter: false,
+            issues: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_stroke_painted_backwards_is_the_same_stroke() {
+        let back = AreaStroke {
+            edge: 2,
+            from: 900.0,
+            to: 300.0,
+        };
+        assert_eq!(back.length(), 600.0);
+        let span = back.span();
+        assert_eq!(span.edge, 2);
+        assert_eq!(span.from, 300.0);
+        assert_eq!(span.to, 900.0);
+    }
+
+    #[test]
+    fn laying_a_stroke_down_opens_an_area_and_selects_it() {
+        let mut line = line();
+        let mut state = EditorState::default();
+        let stroke = AreaStroke {
+            edge: 0,
+            from: 200.0,
+            to: 800.0,
+        };
+        assert!(commit_stroke(&mut line, &mut state, stroke).is_none());
+        assert_eq!(line.source.areas.len(), 1);
+        assert_eq!(
+            line.source.areas[0].spans,
+            vec![AreaSpan::new(0, 200.0, 800.0)]
+        );
+        assert_eq!(state.selection, Selection::TrackArea(0));
+        // It is painted at the width the brush is set to.
+        assert_eq!(line.source.areas[0].width, AREA_WIDTH);
+    }
+
+    #[test]
+    fn the_next_stroke_joins_the_selected_area() {
+        let mut line = line();
+        let mut state = EditorState::default();
+        commit_stroke(
+            &mut line,
+            &mut state,
+            AreaStroke {
+                edge: 0,
+                from: 0.0,
+                to: 500.0,
+            },
+        );
+        // Still selected, so the second stroke belongs to the same area — which is how
+        // one area comes to cover a whole station, one track at a time.
+        commit_stroke(
+            &mut line,
+            &mut state,
+            AreaStroke {
+                edge: 1,
+                from: 100.0,
+                to: 400.0,
+            },
+        );
+        assert_eq!(line.source.areas.len(), 1);
+        assert_eq!(line.source.areas[0].spans.len(), 2);
+        assert_eq!(line.source.areas[0].spans[1].edge, 1);
+
+        // With nothing selected the next one opens an area of its own.
+        state.selection = Selection::None;
+        commit_stroke(
+            &mut line,
+            &mut state,
+            AreaStroke {
+                edge: 2,
+                from: 0.0,
+                to: 300.0,
+            },
+        );
+        assert_eq!(line.source.areas.len(), 2);
+    }
+
+    #[test]
+    fn a_click_without_a_drag_paints_nothing() {
+        let mut line = line();
+        let mut state = EditorState::default();
+        let dot = AreaStroke {
+            edge: 0,
+            from: 500.0,
+            to: 500.2,
+        };
+        assert!(commit_stroke(&mut line, &mut state, dot).is_some());
+        assert!(line.source.areas.is_empty());
+    }
+
+    #[test]
+    fn a_new_area_wears_the_brush_width_and_keeps_it() {
+        let mut line = line();
+        let mut state = EditorState {
+            area_width: Some(6.0),
+            ..Default::default()
+        };
+        commit_stroke(
+            &mut line,
+            &mut state,
+            AreaStroke {
+                edge: 0,
+                from: 0.0,
+                to: 100.0,
+            },
+        );
+        assert_eq!(line.source.areas[0].width, 6.0);
+        // The width belongs to the area, not to the brush: a file written now reads back
+        // the same width whatever the brush is set to afterwards.
+        let text = ron::to_string(&line.source.areas[0]).expect("serialises");
+        let back: TrackAreaSource = ron::from_str(&text).expect("parses");
+        assert_eq!(back.width, 6.0);
     }
 }

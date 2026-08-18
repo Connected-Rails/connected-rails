@@ -30,6 +30,9 @@ pub struct ImportOptions {
     pub max_edge_length: f64,
     /// Geoid undulation for the height conversion [m].
     pub geoid_offset: f64,
+    /// What the imported line is electrified with (an id of
+    /// [`track_model::PowerSystem`], or `"none"`).
+    pub electrification: String,
     /// Permitted speed when OSM does not give one [km/h].
     pub default_speed: f64,
     /// Height used when no DGM is available [m].
@@ -45,6 +48,7 @@ impl Default for ImportOptions {
             alignment: AlignmentOptions::default(),
             max_edge_length: 2_000.0,
             geoid_offset: 46.0,
+            electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
             default_speed: 100.0,
             default_height: 100.0,
             start_way: None,
@@ -179,6 +183,7 @@ pub fn import_line(
             cant: shift_profile(&fitted.cant, offset, len),
             speed: shift_profile(&fitted.speed, offset, len),
             track_type: vec![],
+            electrification: Vec::new(),
         });
         offset += len;
     }
@@ -190,6 +195,7 @@ pub fn import_line(
             options.name.clone()
         },
         geoid_offset: options.geoid_offset,
+        electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
         nodes,
         edges,
         devices: Vec::new(),
@@ -199,6 +205,7 @@ pub fn import_line(
         terrain: Vec::new(),
         heights: Vec::new(),
         sections: Vec::new(),
+        areas: Vec::new(),
         signals: Vec::new(),
         routes: Vec::new(),
         boundaries: Vec::new(),

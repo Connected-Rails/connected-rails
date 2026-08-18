@@ -55,6 +55,18 @@ pub struct CabInputs {
     /// Starter button of the diesel engine.
     #[serde(default)]
     pub engine_start: bool,
+    /// Emergency valve of the cab pulled. It vents the brake pipe and the driver's own
+    /// valve cannot make it up — that is what "emergency" means.
+    #[serde(default)]
+    pub emergency_valve: bool,
+    /// Regulator, cutoff, blower, damper, firehole and injectors of a steam locomotive.
+    /// The cutoff carries the reverser: negative is back gear.
+    #[serde(default)]
+    pub steam: crate::steam::SteamControls,
+    /// Shovelfuls waiting to go on the grate — the fireman's stroke, consumed by
+    /// [`crate::steam::fire`] on the next step.
+    #[serde(default)]
+    pub shovel: f64,
     /// Door release, left and right in the direction of travel.
     #[serde(default)]
     pub door_release_left: bool,
@@ -112,6 +124,9 @@ impl Default for CabInputs {
             parking_brake: false,
             ep_brake: false,
             engine_start: false,
+            emergency_valve: false,
+            steam: crate::steam::SteamControls::default(),
+            shovel: 0.0,
             door_release_left: false,
             door_release_right: false,
             door_close: false,

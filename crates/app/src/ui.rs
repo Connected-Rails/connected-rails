@@ -405,6 +405,22 @@ pub fn update_hud(
         ),
         valve = format!("{:?}", cab.brake_valve),
     ));
+    // The running gear, but only when it has something to say: an axle spinning or
+    // sliding is what the line is there for, and a train running cleanly has none.
+    let slipping = loco.axles.iter().filter(|a| a.slip.abs() > 0.02).count();
+    if slipping > 0 {
+        lines.push(t!(
+            "hud-axles",
+            slipping = slipping,
+            axles = loco.axles.len(),
+            worst = format!("{:+4.2}", loco.slip),
+            state = t!(if loco.slip > 0.0 {
+                "hud-axles-spinning"
+            } else {
+                "hud-axles-sliding"
+            }),
+        ));
+    }
     if train.vehicles.get(train.cab).is_some_and(|v| v.spec.afb) {
         lines.push(t!(
             "hud-afb",
@@ -432,19 +448,58 @@ pub fn update_hud(
             field = format!("{:3.0}", drive.field * 100.0),
             force = format!("{:5.0}", drive.dynamic_force / 1000.0),
         )),
-        Some(sim_core::drive::TractionSpec::Diesel { .. }) => lines.push(t!(
-            "hud-diesel",
-            rpm = format!("{:5.0}", drive.engine_rpm),
-            fill = format!("{:3.0}", drive.engine_fill * 100.0),
-            circuit = drive.circuit + 1,
-            nu = format!("{:4.2}", drive.circuit_nu),
-            retarder = format!("{:3.0}", drive.retarder_fill * 100.0),
-        )),
+        Some(sim_core::drive::TractionSpec::Diesel { electric, .. }) => {
+            lines.push(t!(
+                "hud-diesel",
+                rpm = format!("{:5.0}", drive.engine_rpm),
+                fill = format!("{:3.0}", drive.engine_fill * 100.0),
+                circuit = drive.circuit + 1,
+                nu = format!("{:4.2}", drive.circuit_nu),
+                retarder = format!("{:3.0}", drive.retarder_fill * 100.0),
+            ));
+            // A diesel-electric drive is read at the generator, not at the transmission.
+            if electric.is_some() {
+                lines.push(t!(
+                    "hud-generator",
+                    voltage = format!("{:5.0}", drive.generator_voltage),
+                    current = format!("{:5.0}", drive.motor_current),
+                    regulator = format!("{:3.0}", drive.regulator * 100.0),
+                ));
+            }
+        }
+        // The boiler is the instrument panel of a steam locomotive; without it there is
+        // nothing to drive by.
+        Some(sim_core::drive::TractionSpec::Steam { loco: steam, .. }) => {
+            if let Some(boiler) = drive.steam {
+                lines.push(t!(
+                    "hud-boiler",
+                    pressure = format!("{:4.1}", boiler.pressure),
+                    glass = format!("{:3.0}", boiler.glass(steam).clamp(0.0, 1.0) * 100.0),
+                    fire = format!("{:3.0}", boiler.fire_intensity * 100.0),
+                    coal = format!("{:4.0}", boiler.fire_mass),
+                ));
+                lines.push(t!(
+                    "hud-tender",
+                    water = format!("{:6.0}", boiler.tender_water),
+                    coal = format!("{:5.0}", boiler.tender_coal),
+                    blowing = onoff(boiler.blowing_off),
+                ));
+            }
+        }
         Some(_) => lines.push(t!(
             "hud-dynamic",
             force = format!("{:5.0}", drive.dynamic_force / 1000.0)
         )),
         None => {}
+    }
+    // Temperature only shows up where something can actually get hot — a vehicle without a
+    // cooling system in its diagram would just show the ambient figure for ever.
+    if drive.peak_temp() > sim_core::electric::AMBIENT_TEMP + 1.0 {
+        lines.push(t!(
+            "hud-temperature",
+            motor = format!("{:3.0}", drive.motor_temp),
+            resistor = format!("{:3.0}", drive.resistor_temp.max(drive.brake_resistor_temp)),
+        ));
     }
 
     // Train protection.

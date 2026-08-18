@@ -1,5 +1,7 @@
 //! Content: vehicle database, line format, scenarios and example line (plan ch. 15).
 
+#[cfg(test)]
+mod area_tests;
 pub mod compose;
 pub mod demo;
 pub mod import;

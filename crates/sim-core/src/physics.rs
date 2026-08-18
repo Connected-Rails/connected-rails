@@ -5,7 +5,7 @@
 
 use crate::G;
 use crate::brakes::SlipProtection;
-use crate::train::{RailCondition, Train, Vehicle};
+use crate::train::{AxleState, RailCondition, Train, Vehicle};
 use track_model::{AdvanceError, PassedDevice, TrackNetwork};
 
 /// Result of a physics step.
@@ -20,10 +20,64 @@ pub struct StepReport {
 }
 
 /// Adhesion coefficient after Curtius/Kniffler, with rail condition and sanding.
+///
+/// `sanding` is the plain on/off case at the reference rate; [`adhesion_with_sand`] takes
+/// the vehicle's own sand rate, which is what the sander block sets.
 pub fn adhesion_coefficient(v_kmh: f64, rail: RailCondition, sanding: bool) -> f64 {
+    let rate = if sanding { REFERENCE_SAND_RATE } else { 0.0 };
+    adhesion_with_sand(v_kmh, rail, rate)
+}
+
+/// Sand rate [kg/min] the 25 % bonus of [`adhesion_coefficient`] is calibrated for.
+pub const REFERENCE_SAND_RATE: f64 = 4.0;
+
+/// The same with the vehicle's own sand rate [kg/min]. More sand helps, but not without
+/// end — past about twice the reference rate the extra sand is simply thrown away.
+pub fn adhesion_with_sand(v_kmh: f64, rail: RailCondition, sand_rate: f64) -> f64 {
     let base = 7.5 / (v_kmh.abs() + 44.0) + 0.161;
-    let sand = if sanding { 1.25 } else { 1.0 };
+    let sand = 1.0 + 0.25 * (sand_rate.max(0.0) / REFERENCE_SAND_RATE).min(1.4);
     base * rail.factor() * sand
+}
+
+/// Adhesion of this vehicle right now — its sand rate where it is sanding.
+fn vehicle_adhesion(veh: &Vehicle, rail: RailCondition) -> f64 {
+    let rate = if veh.sanding { veh.spec.sand_rate } else { 0.0 };
+    adhesion_with_sand(veh.v * 3.6, rail, rate)
+}
+
+/// How much worse the leading axle has it than the ones behind it.
+///
+/// The first axle runs on the rail as it finds it — damp, dusty, greasy — and wipes it as
+/// it goes; every axle behind it runs on a rail that has already been cleaned. That is why
+/// the leading axle of a locomotive is the one that spins, and it is the whole reason
+/// modelling axles separately buys anything: with the same coefficient everywhere and the
+/// torque shared by weight, every driven axle would reach its limit in the same instant.
+///
+/// The factors are normalised against the vehicle's own load distribution, so the total
+/// adhesive force is exactly what it was before the axles were told apart — only its
+/// distribution changes.
+///
+/// ponytail: one exponential instead of a contamination model. The shape is what the
+/// measurements agree on (first axle 10–30 % down, recovered within three or four axles);
+/// the exact figure depends on things no data sheet states.
+pub fn rail_cleaning(axles: &[AxleState]) -> Vec<f64> {
+    /// How far down the leading axle is before the normalisation.
+    const DEPTH: f64 = 0.18;
+    /// Axles it takes to recover, as the decay constant of the exponential.
+    const RECOVERY: f64 = 1.5;
+
+    let raw: Vec<f64> = (0..axles.len())
+        .map(|i| 1.0 - DEPTH * (-(i as f64) / RECOVERY).exp())
+        .collect();
+    let mean: f64 = axles
+        .iter()
+        .zip(&raw)
+        .map(|(a, f)| a.spec.load_share * f)
+        .sum();
+    if mean <= 0.0 {
+        return vec![1.0; axles.len()];
+    }
+    raw.into_iter().map(|f| f / mean).collect()
 }
 
 /// Curve resistance after Röckl [N] for mass `m` [kg] and curvature `k` [1/m].
@@ -172,88 +226,343 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
     report
 }
 
-/// Tractive effort limited by adhesion; produces wheel slip and answers it the way the
-/// vehicle's wheel slip protection would (plan ch. 6).
+/// Tractive effort limited by adhesion, axle by axle (plan ch. 6).
+///
+/// Every driven axle gets its share of the demand and has its own adhesion limit from the
+/// weight it carries. That is why a locomotive on a greasy rail loses *an* axle rather
+/// than all of them: the others keep pulling, and what the driver feels is the effort
+/// stepping down, not vanishing.
+///
+/// The wheel slip protection answers per axle too, which is what the three kinds actually
+/// differ in — the slip brake takes the one spinning wheelset down, the cutback throttles
+/// the whole drive because it has only one handle to throttle, and creep control holds
+/// every axle at the maximum of its own adhesion curve.
 fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
     let protection = veh.spec.slip_protection;
-    let demand = veh.traction.force.max(0.0);
+    let mu = vehicle_adhesion(veh, rail) * protection.adhesion_bonus();
+    let cleaning = rail_cleaning(&veh.axles);
+    let mass = veh.mass();
+    let inertia = veh.inertial_mass();
+    let demand = veh.traction.force;
+
+    // Dynamic braking through the traction motors runs through `brake_force`; here the
+    // negative case only has to stay inside the driven axles' adhesion.
     if demand <= 0.0 {
-        veh.slip = (veh.slip - 3.0 * dt).max(0.0);
-        return veh.traction.force.min(0.0).max(-limit(veh, rail));
-    }
-    let limit = limit(veh, rail);
-    if demand > limit && limit > 0.0 {
-        // Excess force accelerates the driven wheelsets → slip grows.
-        veh.slip += (demand - limit) / veh.inertial_mass() * dt;
-        let mut transmitted = limit * 0.9; // sliding friction < static friction
-        match protection {
-            SlipProtection::None => {}
-            // The wheel slip brake takes the spinning wheelset down. That costs effort, but
-            // it catches the slip in a fraction of the time.
-            SlipProtection::SlipBrake if veh.slip > 0.1 => {
-                transmitted *= 0.8;
-                veh.slip = (veh.slip - 9.0 * dt).max(0.0);
+        let mut total = 0.0;
+        for (i, axle) in veh.axles.iter_mut().enumerate() {
+            axle.tractive_effort = 0.0;
+            axle.slip -= axle.slip.signum() * (3.0 * dt).min(axle.slip.abs());
+            if axle.spec.driven {
+                total += mu * cleaning[i] * mass * axle.spec.load_share * G;
             }
-            // Throttling: the drive cuts its own effort right back and feels its way up again.
-            SlipProtection::TractionCutback if veh.slip > 0.3 => transmitted *= 0.6,
-            // Creep control does not avoid the slip, it lives in it — and therefore stays
-            // right at the maximum of the adhesion curve.
-            SlipProtection::CreepControl => {
-                transmitted = limit * 0.98;
-                veh.slip = veh.slip.min(0.15);
-            }
-            _ => {}
         }
-        transmitted
-    } else {
-        veh.slip = (veh.slip - 3.0 * dt).max(0.0);
-        demand
+        veh.slip = peak_slip(&veh.axles);
+        return demand.max(-total);
     }
+
+    // The drive shares its effort over the driven axles by the weight they carry — a
+    // common shaft would equalise the torque, and the load share is what that comes to.
+    let driven: f64 = veh
+        .axles
+        .iter()
+        .filter(|a| a.spec.driven)
+        .map(|a| a.spec.load_share)
+        .sum();
+    if driven <= 0.0 {
+        veh.slip = 0.0;
+        return 0.0;
+    }
+
+    // A cutback has one handle for the whole drive, so it needs the worst axle first.
+    let cutback = protection == SlipProtection::TractionCutback
+        && veh.axles.iter().any(|a| a.spec.driven && a.slip > 0.3);
+
+    let mut total = 0.0;
+    for (i, axle) in veh.axles.iter_mut().enumerate() {
+        if !axle.spec.driven {
+            axle.tractive_effort = 0.0;
+            continue;
+        }
+        let share = axle.spec.load_share / driven;
+        let mut want = demand * share;
+        if cutback {
+            want *= 0.6;
+        }
+        let limit = mu * cleaning[i] * mass * axle.spec.load_share * G;
+        let transmitted = if want > limit && limit > 0.0 {
+            // Excess force accelerates this wheelset — the slip is its own.
+            axle.slip += (want - limit) / (inertia * share.max(1e-6)) * dt;
+            let mut transmitted = limit * 0.9; // sliding friction < static friction
+            match protection {
+                SlipProtection::None => {}
+                // The wheel slip brake takes the spinning wheelset down. That costs effort
+                // on that axle, but it catches the slip in a fraction of the time.
+                SlipProtection::SlipBrake if axle.slip > 0.1 => {
+                    transmitted *= 0.8;
+                    axle.slip = (axle.slip - 9.0 * dt).max(0.0);
+                }
+                SlipProtection::TractionCutback => {}
+                // Creep control does not avoid the slip, it lives in it — and therefore
+                // stays right at the maximum of the adhesion curve.
+                SlipProtection::CreepControl => {
+                    transmitted = limit * 0.98;
+                    axle.slip = axle.slip.min(0.15);
+                }
+                _ => {}
+            }
+            transmitted
+        } else {
+            axle.slip = (axle.slip - 3.0 * dt).max(0.0);
+            want
+        };
+        axle.tractive_effort = transmitted;
+        total += transmitted;
+    }
+    veh.slip = peak_slip(&veh.axles);
+    total
 }
 
-/// Brake force limited by adhesion, including blending with the dynamic brake.
+/// Brake force limited by adhesion, axle by axle, including blending with the dynamic
+/// brake. An axle that starts to slide is released on its own, which is what a wheel slide
+/// protection does and why it saves the wheel flat on that axle alone.
 fn brake_force(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
-    let mu = adhesion_coefficient(veh.v * 3.6, rail, veh.sanding);
+    let mu = vehicle_adhesion(veh, rail);
+    let cleaning = rail_cleaning(&veh.axles);
+    let mass = veh.mass();
+    let inertia = veh.inertial_mass();
     // The dynamic brake only acts on the driven axles, so it has only their adhesion.
+    let driven: f64 = veh
+        .axles
+        .iter()
+        .filter(|a| a.spec.driven)
+        .map(|a| a.spec.load_share)
+        .sum();
     let dynamic = veh
         .brake
         .dynamic_force
-        .min(mu * veh.adhesive_mass() * G * veh.spec.slip_protection.adhesion_bonus());
+        .min(mu * mass * driven * G * veh.spec.slip_protection.adhesion_bonus());
     // Blending: an air supplement brake adds to the dynamic brake (the pneumatic part has
     // already been reduced by it), otherwise the dynamic brake replaces the air brake on
     // the powered vehicle — else the loco would be overbraked within the consist.
-    let mut f = if veh.spec.brake.supplement_brake {
+    let demand = if veh.spec.brake.supplement_brake {
         veh.brake.force + dynamic
     } else {
         veh.brake.force.max(dynamic)
     };
-    // The magnetic track brake acts on the rail, not through the wheel adhesion.
-    let adhesion_bound = mu * veh.mass() * G;
+    // The magnetic track brake acts on the rail, not through the wheel adhesion, so it is
+    // taken out before the axles are asked and put back afterwards.
     let mg = if veh.brake.mg_applied {
         veh.spec.brake.mg_force
     } else {
         0.0
     };
-    let wheel = (f - mg).max(0.0);
-    if wheel > adhesion_bound {
-        // Wheel slide: the wheel slide protection briefly releases the brake.
-        veh.slip -= (wheel - adhesion_bound) / veh.inertial_mass() * dt;
-        f = if veh.spec.slip_protection.protects() {
-            adhesion_bound * 0.85 + mg
+    let wheel_demand = (demand - mg).max(0.0);
+    let protects = veh.spec.slip_protection.protects();
+
+    let mut total = 0.0;
+    for (i, axle) in veh.axles.iter_mut().enumerate() {
+        let want = wheel_demand * axle.spec.load_share;
+        let limit = mu * cleaning[i] * mass * axle.spec.load_share * G;
+        let applied = if want > limit && limit > 0.0 {
+            // Wheel slide on this axle: its protection briefly releases this brake.
+            axle.slip -= (want - limit) / (inertia * axle.spec.load_share.max(1e-6)) * dt;
+            if protects { limit * 0.85 } else { limit * 0.7 }
         } else {
-            adhesion_bound * 0.7 + mg
+            if axle.slip < 0.0 {
+                axle.slip = (axle.slip + 3.0 * dt).min(0.0);
+            }
+            want
         };
-    } else if veh.slip < 0.0 {
-        veh.slip = (veh.slip + 3.0 * dt).min(0.0);
+        axle.brake_effort = applied;
+        total += applied;
     }
-    f
+    veh.slip = peak_slip(&veh.axles);
+    total + mg
 }
 
-fn limit(veh: &Vehicle, rail: RailCondition) -> f64 {
-    adhesion_coefficient(veh.v * 3.6, rail, veh.sanding)
-        * veh.adhesive_mass()
-        * G
-        * veh.spec.slip_protection.adhesion_bonus()
+/// The axle the vehicle is worst off on — what the HUD, the sound and the scoring read,
+/// because a train with one axle spinning is a train that is spinning.
+fn peak_slip(axles: &[AxleState]) -> f64 {
+    axles.iter().map(|a| a.slip).fold(0.0, |worst: f64, slip| {
+        if slip.abs() > worst.abs() {
+            slip
+        } else {
+            worst
+        }
+    })
+}
+
+#[cfg(test)]
+mod axle_tests {
+    use super::*;
+    use crate::brakes::{BrakeKind, BrakeSpec};
+    use crate::train::{AxleSpec, Vehicle, VehicleSpec};
+    use track_model::{EdgeId, TrackPosition};
+
+    /// A Bo'2' vehicle: two driven axles leading, two carrying — and the driven pair
+    /// deliberately made to carry more, as a locomotive's do.
+    fn vehicle() -> Vehicle {
+        let spec = VehicleSpec {
+            mass_empty: 80_000.0,
+            axles: 4,
+            adhesive_mass_fraction: 0.6,
+            brake: BrakeSpec::from_brake_weight(60.0, BrakeKind::Disc),
+            running_gear: vec![
+                AxleSpec {
+                    driven: true,
+                    load_share: 0.3,
+                },
+                AxleSpec {
+                    driven: true,
+                    load_share: 0.3,
+                },
+                AxleSpec {
+                    driven: false,
+                    load_share: 0.2,
+                },
+                AxleSpec {
+                    driven: false,
+                    load_share: 0.2,
+                },
+            ],
+            ..VehicleSpec::default()
+        };
+        Vehicle::new(spec, TrackPosition::new(EdgeId(0), 0.0, 1))
+    }
+
+    #[test]
+    fn the_layout_reproduces_the_adhesive_mass_a_data_sheet_states() {
+        for (axles, fraction) in [(4u8, 1.0), (6, 1.0), (4, 0.5), (10, 0.5), (2, 0.0)] {
+            let layout = AxleSpec::layout(axles, fraction);
+            assert_eq!(layout.len(), axles as usize);
+            let total: f64 = layout.iter().map(|a| a.load_share).sum();
+            assert!((total - 1.0).abs() < 1e-12, "{axles}/{fraction}: {total}");
+            let driven: f64 = layout
+                .iter()
+                .filter(|a| a.driven)
+                .map(|a| a.load_share)
+                .sum();
+            assert!(
+                (driven - fraction).abs() < 1e-12,
+                "{axles} axles at {fraction}: {driven}"
+            );
+        }
+        // A count that does not divide the fraction evenly still lands on it exactly.
+        let odd = AxleSpec::layout(5, 0.55);
+        let driven: f64 = odd.iter().filter(|a| a.driven).map(|a| a.load_share).sum();
+        assert!((driven - 0.55).abs() < 1e-12, "{driven}");
+        assert_eq!(AxleSpec::layout(0, 1.0).len(), 0);
+    }
+
+    #[test]
+    fn only_the_driven_axles_take_traction() {
+        let mut veh = vehicle();
+        veh.v = 10.0;
+        veh.traction.force = 60_000.0;
+        transmit_traction(&mut veh, RailCondition::Dry, 1.0 / 200.0);
+        assert!(veh.axles[0].tractive_effort > 0.0);
+        assert!(veh.axles[1].tractive_effort > 0.0);
+        assert_eq!(veh.axles[2].tractive_effort, 0.0);
+        assert_eq!(veh.axles[3].tractive_effort, 0.0);
+        // Shared by the weight they carry, so equally loaded axles pull equally.
+        assert!((veh.axles[0].tractive_effort - veh.axles[1].tractive_effort).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_leading_axle_runs_on_a_dirtier_rail_than_the_ones_behind_it() {
+        let veh = vehicle();
+        let cleaning = rail_cleaning(&veh.axles);
+        assert_eq!(cleaning.len(), 4);
+        for pair in cleaning.windows(2) {
+            assert!(pair[0] < pair[1], "{cleaning:?}");
+        }
+        // …and the vehicle as a whole has exactly the adhesion it had before the axles
+        // were told apart, so nothing that was calibrated against it moves.
+        let mean: f64 = veh
+            .axles
+            .iter()
+            .zip(&cleaning)
+            .map(|(a, f)| a.spec.load_share * f)
+            .sum();
+        assert!((mean - 1.0).abs() < 1e-12, "{mean}");
+    }
+
+    /// A vehicle with all four axles alike and driven, so only the rail decides.
+    fn loco() -> Vehicle {
+        let spec = VehicleSpec {
+            mass_empty: 80_000.0,
+            axles: 4,
+            adhesive_mass_fraction: 1.0,
+            brake: BrakeSpec::from_brake_weight(60.0, BrakeKind::Disc),
+            ..VehicleSpec::default()
+        };
+        Vehicle::new(spec, TrackPosition::new(EdgeId(0), 0.0, 1))
+    }
+
+    /// The point of the whole thing: the axle that has lost the rail loses *its* effort,
+    /// and the ones behind it go on pulling.
+    #[test]
+    fn the_leading_axle_spins_first_and_the_others_keep_pulling() {
+        let mut veh = loco();
+        veh.v = 5.0;
+        // Between the leading axle's limit and the trailing one's.
+        veh.traction.force = 215_000.0;
+        for _ in 0..200 {
+            transmit_traction(&mut veh, RailCondition::Dry, 1.0 / 200.0);
+        }
+        assert!(
+            veh.axles[0].slip > 0.05,
+            "the leading axle must spin: {:.3} m/s",
+            veh.axles[0].slip
+        );
+        assert_eq!(veh.axles[3].slip, 0.0, "the last axle must hold");
+        assert!(
+            veh.axles[3].tractive_effort > veh.axles[0].tractive_effort,
+            "{:.0} vs {:.0} N",
+            veh.axles[3].tractive_effort,
+            veh.axles[0].tractive_effort
+        );
+        // The vehicle reports the worst axle, which is what the HUD and the sound read.
+        assert_eq!(veh.slip, veh.axles[0].slip);
+        // And it still pulls: losing one axle is not losing the locomotive.
+        let total: f64 = veh.axles.iter().map(|a| a.tractive_effort).sum();
+        assert!(total > 150_000.0, "{total:.0} N");
+    }
+
+    #[test]
+    fn the_wheel_slide_protection_releases_the_sliding_axle_alone() {
+        let mut veh = loco();
+        veh.spec.slip_protection = crate::brakes::SlipProtection::CreepControl;
+        veh.v = 20.0;
+        // Between the leading axle's limit and the trailing one's, again.
+        veh.brake.force = 170_000.0;
+        for _ in 0..200 {
+            brake_force(&mut veh, RailCondition::Dry, 1.0 / 200.0);
+        }
+        assert!(
+            veh.axles[0].slip < -0.01,
+            "the leading axle must slide: {:.3} m/s",
+            veh.axles[0].slip
+        );
+        assert_eq!(veh.axles[3].slip, 0.0, "the last axle must hold");
+        assert!(
+            veh.axles[3].brake_effort > veh.axles[0].brake_effort,
+            "the sliding axle is the one that gets released"
+        );
+    }
+
+    #[test]
+    fn a_vehicle_that_states_nothing_still_gets_axles() {
+        let spec = VehicleSpec {
+            axles: 4,
+            adhesive_mass_fraction: 1.0,
+            ..VehicleSpec::default()
+        };
+        let veh = Vehicle::new(spec, TrackPosition::new(EdgeId(0), 0.0, 1));
+        assert_eq!(veh.axles.len(), 4);
+        assert!(veh.axles.iter().all(|a| a.spec.driven));
+        assert!((veh.adhesive_mass() - veh.mass()).abs() < 1e-9);
+    }
 }
 
 #[cfg(test)]

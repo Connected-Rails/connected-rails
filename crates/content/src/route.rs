@@ -41,6 +41,10 @@ fn default_throw_time() -> f64 {
     6.0
 }
 
+fn default_electrification() -> String {
+    track_model::PowerSystem::Ac15kv.id().to_string()
+}
+
 /// Where an edge begins.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum EdgeStart {
@@ -70,6 +74,12 @@ pub struct EdgeSource {
     /// Empty = the default type.
     #[serde(default)]
     pub track_type: Vec<(f64, String)>,
+    /// What hangs over this track as steps `(s, system)` — `"ac-15kv"`,
+    /// `"ac-25kv"`, `"dc-3kv"`, `"dc-1.5kv"`, `"third-rail"` or `"none"`.
+    /// Empty = the line's own [`LineSource::electrification`] applies, which is
+    /// how a line states its wire once and names only the exceptions.
+    #[serde(default)]
+    pub electrification: Vec<(f64, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,6 +218,193 @@ pub struct MarkerSource {
     pub lon: f64,
 }
 
+/// One stretch of track a marked area covers: `[from, to)` along one edge.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AreaSpan {
+    pub edge: u32,
+    pub from: f64,
+    pub to: f64,
+}
+
+impl AreaSpan {
+    pub fn new(edge: u32, a: f64, b: f64) -> Self {
+        Self {
+            edge,
+            from: a.min(b),
+            to: a.max(b),
+        }
+    }
+
+    pub fn length(&self) -> f64 {
+        (self.to - self.from).max(0.0)
+    }
+
+    pub fn covers(&self, edge: u32, s: f64) -> bool {
+        self.edge == edge && s >= self.from && s < self.to
+    }
+}
+
+/// A **marked stretch of track** that carries properties.
+///
+/// The per-edge step profiles say what a track is like metre by metre, which is exactly
+/// right for a compiler and exactly wrong for a person: laying a 40 km/h restriction
+/// through a station means editing the speed steps of every track it touches, and
+/// changing it again means finding them all a second time.
+///
+/// An area is that job the other way round: mark the stretch once, give it a name and a
+/// colour, and set the properties on it. What it does not set, it does not touch — so a
+/// speed restriction laid over an electrification boundary leaves the wire alone. Areas
+/// are laid over the edges' own profiles in order, so a later one wins where two overlap,
+/// which is what "drawn on top" means on the map.
+///
+/// Nothing in the simulation knows about them: [`LineSource::compile`] bakes them down
+/// into the same step profiles the edges have always carried.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrackAreaSource {
+    /// What it is for, in the author's words — "Bahnhof Musterstadt", "La 40".
+    pub name: String,
+    /// Colour on the map (sRGB 0..1).
+    #[serde(default = "default_area_color")]
+    pub color: (f32, f32, f32),
+    /// Half-width of the stroke it is painted with [m]. A display property — the data is
+    /// the stretch, not the paint — but it belongs to the area rather than to the editor,
+    /// so a wide marking stays wide when the file is opened again.
+    #[serde(default = "default_area_width")]
+    pub width: f64,
+    /// The stretches it covers. Several, because a station is several tracks.
+    #[serde(default)]
+    pub spans: Vec<AreaSpan>,
+    /// Permitted speed [km/h].
+    #[serde(default)]
+    pub speed: Option<f64>,
+    /// Cant [mm].
+    #[serde(default)]
+    pub cant: Option<f64>,
+    /// Longitudinal gradient [‰].
+    #[serde(default)]
+    pub grade: Option<f64>,
+    /// Track type (`"<mod>:<name>"`, or `"default"`) — model and texture of the
+    /// superstructure.
+    #[serde(default)]
+    pub track_type: Option<String>,
+    /// Electrification (an id of [`track_model::PowerSystem`], or `"none"`).
+    #[serde(default)]
+    pub electrification: Option<String>,
+}
+
+/// Permitted speed a track without a profile of its own carries [km/h] — the figure
+/// `TrackEdge::new` starts from, repeated here because an area laid over such a track has
+/// to know what it is laying over.
+pub const DEFAULT_SPEED: f64 = 160.0;
+
+/// The reserved name of the built-in track type.
+pub const DEFAULT_TRACK_TYPE: &str = "default";
+
+/// Half-width a marked area is painted with by default [m] — comfortably wider than the
+/// 1.5 m of the track ribbon, so a painted stretch reads as laid over the track.
+pub const DEFAULT_AREA_WIDTH: f64 = 2.5;
+
+fn default_area_width() -> f64 {
+    DEFAULT_AREA_WIDTH
+}
+
+fn default_area_color() -> (f32, f32, f32) {
+    // The editor's accent, so a fresh area is visible before anybody colours it.
+    (0.35, 0.72, 0.95)
+}
+
+impl Default for TrackAreaSource {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            color: default_area_color(),
+            width: default_area_width(),
+            spans: Vec::new(),
+            speed: None,
+            cant: None,
+            grade: None,
+            track_type: None,
+            electrification: None,
+        }
+    }
+}
+
+impl TrackAreaSource {
+    /// Does the area set anything at all? One that does not is a marking and nothing more
+    /// — useful while working, worth saying out loud in the editor.
+    pub fn sets_anything(&self) -> bool {
+        self.speed.is_some()
+            || self.cant.is_some()
+            || self.grade.is_some()
+            || self.track_type.is_some()
+            || self.electrification.is_some()
+    }
+
+    /// Total length of track it covers [m].
+    pub fn length(&self) -> f64 {
+        self.spans.iter().map(AreaSpan::length).sum()
+    }
+}
+
+/// Lays area values over a base step profile.
+///
+/// `base` is what the edge itself says (empty = nothing but `base_default`), `spans` are
+/// the `(from, to, value)` of every area covering this edge, in the order they are to be
+/// applied. The result is the same kind of step list, with equal neighbours collapsed.
+fn overlay_steps<T: Clone + PartialEq>(
+    base: &[(f64, T)],
+    base_default: T,
+    spans: &[(f64, f64, T)],
+    length: f64,
+) -> Vec<(f64, T)> {
+    if spans.is_empty() {
+        return base.to_vec();
+    }
+    // The value the edge's own profile has at `s` — the first entry also applies before
+    // its own `s`, as `StepProfile` reads it.
+    let from_base = |s: f64| -> T {
+        let mut value = base
+            .first()
+            .map_or(base_default.clone(), |(_, v)| v.clone());
+        for (at, v) in base {
+            if *at <= s {
+                value = v.clone();
+            } else {
+                break;
+            }
+        }
+        value
+    };
+    let value_at = |s: f64| -> T {
+        // Later areas are drawn on top of earlier ones.
+        spans
+            .iter()
+            .rev()
+            .find(|(from, to, _)| s >= *from && s < *to)
+            .map(|(_, _, v)| v.clone())
+            .unwrap_or_else(|| from_base(s))
+    };
+
+    let mut breaks: Vec<f64> = vec![0.0];
+    breaks.extend(base.iter().map(|(s, _)| *s));
+    for (from, to, _) in spans {
+        breaks.push(*from);
+        breaks.push(*to);
+    }
+    breaks.retain(|s| *s >= 0.0 && *s < length);
+    breaks.sort_by(|a, b| a.total_cmp(b));
+    breaks.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+
+    let mut steps: Vec<(f64, T)> = Vec::with_capacity(breaks.len());
+    for s in breaks {
+        let value = value_at(s);
+        if steps.last().is_none_or(|(_, last)| *last != value) {
+            steps.push((s, value));
+        }
+    }
+    steps
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SectionSource {
     pub edges: Vec<u32>,
@@ -284,6 +481,12 @@ pub struct LineSource {
     /// Geoid undulation for the height conversion [m] (plan 4.2).
     #[serde(default = "default_geoid")]
     pub geoid_offset: f64,
+    /// What the line is electrified with where an edge says nothing: one of the
+    /// ids of [`track_model::PowerSystem`], or `"none"` for a line under no
+    /// wire at all. A file that says nothing reads as the German main line, so
+    /// that lines written before there was any electrification keep working.
+    #[serde(default = "default_electrification")]
+    pub electrification: String,
     pub nodes: Vec<NodeSource>,
     pub edges: Vec<EdgeSource>,
     #[serde(default)]
@@ -313,6 +516,10 @@ pub struct LineSource {
     pub heights: Vec<HeightSource>,
     #[serde(default)]
     pub sections: Vec<SectionSource>,
+    /// Marked stretches of track with properties (see [`TrackAreaSource`]). They are laid
+    /// over the edges' own profiles on compile, in order, so a later one wins.
+    #[serde(default)]
+    pub areas: Vec<TrackAreaSource>,
     #[serde(default)]
     pub signals: Vec<SignalSource>,
     #[serde(default)]
@@ -366,6 +573,13 @@ pub enum RuleIssue {
     BoundaryInvalid { boundary: u32 },
     /// Edge names a track type the registry does not know.
     UnknownTrackType { edge: u32 },
+    /// A marked area covers a track that does not exist, or a stretch beyond its end.
+    AreaOffTrack { area: u32 },
+    /// A marked area with no stretch, or one that sets nothing — a marking that does not
+    /// reach the line.
+    AreaWithoutEffect { area: u32 },
+    /// A marked area names a track type no installed mod defines.
+    AreaUnknownTrackType { area: u32 },
     /// Edge uses an LZB track type, but the line places no line conductor.
     LzbTypeWithoutConductor { edge: u32 },
     /// Scenery object outside its track (bad edge index or `s` beyond the length).
@@ -559,6 +773,15 @@ impl LineSource {
         self.devices.retain(|d| edge_map(d.edge).is_some());
         for d in &mut self.devices {
             d.edge = edge_map(d.edge).expect("kept devices sit on kept edges");
+        }
+        // Marked areas follow their edges: spans on a removed edge go with it, the rest
+        // move down. An area that loses every span stays — it is a named thing the author
+        // made, and an empty one is visibly empty in the panel rather than silently gone.
+        for area in &mut self.areas {
+            area.spans.retain(|span| edge_map(span.edge).is_some());
+            for span in &mut area.spans {
+                span.edge = edge_map(span.edge).expect("kept spans sit on kept edges");
+            }
         }
         // Scenery objects follow their edge; nothing references them by index.
         self.objects.retain(|o| edge_map(o.edge).is_some());
@@ -1230,6 +1453,7 @@ impl LineSource {
         let (cant_a, cant_b) = split_steps(&self.edges[index].cant, s);
         let (speed_a, speed_b) = split_steps(&self.edges[index].speed, s);
         let (type_a, type_b) = split_steps(&self.edges[index].track_type, s);
+        let (power_a, power_b) = split_steps(&self.edges[index].electrification, s);
 
         for d in &mut self.devices {
             if d.edge as usize == index && d.s >= s {
@@ -1259,6 +1483,29 @@ impl LineSource {
                 }
             }
         }
+        // A marked area follows the cut: what lay beyond it moves to the second half, and
+        // a span straddling the cut becomes two — the marking on the map does not move.
+        for area in &mut self.areas {
+            let mut added = Vec::new();
+            for span in &mut area.spans {
+                if span.edge as usize != index {
+                    continue;
+                }
+                if span.from >= s {
+                    span.edge = new_index;
+                    span.from -= s;
+                    span.to -= s;
+                } else if span.to > s {
+                    added.push(AreaSpan {
+                        edge: new_index,
+                        from: 0.0,
+                        to: span.to - s,
+                    });
+                    span.to = s;
+                }
+            }
+            area.spans.extend(added);
+        }
         // Both halves stay one occupancy unit — section ids keep their meaning.
         for section in &mut self.sections {
             if section.edges.contains(&(index as u32)) {
@@ -1275,6 +1522,7 @@ impl LineSource {
         self.edges[index].cant = cant_a;
         self.edges[index].speed = speed_a;
         self.edges[index].track_type = type_a;
+        self.edges[index].electrification = power_a;
         self.edges.push(EdgeSource {
             from: joint,
             to: old_to,
@@ -1284,6 +1532,7 @@ impl LineSource {
             cant: cant_b,
             speed: speed_b,
             track_type: type_b,
+            electrification: power_b,
         });
 
         // Followers continued from the old end, which now belongs to the second
@@ -1369,6 +1618,32 @@ impl LineSource {
             .iter()
             .map(|e| e.segments.iter().map(|g| g.len).sum())
             .collect();
+
+        // Marked areas: on their track, reaching the line, and naming a type that exists.
+        for (i, area) in self.areas.iter().enumerate() {
+            let index = i as u32;
+            let off = area.spans.iter().any(|span| {
+                match lengths.get(span.edge as usize) {
+                    None => true,
+                    // A stretch that starts past the end of its track marks nothing; one
+                    // that runs past it is simply clamped and is not worth a finding.
+                    Some(length) => span.from >= *length || span.to <= 0.0 || span.to <= span.from,
+                }
+            });
+            if off {
+                issues.push(RuleIssue::AreaOffTrack { area: index });
+            }
+            if area.spans.is_empty() || !area.sets_anything() {
+                issues.push(RuleIssue::AreaWithoutEffect { area: index });
+            }
+            if area
+                .track_type
+                .as_ref()
+                .is_some_and(|name| name != DEFAULT_TRACK_TYPE && !types.contains_key(name))
+            {
+                issues.push(RuleIssue::AreaUnknownTrackType { area: index });
+            }
+        }
 
         let mut magnets: Vec<MagnetPayload> = Vec::new();
         for (i, d) in self.devices.iter().enumerate() {
@@ -1523,22 +1798,83 @@ impl LineSource {
                 .get(e.to as usize)
                 .ok_or(CompileError::UnknownNode(e.to))?;
             let mut edge = TrackEdge::new(EdgeId(0), from, to, anchor, heading, e.segments.clone());
-            if !e.grade.is_empty() {
-                edge = edge.with_grade(StepProfile::new(e.grade.clone()));
+            // Marked areas are laid over the edge's own profiles, in file order, so a
+            // later area wins where two of them overlap.
+            let length: f64 = e.segments.iter().map(|g| g.len).sum();
+            let spans = |pick: &dyn Fn(&TrackAreaSource) -> Option<f64>| -> Vec<(f64, f64, f64)> {
+                self.areas
+                    .iter()
+                    .flat_map(|area| {
+                        let value = pick(area);
+                        area.spans
+                            .iter()
+                            .filter(move |span| span.edge as usize == i)
+                            .filter_map(move |span| Some((span.from, span.to, value?)))
+                    })
+                    .collect()
+            };
+
+            let grade = overlay_steps(&e.grade, 0.0, &spans(&|a| a.grade), length);
+            if !grade.is_empty() {
+                edge = edge.with_grade(StepProfile::new(grade));
             }
-            if !e.cant.is_empty() {
-                edge = edge.with_cant(StepProfile::new(e.cant.clone()));
+            let cant = overlay_steps(&e.cant, 0.0, &spans(&|a| a.cant), length);
+            if !cant.is_empty() {
+                edge = edge.with_cant(StepProfile::new(cant));
             }
-            if !e.speed.is_empty() {
-                edge = edge.with_speed(StepProfile::new(e.speed.clone()));
+            let speed = overlay_steps(&e.speed, DEFAULT_SPEED, &spans(&|a| a.speed), length);
+            if !speed.is_empty() {
+                edge = edge.with_speed(StepProfile::new(speed));
             }
-            if !e.track_type.is_empty() {
-                let steps = e
-                    .track_type
+
+            let type_spans: Vec<(f64, f64, String)> = self
+                .areas
+                .iter()
+                .flat_map(|area| {
+                    let name = area.track_type.clone();
+                    area.spans
+                        .iter()
+                        .filter(move |span| span.edge as usize == i)
+                        .filter_map(move |span| Some((span.from, span.to, name.clone()?)))
+                })
+                .collect();
+            let types = overlay_steps(
+                &e.track_type,
+                DEFAULT_TRACK_TYPE.to_string(),
+                &type_spans,
+                length,
+            );
+            if !types.is_empty() {
+                let steps = types
                     .iter()
                     .map(|(s, name)| (*s, intern(&mut type_names, name)))
                     .collect();
                 edge = edge.with_track_type(StepProfile::new(steps));
+            }
+
+            let power_spans: Vec<(f64, f64, String)> = self
+                .areas
+                .iter()
+                .flat_map(|area| {
+                    let id = area.electrification.clone();
+                    area.spans
+                        .iter()
+                        .filter(move |span| span.edge as usize == i)
+                        .filter_map(move |span| Some((span.from, span.to, id.clone()?)))
+                })
+                .collect();
+            let power = overlay_steps(
+                &e.electrification,
+                self.electrification.clone(),
+                &power_spans,
+                length,
+            );
+            if !power.is_empty() {
+                let steps = power
+                    .iter()
+                    .map(|(s, id)| (*s, track_model::electrification_from_id(id)))
+                    .collect();
+                edge = edge.with_electrification(StepProfile::new(steps));
             }
             edge_ids.push(net.add_edge(edge));
         }
@@ -1547,6 +1883,9 @@ impl LineSource {
             types.extend(type_names.iter().map(|n| TrackType::placeholder(n)));
             net.set_types(types);
         }
+        net.set_default_electrification(track_model::electrification_from_id(
+            &self.electrification,
+        ));
 
         // Wire up the switches.
         for (i, n) in self.nodes.iter().enumerate() {
@@ -1888,6 +2227,7 @@ mod tests {
             cant: vec![],
             speed: vec![],
             track_type: vec![],
+            electrification: Vec::new(),
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -2004,6 +2344,7 @@ mod tests {
             cant: vec![],
             speed: vec![],
             track_type: vec![],
+            electrification: Vec::new(),
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -2046,6 +2387,7 @@ mod tests {
                 cant: vec![],
                 speed: vec![],
                 track_type: vec![],
+                electrification: Vec::new(),
             });
         }
         line.nodes[buffer as usize] = NodeSource::Switch {
@@ -2105,6 +2447,7 @@ mod tests {
             cant: vec![],
             speed: vec![],
             track_type: vec![],
+            electrification: Vec::new(),
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -2213,6 +2556,7 @@ mod tests {
         let mut line = LineSource {
             name: "turnout".into(),
             geoid_offset: 46.0,
+            electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
             nodes: vec![
                 NodeSource::Buffer,
                 NodeSource::Switch {
@@ -2237,6 +2581,7 @@ mod tests {
                     cant: vec![],
                     speed: vec![],
                     track_type: vec![],
+                    electrification: Vec::new(),
                 },
                 EdgeSource {
                     from: 1,
@@ -2247,6 +2592,7 @@ mod tests {
                     cant: vec![],
                     speed: vec![],
                     track_type: vec![],
+                    electrification: Vec::new(),
                 },
                 EdgeSource {
                     from: 1,
@@ -2257,6 +2603,7 @@ mod tests {
                     cant: vec![],
                     speed: vec![],
                     track_type: vec![],
+                    electrification: Vec::new(),
                 },
             ],
             devices: vec![],
@@ -2266,6 +2613,7 @@ mod tests {
             terrain: vec![],
             heights: vec![],
             sections: vec![],
+            areas: Vec::new(),
             signals: vec![],
             routes: vec![],
             boundaries: vec![],

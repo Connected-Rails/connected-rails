@@ -8,6 +8,7 @@
 //! Without a line file the example line is loaded. The overlay configuration is created
 //! on first start and can be reloaded at runtime (F5).
 
+mod areas;
 mod gizmo;
 mod overlay;
 mod signals;
@@ -606,6 +607,17 @@ fn rebuild(
         signal_models.0.clear();
         lamp_images.0.clear();
     }
+    // The painted areas go over whichever of the two the map is showing — over the
+    // schematic ribbon and over the built track alike, because the marking belongs to the
+    // line and not to the way it happens to be drawn.
+    spawn_areas(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &line.source,
+        &line.net,
+        &origin.0,
+    );
     spawn_markers(
         &mut commands,
         &mut meshes,
@@ -633,8 +645,8 @@ fn rebuild(
 }
 
 /// Track ribbon mesh of one edge between `s0` and `s1` in its anchor frame,
-/// `lift` metres above the plane.
-fn ribbon_mesh(edge: &TrackEdge, lift: f64, s0: f64, s1: f64) -> Mesh {
+/// `half_width` metres to either side and `lift` metres above the plane.
+fn ribbon_mesh(edge: &TrackEdge, half_width: f64, lift: f64, s0: f64, s1: f64) -> Mesh {
     let frame = EnuFrame::at(edge.anchor);
     let steps = (((s1 - s0) / 5.0).ceil() as usize).max(2);
     let mut positions = Vec::with_capacity((steps + 1) * 2);
@@ -644,7 +656,7 @@ fn ribbon_mesh(edge: &TrackEdge, lift: f64, s0: f64, s1: f64) -> Mesh {
         let center = frame.to_local(pose.pos);
         let tangent = frame.dir_to_local(pose.tangent);
         let up = frame.dir_to_local(pose.up);
-        let right = tangent.cross(up).normalize_or_zero() * 1.5;
+        let right = tangent.cross(up).normalize_or_zero() * half_width;
         for side in [-1.0, 1.0] {
             let p = center + right * side + DVec3::new(0.0, 0.0, lift);
             positions.push([p.x as f32, p.z as f32, -p.y as f32]);
@@ -697,7 +709,55 @@ fn spawn_track(
                 .get(index as usize)
                 .unwrap_or(&type_materials[0]);
             commands.spawn((
-                Mesh3d(meshes.add(ribbon_mesh(edge, 0.4, s0, s1))),
+                Mesh3d(meshes.add(ribbon_mesh(edge, 1.5, 0.4, s0, s1))),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(translation).with_rotation(rotation),
+                WorldAnchored {
+                    anchor: edge.anchor,
+                },
+            ));
+        }
+    }
+}
+
+/// The marked areas as what they are: a wide coloured stroke painted over the
+/// track, one quad per stretch, in the colour the area wears.
+///
+/// Drawn a little above the track ribbon and a good deal wider than it, and
+/// half transparent so the track underneath still reads — a highlighter over a
+/// map, which is exactly the gesture that put it there. Where two areas overlap
+/// the later one is drawn last and therefore wins, the same rule the compile
+/// uses, so the map shows what the line will get.
+fn spawn_areas(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    source: &LineSource,
+    net: &TrackNetwork,
+    origin: &RenderOrigin,
+) {
+    for area in &source.areas {
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgba(area.color.0, area.color.1, area.color.2, 0.55),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        for span in &area.spans {
+            let Some(edge) = net.edges().get(span.edge as usize) else {
+                continue;
+            };
+            let (s0, s1) = (
+                span.from.clamp(0.0, edge.length()),
+                span.to.clamp(0.0, edge.length()),
+            );
+            if s1 <= s0 {
+                continue;
+            }
+            let frame = EnuFrame::at(edge.anchor);
+            let (translation, rotation) = origin.frame_transform(&frame);
+            commands.spawn((
+                Mesh3d(meshes.add(ribbon_mesh(edge, area.width, tools::AREA_LIFT, s0, s1))),
                 MeshMaterial3d(material.clone()),
                 Transform::from_translation(translation).with_rotation(rotation),
                 WorldAnchored {
@@ -737,7 +797,7 @@ fn spawn_ghost(
         let frame = EnuFrame::at(edge.anchor);
         let (translation, rotation) = origin.0.frame_transform(&frame);
         commands.spawn((
-            Mesh3d(meshes.add(ribbon_mesh(edge, 0.25, 0.0, edge.length()))),
+            Mesh3d(meshes.add(ribbon_mesh(edge, 1.5, 0.25, 0.0, edge.length()))),
             MeshMaterial3d(material.clone()),
             Transform::from_translation(translation).with_rotation(rotation),
             WorldAnchored {

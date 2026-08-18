@@ -2,6 +2,7 @@
 
 use crate::device::{DeviceId, TracksideDevice};
 use crate::geometry::{Segment, eval_chain};
+use crate::power::{Electrification, PowerSystem};
 use crate::profile::StepProfile;
 use crate::track_type::TrackType;
 use glam::DVec3;
@@ -193,6 +194,11 @@ pub struct TrackEdge {
     /// Track type over `s` — indices into [`TrackNetwork::types`], 0 = default.
     #[serde(default = "default_track_type")]
     pub track_type: StepProfile<u32>,
+    /// What hangs over this edge, section by section. `None` = the edge says nothing and
+    /// [`TrackNetwork::default_electrification`] applies, which is how a line states its
+    /// electrification once and only names the exceptions.
+    #[serde(default)]
+    pub electrification: Option<StepProfile<Electrification>>,
     #[serde(skip)]
     frame: Option<EnuFrame>,
     #[serde(skip)]
@@ -223,6 +229,7 @@ impl TrackEdge {
             cant: StepProfile::constant(0.0),
             speed: StepProfile::constant(160.0),
             track_type: default_track_type(),
+            electrification: None,
             frame: None,
             length: 0.0,
         };
@@ -248,6 +255,36 @@ impl TrackEdge {
     pub fn with_track_type(mut self, track_type: StepProfile<u32>) -> Self {
         self.track_type = track_type;
         self
+    }
+
+    pub fn with_electrification(mut self, electrification: StepProfile<Electrification>) -> Self {
+        self.electrification = Some(electrification);
+        self
+    }
+
+    /// Sections of this edge by electrification: `(s from, s to, system)`, clamped to the
+    /// edge and with consecutive equal systems merged — what the editor tints and what a
+    /// catenary mesh is split at. Empty where the edge states nothing.
+    pub fn electrification_runs(&self) -> Vec<(f64, f64, Electrification)> {
+        let Some(profile) = &self.electrification else {
+            return Vec::new();
+        };
+        let steps = profile.steps();
+        let mut runs: Vec<(f64, f64, Electrification)> = Vec::with_capacity(steps.len());
+        for (i, (s, system)) in steps.iter().enumerate() {
+            // The first entry also applies before its own `s` (StepProfile).
+            let from = if i == 0 { 0.0 } else { *s };
+            let to = steps.get(i + 1).map_or(self.length, |n| n.0);
+            let (from, to) = (from.clamp(0.0, self.length), to.clamp(0.0, self.length));
+            if to <= from {
+                continue;
+            }
+            match runs.last_mut() {
+                Some(last) if last.2 == *system => last.1 = to,
+                _ => runs.push((from, to, *system)),
+            }
+        }
+        runs
     }
 
     /// Sections of this edge by track type: `(s from, s to, type index)`,
@@ -335,6 +372,12 @@ pub struct TrackNetwork {
     /// deserialize into the default table.
     #[serde(default = "default_types")]
     types: Vec<TrackType>,
+    /// What the line is electrified with where an edge says nothing. A line states this
+    /// once and names only its exceptions — an unelectrified branch, a system boundary.
+    /// Lines saved before there was any electrification read as the German main line, so
+    /// that what ran on them keeps running.
+    #[serde(default = "default_electrification")]
+    default_electrification: Electrification,
     /// Per edge, the device IDs sorted by `s`.
     #[serde(skip)]
     devices_by_edge: Vec<Vec<DeviceId>>,
@@ -344,6 +387,10 @@ fn default_types() -> Vec<TrackType> {
     vec![TrackType::default()]
 }
 
+fn default_electrification() -> Electrification {
+    Some(PowerSystem::Ac15kv)
+}
+
 impl Default for TrackNetwork {
     fn default() -> Self {
         Self {
@@ -351,6 +398,7 @@ impl Default for TrackNetwork {
             nodes: Vec::new(),
             devices: Vec::new(),
             types: default_types(),
+            default_electrification: default_electrification(),
             devices_by_edge: Vec::new(),
         }
     }
@@ -364,6 +412,40 @@ impl TrackNetwork {
     /// The track-type table; [`TrackEdge::track_type`] indexes into it.
     pub fn types(&self) -> &[TrackType] {
         &self.types
+    }
+
+    /// What the line is electrified with where an edge states nothing.
+    pub fn default_electrification(&self) -> Electrification {
+        self.default_electrification
+    }
+
+    pub fn set_default_electrification(&mut self, value: Electrification) {
+        self.default_electrification = value;
+    }
+
+    /// Gives one edge an electrification of its own; `None` puts it back on the line's
+    /// default. A compiled line sets this from its source, and a scenario may change it —
+    /// an isolated section is a switching operation, not a rebuild.
+    pub fn set_electrification(
+        &mut self,
+        edge: EdgeId,
+        profile: Option<StepProfile<Electrification>>,
+    ) {
+        if let Some(e) = self.edges.get_mut(edge.index()) {
+            e.electrification = profile;
+        }
+    }
+
+    /// What hangs over `edge` at arc length `s` — the edge's own profile where it has one,
+    /// the line's default where it has not, and `None` where there is no wire.
+    pub fn electrification_at(&self, edge: EdgeId, s: f64) -> Electrification {
+        match self.edges.get(edge.index()) {
+            Some(e) => match &e.electrification {
+                Some(profile) => profile.at(s),
+                None => self.default_electrification,
+            },
+            None => None,
+        }
     }
 
     /// Replaces the track-type table. Index 0 should stay a default type;
@@ -722,5 +804,83 @@ mod tests {
             Err(SwitchError::Locked)
         );
         assert_eq!(sw.position, SwitchPosition::Diverging);
+    }
+}
+
+#[cfg(test)]
+mod electrification_tests {
+    use super::*;
+    use crate::geometry::Segment;
+    use world_coords::EcefPos;
+
+    fn edge() -> TrackEdge {
+        TrackEdge::new(
+            EdgeId(0),
+            NodeId(0),
+            NodeId(1),
+            EcefPos::default(),
+            0.0,
+            vec![Segment::straight(1000.0)],
+        )
+    }
+
+    fn net(edge: TrackEdge) -> TrackNetwork {
+        let mut net = TrackNetwork::new();
+        net.add_node(NodeKind::Buffer);
+        net.add_node(NodeKind::Buffer);
+        net.add_edge(edge);
+        net
+    }
+
+    #[test]
+    fn an_edge_without_a_profile_follows_the_line() {
+        let mut net = net(edge());
+        assert_eq!(
+            net.electrification_at(EdgeId(0), 500.0),
+            Some(PowerSystem::Ac15kv)
+        );
+        net.set_default_electrification(None);
+        assert_eq!(net.electrification_at(EdgeId(0), 500.0), None);
+        // An edge that does not exist carries no wire either.
+        assert_eq!(net.electrification_at(EdgeId(7), 0.0), None);
+    }
+
+    #[test]
+    fn an_edge_profile_overrides_the_line_section_by_section() {
+        let edge = edge().with_electrification(StepProfile::new(vec![
+            (0.0, Some(PowerSystem::Ac15kv)),
+            (400.0, None),
+            (600.0, Some(PowerSystem::Dc1500v)),
+        ]));
+        let net = net(edge);
+        assert_eq!(
+            net.electrification_at(EdgeId(0), 100.0),
+            Some(PowerSystem::Ac15kv)
+        );
+        assert_eq!(net.electrification_at(EdgeId(0), 500.0), None);
+        assert_eq!(
+            net.electrification_at(EdgeId(0), 900.0),
+            Some(PowerSystem::Dc1500v)
+        );
+    }
+
+    #[test]
+    fn the_runs_merge_equal_neighbours_and_clamp_to_the_edge() {
+        let wired = edge().with_electrification(StepProfile::new(vec![
+            (0.0, Some(PowerSystem::Ac15kv)),
+            (300.0, Some(PowerSystem::Ac15kv)),
+            (500.0, None),
+            (5000.0, Some(PowerSystem::Dc3kv)),
+        ]));
+        let runs = wired.electrification_runs();
+        assert_eq!(
+            runs,
+            vec![
+                (0.0, 500.0, Some(PowerSystem::Ac15kv)),
+                (500.0, 1000.0, None),
+            ]
+        );
+        // An edge that states nothing has no runs of its own to draw.
+        assert!(edge().electrification_runs().is_empty());
     }
 }

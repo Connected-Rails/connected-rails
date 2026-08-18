@@ -202,6 +202,56 @@ pub struct VehicleModel {
     pub displays: Vec<crate::cab::DisplaySpec>,
 }
 
+/// One axle of the running gear.
+///
+/// The running gear is what carries the vehicle's forces to the rail, and it does so one
+/// axle at a time: each of them has its own share of the weight, and therefore its own
+/// adhesion limit and its own slip. A locomotive on a greasy rail loses an axle, not the
+/// whole machine — which is exactly what a driver feels and what a wheel slip protection
+/// is there to answer.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AxleSpec {
+    /// The axle takes traction.
+    pub driven: bool,
+    /// Share of the vehicle's mass this axle carries (the shares sum to 1).
+    pub load_share: f64,
+}
+
+impl AxleSpec {
+    /// A layout of `axles` axles of which the share `driven` of the weight is on driven
+    /// ones — what a vehicle that states only those two numbers has.
+    ///
+    /// The driven axles are the leading ones and carry exactly the stated share between
+    /// them, so `adhesive_mass()` comes out at the figure the data sheet gives whatever the
+    /// axle count divides into.
+    pub fn layout(axles: u8, driven: f64) -> Vec<AxleSpec> {
+        let count = axles as usize;
+        if count == 0 {
+            return Vec::new();
+        }
+        let driven_share = driven.clamp(0.0, 1.0);
+        let driven_count = if driven_share <= 0.0 {
+            0
+        } else {
+            ((count as f64 * driven_share).round() as usize).clamp(1, count)
+        };
+        let idle_count = count - driven_count;
+        (0..count)
+            .map(|i| {
+                let driven = i < driven_count;
+                let load_share = if driven {
+                    driven_share / driven_count as f64
+                } else if idle_count > 0 {
+                    (1.0 - driven_share) / idle_count as f64
+                } else {
+                    0.0
+                };
+                AxleSpec { driven, load_share }
+            })
+            .collect()
+    }
+}
+
 /// Static vehicle description (from the vehicle database, RON).
 ///
 /// `PartialEq` compares the fields bit for bit, floats included. That is what
@@ -305,6 +355,29 @@ pub struct VehicleSpec {
     /// runtime format.
     #[serde(default)]
     pub graph: Option<crate::blocks::VehicleGraph>,
+    /// Control logic compiled out of the diagram's logic blocks
+    /// ([`crate::signal`]). Empty = the vehicle runs on its hardwired behaviour.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::signal::SignalProgram::is_empty"
+    )]
+    pub signal: crate::signal::SignalProgram,
+    /// Battery and current collector — the vehicle's own electrical system, as distinct
+    /// from its traction chains.
+    #[serde(default)]
+    pub supply: crate::electric::PowerSupply,
+    /// Sand the sander lays down [kg/min]; 0 = no sanding gear.
+    #[serde(default = "default_sand_rate")]
+    pub sand_rate: f64,
+    /// The running gear axle by axle. Empty = derived from `axles` and
+    /// `adhesive_mass_fraction`, which is what a vehicle that states only those two has;
+    /// the diagram's `axle` blocks fill it in where the layout is not that even.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub running_gear: Vec<AxleSpec>,
+}
+
+fn default_sand_rate() -> f64 {
+    4.0
 }
 
 impl VehicleSpec {
@@ -406,6 +479,16 @@ impl VehicleSpec {
     /// Axle load [t] at a total mass of `mass_kg` — the curve of the friction family the
     /// vehicle runs on ([`crate::brakes::BrakeKind::friction_factor_at`]). Without an
     /// axle count in the data sheet it stays on the reference curve.
+    /// The running gear of this vehicle: what it states, or the even layout its axle
+    /// count and adhesive mass imply.
+    pub fn running_gear(&self) -> Vec<AxleSpec> {
+        if self.running_gear.is_empty() {
+            AxleSpec::layout(self.axles, self.adhesive_mass_fraction)
+        } else {
+            self.running_gear.clone()
+        }
+    }
+
     pub fn axle_load_t(&self, mass_kg: f64) -> f64 {
         if self.axles == 0 {
             return crate::brakes::REFERENCE_AXLE_LOAD;
@@ -430,6 +513,10 @@ impl Default for VehicleSpec {
             brake: BrakeSpec::from_brake_weight(40.0, BrakeKind::Disc),
             drives: Vec::new(),
             legacy_traction: None,
+            signal: crate::signal::SignalProgram::default(),
+            supply: crate::electric::PowerSupply::default(),
+            sand_rate: default_sand_rate(),
+            running_gear: Vec::new(),
             coupler: CouplerSpec::screw(),
             adhesive_mass_fraction: 0.0,
             slip_protection: SlipProtection::None,
@@ -509,14 +596,30 @@ pub struct Vehicle {
     /// Position of the passenger doors (only used with `spec.passenger_doors`).
     #[serde(default)]
     pub doors: VehicleDoors,
+    /// The running gear, axle by axle.
+    #[serde(default)]
+    pub axles: Vec<AxleState>,
+    /// Memory of the vehicle's signal graph.
+    #[serde(default)]
+    pub signal: crate::signal::SignalState,
+    /// What the signal graph wrote last step.
+    #[serde(default)]
+    pub signal_out: crate::signal::SignalOutputs,
 }
 
 impl Vehicle {
     pub fn new(spec: VehicleSpec, pos: TrackPosition) -> Self {
         Self {
             brake: BrakeState::new(&spec.brake),
+            axles: spec
+                .running_gear()
+                .into_iter()
+                .map(AxleState::new)
+                .collect(),
             safety: spec.safety.build(),
             traction: TractionState::default(),
+            signal: crate::signal::SignalState::new(&spec.signal),
+            signal_out: crate::signal::SignalOutputs::default(),
             spec,
             load: 0.0,
             x: 0.0,
@@ -541,12 +644,46 @@ impl Vehicle {
     }
 
     /// Mass on driven axles [kg].
+    /// Mass on the driven axles [kg] — the sum of their load shares, which for a vehicle
+    /// that states nothing but `adhesive_mass_fraction` is exactly that fraction.
     pub fn adhesive_mass(&self) -> f64 {
-        self.mass() * self.spec.adhesive_mass_fraction
+        let share: f64 = self
+            .axles
+            .iter()
+            .filter(|a| a.spec.driven)
+            .map(|a| a.spec.load_share)
+            .sum();
+        self.mass() * share
     }
 
     pub fn is_powered(&self) -> bool {
         self.spec.powered()
+    }
+}
+
+/// Running state of one axle.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AxleState {
+    pub spec: AxleSpec,
+    /// Slip speed of this axle [m/s]: positive = spinning under traction, negative =
+    /// sliding under the brake.
+    pub slip: f64,
+    /// Tractive effort this axle is actually putting on the rail [N].
+    #[serde(default)]
+    pub tractive_effort: f64,
+    /// Brake force this axle is actually putting on the rail [N].
+    #[serde(default)]
+    pub brake_effort: f64,
+}
+
+impl AxleState {
+    pub fn new(spec: AxleSpec) -> Self {
+        Self {
+            spec,
+            slip: 0.0,
+            tractive_effort: 0.0,
+            brake_effort: 0.0,
+        }
     }
 }
 
@@ -600,13 +737,27 @@ impl Train {
         let couplers = vec![CouplerState::default(); vehicles.len().saturating_sub(1)];
         // The driver's desk of the leading vehicle carries the door control.
         let doors = DoorControl::new(vehicles.first().map(|v| v.spec.doors).unwrap_or_default());
-        Self {
+        let mut train = Self {
             vehicles,
             couplers,
             cab: 0,
             rail: RailCondition::Dry,
             number: String::new(),
             doors,
+        };
+        train.couple_brake_pipe();
+        train
+    }
+
+    /// Couples the brake pipe through the whole train: every cock between two vehicles is
+    /// opened, the two at the ends stay shut. That is what a shunter does when the train is
+    /// made up, and what [`crate::brakes`] needs before the pipe will charge.
+    pub fn couple_brake_pipe(&mut self) {
+        let n = self.vehicles.len();
+        for (i, vehicle) in self.vehicles.iter_mut().enumerate() {
+            // A cock can only be opened where the pipe actually reaches the end.
+            vehicle.brake.cock_front = i > 0 && vehicle.spec.brake.pipe_front;
+            vehicle.brake.cock_rear = i + 1 < n && vehicle.spec.brake.pipe_rear;
         }
     }
 

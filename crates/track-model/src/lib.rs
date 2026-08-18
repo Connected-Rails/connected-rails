@@ -7,6 +7,7 @@ pub mod device;
 pub mod geometry;
 pub mod network;
 pub mod position;
+pub mod power;
 pub mod profile;
 pub mod track_object;
 pub mod track_type;
@@ -18,6 +19,7 @@ pub use network::{
     TrackNetwork, TrackNode, TrackPose,
 };
 pub use position::{AdvanceError, PassedDevice, TrackPosition};
+pub use power::{Electrification, PowerSystem, electrification_from_id, electrification_id};
 pub use profile::StepProfile;
 pub use track_object::TrackObject;
 pub use track_type::TrackType;

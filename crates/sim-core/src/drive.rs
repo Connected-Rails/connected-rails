@@ -93,6 +93,9 @@ pub struct SeriesMotor {
     pub wheel_diameter: f64,
     /// Efficiency of gearing and motor.
     pub efficiency: f64,
+    /// Thermal behaviour of the motors; `None` = they never get hot.
+    #[serde(default)]
+    pub thermal: Option<Thermal>,
 }
 
 impl SeriesMotor {
@@ -101,15 +104,17 @@ impl SeriesMotor {
         self.flux_constant * i / (1.0 + i / self.saturation_current.max(1.0)) * field
     }
 
-    /// Armature current [A] at terminal voltage `u` [V] and angular velocity `omega` [rad/s].
+    /// Armature current [A] at terminal voltage `u` [V] and angular velocity `omega`
+    /// [rad/s], with `r_ext` [Ω] of starting resistance in the same string.
     ///
-    /// `U = I·R + kΦ(I)·ω` grows strictly monotonically in `I`, so bisection converges;
-    /// 30 halvings resolve the search range to well below a milliampere.
-    fn current(&self, u: f64, omega: f64, field: f64) -> f64 {
+    /// `U = I·(R + R_ext) + kΦ(I)·ω` grows strictly monotonically in `I`, so bisection
+    /// converges; 30 halvings resolve the search range to well below a milliampere.
+    fn current(&self, u: f64, omega: f64, field: f64, r_ext: f64) -> f64 {
+        let r = self.resistance + r_ext.max(0.0);
         let (mut lo, mut hi) = (0.0, self.max_current * 4.0);
         for _ in 0..30 {
             let mid = 0.5 * (lo + hi);
-            if mid * self.resistance + self.flux(mid, field) * omega < u {
+            if mid * r + self.flux(mid, field) * omega < u {
                 lo = mid;
             } else {
                 hi = mid;
@@ -121,18 +126,42 @@ impl SeriesMotor {
     /// Tractive effort [N] and armature current [A] at speed `v` [m/s], with the tap
     /// changer at `ratio` (0…1) of the full voltage and the field at `field`.
     pub fn effort(&self, v: f64, ratio: f64, field: f64) -> (f64, f64) {
+        self.effort_with(v, ratio, field, 0.0)
+    }
+
+    /// The same with a starting resistance `r_ext` [Ω] in series with each motor. That is
+    /// the whole of what a resistance start does: the resistor eats the voltage the back
+    /// EMF is not yet eating, and the current stays where the contactors want it.
+    pub fn effort_with(&self, v: f64, ratio: f64, field: f64, r_ext: f64) -> (f64, f64) {
         let radius = (self.wheel_diameter / 2.0).max(0.05);
         let omega = v.abs() / radius * self.gear_ratio;
         let u = self.max_voltage * ratio.clamp(0.0, 1.0);
-        let current = self.current(u, omega, field).min(self.max_current);
+        let current = self.current(u, omega, field, r_ext).min(self.max_current);
         let torque = self.flux(current, field) * current;
         let force = torque * self.gear_ratio / radius * self.count as f64 * self.efficiency;
         (force, current)
     }
 
+    /// Heat the motors and a starting resistance put out at `current` [A] [W].
+    pub fn losses(&self, current: f64, r_ext: f64) -> f64 {
+        let r = self.resistance + r_ext.max(0.0);
+        current * current * r * self.count.max(1) as f64
+    }
+
     /// Best field stage at this operating point: the strongest field wins at a stand,
     /// the weakest one keeps the effort up at speed. Returns (force, current, field).
     pub fn best_effort(&self, v: f64, ratio: f64, power_limit: f64) -> (f64, f64, f64) {
+        self.best_effort_with(v, ratio, power_limit, 0.0)
+    }
+
+    /// The same with a starting resistance in the string.
+    pub fn best_effort_with(
+        &self,
+        v: f64,
+        ratio: f64,
+        power_limit: f64,
+        r_ext: f64,
+    ) -> (f64, f64, f64) {
         let mut best = (0.0, 0.0, 1.0);
         let steps: &[f64] = if self.field_steps.is_empty() {
             &[1.0]
@@ -140,7 +169,7 @@ impl SeriesMotor {
             &self.field_steps
         };
         for &field in steps {
-            let (force, current) = self.effort(v, ratio, field);
+            let (force, current) = self.effort_with(v, ratio, field, r_ext);
             // The transformer's continuous rating limits the power, not the motor.
             let force = force.min(power_limit / v.abs().max(0.5));
             if force > best.0 {
@@ -148,6 +177,430 @@ impl SeriesMotor {
             }
         }
         best
+    }
+}
+
+/// How the traction motors of a series-wound drive are connected to each other.
+///
+/// The classic way of starting a DC drive: all motors in series first, so each one sees a
+/// fraction of the line voltage, then regrouped as the train speeds up. Every regrouping is
+/// a step in the tractive effort curve — the sawtooth of an old electric loco's data sheet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MotorGroup {
+    /// All motors in one series string.
+    Series,
+    /// Two strings in parallel.
+    SeriesParallel,
+    /// Every motor across the full voltage.
+    #[default]
+    Parallel,
+}
+
+impl MotorGroup {
+    /// How many motors share the supply voltage in one string.
+    pub fn in_series(self, count: u32) -> f64 {
+        let count = count.max(1) as f64;
+        match self {
+            MotorGroup::Series => count,
+            MotorGroup::SeriesParallel => (count / 2.0).max(1.0),
+            MotorGroup::Parallel => 1.0,
+        }
+    }
+
+    /// i18n key of the grouping's name.
+    pub fn key(self) -> &'static str {
+        match self {
+            MotorGroup::Series => "grp-series",
+            MotorGroup::SeriesParallel => "grp-series-parallel",
+            MotorGroup::Parallel => "grp-parallel",
+        }
+    }
+}
+
+/// Starting equipment of a DC drive: resistors that are cut out step by step, and the
+/// regroupings between them.
+///
+/// Without it a series-wound drive is nailed to the tap changer's voltage; with it the
+/// contactor sequence of a DC loco or tramcar can be written down as it really runs —
+/// notch up, resistors out, regroup, resistors out again, field weakening last.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Starter {
+    /// Series resistance per step [Ω], strongest first, ending at 0. One entry per
+    /// contactor notch; the last one is the resistance-free running position.
+    pub resistor_steps: Vec<f64>,
+    /// Groupings in the order they are taken up.
+    pub groups: Vec<MotorGroup>,
+    /// Time per contactor step [s].
+    pub step_time: f64,
+    /// A chopper replaces the resistors: the voltage is set continuously instead of in
+    /// steps, and nothing is burnt in a resistor bank.
+    #[serde(default)]
+    pub chopper: bool,
+    /// Thermal behaviour of the resistor bank; `None` = the resistors never get hot.
+    #[serde(default)]
+    pub thermal: Option<Thermal>,
+}
+
+impl Default for Starter {
+    fn default() -> Self {
+        Self {
+            resistor_steps: vec![1.6, 1.1, 0.75, 0.5, 0.3, 0.15, 0.0],
+            groups: vec![MotorGroup::Series, MotorGroup::Parallel],
+            step_time: 1.2,
+            chopper: false,
+            thermal: None,
+        }
+    }
+}
+
+impl Starter {
+    /// Number of contactor positions: every grouping runs through every resistor step.
+    pub fn positions(&self) -> usize {
+        (self.resistor_steps.len().max(1)) * (self.groups.len().max(1))
+    }
+
+    /// Grouping and series resistance at contactor position `pos`.
+    pub fn at(&self, pos: usize) -> (MotorGroup, f64) {
+        let steps = self.resistor_steps.len().max(1);
+        let group = *self
+            .groups
+            .get(pos / steps)
+            .or_else(|| self.groups.last())
+            .unwrap_or(&MotorGroup::Parallel);
+        let resistance = self
+            .resistor_steps
+            .get(pos % steps)
+            .copied()
+            .unwrap_or(0.0)
+            .max(0.0);
+        (group, resistance)
+    }
+
+    /// Position the drive should be on at demand `notch` (0…1) — the driver's handle
+    /// commands a position, the contactors walk towards it with `step_time`.
+    pub fn target(&self, notch: f64) -> f64 {
+        (notch.clamp(0.0, 1.0) * (self.positions().saturating_sub(1)) as f64).max(0.0)
+    }
+}
+
+/// Thermal behaviour of a component that turns electricity into heat — traction motors,
+/// braking resistors, starting resistors.
+///
+/// One lumped mass with a cooling term. What it buys is the reason a rheostatic brake
+/// cannot be held for ever and why a loco that has been slogging derates: the resistor bank
+/// is a heat store, not a sink.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Thermal {
+    /// Heat capacity of the mass [J/K].
+    pub heat_capacity: f64,
+    /// Heat the cooling carries off per kelvin above ambient [W/K], with the blower running.
+    pub cooling: f64,
+    /// Share of `cooling` left with the blower off (natural convection).
+    #[serde(default)]
+    pub natural_share: f64,
+    /// Temperature at which derating starts [°C].
+    pub warn_temp: f64,
+    /// Temperature at which nothing is delivered any more [°C].
+    pub max_temp: f64,
+    /// Ambient temperature [°C].
+    pub ambient: f64,
+}
+
+impl Default for Thermal {
+    fn default() -> Self {
+        Self {
+            heat_capacity: 120_000.0,
+            cooling: 900.0,
+            natural_share: 0.15,
+            warn_temp: 250.0,
+            max_temp: 400.0,
+            ambient: 20.0,
+        }
+    }
+}
+
+impl Thermal {
+    /// New temperature [°C] after `dt` with `heat_w` going in and the blower at `blower`
+    /// (0…1).
+    pub fn step(&self, temp: f64, heat_w: f64, blower: f64, dt: f64) -> f64 {
+        let share = self.natural_share.clamp(0.0, 1.0);
+        let cooling = self.cooling * (share + (1.0 - share) * blower.clamp(0.0, 1.0));
+        let out = cooling * (temp - self.ambient);
+        temp + (heat_w - out) / self.heat_capacity.max(1.0) * dt
+    }
+
+    /// Factor on the deliverable effort at `temp` — 1 up to the warning temperature, then
+    /// linearly down to 0 at the limit.
+    pub fn derate(&self, temp: f64) -> f64 {
+        let span = (self.max_temp - self.warn_temp).max(1.0);
+        (1.0 - (temp - self.warn_temp) / span).clamp(0.0, 1.0)
+    }
+
+    /// Starting temperature of a cold vehicle.
+    pub fn cold(&self) -> f64 {
+        self.ambient
+    }
+}
+
+/// Three-phase induction motor (Asynchronmotor) behind a traction converter.
+///
+/// The torque follows Kloss's equation `M(s) = 2·M_K / (s/s_K + s_K/s)`, and the converter
+/// sets the stator frequency. That is what produces the three ranges of a modern tractive
+/// effort curve by itself, instead of the `v_pullout` fudge: constant effort while the
+/// converter still has voltage in hand, constant power in the field-weakening range, and
+/// the pull-out torque bending the curve down with 1/v² at the top.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AsyncMotor {
+    /// Number of motors in the vehicle.
+    pub count: u32,
+    /// Pole pairs.
+    pub pole_pairs: u32,
+    /// Rated torque per motor [N·m].
+    pub rated_torque: f64,
+    /// Pull-out torque as a multiple of the rated torque (2.2…3).
+    pub pullout_ratio: f64,
+    /// Slip at the pull-out torque.
+    pub pullout_slip: f64,
+    /// Stator frequency at which the converter reaches its full voltage [Hz]; above it the
+    /// field weakens.
+    pub rated_frequency: f64,
+    /// Highest stator frequency the converter can put out [Hz].
+    pub max_frequency: f64,
+    /// Gear ratio motor : wheelset.
+    pub gear_ratio: f64,
+    /// Wheel diameter [m].
+    pub wheel_diameter: f64,
+    /// Efficiency of converter, motor and gearing together.
+    pub efficiency: f64,
+    /// Thermal behaviour of the motors.
+    #[serde(default)]
+    pub thermal: Option<Thermal>,
+}
+
+impl Default for AsyncMotor {
+    fn default() -> Self {
+        Self {
+            count: 4,
+            pole_pairs: 2,
+            rated_torque: 5_800.0,
+            pullout_ratio: 2.6,
+            pullout_slip: 0.14,
+            rated_frequency: 60.0,
+            max_frequency: 160.0,
+            gear_ratio: 2.5,
+            wheel_diameter: 1.25,
+            efficiency: 0.9,
+            thermal: None,
+        }
+    }
+}
+
+impl AsyncMotor {
+    /// Rotor frequency [Hz] at road speed `v` [m/s].
+    pub fn rotor_frequency(&self, v: f64) -> f64 {
+        let radius = (self.wheel_diameter / 2.0).max(0.05);
+        v.abs() / radius * self.gear_ratio * self.pole_pairs.max(1) as f64 / TAU
+    }
+
+    /// Torque per motor [N·m] at slip `s` with the flux at `flux` (1 = full field).
+    pub fn torque(&self, s: f64, flux: f64) -> f64 {
+        let s_k = self.pullout_slip.max(1e-3);
+        let s = s.clamp(-4.0, 4.0);
+        if s.abs() < 1e-6 {
+            return 0.0;
+        }
+        // Pull-out torque scales with the square of the flux; the shape of the curve does not.
+        let m_k = self.pullout_ratio.max(1.0) * self.rated_torque * flux * flux;
+        2.0 * m_k / (s / s_k + s_k / s)
+    }
+
+    /// Flux the converter can still hold at stator frequency `f_s` [Hz] — full up to the
+    /// rated frequency, then falling with 1/f because the voltage has run out.
+    pub fn flux(&self, f_s: f64) -> f64 {
+        if f_s <= self.rated_frequency.max(1e-3) {
+            1.0
+        } else {
+            (self.rated_frequency / f_s).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Highest tractive effort [N] at speed `v` [m/s], and the slip it is reached at.
+    ///
+    /// The converter is free to put the slip wherever it likes up to the pull-out point;
+    /// what limits it is the stator frequency it can generate and the flux left at it.
+    pub fn best_effort(&self, v: f64) -> (f64, f64) {
+        let radius = (self.wheel_diameter / 2.0).max(0.05);
+        let f_r = self.rotor_frequency(v);
+        let s_k = self.pullout_slip.max(1e-3);
+        // Driving means the stator runs ahead of the rotor: f_s = f_r/(1 − s).
+        let f_s = (f_r / (1.0 - s_k)).min(self.max_frequency.max(1.0));
+        if f_s <= 0.0 {
+            return (0.0, 0.0);
+        }
+        // The slip that is actually left once the frequency ceiling bites.
+        let slip = if f_s > 0.0 {
+            ((f_s - f_r) / f_s).clamp(0.0, s_k)
+        } else {
+            0.0
+        };
+        let torque = self.torque(slip, self.flux(f_s));
+        let force =
+            torque * self.gear_ratio / radius * self.count.max(1) as f64 * self.efficiency.max(0.1);
+        (force.max(0.0), slip)
+    }
+
+    /// Tractive effort [N] the converter delivers at `demand` (0…1) of the available torque.
+    pub fn effort(&self, v: f64, demand: f64) -> f64 {
+        self.best_effort(v).0 * demand.clamp(0.0, 1.0)
+    }
+
+    /// Heat the motors put out at effort `force` [N] and speed `v` [m/s] [W].
+    pub fn losses(&self, force: f64, v: f64) -> f64 {
+        let mechanical = force.abs() * v.abs();
+        mechanical * (1.0 / self.efficiency.clamp(0.1, 1.0) - 1.0)
+    }
+}
+
+/// What a diesel-electric drive drives its wheels with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ElectricMotor {
+    /// Series-wound DC motors behind a generator and a rectifier — the classic arrangement.
+    Dc(SeriesMotor),
+    /// Three-phase motors behind an inverter (modern diesel-electrics).
+    Ac(AsyncMotor),
+}
+
+impl ElectricMotor {
+    /// Tractive effort [N] at speed `v` with the supply at `voltage_ratio` (0…1) and the
+    /// field at `field` — the AC branch ignores the field and takes the ratio as a torque
+    /// demand, which is exactly what its converter does.
+    pub fn effort(&self, v: f64, voltage_ratio: f64, field: f64, resistance: f64) -> (f64, f64) {
+        match self {
+            ElectricMotor::Dc(motor) => motor.effort_with(v, voltage_ratio, field, resistance),
+            ElectricMotor::Ac(motor) => (motor.effort(v, voltage_ratio), 0.0),
+        }
+    }
+
+    /// Highest effort the motor can make at `v` with the supply fully open.
+    pub fn max_effort(&self, v: f64) -> f64 {
+        match self {
+            ElectricMotor::Dc(motor) => motor.best_effort(v, 1.0, f64::INFINITY).0,
+            ElectricMotor::Ac(motor) => motor.best_effort(v).0,
+        }
+    }
+
+    pub fn thermal(&self) -> Option<Thermal> {
+        match self {
+            ElectricMotor::Dc(motor) => motor.thermal,
+            ElectricMotor::Ac(motor) => motor.thermal,
+        }
+    }
+}
+
+/// Generator (or alternator) and load regulator of a diesel-electric drive.
+///
+/// The load regulator is what makes the type behave the way it does: the driver's handle
+/// asks for an engine power, and the regulator adjusts the generator's excitation until the
+/// generator takes exactly that much off the engine. The wheels then get whatever voltage
+/// and current that power happens to work out to — constant power, limited by the highest
+/// current at a stand and by the highest voltage at speed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DieselElectric {
+    /// Electrical power the generator can deliver at the full notch [W].
+    pub generator_power: f64,
+    /// Efficiency of generator and rectifier together.
+    pub generator_efficiency: f64,
+    /// Highest generator voltage [V].
+    pub max_voltage: f64,
+    /// Highest generator current [A].
+    pub max_current: f64,
+    /// Time the load regulator takes to travel its full range [s].
+    pub regulator_time: f64,
+    /// The traction motors behind it.
+    pub motor: ElectricMotor,
+    /// Blower of the traction motors: share of the cooling that runs with the engine
+    /// (0 = only when the drive is working).
+    #[serde(default)]
+    pub blower_idle_share: f64,
+}
+
+impl Default for DieselElectric {
+    fn default() -> Self {
+        Self {
+            generator_power: 1_800_000.0,
+            generator_efficiency: 0.94,
+            max_voltage: 1_200.0,
+            max_current: 4_000.0,
+            regulator_time: 3.0,
+            motor: ElectricMotor::Dc(SeriesMotor {
+                count: 6,
+                resistance: 0.028,
+                flux_constant: 0.021,
+                saturation_current: 900.0,
+                max_current: 1_100.0,
+                max_voltage: 1_200.0,
+                field_steps: vec![1.0, 0.7, 0.5],
+                gear_ratio: 4.4,
+                wheel_diameter: 1.016,
+                efficiency: 0.92,
+                thermal: None,
+            }),
+            blower_idle_share: 0.2,
+        }
+    }
+}
+
+impl DieselElectric {
+    /// Voltage ratio (0…1) the load regulator settles on so the generator takes `power` [W]
+    /// off the engine at speed `v` [m/s], with the field at `field`.
+    ///
+    /// The motor's demand grows monotonically with the voltage, so bisection finds the
+    /// working point; the ceiling is the generator's own voltage limit.
+    pub fn regulator_ratio(&self, v: f64, power: f64, field: f64) -> f64 {
+        let target = power.max(0.0) * self.generator_efficiency.clamp(0.1, 1.0);
+        let draw = |ratio: f64| {
+            let (force, current) = self.motor.effort(v, ratio, field, 0.0);
+            // Electrical power the motors take: mechanical output plus their own losses.
+            let mechanical = force * v.abs();
+            let electrical = match &self.motor {
+                ElectricMotor::Dc(motor) => {
+                    let per = ratio * motor.max_voltage * current;
+                    per * motor.count.max(1) as f64
+                }
+                ElectricMotor::Ac(motor) => mechanical / motor.efficiency.clamp(0.1, 1.0),
+            };
+            (electrical.max(mechanical), current)
+        };
+        let (mut lo, mut hi) = (0.0, 1.0);
+        if draw(hi).0 <= target {
+            return 1.0;
+        }
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            let (electrical, current) = draw(mid);
+            if electrical < target && current < self.max_current {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    }
+
+    /// Tractive effort [N] at `v` with the load regulator at `ratio` and the field at `field`.
+    pub fn effort(&self, v: f64, ratio: f64, field: f64) -> (f64, f64) {
+        self.motor.effort(v, ratio, field, 0.0)
+    }
+
+    /// Steady tractive effort [N] at the full notch — the data sheet's curve.
+    pub fn steady_force(&self, v: f64) -> f64 {
+        let field = match &self.motor {
+            ElectricMotor::Dc(motor) => motor.field_steps.last().copied().unwrap_or(1.0),
+            ElectricMotor::Ac(_) => 1.0,
+        };
+        let ratio = self.regulator_ratio(v, self.generator_power, field);
+        let (force, _) = self.effort(v, ratio, field);
+        force
     }
 }
 
@@ -168,6 +621,11 @@ pub struct DynamicBrake {
     pub regenerative: bool,
     /// Rise time from zero to full braking force [s].
     pub ramp_time: f64,
+    /// Thermal behaviour of the braking resistors. A rheostatic brake that is held long
+    /// enough fades out — that is what this models. `None` = the bank never gets hot;
+    /// a regenerative brake has nothing to heat up anyway.
+    #[serde(default)]
+    pub thermal: Option<Thermal>,
 }
 
 impl DynamicBrake {
@@ -508,6 +966,8 @@ pub enum DriveMode {
     Electric,
     /// Diesel engine carried on board.
     Diesel,
+    /// Boiler and fire carried on board.
+    Steam,
 }
 
 impl DriveMode {
@@ -516,6 +976,7 @@ impl DriveMode {
         match self {
             DriveMode::Electric => "drv-mode-electric",
             DriveMode::Diesel => "drv-mode-diesel",
+            DriveMode::Steam => "drv-mode-steam",
         }
     }
 }
@@ -586,6 +1047,12 @@ pub enum TractionSpec {
         /// `max_force`/`max_power`.
         #[serde(default)]
         motor: Option<SeriesMotor>,
+        /// Starting resistors and motor groupings. A tap changer loco has none — its
+        /// transformer already sets the voltage — but a DC loco, a tramcar or a shunter
+        /// with a contactor drum is nothing else, and then `steps` is the contactor drum
+        /// rather than the transformer.
+        #[serde(default)]
+        starter: Option<Starter>,
         /// Rheostatic brake. Most tap changer locos have none.
         #[serde(default)]
         dynamic_brake: Option<DynamicBrake>,
@@ -611,6 +1078,10 @@ pub enum TractionSpec {
         /// Below this speed the dynamic brake fades out [km/h].
         #[serde(default)]
         brake_fade_kmh: f64,
+        /// Induction motor data. With it the three ranges of the curve come out of the
+        /// machine instead of out of `v_pullout`, and `max_force`/`max_power` only cap it.
+        #[serde(default)]
+        motor: Option<AsyncMotor>,
     },
     /// Diesel drive (BR 218 hydraulic, BR 648).
     Diesel {
@@ -627,6 +1098,10 @@ pub enum TractionSpec {
         /// Hydraulic transmission. Needs `engine`; without it the drive stays simplified.
         #[serde(default)]
         transmission: Option<Transmission>,
+        /// Generator, load regulator and traction motors of a diesel-electric drive.
+        /// Mutually exclusive with `transmission` — a locomotive has one or the other.
+        #[serde(default)]
+        electric: Option<DieselElectric>,
         /// Hydrodynamic brake in the transmission.
         #[serde(default)]
         hydrodynamic_brake: Option<HydrodynamicBrake>,
@@ -636,6 +1111,12 @@ pub enum TractionSpec {
         #[serde(default)]
         dynamic_brake: Option<DynamicBrake>,
     },
+    /// Steam locomotive (see [`crate::steam`]). Everything about it is in the boiler, so
+    /// the variant carries nothing else but the top speed.
+    Steam {
+        loco: Box<crate::steam::SteamLoco>,
+        v_max: f64,
+    },
 }
 
 impl TractionSpec {
@@ -644,6 +1125,7 @@ impl TractionSpec {
     pub fn implied_mode(&self) -> DriveMode {
         match self {
             TractionSpec::Diesel { .. } => DriveMode::Diesel,
+            TractionSpec::Steam { .. } => DriveMode::Steam,
             _ => DriveMode::Electric,
         }
     }
@@ -653,7 +1135,8 @@ impl TractionSpec {
             TractionSpec::Curve { v_max, .. }
             | TractionSpec::TapChanger { v_max, .. }
             | TractionSpec::Converter { v_max, .. }
-            | TractionSpec::Diesel { v_max, .. } => *v_max,
+            | TractionSpec::Diesel { v_max, .. }
+            | TractionSpec::Steam { v_max, .. } => *v_max,
         }
     }
 
@@ -670,8 +1153,18 @@ impl TractionSpec {
                 max_force,
                 max_power,
                 v_pullout,
+                motor,
                 ..
             } => {
+                // With motor data the machine draws the curve; `max_force`/`max_power` only
+                // cap what the converter is rated for.
+                if let Some(motor) = motor {
+                    return motor
+                        .best_effort(av)
+                        .0
+                        .min(*max_force)
+                        .min(max_power / av.max(0.5));
+                }
                 let base = max_force.min(max_power / av.max(0.5));
                 // Above the pull-out speed the breakdown torque takes over: F ~ 1/v².
                 if *v_pullout > 0.0 && av * 3.6 > *v_pullout {
@@ -684,22 +1177,46 @@ impl TractionSpec {
             TractionSpec::TapChanger {
                 max_force,
                 max_power,
+                motor,
+                starter,
                 ..
-            } => max_force.min(max_power / av.max(0.5)),
+            } => {
+                // A contactor drive runs its motors at full line voltage once the resistors
+                // are out; what the curve looks like is then the motor's business.
+                if let (Some(motor), Some(_)) = (motor, starter) {
+                    return motor
+                        .best_effort(av, 1.0, *max_power)
+                        .0
+                        .min(*max_force)
+                        .min(max_power / av.max(0.5));
+                }
+                max_force.min(max_power / av.max(0.5))
+            }
             TractionSpec::Diesel {
                 max_force,
                 max_power,
                 engine,
                 transmission,
+                electric,
                 ..
-            } => match (engine, transmission) {
+            } => {
                 // With engine and transmission the curve is not a hyperbola but what the
                 // converters make of the engine map — change points and all.
-                (Some(engine), Some(transmission)) => {
-                    transmission.steady_force(engine, av).min(*max_force)
+                if let (Some(engine), Some(transmission)) = (engine, transmission) {
+                    return transmission.steady_force(engine, av).min(*max_force);
                 }
-                _ => max_force.min(max_power / av.max(0.5)),
-            },
+                // Diesel-electric: the load regulator holds the power, the motors decide
+                // where the current limit takes over from it.
+                if let Some(electric) = electric {
+                    return electric.steady_force(av).min(*max_force);
+                }
+                max_force.min(max_power / av.max(0.5))
+            }
+            // At working pressure, full regulator and the longest cutoff — the figure the
+            // works plate carries. What is actually there depends on the boiler.
+            TractionSpec::Steam { loco, .. } => {
+                loco.tractive_effort(loco.working_pressure, 1.0, loco.max_cutoff)
+            }
         }
     }
 
@@ -732,6 +1249,8 @@ impl TractionSpec {
                 hydrodynamic_brake.map_or(0.0, |b| b.force(v, 1.0))
                     + dynamic_brake.map_or(0.0, |b| b.available(v))
             }
+            // A steam locomotive brakes with its train brake and nothing else.
+            TractionSpec::Steam { .. } => 0.0,
         }
     }
 
@@ -746,6 +1265,7 @@ impl TractionSpec {
                 dynamic_brake,
                 ..
             } => hydrodynamic_brake.is_some() || dynamic_brake.is_some(),
+            TractionSpec::Steam { .. } => false,
         }
     }
 }
@@ -766,6 +1286,7 @@ mod tests {
             gear_ratio: 2.17,
             wheel_diameter: 1.25,
             efficiency: 0.95,
+            thermal: None,
         }
     }
 
@@ -990,6 +1511,7 @@ mod tests {
             v_pullout: 150.0,
             regenerative: true,
             brake_fade_kmh: 10.0,
+            motor: None,
         };
         let hyperbola = |kmh: f64| 6_400_000.0 / (kmh / 3.6);
         // Below the pull-out speed it is the plain constant-power hyperbola.
@@ -1012,6 +1534,166 @@ mod tests {
         assert_eq!(b.force(0.0, 1.0), 0.0);
         assert!(b.force(80.0 / 3.6, 1.0) > b.force(20.0 / 3.6, 1.0));
         assert!(b.force(160.0 / 3.6, 1.0) <= b.max_force);
+    }
+
+    fn async_motor() -> AsyncMotor {
+        // Roughly a BR 101: four motors, 6.4 MW at the wheel.
+        AsyncMotor {
+            count: 4,
+            pole_pairs: 2,
+            rated_torque: 7_600.0,
+            pullout_ratio: 2.6,
+            pullout_slip: 0.14,
+            rated_frequency: 45.0,
+            max_frequency: 180.0,
+            gear_ratio: 2.1,
+            wheel_diameter: 1.25,
+            efficiency: 0.92,
+            thermal: None,
+        }
+    }
+
+    #[test]
+    fn the_induction_motor_draws_the_three_ranges_by_itself() {
+        let m = async_motor();
+        let f = |kmh: f64| m.best_effort(kmh / 3.6).0;
+        // Constant tractive effort while the converter still has voltage in hand.
+        assert!(
+            (f(10.0) - f(40.0)).abs() / f(10.0) < 0.05,
+            "{:.0} vs {:.0} N",
+            f(10.0),
+            f(40.0)
+        );
+        // Field weakening: the effort falls, the power stays roughly where it was.
+        let p = |kmh: f64| f(kmh) * kmh / 3.6;
+        assert!(f(160.0) < f(80.0));
+        assert!(
+            p(160.0) > p(80.0) * 0.6,
+            "{:.0} vs {:.0} W",
+            p(160.0),
+            p(80.0)
+        );
+        // And past the pull-out point it falls away faster than 1/v.
+        assert!(f(250.0) * 250.0 < f(120.0) * 120.0 * 0.9);
+    }
+
+    #[test]
+    fn kloss_peaks_at_the_pull_out_slip() {
+        let m = async_motor();
+        let peak = m.torque(m.pullout_slip, 1.0);
+        for s in [0.02, 0.05, 0.25, 0.5, 1.0] {
+            assert!(m.torque(s, 1.0) <= peak + 1e-9, "slip {s}");
+        }
+        assert!((peak - m.pullout_ratio * m.rated_torque).abs() < 1.0);
+        assert_eq!(m.torque(0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_starting_resistance_holds_the_current_down_and_costs_effort() {
+        let m = motor();
+        let (free, i_free) = m.effort_with(0.0, 1.0, 1.0, 0.0);
+        let (damped, i_damped) = m.effort_with(0.0, 1.0, 1.0, 0.6);
+        assert!(i_damped < i_free, "{i_damped:.0} vs {i_free:.0} A");
+        assert!(damped < free);
+        // Cutting the resistors out step by step is what the contactor sequence is for:
+        // no step ever costs effort, and the last one lands on the resistance-free figure.
+        // It stops rising once the current limit relay has hold of it — which is exactly
+        // why the last few notches of a real contactor drive feel like nothing at all.
+        let steps = Starter::default().resistor_steps;
+        let mut last = 0.0;
+        for r in &steps {
+            let (force, _) = m.effort_with(0.0, 1.0, 1.0, *r);
+            assert!(
+                force >= last - 1e-9,
+                "cutting out {r} Ω must not cost effort"
+            );
+            last = force;
+        }
+        assert!((last - free).abs() < 1e-9);
+        let (first, _) = m.effort_with(0.0, 1.0, 1.0, steps[0]);
+        assert!(first < last * 0.5, "{first:.0} vs {last:.0} N");
+    }
+
+    #[test]
+    fn the_contactor_positions_walk_through_resistors_and_groupings() {
+        let starter = Starter::default();
+        assert_eq!(starter.positions(), 14);
+        assert_eq!(starter.at(0), (MotorGroup::Series, 1.6));
+        assert_eq!(starter.at(6), (MotorGroup::Series, 0.0));
+        assert_eq!(starter.at(7), (MotorGroup::Parallel, 1.6));
+        assert_eq!(starter.at(13), (MotorGroup::Parallel, 0.0));
+        // Past the end it stays on the last position rather than panicking.
+        assert_eq!(starter.at(99).0, MotorGroup::Parallel);
+        assert!((starter.target(1.0) - 13.0).abs() < 1e-9);
+        assert_eq!(starter.target(0.0), 0.0);
+    }
+
+    #[test]
+    fn a_grouping_shares_the_voltage_between_its_motors() {
+        assert_eq!(MotorGroup::Series.in_series(4), 4.0);
+        assert_eq!(MotorGroup::SeriesParallel.in_series(4), 2.0);
+        assert_eq!(MotorGroup::Parallel.in_series(4), 1.0);
+        // A single motor cannot be split up.
+        assert_eq!(MotorGroup::SeriesParallel.in_series(1), 1.0);
+    }
+
+    #[test]
+    fn the_load_regulator_holds_the_power_and_the_current_limit_takes_over() {
+        let de = DieselElectric::default();
+        let f = |kmh: f64| de.steady_force(kmh / 3.6);
+        // A 1.8 MW diesel-electric: a few hundred kN at a stand, falling with speed.
+        assert!(f(0.0) > f(40.0) && f(40.0) > f(100.0));
+        // Constant power over the middle range — within the accuracy of a motor that also
+        // has a current limit and a field to weaken.
+        let p = |kmh: f64| f(kmh) * kmh / 3.6;
+        assert!(
+            p(80.0) > p(40.0) * 0.7 && p(80.0) < p(40.0) * 1.4,
+            "{:.0} vs {:.0} W",
+            p(40.0),
+            p(80.0)
+        );
+        // Half the notch is half the power, not half the effort.
+        let half = de.regulator_ratio(60.0 / 3.6, de.generator_power * 0.5, 1.0);
+        let full = de.regulator_ratio(60.0 / 3.6, de.generator_power, 1.0);
+        assert!(half < full, "{half} vs {full}");
+    }
+
+    #[test]
+    fn a_hot_resistor_bank_stops_taking_energy() {
+        let t = Thermal::default();
+        assert_eq!(t.derate(t.ambient), 1.0);
+        assert_eq!(t.derate(t.warn_temp), 1.0);
+        assert_eq!(t.derate(t.max_temp), 0.0);
+        assert!((t.derate((t.warn_temp + t.max_temp) / 2.0) - 0.5).abs() < 1e-9);
+        // 500 kW into the bank heats it past its limit inside a few minutes…
+        let mut temp = t.cold();
+        for _ in 0..(200 * 400) {
+            temp = t.step(temp, 500_000.0, 1.0, 1.0 / 200.0);
+        }
+        assert!(temp > t.max_temp, "{temp:.0} °C");
+        // …and the blower brings it back down again.
+        for _ in 0..(200 * 900) {
+            temp = t.step(temp, 0.0, 1.0, 1.0 / 200.0);
+        }
+        assert!(temp < t.warn_temp, "{temp:.0} °C");
+    }
+
+    #[test]
+    fn the_blower_is_what_makes_the_difference() {
+        let t = Thermal::default();
+        let run = |blower: f64| {
+            let mut temp = t.cold();
+            for _ in 0..(200 * 300) {
+                temp = t.step(temp, 150_000.0, blower, 1.0 / 200.0);
+            }
+            temp
+        };
+        assert!(
+            run(0.0) > run(1.0) + 50.0,
+            "{:.0} vs {:.0}",
+            run(0.0),
+            run(1.0)
+        );
     }
 
     #[test]

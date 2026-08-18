@@ -1021,8 +1021,9 @@ hud-scenario-failed = Scenario failed
 hud-outcome = { $result }: { $reason }
 hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
 hud-control = { $name }: { $value } %
+hud-keys-walk = WASD walk  Shift run  Mouse look around  E door in/out  Left click operate  F1 back to the seat
 hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper  6 AFB  7/8 AFB target
-hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F3 camera  F9 mods
+hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F4 camera  F9 mods
 hud-keys-lights = 9 headlights  0 cab light  ,/. instrument dimmer
 
 ## Main menu

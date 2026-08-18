@@ -9,6 +9,7 @@ use crate::streaming::TerrainStreamer;
 use crate::{Origin, PlayerTrain, SimResource, TerrainInfo, ViewDistance};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, CursorOptions};
 use i18n::t;
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::safety::{LampState, SafetySystems, SelfTestPhase};
@@ -21,12 +22,18 @@ pub struct CabCamera;
 #[derive(Component)]
 pub struct HudText;
 
+/// Aiming dot in the middle of the screen, shown while walking.
+#[derive(Component)]
+pub struct Crosshair;
+
 /// Camera perspectives (plan 12.4).
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum CameraMode {
-    /// View from the cab.
+    /// View from the driver's seat.
     #[default]
     Cab,
+    /// First person: the driver stands up and walks through the vehicle.
+    Walk,
     /// External camera, orbits the train.
     Outside,
     /// Lineside camera: fixed at the spot where it was activated.
@@ -43,13 +50,26 @@ pub struct CameraState {
     pub wayside: Option<Vec3>,
 }
 
+impl CameraMode {
+    /// Both views ride inside the vehicle: the seat and the walk.
+    pub fn inside(self) -> bool {
+        matches!(self, CameraMode::Cab | CameraMode::Walk)
+    }
+}
+
 /// Key bindings → cab inputs.
 pub fn player_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut sim: ResMut<SimResource>,
     player: Res<PlayerTrain>,
     time: Res<Time>,
+    camera: Res<CameraState>,
 ) {
+    // Away from the seat WASD walks; the cab keys only answer to the driver sitting
+    // at the desk.
+    if camera.mode == CameraMode::Walk {
+        return;
+    }
     let dt = time.delta_secs_f64();
     let index = player.0;
     // AFB dial ceiling: the running-gear limit of the occupied vehicle.
@@ -226,7 +246,7 @@ pub fn player_input(
     }
 }
 
-/// Camera control: F1/F2/F3 switch the perspective, arrow keys pan.
+/// Camera control: F1–F4 switch the perspective, arrow keys pan.
 // A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn camera_control(
@@ -239,6 +259,7 @@ pub fn camera_control(
     player: Res<PlayerTrain>,
     manager: Res<ModManager>,
     gameplay: Res<Gameplay>,
+    walker: Res<crate::walk::Walker>,
     mut state: ResMut<CameraState>,
     mut camera: Query<&mut Transform, With<CabCamera>>,
 ) {
@@ -255,6 +276,9 @@ pub fn camera_control(
     if keys.just_pressed(KeyCode::F3) {
         state.mode = CameraMode::Wayside;
         state.wayside = None;
+    }
+    if keys.just_pressed(KeyCode::F4) {
+        state.mode = CameraMode::Walk;
     }
     // With the mod manager open the arrow keys belong to its list, not to the camera.
     let turn = if manager.open { 0.0 } else { 1.2 * dt };
@@ -276,8 +300,10 @@ pub fn camera_control(
     if keys.pressed(KeyCode::NumpadSubtract) {
         state.distance = (state.distance + 30.0 * dt).min(400.0);
     }
-    // Right-drag looks around; the left button stays free for the cab controls.
-    if buttons.pressed(MouseButton::Right) {
+    // Right-drag looks around; the left button stays free for the cab controls. While
+    // walking the mouse looks on its own — the cursor is caught in the middle of the
+    // screen, so there is nothing else for it to do.
+    if buttons.pressed(MouseButton::Right) || state.mode == CameraMode::Walk {
         let speed = 0.003 * gameplay.look_speed;
         state.yaw -= motion.delta.x * speed;
         state.pitch = (state.pitch - motion.delta.y * speed).clamp(-1.2, 1.2);
@@ -293,11 +319,27 @@ pub fn camera_control(
     let forward = origin.0.dir_to_render(pose.tangent);
     let right = forward.cross(up).normalize_or_zero();
 
+    // On foot outside the train the view no longer hangs on the vehicle: yaw counts
+    // from north, so a departing train does not drag the head around.
+    if let Some(crate::walk::Place::Outside { eye }) = walker.place {
+        transform.translation = origin.0.to_render(eye);
+        transform.rotation = Quat::from_euler(EulerRot::YXZ, state.yaw, state.pitch, 0.0);
+        return;
+    }
+
     match state.mode {
-        CameraMode::Cab => {
-            // Eye point from the occupied vehicle's cab data; vehicles without one
-            // fall back to the old guess: 8 m ahead of the centre, 2.8 m up.
-            let seat = train.vehicles.get(train.cab).unwrap_or(&train.vehicles[0]);
+        CameraMode::Cab | CameraMode::Walk => {
+            // Eye point from the vehicle the driver is in — his seat, or the vehicle he
+            // walked into. Vehicles without cab data fall back to the old guess: 8 m
+            // ahead of the centre, 2.8 m up.
+            let (aboard, local) = match walker.place {
+                Some(crate::walk::Place::Aboard { vehicle, eye }) => (Some(vehicle), Some(eye)),
+                _ => (None, None),
+            };
+            let seat = aboard
+                .and_then(|v| train.vehicles.get(v))
+                .or_else(|| train.vehicles.get(train.cab))
+                .unwrap_or(&train.vehicles[0]);
             let eye = match seat.spec.model.as_ref().and_then(|m| m.cab.as_ref()) {
                 Some(cab) => {
                     let pose = seat.pos.pose(&sim.0.net);
@@ -305,9 +347,18 @@ pub fn camera_control(
                         origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * 2.2;
                     // Vehicle views sit 2.2 m above the rail head (`sync_vehicles`);
                     // the eye is model space below that anchor.
-                    anchor + origin.0.look_rotation(pose.tangent, pose.up) * Vec3::from(cab.eye)
+                    anchor
+                        + origin.0.look_rotation(pose.tangent, pose.up)
+                            * local.unwrap_or_else(|| Vec3::from(cab.eye))
                 }
-                None => pos + forward * 8.0 + up * 2.8 - right * 0.6,
+                // No cab data: the old guess, 8 m ahead of the centre and 2.8 m up,
+                // which is what `CabSpec::default` holds — so the walk offset applies
+                // to it just the same.
+                None => {
+                    let local =
+                        local.unwrap_or_else(|| Vec3::from(sim_core::cab::CabSpec::default().eye));
+                    pos + right * local.x + up * local.y - forward * local.z
+                }
             };
             let look =
                 Quat::from_axis_angle(up, state.yaw) * Quat::from_axis_angle(right, state.pitch);
@@ -328,8 +379,60 @@ pub fn camera_control(
     }
 }
 
+/// Catches the mouse while walking: hidden, held inside the window and put back into
+/// the middle of the screen every frame, so the picking ray of the cab controls stays
+/// on the crosshair instead of wandering off with the cursor.
+pub fn grab_cursor(
+    state: Res<CameraState>,
+    game: Res<State<crate::GameState>>,
+    mut windows: Query<(&mut Window, &mut CursorOptions)>,
+    mut crosshair: Query<&mut Visibility, With<Crosshair>>,
+    mut flip: Local<bool>,
+) {
+    let walking = state.mode == CameraMode::Walk && *game.get() == crate::GameState::Driving;
+    for (mut window, mut cursor) in windows.iter_mut() {
+        if cursor.visible == walking {
+            cursor.visible = !walking;
+            cursor.grab_mode = if walking {
+                CursorGrabMode::Confined
+            } else {
+                CursorGrabMode::None
+            };
+        }
+        if walking {
+            // ponytail: Bevy passes the position on to the window only when it differs
+            // from the cache of the last frame — the half pixel keeps it different.
+            *flip = !*flip;
+            let centre = window.size() / 2.0 + Vec2::X * if *flip { 0.5 } else { 0.0 };
+            window.set_cursor_position(Some(centre));
+        }
+    }
+    for mut visibility in crosshair.iter_mut() {
+        *visibility = if walking {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 /// Create the HUD text.
 pub fn spawn_hud(commands: &mut Commands) {
+    // Crosshair of the walk — the caught cursor is invisible, this shows where it points.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            width: Val::Px(5.0),
+            height: Val::Px(5.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.65)),
+        bevy::picking::Pickable::IGNORE,
+        Visibility::Hidden,
+        Crosshair,
+    ));
     commands.spawn((
         Text::new(""),
         TextFont {
@@ -357,6 +460,7 @@ pub fn update_hud(
     view: Res<ViewDistance>,
     mouse: Res<crate::cab::CabMouse>,
     gameplay: Res<Gameplay>,
+    camera: Res<CameraState>,
     mut query: Query<(&mut Text, &mut Visibility), With<HudText>>,
 ) {
     let Ok((mut text, mut visibility)) = query.single_mut() else {
@@ -636,7 +740,11 @@ pub fn update_hud(
         ));
     }
 
-    lines.push(t!("hud-keys-drive"));
+    lines.push(if camera.mode == CameraMode::Walk {
+        t!("hud-keys-walk")
+    } else {
+        t!("hud-keys-drive")
+    });
     lines.push(t!("hud-keys-safety"));
     lines.push(t!("hud-keys-lights"));
 

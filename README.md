@@ -22,6 +22,8 @@ cargo run -p app -- --menu --screenshot screenshots/menu.png   # …of the menu 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
 cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
+cargo run -p app -- --loco example:br101_afb --camera walk      # start on foot (F4) instead of on the seat
+cargo run -p app -- --camera walk --character example/models/driver.glb   # with a body (seen from F2/F3)
 ```
 
 Without arguments the simulator opens on a title screen: wordmark over the backdrop, and four
@@ -283,9 +285,11 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `9` / `0` | Headlights / cab light |
 | `,` / `.` | Instrument backlighting dimmer down / up |
 | `Esc` | Pause: resume, settings, quit — the world stands still under the overlay |
-| `F1`–`F3` | Camera: cab / external / lineside |
+| `F1`–`F4` | Camera: driver's seat / external / lineside / first person |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
+| `WASD` / `Shift` | First person (`F4`): walk (1.5 m/s) and run (5 m/s) through the train and over the ground. The walker falls where the ground drops away, climbs what is no higher than a step, is stopped by what stands at chest height and walks on through the train from vehicle to vehicle. The mouse looks around on its own, the cursor is caught on the crosshair and the driving keys rest until `F1` puts the driver back on the seat |
+| `E` | First person: through the door — out beside the train, and back in at any vehicle standing next to you. A passenger door has to be open for it; a traction unit's own cab door opens itself, both only at a stand |
 | Mouse | Left button operates the controls of the 3D cab (click, drag, wheel), right button looks around |
 
 ## Example line

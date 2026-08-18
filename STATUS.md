@@ -438,7 +438,20 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
 - **Vehicle models in the app (ch. 15.3):** a vehicle with a model gets its glTF instead of
   the placeholder body; the level of detail follows the camera distance, and the bound parts
   follow the simulation (pantograph, gauges, switches, lamps). `--camera outside` starts on
-  the external camera.
+  the external camera, `--camera walk` on foot.
+- **First person (ch. 12.4):** F4 stands the driver up out of the seat — a character
+  controller that falls. He walks at 1.5 m/s, runs at 5 m/s with shift, looks around with
+  the mouse on its own (the cursor is caught on a crosshair, so the cab controls keep
+  taking clicks), climbs what is no higher than a step (platform edge, stair), is stopped
+  by what stands at chest height and falls where the ground drops away. Ground and walls
+  come out of two ray casts against the meshes that are drawn anyway, one down and one
+  ahead, so nothing in the world needs collision data of its own — terrain, platforms,
+  objects and a modelled interior all carry him as they are drawn; a vehicle without an
+  interior holds him on the floor its `eye` implies. Past the end of a vehicle he walks on
+  into the next one of the train, and `E` takes him through a door: out of an open
+  passenger door or a traction unit's cab door at a stand, and back in at any vehicle
+  beside him. `--character <file>` hangs a model on him, shown from the outside cameras.
+  The driving keys rest while he is off the seat; F1 puts him back.
 - **Signal models (ch. 15.3, after the Zusi assembly pattern):** a `SignalModel`
   (`signal_models/*.ron` in a mod) is a list of glTF **parts chained by mount points**
   (empty nodes `mp_*`), so masts, screens and indicators are shared files, plus a binding

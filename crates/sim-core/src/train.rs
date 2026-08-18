@@ -573,6 +573,11 @@ pub struct Vehicle {
     pub x: f64,
     /// Speed [m/s], positive = direction of travel of the train.
     pub v: f64,
+    /// Acceleration of the last step [m/s²] — what the physics actually applied, after the
+    /// standstill hold and the brake's zero crossing. The network sends it so a client can
+    /// extrapolate a correction over the transit time (`net.rs`).
+    #[serde(default)]
+    pub a: f64,
     /// Position of the vehicle centre on the track graph.
     pub pos: TrackPosition,
     pub brake: BrakeState,
@@ -624,6 +629,7 @@ impl Vehicle {
             load: 0.0,
             x: 0.0,
             v: 0.0,
+            a: 0.0,
             pos,
             slip: 0.0,
             sanding: false,
@@ -814,6 +820,46 @@ impl Train {
             0.0
         } else {
             weight / mass * 100.0
+        }
+    }
+
+    /// Shifts the whole consist `d` metres along the track, speeds untouched.
+    ///
+    /// This is how a network correction is worked off (`app/src/net.rs`): a train that is a
+    /// few centimetres behind runs a hair faster for a moment instead of being set to the
+    /// server's position, which the eye would read as a jump. Trackside devices passed on
+    /// the way are deliberately dropped — a correction must not trip a PZB magnet twice.
+    pub fn nudge(&mut self, net: &track_model::TrackNetwork, d: f64) {
+        let mut scratch = Vec::new();
+        for vehicle in &mut self.vehicles {
+            let _ = vehicle.pos.advance(net, d, &mut scratch);
+            scratch.clear();
+            vehicle.x += d;
+        }
+    }
+
+    /// Places the consist with its head at `head`, lining the vehicles up behind it.
+    ///
+    /// The hard resync of the network layer, for the cases a nudge cannot cover: a client
+    /// joining, a switch taken the other way, a stall long enough to lose the train.
+    pub fn place_head_at(&mut self, head: TrackPosition, net: &track_model::TrackNetwork) {
+        // `x` keeps running where it was: the couplers read differences of it, and a jump
+        // in one of them would be a shove through the whole train.
+        let head_x = self
+            .vehicles
+            .first()
+            .map_or(0.0, |v| v.x + v.spec.length / 2.0);
+        let mut offset = 0.0;
+        let mut scratch = Vec::new();
+        for vehicle in &mut self.vehicles {
+            let half = vehicle.spec.length / 2.0;
+            offset -= half;
+            let mut p = head;
+            let _ = p.advance(net, offset, &mut scratch);
+            scratch.clear();
+            vehicle.pos = p;
+            vehicle.x = head_x + offset;
+            offset -= half;
         }
     }
 

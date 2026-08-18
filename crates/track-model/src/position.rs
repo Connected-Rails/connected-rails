@@ -144,6 +144,68 @@ impl TrackPosition {
         passed.sort_by(|a, b| b.distance_behind.total_cmp(&a.distance_behind));
     }
 
+    /// Signed distance from this position to `other` along the track [m] — positive when
+    /// `other` lies ahead in the direction of travel. Searches at most `limit` metres each
+    /// way and returns `None` when `other` is not on the path at all; a switch lying the
+    /// other way is enough for that.
+    ///
+    /// This is how a network correction is measured: server and client hold the same train
+    /// on the same track, and the only thing that differs is how far along it has come.
+    pub fn distance_to(
+        &self,
+        net: &TrackNetwork,
+        other: &TrackPosition,
+        limit: f64,
+    ) -> Option<f64> {
+        for sign in [1.0f64, -1.0] {
+            let mut pos = *self;
+            let mut travelled = 0.0;
+            // A safety limit against infinite loops with zero-length edges, as in `advance`.
+            for _ in 0..1024 {
+                // Which end of the current edge the search runs towards.
+                let towards_end = pos.dir as f64 * sign > 0.0;
+                if pos.edge == other.edge {
+                    let ahead = (other.s - pos.s) * pos.dir as f64 * sign;
+                    if ahead >= -1e-9 && travelled + ahead <= limit {
+                        return Some(sign * (travelled + ahead));
+                    }
+                }
+                let edge = net.edge(pos.edge);
+                let (boundary, side) = if towards_end {
+                    (edge.length(), EdgeSide::End)
+                } else {
+                    (0.0, EdgeSide::Start)
+                };
+                travelled += (boundary - pos.s).abs();
+                if travelled > limit {
+                    break;
+                }
+                let node = if side == EdgeSide::End {
+                    edge.to
+                } else {
+                    edge.from
+                };
+                let Ok(next) = net.continuation(node, EdgeEnd::new(pos.edge, side)) else {
+                    break;
+                };
+                // Entering the next edge at its start means running with its `s`; the
+                // direction of travel follows from which way the search is going.
+                match next.side {
+                    EdgeSide::Start => {
+                        pos.s = 0.0;
+                        pos.dir = if sign > 0.0 { 1 } else { -1 };
+                    }
+                    EdgeSide::End => {
+                        pos.s = net.edge(next.edge).length();
+                        pos.dir = if sign > 0.0 { -1 } else { 1 };
+                    }
+                }
+                pos.edge = next.edge;
+            }
+        }
+        None
+    }
+
     /// Position `distance` metres ahead of this one (without modifying it), e.g. for
     /// vehicle ends or the AI look-ahead. `None` if the path is blocked.
     pub fn offset_by(&self, net: &TrackNetwork, distance: f64) -> Option<TrackPosition> {
@@ -273,6 +335,24 @@ mod tests {
         assert_eq!(net.device(passed[0].device).kind, DeviceKind::Magnet);
         assert!((passed[0].distance_behind - 300.0).abs() < 1e-9);
         assert!((passed[1].distance_behind - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn distance_to_measures_over_a_switch_and_backwards() {
+        let (net, e0, e1, _e2, _b) = switch_net();
+        let here = TrackPosition::new(e0, 100.0, 1);
+        // 400 m to the end of e0, then 250 m into e1.
+        let ahead = TrackPosition::new(e1, 250.0, 1);
+        assert!((here.distance_to(&net, &ahead, 1000.0).unwrap() - 650.0).abs() < 1e-6);
+        // The same pair the other way round is the negative distance.
+        assert!((ahead.distance_to(&net, &here, 1000.0).unwrap() + 650.0).abs() < 1e-6);
+        // On the same edge, behind.
+        let behind = TrackPosition::new(e0, 40.0, 1);
+        assert!((here.distance_to(&net, &behind, 1000.0).unwrap() + 60.0).abs() < 1e-6);
+        // Out of range and off the path stay `None`.
+        assert_eq!(here.distance_to(&net, &ahead, 100.0), None);
+        let branch = TrackPosition::new(_e2, 50.0, 1);
+        assert_eq!(here.distance_to(&net, &branch, 1000.0), None);
     }
 
     #[test]

@@ -19,6 +19,8 @@ mod-runtime = { workspace = true }
 # `!Send` — the app keeps them in a non-send resource (displays.rs).
 html-display = { path = "../html-display" }
 ai-driver = { workspace = true }
+lightyear = { workspace = true }
+serde = { workspace = true }
 world-render = { workspace = true }
 glam = { workspace = true }
 # `jpeg`: the menu wallpaper is a compiled-in JPEG (`images/`).

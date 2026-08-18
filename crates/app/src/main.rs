@@ -9,14 +9,16 @@ mod displays;
 mod menu;
 mod models;
 mod mods_ui;
+mod net;
 mod render;
 mod settings;
 mod signals;
 mod streaming;
 mod ui;
 mod walk;
+mod world;
 
-use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
+use ai_driver::AiDriver;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
@@ -25,13 +27,12 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
 use content::terrain::{TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation};
-use content::vehicles::{br101, passenger_coach};
-use content::{musterbahn, re_4711, to_musterstadt};
+use content::vehicles::passenger_coach;
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
 use sim_core::train::{Train, Vehicle, VehicleSpec, Weather};
-use track_model::{EdgeId, TrackPosition};
+use track_model::TrackPosition;
 use world_coords::{RenderOrigin, sun};
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
 // `update_daylight`, read by everything that switches with darkness: the
@@ -162,6 +163,17 @@ fn main() {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
+    // A dedicated server never gets as far as a window: it builds the same world and
+    // serves it, and that is the whole process (`net.rs`).
+    if let Some(address) = flag("--dedicated").or_else(|| {
+        args.iter()
+            .any(|a| a == "--dedicated")
+            .then(|| net::DEFAULT_PORT.to_string())
+    }) {
+        net::run_dedicated(&address);
+        return;
+    }
+
     let shot = flag("--screenshot");
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
@@ -180,6 +192,7 @@ fn main() {
         "--dgm",
         "--frames",
         "--screenshot",
+        "--connect",
     ];
     // `--menu` overrules them again — the only way to put the menu itself in front of
     // `--screenshot`, which would otherwise photograph the world behind it. It takes an
@@ -226,6 +239,8 @@ fn main() {
         require_markers: true,
         ..default()
     })
+    // Multiplayer, if the command line asked for it — otherwise this adds nothing.
+    .add_plugins(net::plugin)
     .init_resource::<ui::CameraState>()
     .init_resource::<walk::Walker>()
     .init_resource::<cab::CabMouse>()
@@ -431,138 +446,15 @@ fn setup(
     }
     let mods = &mut mods.0;
 
-    // Build line and simulation. Selection comes from the menu or from CLI flags.
-    // CLI flags take precedence (command line usage stays non-interactive).
-    let scenario_id = arg("--scenario").or_else(|| selection.scenario_id.clone());
-    let line_ref = arg("--line")
-        .or_else(|| selection.line_ref.clone())
-        .or_else(|| {
-            scenario_id
-                .as_ref()
-                .and_then(|id| mods.mods.scenarios.get(id))
-                .and_then(|s| s.line.clone())
-        });
-    let resolved = line_ref.and_then(|id| match mods.mods.resolve_line(&id) {
-        Ok(composed) => {
-            for note in &composed.notes {
-                info!("{id}: {note}");
-            }
-            Some(composed)
-        }
-        Err(e) => {
-            warn!("line {id}: {e} — using the example line");
-            None
-        }
-    });
-    let modded = resolved.is_some();
-    let module_offsets = resolved
-        .as_ref()
-        .map(|c| c.offsets.clone())
-        .unwrap_or_default();
-    let line_source = resolved.map(|c| c.line).unwrap_or_else(musterbahn);
-    let mut line = line_source.compile().expect("line compiles");
-    for warning in mods
-        .mods
-        .apply_signal_types(&line_source, &mut line.interlock)
-    {
-        warn!("{}: {warning}", line_source.name);
-    }
-    // Track types: specs behind the names, and the superstructure speed cap
-    // merged into the one profile AI, LZB, HUD and scoring read.
-    for warning in mods.mods.apply_track_types(&mut line.net) {
-        warn!("{}: {warning}", line_source.name);
-    }
-    let mut sim = Sim::new(line.net, line.interlock, 2024);
-
-    // Vehicle from menu selection or CLI flag.
-    let loco = arg("--loco")
-        .or_else(|| selection.loco_id.clone())
-        .and_then(|id| match mods.mods.vehicles.get(&id) {
-            Some(spec) => Some(spec.clone()),
-            None => {
-                warn!("vehicle {id} not found — using the BR 101");
-                None
-            }
-        })
-        .unwrap_or_else(br101);
-
-    let player = spawn_train(&mut sim, TrackPosition::new(EdgeId(0), 200.0, 1), 5, loco);
-
-    // Second train, timetable and scenario belong to the example line — a modded line
-    // brings its own scenario or none at all.
-    let mut drivers = Vec::new();
-    if !modded {
-        let ai_train = spawn_train(
-            &mut sim,
-            TrackPosition::new(EdgeId(1), 400.0, 1),
-            3,
-            br101(),
-        );
-        drivers.push((
-            ai_train,
-            AiDriver::new(Timetable {
-                number: "RB 20".into(),
-                category: "RB".into(),
-                kind: TimetableKind::Scenario,
-                module: None,
-                stops: vec![ScheduledStop {
-                    name: "Musterstadt".into(),
-                    edge: EdgeId(2),
-                    s: 2600.0,
-                    arrival: 300.0,
-                    departure: 360.0,
-                    platform: "1".into(),
-                    module: None,
-                }],
-            }),
-        ));
-
-        // Load the scenario with timetable and scoring (plan 11.4).
-        let mut scenario = to_musterstadt();
-        scenario.player_train = player;
-        sim.set_scenario(scenario, re_4711());
-    }
-
-    // `--scenario <mod>:<name>` runs a scenario out of a mod. A `timetable/*.ron` the
-    // scenario references adds stop scoring; without one only the scenario points count.
-    if let Some(id) = scenario_id {
-        match mods.mods.scenarios.get(&id) {
-            Some(scenario) => {
-                let mut scenario = scenario.clone();
-                scenario.player_train = player;
-                for warning in mod_runtime::qualify_scenario(&mut scenario, &module_offsets) {
-                    warn!("scenario {id}: {warning}");
-                }
-                let timetable = scenario
-                    .timetable
-                    .as_deref()
-                    .and_then(|name| {
-                        let timetable = mods.mods.timetables.get(name).cloned();
-                        if timetable.is_none() {
-                            warn!("scenario {id}: timetable {name:?} not found");
-                        }
-                        timetable
-                    })
-                    .map(|mut timetable| {
-                        for warning in
-                            mod_runtime::qualify_timetable(&mut timetable, &module_offsets)
-                        {
-                            warn!("scenario {id}: {warning}");
-                        }
-                        timetable
-                    })
-                    .unwrap_or_else(|| sim_core::timetable::Timetable {
-                        number: scenario.name.clone(),
-                        ..default()
-                    });
-                sim.set_scenario(scenario, timetable);
-            }
-            None => warn!("scenario {id} not found"),
-        }
-    }
-
-    // Line and scenario hooks: `on_load` now, `on_frame` every frame (plan 19.7).
-    mods.begin(&mut sim, &line_source);
+    let world::World {
+        sim,
+        player,
+        drivers,
+        line: line_source,
+    } = world::build(mods, &selection);
+    // Both sides of a multiplayer run have to have built the same world; the fingerprint
+    // is what says so on joining (`net.rs`).
+    let fingerprint = world::fingerprint(&line_source.name, &sim);
 
     // Render origin at the head of the train.
     let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
@@ -920,6 +812,7 @@ fn setup(
     commands.insert_resource(streamer);
     commands.insert_resource(ViewDistance(graphics.view_distance));
     commands.insert_resource(Origin(origin));
+    commands.insert_resource(net::WorldId(fingerprint));
     commands.insert_resource(PlayerTrain(player));
     commands.insert_resource(AiDrivers(drivers));
     commands.insert_resource(SimResource(sim));
@@ -970,7 +863,7 @@ fn lod_range(lod: u8) -> f32 {
 }
 
 /// Value of a command line option (`--name <value>`).
-fn arg(name: &str) -> Option<String> {
+pub(crate) fn arg(name: &str) -> Option<String> {
     std::env::args().skip_while(|a| a != name).nth(1)
 }
 
@@ -987,7 +880,12 @@ fn args_all(name: &str) -> Vec<String> {
 ///
 /// Train protection and door control come from the vehicles themselves (`VehicleSpec`),
 /// not from command line options.
-fn spawn_train(sim: &mut Sim, head: TrackPosition, coaches: usize, loco: VehicleSpec) -> usize {
+pub(crate) fn spawn_train(
+    sim: &mut Sim,
+    head: TrackPosition,
+    coaches: usize,
+    loco: VehicleSpec,
+) -> usize {
     let mut vehicles = vec![Vehicle::new(loco, head)];
     for _ in 0..coaches {
         vehicles.push(Vehicle::new(passenger_coach(), head));
@@ -1006,19 +904,41 @@ fn spawn_train(sim: &mut Sim, head: TrackPosition, coaches: usize, loco: Vehicle
     index
 }
 
-fn drive_ai(mut sim: ResMut<SimResource>, mut drivers: ResMut<AiDrivers>, time: Res<Time>) {
+pub(crate) fn drive_ai(
+    mut sim: ResMut<SimResource>,
+    mut drivers: ResMut<AiDrivers>,
+    time: Res<Time>,
+    host: Option<Res<net::Host>>,
+    role: Option<Res<net::Role>>,
+) {
+    // On a client every train but the player's is driven from the server's setpoints — a
+    // second AI running here would fight them.
+    if role.is_some_and(|role| *role == net::Role::Client) {
+        return;
+    }
     let dt = time.delta_secs_f64().min(0.25);
     for (train, ai) in drivers.0.iter_mut() {
+        // A train a client has taken over drives itself.
+        if host
+            .as_ref()
+            .is_some_and(|host| host.is_player_driven(*train))
+        {
+            continue;
+        }
         ai.drive(&mut sim.0, *train, dt);
     }
 }
 
-fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
+pub(crate) fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
     sim.0.advance(time.delta_secs_f64());
 }
 
 /// Behaviour scripts of the mods — signal aspects and cab automation (plan ch. 19).
-fn run_mod_scripts(mut sim: ResMut<SimResource>, mut mods: ResMut<Mods>, time: Res<Time>) {
+pub(crate) fn run_mod_scripts(
+    mut sim: ResMut<SimResource>,
+    mut mods: ResMut<Mods>,
+    time: Res<Time>,
+) {
     let dt = time.delta_secs_f64().min(0.25);
     mods.0.post_step(&mut sim.0, dt);
 }

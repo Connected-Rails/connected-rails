@@ -14,6 +14,7 @@ mod settings;
 mod signals;
 mod streaming;
 mod ui;
+mod walk;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -35,6 +36,7 @@ use world_coords::{RenderOrigin, sun};
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
 // `update_daylight`, read by everything that switches with darkness: the
 // headlights here, the mods' `_NIGHT` nodes in `world-render`.
+use bevy::gltf::GltfAssetLabel;
 use world_render::Daylight;
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
@@ -80,7 +82,7 @@ struct CabLamp;
 /// Precipitation field around the camera: one static mesh of crossed quads,
 /// moved downwards and wrapped every [`PRECIP_PERIOD`] metres (`update_precipitation`).
 #[derive(Component)]
-struct Precipitation {
+pub(crate) struct Precipitation {
     snow: bool,
     /// Fall speed [m/s].
     speed: f32,
@@ -225,6 +227,7 @@ fn main() {
         ..default()
     })
     .init_resource::<ui::CameraState>()
+    .init_resource::<walk::Walker>()
     .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
     .init_resource::<menu::MenuState>()
@@ -250,6 +253,8 @@ fn main() {
         menu::menu.run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
     )
     .add_systems(Update, pause_on_escape.run_if(in_state(GameState::Driving)))
+    // Runs in every state: the pause menu needs its cursor back.
+    .add_systems(Update, ui::grab_cursor)
     // The sound table and the display cameras need the trains, which `setup` only
     // creates when its commands are applied — the chain inserts that sync point.
     .add_systems(
@@ -269,7 +274,9 @@ fn main() {
             sync_vehicles,
             update_daylight,
             update_headlights,
+            walk::walk_player,
             ui::camera_control,
+            walk::place_character,
             update_precipitation,
             streaming::stream_terrain,
             terrain_visibility,
@@ -875,15 +882,38 @@ fn setup(
     ui::spawn_hud(&mut commands);
     mods_ui::spawn_panel(&mut commands);
 
+    // A character model for the walker (plan ch. 12.4): `--character <file>` takes the
+    // same `mods://` paths as the vehicle models. Without one the walker stays a body
+    // without a picture, which in the first person is all he ever is.
+    if let Some(file) = arg("--character") {
+        let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(models::asset_path(&file)));
+        commands.spawn((
+            WorldAssetRoot(scene),
+            Transform::default(),
+            Visibility::Hidden,
+            walk::CharacterModel,
+        ));
+    }
+
     // `--camera outside` starts on the external camera — handy for screenshots of a
-    // vehicle model.
-    if arg("--camera").as_deref() == Some("outside") {
-        commands.insert_resource(ui::CameraState {
-            mode: ui::CameraMode::Outside,
-            distance: 40.0,
-            pitch: -0.15,
-            ..default()
-        });
+    // vehicle model — and `--camera walk` on foot, which a screenshot cannot reach
+    // otherwise (F4 needs a key press).
+    match arg("--camera").as_deref() {
+        Some("outside") => {
+            commands.insert_resource(ui::CameraState {
+                mode: ui::CameraMode::Outside,
+                distance: 40.0,
+                pitch: -0.15,
+                ..default()
+            });
+        }
+        Some("walk") => {
+            commands.insert_resource(ui::CameraState {
+                mode: ui::CameraMode::Walk,
+                ..default()
+            });
+        }
+        _ => {}
     }
 
     commands.insert_resource(TerrainInfo::default());

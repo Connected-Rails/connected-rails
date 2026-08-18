@@ -1022,8 +1022,9 @@ hud-scenario-failed = Szenario gescheitert
 hud-outcome = { $result }: { $reason }
 hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
 hud-control = { $name }: { $value } %
+hud-keys-walk = WASD Gehen  Umschalt Laufen  Maus Umsehen  E Ein-/Aussteigen  Linksklick Bedienen  F1 zurück zum Sitz
 hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer  6 AFB  7/8 AFB-Ziel
-hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F3 Kamera  F9 Mods
+hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F4 Kamera  F9 Mods
 hud-keys-lights = 9 Spitzensignal  0 Führerraumlicht  ,/. Instrumentenlicht
 
 ## Hauptmenü

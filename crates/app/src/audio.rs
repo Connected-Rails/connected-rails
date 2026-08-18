@@ -403,7 +403,7 @@ pub fn update_audio(
         [rotation.x, rotation.y, rotation.z, rotation.w],
         Tween::default(),
     );
-    let in_cab = camera_state.mode == ui::CameraMode::Cab;
+    let in_cab = camera_state.mode.inside();
     let listener_velocity = match camera_state.mode {
         ui::CameraMode::Wayside => Vec3::ZERO,
         // Cab and orbit both ride on the player train, so it shifts nothing against itself.

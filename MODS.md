@@ -561,7 +561,35 @@ How a control answers the mouse follows from the input, nothing is configured:
 input 0 and 1. The whole subtree of the node takes the mouse; the hovered control glows
 and the HUD names it with its position. Everything also stays operable from the keyboard —
 the two write the same inputs. The camera looks out of `eye` (F1), pans with the arrow
-keys and looks around while the right mouse button is held.
+keys and looks around while the right mouse button is held. F4 stands the driver up: the
+eye then walks from `eye` through the vehicle's box (WASD, shift runs) and the mouse looks
+around by itself, so the eye point is the start of the walk, not a fixed seat. `E` at the
+side of the vehicle steps out onto the ground and back in again — an open passenger door
+(`doors` of the vehicle, ch. 9) or, on a traction unit, the cab door of a vehicle carrying
+`cab` data. Outside, the ground and the walls are the meshes themselves: what the walker
+stands on and what stops him comes out of a ray cast against terrain, platforms and
+objects, so a platform needs no collision data of its own — only a mesh at the height it
+is supposed to be walked at. The same ray carries him inside a vehicle: an interior with
+modelled floors and stairs is walked as it is drawn, and a model without one holds him on
+the floor its `eye` implies. Past the end of a vehicle he walks on into the next one of
+the train.
+
+### The character
+
+`--character <file>` hangs a model on the walker, from the same `mods://` paths as the
+vehicle models:
+
+```
+cargo run -p app -- --camera walk --character example/models/driver.glb
+```
+
+The model stands in its own origin — feet at Y = 0, looking along −Z, metres, Y up, which
+is what a glTF export out of MakeHuman gives. It is shown whenever the camera is not the
+walker's own eye (F2, F3); in the first person it is hidden, because the eye sits inside
+its head and its body would otherwise be in the way of the walker's ray casts.
+
+<!-- ponytail: no animation. The clips of the model are ignored until there is a model
+     with clips to try them against. -->
 
 ### Displays
 

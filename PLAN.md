@@ -359,7 +359,10 @@ cycle per vehicle). Vehicles take part when `VehicleSpec::passenger_doors` is se
   (v2: RailDriver HID).
 - **Instruments:** needles as rotating sub-meshes (brake pipe/main reservoir/cylinder gauges, speedometer),
   MFA/EBuLa/displays as render-to-texture (egui-in-world or custom shaders). Indicator lamps = emissive toggle.
-- **Walkable consist:** v2. v1: cab + exterior cameras.
+- **Walkable consist:** first person on foot (F4) — through the train from vehicle to
+  vehicle, out of an open door and over the ground, with gravity, climbable steps and
+  stairs; ground and walls from ray casts against the drawn meshes, a model on the walker
+  from `--character`. v2: animation, passengers, ladders and doors that open themselves.
 - **Cameras:** cab (head freely pannable), exterior orbit, free-flying, lineside/pass-by camera.
 - **Access to everything via keyboard** (the MaSzyna principle): fully operable without a mouse.
 

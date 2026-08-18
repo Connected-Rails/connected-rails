@@ -103,7 +103,7 @@ mods/<id>/mod.ron           id, name, version, author, depends, enabled
          /signals/*.ron     signal types (aspect table + optional script)
          /signal_models/*.ron signal models: glTF parts on mount points, lamp bindings
          /blocks/*.ron      block presets for the vehicle editor's palette
-         /track_types/*.ron superstructure classes: texture, speed limit, roughness, LZB flag
+         /track_types/*.ron superstructure classes: texture, speed limit, roughness, reverb, LZB flag
          /objects/*.ron     track objects: a 3D model plus its pose relative to the track
          /displays/*.html   cab displays as an HTML/CSS/JS page
          /scripts/*.lua     behaviour
@@ -248,7 +248,7 @@ or the whole corridor.
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, track objects, floating-origin anchoring |
-| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound (ch. 13); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
+| `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
 | `route-editor` | Route editor: top-down map over aerial imagery or a flown 3D view — track, equipment, objects, vegetation, terrain (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, block diagram (drive, brake, equipment), glTF import, LOD, moving parts (ch. 15) |
@@ -440,7 +440,10 @@ a **display** rendered to texture, written either as a declarative widget list i
 `display(ctx)` hook with menus and softkeys, or as an HTML/CSS/JS page under `displays/` —
 parsed, laid out and scripted in-engine by `html-display`, with no browser embedded. The sound
 table maps quantities (speed, traction, air, roughness, rain, control clicks) to the mod's own
-samples.
+samples, normally as **crossfaded layers** — three loops over overlapping speed windows rather
+than one stretched by its playback rate. A **▶ per entry** plays it through the editor's own
+output device with a slider for every quantity it depends on, so the crossfade can be dragged
+through by hand instead of guessed at from a sparkline.
 
 Details: [MODS.md](MODS.md).
 

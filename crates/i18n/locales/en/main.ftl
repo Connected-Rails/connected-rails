@@ -443,9 +443,10 @@ action-add-sound-hint = one entry: trigger, conditions, dependencies
 snd-name-placeholder = Name of the entry
 snd-file-placeholder = <mod>/assets/<file>.ogg or synth:<name>
 snd-file-hint =
-    Sample below the mods directory, or a generated source: synth:rolling,
-    synth:traction, synth:air, synth:compressor, synth:horn, synth:buzzer,
-    synth:joint, synth:contactor
+    Sample below the mods directory, or a generated source: synth:rolling-low,
+    synth:rolling-mid, synth:rolling-high, synth:traction-low, synth:traction-mid,
+    synth:traction-high, synth:air, synth:compressor, synth:horn, synth:buzzer,
+    synth:squeal, synth:joint, synth:contactor
 snd-trigger = Trigger
 snd-trigger-hint = what starts the sound — without one it loops and is only modulated
 snd-trigger-loop = none (loop)
@@ -470,6 +471,16 @@ action-add-factor = Add factor
 snd-pitch = Playback speed
 snd-curve-follows = follows a quantity
 snd-curve-follows-hint = without a curve the sound plays at its own volume and pitch
+
+# The preview plays one entry through the editor's own output device and lets the
+# author scrub the quantities it depends on.
+snd-preview = Preview
+snd-preview-hint = plays this entry; the sliders below scrub the quantities it depends on
+snd-preview-stop = Stop
+snd-preview-no-device = no audio output device
+snd-preview-level = volume { $volume } · speed { $pitch }
+snd-preview-failed = Cannot play: { $error }
+snd-preview-not-scrubbable = follows a cab control — only audible while driving
 
 snd-quantity-speed = Speed [km/h]
 snd-quantity-distance = Distance travelled [m]

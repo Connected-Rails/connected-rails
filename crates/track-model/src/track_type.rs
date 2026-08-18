@@ -11,8 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A track type: texture, roughness, superstructure speed limit and whether a
-/// line conductor (LZB) belongs on it.
+/// A track type: texture, roughness, how much its surroundings ring,
+/// superstructure speed limit and whether a line conductor (LZB) belongs on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackType {
     pub name: String,
@@ -26,6 +26,14 @@ pub struct TrackType {
     /// noise; jointed or worn track sits above 1, slab track below.
     #[serde(default = "default_roughness")]
     pub roughness: f64,
+    /// How much the surroundings ring, 0 = open line, 1 = tunnel. Drives the
+    /// reverb the app mixes under everything the player hears; a station hall,
+    /// a cutting or an overbridge sit in between. Modelling it on the track
+    /// type rather than on the terrain is the same trade `roughness` makes:
+    /// a line says where its tunnels are by assigning the type, and no one has
+    /// to trace geometry at run time.
+    #[serde(default)]
+    pub reverb: f64,
     /// Superstructure speed limit [km/h]; caps the line's speed profile
     /// wherever this type is assigned.
     #[serde(default = "default_max_speed")]
@@ -58,6 +66,7 @@ impl Default for TrackType {
             texture: None,
             color: default_color(),
             roughness: default_roughness(),
+            reverb: 0.0,
             max_speed: default_max_speed(),
             lzb: false,
         }
@@ -94,6 +103,7 @@ mod tests {
             texture: Some("mods://example/assets/track.png".into()),
             color: (0.3, 0.3, 0.3),
             roughness: 0.9,
+            reverb: 0.8,
             max_speed: 250.0,
             lzb: true,
         };
@@ -103,6 +113,8 @@ mod tests {
         // A minimal file only needs the name.
         let minimal = TrackType::from_ron("(name:\"nebenbahn\")").expect("parses");
         assert_eq!(minimal.max_speed, default_max_speed());
+        // A type that says nothing about its surroundings is open line, not a tunnel.
+        assert_eq!(minimal.reverb, 0.0);
         assert!(!minimal.lzb);
         assert!(minimal.texture.is_none());
     }

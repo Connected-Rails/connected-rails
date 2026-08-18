@@ -692,7 +692,7 @@ sounds: [
     // A loop, modulated: no trigger, two curves.
     (
         name: "rolling",
-        file: "synth:rolling",
+        file: "synth:rolling-mid",
         trigger: Loop,
         volume: Some((quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)])),
         pitch: Some((quantity: Speed, points: [(0.0, 0.7), (200.0, 1.7)])),
@@ -723,15 +723,72 @@ sounds: [
 ```
 
 `file` is a sample below the mods directory (`example/assets/whine.ogg`, the same path
-scheme as a model) or one of the sources the app generates at start-up: `synth:rolling`,
-`synth:traction`, `synth:air`, `synth:compressor`, `synth:horn`, `synth:buzzer`,
-`synth:squeal`, `synth:joint`, `synth:contactor`.
+scheme as a model — WAV, OGG/Vorbis and FLAC are decoded) or one of the sources the app
+generates at start-up: `synth:rolling-low`, `synth:rolling-mid`, `synth:rolling-high`,
+`synth:traction-low`, `synth:traction-mid`, `synth:traction-high`, `synth:air`,
+`synth:compressor`, `synth:horn`, `synth:buzzer`, `synth:squeal`, `synth:joint`,
+`synth:contactor`. (`synth:rolling` and `synth:traction` without a band are the middle
+band, for tables written before there were bands.)
 
 `positional: true` places the sound on the vehicle: it is attenuated by distance,
-Doppler-shifted — which is what makes another train audible as it passes — and muffled
-by a lowpass while the camera sits in the cab, the cab wall. Sounds of the
-driver's desk — buzzer, Sifa — set it to `false` so they stay at a constant place when the
-camera goes outside, and they are never filtered: they are in the cab with the listener.
+stereo-placed, Doppler-shifted — which is what makes another train audible as it passes —
+and low-passed, more with distance (air absorbs treble long before bass) and much more
+while the camera sits in the cab, the cab wall. Sounds of the driver's desk — buzzer,
+Sifa — set it to `false` so they stay at a constant place when the camera goes outside,
+and they are never filtered: they are in the cab with the listener.
+
+#### Layers
+
+**One sound is normally several entries.** A single loop stretched over a whole speed range
+by its playback rate drags its formants along with it and arrives at the top of the range as
+a toy train. Three loops whose volume windows overlap each stay near their own pitch and hand
+over to the next:
+
+```ron
+// Band 1 of 3: silent at a stand, full from 12 to 35 km/h, gone by 60.
+(
+    name: "rolling-low",
+    file: "synth:rolling-low",
+    trigger: Loop,
+    volume: Some((quantity: Speed, points: [(0.0, 0.0), (12.0, 1.0), (35.0, 1.0), (60.0, 0.0)])),
+    factors: [
+        (quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)]),
+        (quantity: Roughness, points: [(0.5, 0.75), (2.0, 1.4)]),
+    ],
+    pitch: Some((quantity: Speed, points: [(0.0, 0.85), (60.0, 1.25)])),
+    positional: true,
+),
+// Band 2 fades in over exactly the range band 1 fades out over.
+(
+    name: "rolling-mid",
+    file: "synth:rolling-mid",
+    trigger: Loop,
+    volume: Some((quantity: Speed, points: [(35.0, 0.0), (60.0, 1.0), (95.0, 1.0), (130.0, 0.0)])),
+    // … same factors, pitch ramp over 35 … 130 km/h
+),
+```
+
+Two rules make it work:
+
+1. **Neighbours share a flank.** Layer A's fade-out (`35 … 60`) is layer B's fade-in, so the
+   windows sum to 1 right through the handover — no dip, no doubling.
+2. **The window occupies the volume curve**, so how *loud* the sound is at all goes into
+   `factors`, which are multiplied in. Above, the first factor is the level over speed and
+   the second the track roughness.
+
+Keep each band's pitch ramp inside roughly 0.85 … 1.3. Swap the `synth:` names for six
+recordings and nothing else about the table changes. `mods/example/vehicles/br101_afb.ron`
+is the worked example.
+
+#### Hearing it
+
+The vehicle editor plays an entry: **▶ Preview** on its card starts it through the editor's
+own output device and puts up a slider for every quantity the entry depends on. Moving the
+speed slider walks the crossfade — auditioning `rolling-low` and then `rolling-mid` at the
+same speed is what a level step between two layers sounds like. The preview is a plain
+stereo bus: no distance, no cab wall, no reverb, because those belong to a place in the
+world and the editor has none. Volume and playback speed are shown as numbers next to the
+button, so a condition that mutes the entry is visible and not merely inaudible.
 
 Triggers:
 
@@ -1058,6 +1115,7 @@ built like, not where it runs:
     texture: Some("example/assets/ballast.png"),  // ballast texture, tiled along the track
     color: (0.32, 0.30, 0.28),   // untextured fallback; the route editor tints sections its own way
     roughness: 1.0,              // scales the rolling noise; jointed track > 1, slab track < 1
+    reverb: 0.0,                 // how much the surroundings ring: 0 = open line, 1 = tunnel
     max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
     lzb: false,                  // true: a line conductor belongs on this track (rule check)
 )
@@ -1073,7 +1131,11 @@ track_type: [(0.0, "example:hauptbahn"), (3000.0, "example:altbau")],
 
 `max_speed` merges into the speed profile every consumer already reads (AI, LZB, HUD,
 scoring); `roughness` reaches the sound table as the `Roughness` quantity (the default
-rolling entry carries a volume factor on it, see Sounds). The route editor edits the
+rolling entries carry a volume factor on it, see Sounds); `reverb` drives the reverb the
+simulator mixes under everything the player hears — a tunnel type sets 1.0, a station hall
+or a deep cutting sits around 0.3 … 0.6. Modelling the room on the track type rather than
+on the terrain is the same trade `roughness` makes: a line says where its tunnels are by
+assigning the type, and nothing has to trace geometry at run time. The route editor edits the
 sections in the selection panel (a color chip per section, the map tints the track ribbon
 to match) and its rule check flags names no installed mod has, and LZB types on a line
 that places no line conductor.
@@ -1151,7 +1213,7 @@ run-time cost and no new concept downstream.
 | `speed` | permitted speed [km/h] |
 | `cant` | cant [mm] |
 | `grade` | longitudinal gradient [‰] |
-| `track_type` | superstructure — model, texture, roughness, speed limit, LZB flag |
+| `track_type` | superstructure — model, texture, roughness, reverb, speed limit, LZB flag |
 | `electrification` | what hangs over it (see Electrification), or `"none"` |
 
 In the route editor the areas are **painted**: pick **Mark area**, press on a track and

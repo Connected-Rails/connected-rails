@@ -15,6 +15,7 @@ mod cab;
 mod displays;
 mod graph;
 mod model;
+mod preview;
 mod settings;
 mod sounds;
 mod ui;
@@ -407,6 +408,8 @@ fn main() {
     .insert_resource(editor)
     .init_resource::<View>()
     .add_systems(Startup, setup)
+    // The sound preview owns its own output device (`preview.rs`).
+    .insert_resource(preview::Preview::open())
     .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
         Update,

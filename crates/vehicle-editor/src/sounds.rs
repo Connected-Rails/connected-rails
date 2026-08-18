@@ -5,7 +5,12 @@
 //! **dependencies** (which quantity moves volume and pitch). A sparkline under each curve
 //! answers "does this look right" — a support point typed one digit wrong reads as a kink
 //! there and as a plausible number in the field.
+//!
+//! And a ▶ on each card answers "does this *sound* right", which no sparkline can. It plays
+//! the entry through [`crate::preview`] and puts a slider up for every quantity the entry
+//! depends on, so the crossfade between two layers can be dragged through by hand.
 
+use crate::preview::Preview;
 use crate::ui::row;
 use bevy_egui::egui;
 use editor_ui::{colors, field, space};
@@ -16,7 +21,7 @@ use sim_core::train::VehicleSpec;
 /// Width of the trigger and quantity combos.
 const COMBO_W: f32 = 150.0;
 
-pub fn panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
+pub fn panel(ui: &mut egui::Ui, spec: &mut VehicleSpec, preview: &mut Preview) {
     ui.horizontal(|ui| {
         if ui
             .button(t!("action-add-sound"))
@@ -85,11 +90,97 @@ pub fn panel(ui: &mut egui::Ui, spec: &mut VehicleSpec) {
                 &mut entry.pitch,
                 sim_core::sound::PITCH_RANGE,
             );
+            preview_row(ui, i, entry, preview);
         });
     }
     if let Some(i) = remove {
+        preview.stop();
         spec.sounds.remove(i);
     }
+}
+
+/// Play button, and while it is running a slider for every quantity the entry looks at.
+///
+/// The sliders write into the preview's shared state, so auditioning `rolling-low` at
+/// 30 km/h and then `rolling-mid` at the same speed is two clicks — which is how a
+/// crossfade is judged.
+fn preview_row(ui: &mut egui::Ui, i: usize, entry: &SoundSpec, preview: &mut Preview) {
+    ui.add_space(space::XS);
+    let playing = preview.is_playing(i);
+    ui.horizontal(|ui| {
+        let label = if playing {
+            t!("snd-preview-stop")
+        } else {
+            t!("snd-preview")
+        };
+        let button = ui.add_enabled(
+            preview.available() && !entry.file.is_empty(),
+            egui::Button::new(label),
+        );
+        let button = if preview.available() {
+            button.on_hover_text(t!("snd-preview-hint"))
+        } else {
+            button.on_disabled_hover_text(t!("snd-preview-no-device"))
+        };
+        if button.clicked() {
+            preview.toggle(i, entry);
+        }
+        if playing {
+            let (volume, pitch) = preview.level(entry);
+            ui.label(
+                egui::RichText::new(t!(
+                    "snd-preview-level",
+                    volume = format!("{volume:.2}"),
+                    pitch = format!("{pitch:.2}")
+                ))
+                .small()
+                .color(colors::TEXT_SECONDARY),
+            );
+        }
+    });
+    if !playing {
+        return;
+    }
+    if let Some(error) = preview.error.clone().filter(|e| !e.is_empty()) {
+        ui.label(
+            egui::RichText::new(t!("snd-preview-failed", error = error))
+                .small()
+                .color(colors::ERROR),
+        );
+    }
+    editor_ui::form_grid(&format!("snd-preview-{i}")).show(ui, |ui| {
+        for quantity in entry.quantities() {
+            let mut value = preview.state.get(quantity);
+            let range = quantity.range();
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                editor_ui::form_label(ui, t!(quantity.key()));
+            });
+            ui.horizontal(|ui| {
+                // A cab input is scaled against a whole train, which the editor has no
+                // instance of — the slider would write somewhere that is never read.
+                if preview.state.set(quantity, value) {
+                    changed = ui
+                        .add(
+                            egui::Slider::new(&mut value, range)
+                                .clamping(egui::SliderClamping::Edits),
+                        )
+                        .changed();
+                } else {
+                    ui.label(
+                        egui::RichText::new(t!("snd-preview-not-scrubbable"))
+                            .small()
+                            .color(colors::TEXT_SECONDARY),
+                    );
+                }
+            });
+            ui.end_row();
+            if changed {
+                preview.state.set(quantity, value);
+            }
+        }
+    });
+    preview.refresh(entry);
 }
 
 /// A fresh entry: a loop at full volume, which is audible at once — an entry that starts out

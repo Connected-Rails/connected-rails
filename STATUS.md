@@ -31,7 +31,8 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
 - **Track model (ch. 5):** one segment type (`k0`, `dk`) for straight, curve and clothoid;
   switches with throw time, locking and trailing-move detection; trackside devices with RON payload.
   **Track types** (superstructure classes, `track_types/*.ron` in a mod): texture, color,
-  roughness, superstructure speed limit and an LZB flag — assigned per edge as a step
+  roughness, how much its surroundings ring (`reverb`, 0 = open line, 1 = tunnel),
+  superstructure speed limit and an LZB flag — assigned per edge as a step
   profile over `s`, so one edge changes its type section by section, with the reserved
   name `"default"` returning to the built-in type. The mod runtime resolves the names
   after compile (like signal types) and merges `max_speed` into the one speed profile AI,
@@ -104,19 +105,36 @@ As of 2026-08-17 · `cargo test --workspace`: **408 tests green** · clippy and 
   trigger, and it runs in the app. A tap changer notch is a number whose crossing fires the
   contactor, brake squeal a condition (speed window ∧ brake force) on a loop. Rail joints,
   the one noise that does not follow from the vehicle state, come out of a distance interval.
-  Entries marked `positional` are placed on the vehicle — distance attenuation and Doppler,
-  so **other trains are audible**; the buzzer and the rest of the desk stay unplaced.
-  While the camera sits in the cab, placed sounds pass a one-pole lowpass — the **cab
-  wall**; Bevy's audio has no filter graph, so the filter sits in the audio decoder
-  (`audio::Exterior`), its cutoff steered by the camera mode over an atomic. The outside
-  cameras hear the full spectrum, the desk sounds are never filtered.
+  One sound is normally **several entries**: a single loop stretched over a whole speed range
+  by its playback rate drags its formants along and arrives at the top as a toy train, so
+  rolling noise and traction are three **layers** each, crossfaded by overlapping
+  `Curve::window`s. Each layer only ever plays between 0.85 and 1.25 of its own pitch, and
+  neighbours share a flank so the sum stays flat through the handover. With the window
+  occupying the volume curve, how loud the sound is at all moves into `factors`.
+  **The mixer is kira's** (`app::audio`), not Bevy's — Bevy's audio is a set of sinks on one
+  bus with no filter graph, no sends and no effects, which was enough for "a loop whose
+  volume follows the speed" and nothing beyond it:
+  every vehicle gets its own **spatial mixer track**, so distance attenuation and stereo
+  placement come out of its position and all of its sounds share one filter; **that filter is
+  the cab wall and the air in one**, its cutoff falling with distance (air absorbs treble long
+  before bass) and dropping to 800 Hz while the camera sits inside; **Doppler** is computed
+  from the sim's own velocities and multiplied into the playback rate, which is what makes a
+  wayside camera hear a train *pass* rather than approach and stop; **reverb** is a send track
+  whose level follows the new `TrackType::reverb` under the player — 0 on the open line, 1 in
+  a tunnel, in between for a station hall; and a **compressor on the main track** gives a
+  dozen entries at their own volumes shared head-room. Volumes and rates are tweened, never
+  set hard. The desk sounds (`positional: false`) go on a plain cab track: no distance, no
+  wall — they are in the cab with the listener.
   A vehicle without a table of its own runs on the generated default (`sound::default_table`):
-  rolling, traction split into an electric and a diesel entry, air, compressor, horn, buzzer,
-  rail joints and tap changer contactors. Their samples are **generated at startup**, a few
-  oscillators and a noise generator written into a WAV buffer, so the repository carries no
-  samples — a mod's own files take the same path, only the `file` of the entry changes.
-  The table is edited in the vehicle editor (Sounds section) and documented in
-  [MODS.md](MODS.md). Volumes fade rather than jump.
+  three rolling bands, three traction bands over speed and three more over engine speed, air,
+  compressor, horn, buzzer, rail joints and tap changer contactors. Their samples are
+  **generated** (`sim_core::synth`, 44.1 kHz, four-second loops whose tail is crossfaded over
+  their head so the seam does not click, each band normalised to the same RMS so a crossfade
+  does not step in level), so the repository carries no samples — a mod's own files take the
+  same path, only the `file` of the entry changes.
+  The table is edited in the vehicle editor (Sounds section), where a **▶ per entry plays it
+  through the editor's own output device** and puts up a slider for every quantity it depends
+  on, so a crossfade can be dragged through by hand; documented in [MODS.md](MODS.md).
 - **Train protection (ch. 9):** trait abstraction + country package DE with all intermittent
   builds, LZB and three Sifa builds:
   - **Indusi/PZB** as one state machine plus a parameter set per build — **I 54**, **I 60**,

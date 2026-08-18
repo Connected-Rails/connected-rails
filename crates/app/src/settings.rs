@@ -15,7 +15,6 @@
 
 use std::sync::OnceLock;
 
-use bevy::audio::{GlobalVolume, Volume};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::settings::{
@@ -220,8 +219,12 @@ fn apply_scene(
     }
 }
 
-fn apply_audio(audio: Res<Audio>, mut volume: ResMut<GlobalVolume>) {
-    volume.volume = Volume::Linear(audio.master);
+/// The mixer only exists once the output device opened — without one the simulator runs
+/// silent and the slider on the settings page has nothing to move.
+fn apply_audio(mixer: Option<ResMut<crate::audio::Audio>>, audio: Res<Audio>) {
+    if let Some(mut mixer) = mixer {
+        mixer.set_master(audio.master);
+    }
 }
 
 /// A changed setting is written out right away, on the i/o pool.

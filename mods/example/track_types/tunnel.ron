@@ -1,0 +1,14 @@
+// The same superstructure as `hauptbahn`, but with walls around it: `reverb`
+// is how much the surroundings ring, 0 = open line, 1 = tunnel. The simulator
+// mixes a reverb under everything the player hears and follows this value, so
+// a line says where its tunnels are by assigning the type — nobody has to
+// trace geometry at run time. A station hall or a deep cutting sits between
+// the two, around 0.3 … 0.6.
+(
+    name: "Tunnel",
+    color: (0.28, 0.27, 0.26),
+    roughness: 1.0,
+    reverb: 1.0,
+    max_speed: 250.0,
+    lzb: false,
+)

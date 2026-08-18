@@ -16,7 +16,6 @@ mod streaming;
 mod ui;
 
 use ai_driver::{AiDriver, ScheduledStop, Timetable, TimetableKind};
-use bevy::audio::{AddAudioSource, DefaultSpatialScale, SpatialScale};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
@@ -196,25 +195,28 @@ fn main() {
     // window — no flip on the first frame.
     app.add_plugins(settings::plugin);
     let graphics = app.world().resource::<settings::Graphics>().clone();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: i18n::t!("window-simulator"),
-            mode: settings::window_mode(&graphics),
-            present_mode: settings::present_mode(&graphics),
-            ..default()
-        }),
-        ..default()
-    }))
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: i18n::t!("window-simulator"),
+                    mode: settings::window_mode(&graphics),
+                    present_mode: settings::present_mode(&graphics),
+                    ..default()
+                }),
+                ..default()
+            })
+            // The mixer is kira's (`audio.rs`); Bevy's own audio would open a second output
+            // device and hold it for nothing.
+            .disable::<bevy::audio::AudioPlugin>(),
+    )
     // Terrain splatting (plan ch. 14): shader and material, shared with the
     // route editor, which draws the same ground.
     .add_plugins(world_render::WorldRenderPlugin)
-    // Placed sounds play through the cab-wall lowpass, which lives in a decoder
-    // (`audio::Exterior`) because Bevy's audio has no filter graph.
-    .add_audio_source::<audio::Exterior>()
+    // The mixer (`audio.rs`) — opened here rather than in `Startup`, because the initial
+    // state transition into `Driving` runs before any startup schedule.
+    .add_plugins(audio::plugin)
     .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
-    // Spatial audio is measured in metres here, and a train is heard hundreds of them
-    // away — at the default scale of 1 everything but the cab would be inaudible.
-    .insert_resource(DefaultSpatialScale(SpatialScale::new(0.02)))
     // Mouse picking for the 3D cab: only marked control meshes catch the ray —
     // without the marker requirement every terrain tile would compete for it.
     .add_plugins(MeshPickingPlugin)

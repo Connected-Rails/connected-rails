@@ -3,8 +3,8 @@
 //! The model is the one Zusi uses: an entry has three parts.
 //!
 //! - **Trigger** — what starts the sound. [`Trigger::Loop`] is "no trigger": the sound runs
-//!   continuously and only its volume and pitch move. That is the case the six generated
-//!   loops fall under.
+//!   continuously and only its volume and pitch move. That is the case every generated loop
+//!   of [`crate::synth`] falls under.
 //! - **Conditions** — state predicates that mute the sound or release it (a speed window,
 //!   a brake pressure threshold).
 //! - **Dependencies** — [`Curve`]s with support points that map a physical quantity onto
@@ -21,6 +21,11 @@
 //! contactor; brake squeal is a condition (speed window ∧ brake force) on a loop. Only what
 //! does not follow from the vehicle state at all has to come from outside — rail joints,
 //! which belong to the track, not to the train.
+//!
+//! One sound is normally several entries. A loop stretched over a whole speed range by its
+//! playback rate drags its formants with it; three loops whose [`Curve::window`]s overlap
+//! each stay near their own pitch and hand over to the next. [`default_table`] is built that
+//! way, and a mod with recorded samples writes exactly the same shape.
 
 use crate::cab::{CabControl, CabInputs};
 use crate::train::Vehicle;
@@ -114,6 +119,31 @@ impl Quantity {
         Quantity::Roughness,
         Quantity::Rain,
     ];
+
+    /// Range a slider offers for this quantity — what the vehicle editor's sound preview
+    /// scrubs over.
+    ///
+    /// Not a limit the simulation respects: a value outside it is legal and a curve may
+    /// have support points beyond. It is the range worth dragging through by hand, so a
+    /// pressure slider does not spend its travel between 0 and 6 bar on the way to 10 000.
+    pub fn range(self) -> std::ops::RangeInclusive<f64> {
+        match self {
+            Quantity::Speed => 0.0..=400.0,
+            Quantity::Distance => 0.0..=1_000.0,
+            Quantity::EngineRpm => 0.0..=3_000.0,
+            Quantity::TapChangerStep => 0.0..=40.0,
+            Quantity::Circuit => 0.0..=3.0,
+            Quantity::TractiveEffort | Quantity::BrakeEffort => 0.0..=600.0,
+            Quantity::BrakePipe | Quantity::BrakeCylinder => 0.0..=6.0,
+            Quantity::MainReservoir => 0.0..=12.0,
+            Quantity::AirFlow => 0.0..=3.0,
+            Quantity::Slip => 0.0..=10.0,
+            Quantity::Throttle => -1.0..=1.0,
+            Quantity::Roughness => 0.0..=3.0,
+            // Everything else is a normalised position or a flag.
+            _ => 0.0..=1.0,
+        }
+    }
 
     /// i18n key of the label — `snd-quantity-speed` and so on.
     pub fn key(self) -> &'static str {
@@ -278,6 +308,54 @@ impl SoundState {
         }
     }
 
+    /// Writes one quantity, the inverse of [`Self::get`] — `false` for a quantity this
+    /// state cannot set by itself.
+    ///
+    /// The simulator never needs this: it samples a vehicle and reads the result. The
+    /// vehicle editor does — its sound preview lets the author scrub a quantity and hear
+    /// what the entry makes of it, which is the whole point of a preview.
+    ///
+    /// The exception is [`Quantity::Control`] for a control that lives in [`CabInputs`]:
+    /// writing one goes through [`CabControl::set`], which needs a whole [`Train`] to scale
+    /// against. Those are reported rather than silently ignored, so the editor can say so.
+    ///
+    /// [`Train`]: crate::train::Train
+    pub fn set(&mut self, quantity: Quantity, value: f64) -> bool {
+        match quantity {
+            Quantity::Speed => self.speed = value,
+            Quantity::Distance => self.distance = value,
+            Quantity::EngineRpm => self.engine_rpm = value,
+            Quantity::TapChangerStep => self.tap_changer_step = value,
+            Quantity::Circuit => self.circuit = value,
+            Quantity::TractiveEffort => self.tractive_effort = value,
+            Quantity::BrakeEffort => self.brake_effort = value,
+            Quantity::BrakePipe => self.brake_pipe = value,
+            Quantity::BrakeCylinder => self.brake_cylinder = value,
+            Quantity::MainReservoir => self.main_reservoir = value,
+            Quantity::AirFlow => self.air_flow = value,
+            Quantity::Slip => self.slip = value,
+            Quantity::Throttle => self.throttle = value,
+            Quantity::Pantograph => self.pantograph = value,
+            Quantity::MainSwitch => self.main_switch = value,
+            Quantity::Compressor => self.compressor = value,
+            Quantity::Doors => self.doors = value,
+            Quantity::Horn => self.horn = value,
+            Quantity::Alert => self.alert = value,
+            Quantity::Roughness => self.roughness = value,
+            Quantity::Rain => self.rain = value,
+            Quantity::Control(control) => match control {
+                CabControl::AfbTarget => self.afb_target = value,
+                CabControl::Battery => self.battery = value,
+                CabControl::Pantograph => self.pantograph_switch = value,
+                CabControl::MainSwitch => self.main_switch_position = value,
+                CabControl::Compressor => self.compressor_switch = value,
+                CabControl::TrainType => self.train_type = value,
+                _ => return false,
+            },
+        }
+        true
+    }
+
     /// Reads the state of one vehicle.
     ///
     /// `alert` comes from the train protection of the whole train, `cab` from the desk that
@@ -368,6 +446,21 @@ impl Curve {
         Self {
             quantity,
             points: vec![(x0, y0), (x1, y1)],
+        }
+    }
+
+    /// A crossfade window: silent below `x0`, `peak` between `x1` and `x2`, silent again
+    /// above `x3`.
+    ///
+    /// This is what layering a sound is made of. One recorded loop stretched over a whole
+    /// speed range drags its formants along with the playback rate and arrives at the top
+    /// as a toy train; three loops whose windows overlap each stay near their own pitch.
+    /// Give the neighbours a shared flank — layer A's `x2 … x3` is layer B's `x0 … x1` —
+    /// and the sum stays roughly `peak` right through the handover.
+    pub fn window(quantity: Quantity, x0: f64, x1: f64, x2: f64, x3: f64, peak: f64) -> Self {
+        Self {
+            quantity,
+            points: vec![(x0, 0.0), (x1, peak), (x2, peak), (x3, 0.0)],
         }
     }
 
@@ -516,6 +609,33 @@ impl SoundSpec {
         (volume.clamp(0.0, 1.0), pitch)
     }
 
+    /// Every quantity this entry looks at, in the order it looks at them and without
+    /// repeats — trigger, then conditions, then volume, factors and pitch.
+    ///
+    /// The vehicle editor's preview asks for this: those are exactly the sliders that
+    /// change what the entry does, and nothing else is worth putting on the screen.
+    pub fn quantities(&self) -> Vec<Quantity> {
+        let trigger = match self.trigger {
+            Trigger::Loop => None,
+            Trigger::Rises { quantity, .. }
+            | Trigger::Falls { quantity, .. }
+            | Trigger::Every { quantity, .. } => Some(quantity),
+        };
+        let mut seen = Vec::new();
+        for quantity in trigger
+            .into_iter()
+            .chain(self.conditions.iter().map(|c| c.quantity))
+            .chain(self.volume.iter().map(|c| c.quantity))
+            .chain(self.factors.iter().map(|c| c.quantity))
+            .chain(self.pitch.iter().map(|c| c.quantity))
+        {
+            if !seen.contains(&quantity) {
+                seen.push(quantity);
+            }
+        }
+        seen
+    }
+
     /// `true` when the entry has to be started in this frame — trigger fired and every
     /// condition holds.
     pub fn fires(&self, now: &SoundState, previous: &SoundState) -> bool {
@@ -523,11 +643,20 @@ impl SoundSpec {
     }
 }
 
-/// The table a vehicle without one of its own runs on: the generated loops of M2, plus the
-/// two discrete noises that come out of the same mechanism.
+/// The table a vehicle without one of its own runs on: the generated sources of
+/// [`crate::synth`], wired the way a mod would wire recorded ones.
 ///
 /// It is what a mod would write into its vehicle file, only in code — so the table format is
-/// exercised by every vehicle, not just by the one that brings samples.
+/// exercised by every vehicle, not just by the one that brings samples. Two mechanisms are
+/// worth reading off it:
+///
+/// - **Layers.** Rolling noise and traction are three entries each, their volume curves
+///   overlapping [`Curve::window`]s over speed or engine speed. Only one or two are audible
+///   at a time, and each stays near its own pitch. That is how a sample-based vehicle is
+///   built too — swap the six `synth:` names for six recordings and nothing else changes.
+/// - **Factors.** With the window occupying the volume curve, how *loud* the layer is comes
+///   out of [`SoundSpec::factors`]: tractive effort for the electric, engine speed for the
+///   diesel, track roughness on top of the rolling noise.
 pub fn default_table() -> Vec<SoundSpec> {
     let entry = |name: &str, file: &str, volume: Curve| SoundSpec {
         name: name.into(),
@@ -539,48 +668,137 @@ pub fn default_table() -> Vec<SoundSpec> {
         pitch: None,
         positional: true,
     };
+    // One band of a crossfaded loop: the window says when it is heard, the pitch ramp keeps
+    // it inside `pitch` over its own stretch of the quantity. The volume curve is the
+    // window, so how loud the sound is at all belongs in `factors`.
+    let layer = |name: &str, quantity: Quantity, window: [f64; 4], pitch: [f64; 2]| SoundSpec {
+        name: name.into(),
+        file: format!("synth:{name}"),
+        trigger: Trigger::Loop,
+        conditions: Vec::new(),
+        volume: Some(Curve::window(
+            quantity, window[0], window[1], window[2], window[3], 1.0,
+        )),
+        factors: Vec::new(),
+        pitch: Some(Curve::ramp(
+            quantity, window[0], pitch[0], window[3], pitch[1],
+        )),
+        positional: true,
+    };
+    // Rough or jointed superstructure is audibly louder than welded main-line rail. The
+    // same factor sits on every rolling layer and on the rail joints.
+    let roughness = || Curve::ramp(Quantity::Roughness, 0.5, 0.75, 2.0, 1.4);
+    // How loud the rolling noise is at all; the layers only decide which of them says it.
+    let rolling_level = || Curve::ramp(Quantity::Speed, 0.0, 0.0, 60.0, 0.55);
+    let effort = || Curve::ramp(Quantity::TractiveEffort, 0.0, 0.0, 250.0, 0.45);
+    let rpm_level = || Curve::ramp(Quantity::EngineRpm, 350.0, 0.25, 2250.0, 0.55);
+    let electric = || Condition {
+        quantity: Quantity::EngineRpm,
+        min: 0.0,
+        max: 0.0,
+    };
+    let diesel = || Condition {
+        quantity: Quantity::EngineRpm,
+        min: 1.0,
+        max: f64::INFINITY,
+    };
+
     vec![
-        // Rolling noise: louder and higher with speed, capped so a fast train does not
-        // drown out everything else. The track type scales it — rough or jointed
-        // superstructure is audibly louder than welded main-line rail.
+        // Rolling noise in three bands over speed: the rumble of the running gear at
+        // shunting speed hands over to the hiss of the wheel on the rail at line speed.
         SoundSpec {
-            pitch: Some(Curve::ramp(Quantity::Speed, 0.0, 0.7, 200.0, 1.7)),
-            factors: vec![Curve::ramp(Quantity::Roughness, 0.5, 0.75, 2.0, 1.4)],
-            ..entry(
-                "rolling",
-                "synth:rolling",
-                Curve::ramp(Quantity::Speed, 0.0, 0.0, 60.0, 0.55),
+            factors: vec![rolling_level(), roughness()],
+            ..layer(
+                "rolling-low",
+                Quantity::Speed,
+                [0.0, 12.0, 35.0, 60.0],
+                [0.85, 1.25],
+            )
+        },
+        SoundSpec {
+            factors: vec![rolling_level(), roughness()],
+            ..layer(
+                "rolling-mid",
+                Quantity::Speed,
+                [35.0, 60.0, 95.0, 130.0],
+                [0.85, 1.25],
+            )
+        },
+        SoundSpec {
+            factors: vec![rolling_level(), roughness()],
+            ..layer(
+                "rolling-high",
+                Quantity::Speed,
+                [95.0, 130.0, 260.0, 400.0],
+                [0.85, 1.3],
             )
         },
         // Traction, electric: the converter whine follows the motor, and that follows the
         // wheel. The condition keeps it off a running diesel engine.
         SoundSpec {
-            conditions: vec![Condition {
-                quantity: Quantity::EngineRpm,
-                min: 0.0,
-                max: 0.0,
-            }],
-            pitch: Some(Curve::ramp(Quantity::Speed, 0.0, 0.5, 150.0, 1.5)),
-            ..entry(
-                "traction-electric",
-                "synth:traction",
-                Curve::ramp(Quantity::TractiveEffort, 0.0, 0.0, 250.0, 0.45),
+            conditions: vec![electric()],
+            factors: vec![effort()],
+            ..layer(
+                "traction-low",
+                Quantity::Speed,
+                [0.0, 5.0, 40.0, 70.0],
+                [0.85, 1.25],
             )
         },
-        // Traction, diesel: the same loop, but heard by engine speed. Two entries with one
-        // condition each is how Zusi splits a sound that follows different quantities in
-        // different states.
         SoundSpec {
-            conditions: vec![Condition {
-                quantity: Quantity::EngineRpm,
-                min: 1.0,
-                max: f64::INFINITY,
-            }],
-            pitch: Some(Curve::ramp(Quantity::EngineRpm, 350.0, 0.4, 2250.0, 2.5)),
-            ..entry(
-                "traction-diesel",
-                "synth:traction",
-                Curve::ramp(Quantity::EngineRpm, 0.0, 0.1, 2250.0, 0.5),
+            conditions: vec![electric()],
+            factors: vec![effort()],
+            ..layer(
+                "traction-mid",
+                Quantity::Speed,
+                [40.0, 70.0, 130.0, 180.0],
+                [0.85, 1.25],
+            )
+        },
+        SoundSpec {
+            conditions: vec![electric()],
+            factors: vec![effort()],
+            ..layer(
+                "traction-high",
+                Quantity::Speed,
+                [130.0, 180.0, 300.0, 400.0],
+                [0.85, 1.3],
+            )
+        },
+        // Traction, diesel: the same three loops, but heard by engine speed. Two sets of
+        // entries with one condition each is how Zusi splits a sound that follows different
+        // quantities in different states.
+        SoundSpec {
+            name: "traction-diesel-low".into(),
+            conditions: vec![diesel()],
+            factors: vec![rpm_level()],
+            ..layer(
+                "traction-low",
+                Quantity::EngineRpm,
+                [0.0, 350.0, 750.0, 1050.0],
+                [0.85, 1.25],
+            )
+        },
+        SoundSpec {
+            name: "traction-diesel-mid".into(),
+            conditions: vec![diesel()],
+            factors: vec![rpm_level()],
+            ..layer(
+                "traction-mid",
+                Quantity::EngineRpm,
+                [750.0, 1050.0, 1500.0, 1850.0],
+                [0.85, 1.25],
+            )
+        },
+        SoundSpec {
+            name: "traction-diesel-high".into(),
+            conditions: vec![diesel()],
+            factors: vec![rpm_level()],
+            ..layer(
+                "traction-high",
+                Quantity::EngineRpm,
+                [1500.0, 1850.0, 2250.0, 2800.0],
+                [0.85, 1.3],
             )
         },
         entry(
@@ -621,7 +839,7 @@ pub fn default_table() -> Vec<SoundSpec> {
                 max: f64::INFINITY,
             }],
             volume: Some(Curve::ramp(Quantity::Speed, 3.0, 0.12, 120.0, 0.35)),
-            factors: vec![Curve::ramp(Quantity::Roughness, 0.5, 0.75, 2.0, 1.4)],
+            factors: vec![roughness()],
             pitch: Some(Curve::ramp(Quantity::Speed, 3.0, 0.8, 160.0, 1.4)),
             positional: true,
         },
@@ -767,15 +985,17 @@ mod tests {
         );
     }
 
-    /// The generated loops are the same data a mod would write — and the two traction
-    /// entries must not sound at the same time.
+    /// The generated loops are the same data a mod would write — and the electric and
+    /// diesel traction entries must not sound at the same time.
     #[test]
     fn the_default_table_covers_the_generated_loops() {
         let table = default_table();
         for name in [
-            "rolling",
-            "traction-electric",
-            "traction-diesel",
+            "rolling-low",
+            "rolling-mid",
+            "rolling-high",
+            "traction-low",
+            "traction-diesel-low",
             "air",
             "compressor",
             "horn",
@@ -785,27 +1005,71 @@ mod tests {
             assert!(entry.is_loop(), "{name} runs without a trigger");
             assert!(entry.file.starts_with("synth:"), "{name}");
         }
-        let electric = table
-            .iter()
-            .find(|s| s.name == "traction-electric")
-            .expect("present");
-        let diesel = table
-            .iter()
-            .find(|s| s.name == "traction-diesel")
-            .expect("present");
+        // Every source the table names has to exist, or the vehicle plays silence with
+        // nothing but a warning in the log.
+        for entry in &table {
+            let generated = entry.file.strip_prefix("synth:").expect(&entry.file);
+            assert!(crate::synth::synth(generated).is_some(), "{generated}");
+        }
+
+        let sums = |state: &SoundState, prefix: &str| -> f64 {
+            table
+                .iter()
+                .filter(|e| e.name.starts_with(prefix))
+                .map(|e| e.level(state).0)
+                .sum()
+        };
         let running = SoundState {
             engine_rpm: 1500.0,
             tractive_effort: 200.0,
             ..SoundState::default()
         };
-        assert_eq!(electric.level(&running).0, 0.0);
-        assert!(diesel.level(&running).0 > 0.0);
+        assert_eq!(sums(&running, "traction-low"), 0.0, "electric bands silent");
+        assert!(sums(&running, "traction-diesel") > 0.0);
         let electric_loco = SoundState {
+            speed: 60.0,
             tractive_effort: 200.0,
             ..SoundState::default()
         };
-        assert!(electric.level(&electric_loco).0 > 0.0);
-        assert_eq!(diesel.level(&electric_loco).0, 0.0);
+        assert!(sums(&electric_loco, "traction-mid") > 0.0);
+        assert_eq!(sums(&electric_loco, "traction-diesel"), 0.0);
+    }
+
+    /// The point of layering: over the whole speed range at least one rolling band is
+    /// audible, and the bands together stay near one level instead of dipping in the
+    /// handover or doubling up in the overlap.
+    #[test]
+    fn the_rolling_bands_crossfade_without_a_gap() {
+        let table = default_table();
+        let bands: Vec<&SoundSpec> = table
+            .iter()
+            .filter(|e| e.name.starts_with("rolling-"))
+            .collect();
+        assert_eq!(bands.len(), 3);
+        // The windows are the layer selection — their sum is what must stay flat. How loud
+        // the rolling noise is at all is a factor on top and rises with the speed, so it is
+        // deliberately not part of this.
+        for kmh in 12..=260 {
+            let at = state(f64::from(kmh));
+            let sum: f64 = bands
+                .iter()
+                .map(|b| b.volume.as_ref().expect("windowed").eval(&at))
+                .sum();
+            assert!((0.95..=1.05).contains(&sum), "{kmh} km/h: {sum}");
+        }
+        // And the level itself never drops out between two bands.
+        for kmh in 12..=260 {
+            let at = state(f64::from(kmh));
+            let sum: f64 = bands.iter().map(|b| b.level(&at).0).sum();
+            assert!(sum > 0.1, "a hole at {kmh} km/h: {sum}");
+        }
+        // And no band is resampled far enough to change its character.
+        for band in bands {
+            for kmh in 0..=400 {
+                let (_, pitch) = band.level(&state(f64::from(kmh)));
+                assert!((0.8..=1.35).contains(&pitch), "{}: {pitch}", band.name);
+            }
+        }
     }
 
     /// A cab control is a sound quantity: the button edge fires a trigger, and
@@ -840,7 +1104,7 @@ mod tests {
     fn factors_scale_the_volume() {
         let rolling = default_table()
             .into_iter()
-            .find(|e| e.name == "rolling")
+            .find(|e| e.name == "rolling-mid")
             .expect("rolling entry exists");
         let mut smooth = state(60.0);
         smooth.roughness = 0.5;

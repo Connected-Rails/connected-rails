@@ -653,14 +653,31 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} missing"))
         };
 
-        let rolling = entry("rolling");
-        assert!(rolling.is_loop());
+        // Rolling noise is three crossfaded layers; at 120 km/h the middle one carries it
+        // and the top one is fading in, and neither is stretched far from its own pitch.
         let fast = SoundState {
             speed: 120.0,
             ..SoundState::default()
         };
-        assert!(rolling.level(&fast).0 > 0.0);
-        assert!(rolling.level(&fast).1 > 1.0, "faster is also higher");
+        let rolling: Vec<_> = ["rolling-low", "rolling-mid", "rolling-high"]
+            .map(entry)
+            .into_iter()
+            .collect();
+        assert!(rolling.iter().all(|layer| layer.is_loop()));
+        assert_eq!(
+            rolling[0].level(&fast).0,
+            0.0,
+            "the low band is out by then"
+        );
+        let audible: f64 = rolling.iter().map(|layer| layer.level(&fast).0).sum();
+        assert!(audible > 0.0);
+        for layer in &rolling {
+            assert!(
+                (0.8..=1.35).contains(&layer.level(&fast).1),
+                "{} is resampled too far",
+                layer.name
+            );
+        }
 
         // Squeal is a condition on a loop: braking slowly yes, rolling fast no.
         let squeal = entry("brake-squeal");

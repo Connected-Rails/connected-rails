@@ -19,6 +19,7 @@ pub mod score;
 pub mod signal;
 pub mod sound;
 pub mod steam;
+pub mod synth;
 pub mod timetable;
 pub mod train;
 

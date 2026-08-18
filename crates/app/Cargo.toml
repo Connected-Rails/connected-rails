@@ -21,10 +21,19 @@ html-display = { path = "../html-display" }
 ai-driver = { workspace = true }
 world-render = { workspace = true }
 glam = { workspace = true }
-# `wav`: the sound loops are generated at startup as WAV buffers (ch. 13), so rodio has
-# to be able to decode them — Bevy only brings the ogg decoder by default.
 # `jpeg`: the menu wallpaper is a compiled-in JPEG (`images/`).
-bevy = { workspace = true, features = ["wav", "jpeg", "bevy_settings"] }
+bevy = { workspace = true, features = ["jpeg", "bevy_settings"] }
+# The mixer (plan ch. 13): buses, sends, per-track filters, reverb and a compressor —
+# none of which Bevy's own audio has. `symphonia` and the format features are what lets a
+# mod ship recorded samples; the generated sources need no decoder at all.
+kira = { version = "0.12", default-features = false, features = [
+    "cpal",
+    "symphonia",
+    "wav",
+    "ogg",
+    "vorbis",
+    "flac",
+] }
 
 [features]
 # Links Bevy as a shared library instead of statically: much faster relinks.

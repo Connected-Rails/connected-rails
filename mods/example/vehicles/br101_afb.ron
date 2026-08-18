@@ -80,24 +80,84 @@
     //
     // `synth:<name>` is one of the sources the app generates at start-up. A mod's own
     // samples go in the same field: `file: "example/assets/whine.ogg"`.
+    //
+    // One sound is normally several entries. A single loop stretched over a whole speed
+    // range by its playback rate drags its formants along and arrives at the top as a toy
+    // train, so rolling noise and traction are three **layers** each: their volume curves
+    // are overlapping windows over speed, and each layer only ever plays between 0.85 and
+    // 1.25 of its own pitch. What the neighbours share is a flank — the one fades out over
+    // exactly the range the next fades in over, so the sum stays flat through the handover.
+    // With the window occupying the volume curve, how *loud* the sound is at all goes into
+    // `factors`, which are multiplied in. Swap the six `synth:` names for six recordings
+    // and nothing else about this changes.
     sounds: [
-        // Rolling noise over speed — louder and higher, both capped at the top.
+        // Rolling noise, band 1 of 3: the rumble of the running gear up to shunting speed.
         (
-            name: "rolling",
-            file: "synth:rolling",
+            name: "rolling-low",
+            file: "synth:rolling-low",
             trigger: Loop,
-            volume: Some((quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 0.7), (200.0, 1.7)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.0), (12.0, 1.0), (35.0, 1.0), (60.0, 0.0)])),
+            factors: [
+                (quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)]),
+                (quantity: Roughness, points: [(0.5, 0.75), (2.0, 1.4)]),
+            ],
+            pitch: Some((quantity: Speed, points: [(0.0, 0.85), (60.0, 1.25)])),
             positional: true,
         ),
-        // Converter whine: volume over the tractive effort, pitch over the driving speed —
-        // the motor follows the wheel on a three-phase drive.
+        // Band 2: takes over where the first fades out, hands on at 95 … 130 km/h.
         (
-            name: "traction",
-            file: "synth:traction",
+            name: "rolling-mid",
+            file: "synth:rolling-mid",
             trigger: Loop,
-            volume: Some((quantity: TractiveEffort, points: [(0.0, 0.0), (250.0, 0.45)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 0.5), (150.0, 1.5)])),
+            volume: Some((quantity: Speed, points: [(35.0, 0.0), (60.0, 1.0), (95.0, 1.0), (130.0, 0.0)])),
+            factors: [
+                (quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)]),
+                (quantity: Roughness, points: [(0.5, 0.75), (2.0, 1.4)]),
+            ],
+            pitch: Some((quantity: Speed, points: [(35.0, 0.85), (130.0, 1.25)])),
+            positional: true,
+        ),
+        // Band 3: the hiss of the wheel on the rail at line speed.
+        (
+            name: "rolling-high",
+            file: "synth:rolling-high",
+            trigger: Loop,
+            volume: Some((quantity: Speed, points: [(95.0, 0.0), (130.0, 1.0), (260.0, 1.0), (400.0, 0.0)])),
+            factors: [
+                (quantity: Speed, points: [(0.0, 0.0), (60.0, 0.55)]),
+                (quantity: Roughness, points: [(0.5, 0.75), (2.0, 1.4)]),
+            ],
+            pitch: Some((quantity: Speed, points: [(95.0, 0.85), (400.0, 1.3)])),
+            positional: true,
+        ),
+        // Converter whine, the same three bands: which one is heard follows the driving
+        // speed (the motor follows the wheel on a three-phase drive), how loud it is
+        // follows the tractive effort.
+        (
+            name: "traction-low",
+            file: "synth:traction-low",
+            trigger: Loop,
+            volume: Some((quantity: Speed, points: [(0.0, 0.0), (5.0, 1.0), (40.0, 1.0), (70.0, 0.0)])),
+            factors: [(quantity: TractiveEffort, points: [(0.0, 0.0), (250.0, 0.45)])],
+            pitch: Some((quantity: Speed, points: [(0.0, 0.85), (70.0, 1.25)])),
+            positional: true,
+        ),
+        (
+            name: "traction-mid",
+            file: "synth:traction-mid",
+            trigger: Loop,
+            volume: Some((quantity: Speed, points: [(40.0, 0.0), (70.0, 1.0), (130.0, 1.0), (180.0, 0.0)])),
+            factors: [(quantity: TractiveEffort, points: [(0.0, 0.0), (250.0, 0.45)])],
+            pitch: Some((quantity: Speed, points: [(40.0, 0.85), (180.0, 1.25)])),
+            positional: true,
+        ),
+        (
+            name: "traction-high",
+            file: "synth:traction-high",
+            trigger: Loop,
+            volume: Some((quantity: Speed, points: [(130.0, 0.0), (180.0, 1.0), (300.0, 1.0), (400.0, 0.0)])),
+            factors: [(quantity: TractiveEffort, points: [(0.0, 0.0), (250.0, 0.45)])],
+            pitch: Some((quantity: Speed, points: [(130.0, 0.85), (400.0, 1.3)])),
             positional: true,
         ),
         // Air hisses whenever a pressure moves, in either direction.

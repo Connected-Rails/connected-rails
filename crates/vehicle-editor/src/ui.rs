@@ -40,6 +40,7 @@ pub fn draw(
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
     mut view: ResMut<crate::View>,
+    mut preview: ResMut<crate::preview::Preview>,
     windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
     // Native dialogs are opened from here. Windows only lets a window take the
     // foreground from the thread that owns it — off the main thread the dialog
@@ -91,7 +92,7 @@ pub fn draw(
     // the history. Everything below is.
     let before = editor.spec.clone();
     status_bar(&mut root, &editor);
-    let left = data_panel(&mut root, &mut editor, &mut active);
+    let left = data_panel(&mut root, &mut editor, &mut active, &mut preview);
     let right = model_panel(&mut root, &mut editor, &mut assets);
     // In memory only; written when the user leaves.
     editor.settings.panels = Some((left, right));
@@ -586,7 +587,12 @@ fn nav_section(
 /// `active` is the section the jump bar marks as the one being read. It comes
 /// from the previous frame, because the bar is drawn before the sections whose
 /// position decides it — a frame of lag no one can see.
-fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'static str>) -> f32 {
+fn data_panel(
+    root: &mut egui::Ui,
+    editor: &mut Editor,
+    active: &mut Option<&'static str>,
+    preview: &mut crate::preview::Preview,
+) -> f32 {
     let width = editor
         .settings
         .panels
@@ -834,7 +840,7 @@ fn data_panel(root: &mut egui::Ui, editor: &mut Editor, active: &mut Option<&'st
                     // Brake, drive, equipment and behaviour are blocks on the
                     // canvas now — see the block diagram toggle in the centre.
                     nav_section(ui, jump, &mut current, "sounds", "group-sounds", |ui| {
-                        sounds::panel(ui, spec);
+                        sounds::panel(ui, spec, preview);
                     });
                 });
             // Above the first header nothing has reported in yet.

@@ -444,8 +444,9 @@ snd-name-placeholder = Name des Eintrags
 snd-file-placeholder = <mod>/assets/<datei>.ogg oder synth:<name>
 snd-file-hint =
     Sample unterhalb des mods-Verzeichnisses oder eine erzeugte Quelle:
-    synth:rolling, synth:traction, synth:air, synth:compressor, synth:horn,
-    synth:buzzer, synth:joint, synth:contactor
+    synth:rolling-low, synth:rolling-mid, synth:rolling-high, synth:traction-low,
+    synth:traction-mid, synth:traction-high, synth:air, synth:compressor,
+    synth:horn, synth:buzzer, synth:squeal, synth:joint, synth:contactor
 snd-trigger = Auslöser
 snd-trigger-hint = was den Sound startet — ohne Auslöser läuft er als Schleife und wird nur moduliert
 snd-trigger-loop = keiner (Schleife)
@@ -470,6 +471,16 @@ action-add-factor = Faktor hinzufügen
 snd-pitch = Abspielgeschwindigkeit
 snd-curve-follows = folgt einer Größe
 snd-curve-follows-hint = ohne Kennlinie läuft der Sound in seiner eigenen Lautstärke und Tonhöhe
+
+# Die Vorschau spielt einen Eintrag über das eigene Ausgabegerät des Editors und
+# lässt die Größen, von denen er abhängt, durchfahren.
+snd-preview = Vorschau
+snd-preview-hint = spielt diesen Eintrag; die Regler darunter fahren die Größen durch, von denen er abhängt
+snd-preview-stop = Stopp
+snd-preview-no-device = kein Audio-Ausgabegerät
+snd-preview-level = Lautstärke { $volume } · Geschwindigkeit { $pitch }
+snd-preview-failed = Nicht abspielbar: { $error }
+snd-preview-not-scrubbable = folgt einem Führerraumbedienteil — nur im Fahrbetrieb hörbar
 
 snd-quantity-speed = Geschwindigkeit [km/h]
 snd-quantity-distance = Zurückgelegter Weg [m]

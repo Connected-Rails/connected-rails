@@ -6,9 +6,9 @@
 //! shows, including every brush stroke, the cutting/embankment at the track and
 //! the ground textures.
 //!
-//! Terrain and aerial imagery lie in the same place, so only one of them is
-//! drawn: `T` switches. The height readout under the cursor works either way —
-//! the builder stays, only the tiles come and go.
+//! The ground is always drawn. The aerial imagery is not an alternative to it
+//! but a layer on top: switched on, it is draped over the terrain's shape (see
+//! `overlay`), so a builder sees the photo and the relief at once.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -38,8 +38,6 @@ pub struct TerrainChunk;
 
 #[derive(Resource)]
 pub struct TerrainView {
-    /// Draw the terrain instead of the aerial imagery.
-    pub enabled: bool,
     /// The line changed — the builder takes the new state over.
     pub dirty: bool,
     /// Ground height under the cursor [m], for the status bar.
@@ -65,15 +63,11 @@ pub struct TerrainView {
     empty: HashSet<TileKey>,
     /// Bumped on every edit; a tile built for an older one is built anew.
     generation: u64,
-    /// Whether the first look at the line is still to come — a module that
-    /// brings height data shows it, one without stays on the imagery.
-    first: bool,
 }
 
 impl TerrainView {
     pub fn new(material: Handle<TerrainMaterial>, trees: TreeCatalog) -> Self {
         Self {
-            enabled: false,
             dirty: true,
             cursor_height: None,
             has_heights: false,
@@ -86,12 +80,7 @@ impl TerrainView {
             pending: HashMap::new(),
             empty: HashSet::new(),
             generation: 0,
-            first: true,
         }
-    }
-
-    pub fn tiles_shown(&self) -> usize {
-        self.loaded.len()
     }
 
     /// The builder, for whoever needs a ground height outside this module —
@@ -101,12 +90,10 @@ impl TerrainView {
         self.builder.as_ref()?.lock().ok()
     }
 
-    /// Drops every tile in the scene; the builder stays.
-    fn clear(&mut self, commands: &mut Commands) {
-        for (entity, _) in self.loaded.drain().map(|(_, v)| v) {
-            commands.entity(entity).despawn();
-        }
-        self.pending.clear();
+    /// The builder itself, for work that belongs on a worker thread — the
+    /// aerial imagery samples a height grid per tile through it.
+    pub fn builder_arc(&self) -> Option<Arc<Mutex<TerrainBuilder>>> {
+        self.builder.clone()
     }
 }
 
@@ -120,18 +107,12 @@ pub fn update(
     mut view: ResMut<TerrainView>,
     mut overlay: ResMut<Overlay>,
     assets: Res<AssetServer>,
-    keys: Res<ButtonInput<KeyCode>>,
     state: Res<EditorState>,
-    mut line: ResMut<Line>,
+    line: Res<Line>,
     objects: Res<TrackObjects>,
     focus: Res<Focus>,
     origin: Res<Origin>,
 ) {
-    if keys.just_pressed(KeyCode::KeyT) && !state.typing {
-        view.enabled = !view.enabled;
-        // Track and signals are drawn differently in each view.
-        line.needs_rebuild = true;
-    }
     if view.dirty {
         view.dirty = false;
         refresh_builder(&mut view, &line, state.terrain_options());
@@ -149,18 +130,6 @@ pub fn update(
         );
         view.generation += 1;
         view.empty.clear();
-        // A module that carries its ground shows it; one without would only
-        // put a flat plane over the aerial imagery.
-        if std::mem::take(&mut view.first) {
-            view.enabled = view.has_heights;
-            line.needs_rebuild = true;
-        }
-    }
-    if !view.enabled {
-        if view.tiles_shown() > 0 || !view.pending.is_empty() {
-            view.clear(&mut commands);
-        }
-        return;
     }
     if !view.has_heights && overlay.status.is_empty() {
         overlay.status = i18n::t!("status-terrain-flat");

@@ -41,10 +41,6 @@ fn default_throw_time() -> f64 {
     6.0
 }
 
-fn default_electrification() -> String {
-    track_model::PowerSystem::Ac15kv.id().to_string()
-}
-
 /// Where an edge begins.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum EdgeStart {
@@ -76,8 +72,8 @@ pub struct EdgeSource {
     pub track_type: Vec<(f64, String)>,
     /// What hangs over this track as steps `(s, system)` — `"ac-15kv"`,
     /// `"ac-25kv"`, `"dc-3kv"`, `"dc-1.5kv"`, `"third-rail"` or `"none"`.
-    /// Empty = the line's own [`LineSource::electrification`] applies, which is
-    /// how a line states its wire once and names only the exceptions.
+    /// Empty = no wire, unless the file still carries the legacy
+    /// [`LineSource::electrification`].
     #[serde(default)]
     pub electrification: Vec<(f64, String)>,
 }
@@ -481,11 +477,11 @@ pub struct LineSource {
     /// Geoid undulation for the height conversion [m] (plan 4.2).
     #[serde(default = "default_geoid")]
     pub geoid_offset: f64,
-    /// What the line is electrified with where an edge says nothing: one of the
-    /// ids of [`track_model::PowerSystem`], or `"none"` for a line under no
-    /// wire at all. A file that says nothing reads as the German main line, so
-    /// that lines written before there was any electrification keep working.
-    #[serde(default = "default_electrification")]
+    /// Legacy: what the whole line is electrified with where an edge says
+    /// nothing. The wire belongs to the track, not to the line — the editor
+    /// sets it per edge and writes nothing here. Files from before that keep
+    /// their value and keep working; empty means the edges decide alone.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub electrification: String,
     pub nodes: Vec<NodeSource>,
     pub edges: Vec<EdgeSource>,

@@ -37,6 +37,9 @@ const SHORTCUT_REDO_ALT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
     egui::Key::Z,
 );
+/// The content drawer, on Unreal's own binding.
+const SHORTCUT_DRAWER: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Space);
 
 /// One frame of UI. Panels live inside a background `Ui` (egui 0.35).
 #[allow(clippy::too_many_arguments)]
@@ -49,10 +52,9 @@ pub fn draw(
     mut history: ResMut<History>,
     mut state: ResMut<EditorState>,
     mut ghost: ResMut<Ghost>,
-    mut terrain: ResMut<crate::terrain::TerrainView>,
+    terrain: Res<crate::terrain::TerrainView>,
     mut gizmo: ResMut<crate::gizmo::GizmoState>,
-    types: Res<TrackTypes>,
-    objects: Res<TrackObjects>,
+    mut catalogs: crate::Catalogs,
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
     windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
@@ -84,18 +86,20 @@ pub fn draw(
         &mut state,
         &mut overlay,
         &mut request,
-        &mut terrain,
         &mut focus,
         &mut exit,
     );
-    status_bar(&mut root, &line, &state, &overlay, &focus, &terrain);
+    status_bar(&mut root, &line, &mut state, &overlay, &focus, &terrain);
+    // Over the status bar and under the side panel, so it spans the window the
+    // way Unreal's does — the catalogue is not a property of the selection.
+    crate::content_drawer::draw(&mut root, &mut state, &mut catalogs);
     left_panel(
         &mut root,
         &mut line,
         &mut state,
         &mut ghost,
-        &types,
-        &objects,
+        &catalogs.types,
+        &catalogs.objects,
         &mut overlay,
         &mut request,
         &mut focus,
@@ -104,7 +108,7 @@ pub fn draw(
 
     // Docked into the space the side panel leaves, so it takes its width from
     // the viewport and its clicks never reach the tools underneath.
-    viewport_bar(&mut root, &mut focus, &mut gizmo, &mut terrain, &mut line);
+    viewport_bar(&mut root, &mut focus, &mut gizmo, &overlay, &mut request);
 
     // The rect the panels leave free, and whether a text field owns the
     // keyboard — the input systems read both from here: the hand-built panel
@@ -140,14 +144,17 @@ fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState, focu
         crate::view::ViewMode::Perspective => "help-fly",
     };
     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-        // On the panel background, not bare: the hint sits on the aerial
-        // imagery, and secondary grey vanishes over a sunlit field.
-        ui.label(
-            egui::RichText::new(t!(key))
-                .small()
-                .color(colors::TEXT_SECONDARY)
-                .background_color(colors::BG_PANEL),
-        );
+        // On a card, not on a text highlight: the hint sits over the aerial
+        // imagery, where secondary grey vanishes against a sunlit field, and
+        // `background_color` paints the glyph boxes only — a ragged bar that
+        // reads as a selection rather than as a note.
+        editor_ui::card_frame().show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(t!(key))
+                    .small()
+                    .color(colors::TEXT_SECONDARY),
+            );
+        });
     });
 }
 
@@ -161,8 +168,8 @@ fn viewport_bar(
     root: &mut egui::Ui,
     focus: &mut Focus,
     gizmo: &mut crate::gizmo::GizmoState,
-    terrain: &mut crate::terrain::TerrainView,
-    line: &mut Line,
+    overlay: &Overlay,
+    request: &mut Request,
 ) {
     use crate::gizmo::GizmoMode;
     use crate::view::ViewMode;
@@ -195,19 +202,14 @@ fn viewport_bar(
                     }
                 }
                 bar_divider(ui);
-                // Imagery and terrain lie in the same place, so only one of
-                // them is drawn — and each draws track and signals its own way,
-                // which is why the switch costs a rebuild.
-                for (icon, enabled, key) in [
-                    (Icon::Imagery, false, "view-imagery"),
-                    (Icon::Terrain, true, "view-terrain"),
-                ] {
-                    if icon_button(ui, icon, terrain.enabled == enabled, t!(key)).clicked()
-                        && terrain.enabled != enabled
-                    {
-                        terrain.enabled = enabled;
-                        line.needs_rebuild = true;
-                    }
+                // What lies on the ground. The imagery is switched often enough
+                // while building that burying it in a panel section costs a
+                // scroll every time — the ground it drapes over is always drawn.
+                let shown = overlay.config().enabled;
+                if icon_button(ui, Icon::Imagery, shown, t!("view-imagery")).clicked() {
+                    let mut config = overlay.config().clone();
+                    config.enabled = !shown;
+                    request.config = Some((config, false));
                 }
                 // The speed dial only means something while there is something
                 // to fly.
@@ -229,6 +231,9 @@ fn handle_shortcuts(
     state: &mut EditorState,
     overlay: &mut Overlay,
 ) {
+    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_DRAWER)) {
+        state.drawer.open = !state.drawer.open;
+    }
     // Redo first: Ctrl+Shift+Z must not be eaten by the plain Ctrl+Z.
     if ctx
         .input_mut(|i| i.consume_shortcut(&SHORTCUT_REDO) || i.consume_shortcut(&SHORTCUT_REDO_ALT))
@@ -664,7 +669,7 @@ fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
     line.source = LineSource {
         name: "Line".into(),
         geoid_offset: 46.0,
-        electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
+        electrification: String::new(),
         nodes: vec![],
         edges: vec![],
         devices: vec![],
@@ -698,7 +703,6 @@ fn menu_bar(
     state: &mut EditorState,
     overlay: &mut Overlay,
     request: &mut Request,
-    terrain: &mut crate::terrain::TerrainView,
     focus: &mut Focus,
     exit: &mut MessageWriter<AppExit>,
 ) {
@@ -818,18 +822,7 @@ fn menu_bar(
                         crate::view::toggle_mode(focus);
                         ui.close();
                     }
-                    ui.separator();
-                    // The terrain replaces the imagery under the track: both
-                    // lie on the map plane, only one of them is drawn — and
-                    // each draws track and signals its own way, so the switch
-                    // has to reach the rebuild.
-                    if ui
-                        .checkbox(&mut terrain.enabled, t!("action-show-terrain"))
-                        .changed()
-                    {
-                        line.needs_rebuild = true;
-                        ui.close();
-                    }
+
                     ui.separator();
                     language_menu(ui);
                 });
@@ -840,7 +833,6 @@ fn menu_bar(
                     ui.label(t!("help-opacity"));
                     ui.label(t!("help-offset"));
                     ui.label(t!("help-draw"));
-                    ui.label(t!("help-terrain"));
                 });
             });
         });
@@ -849,7 +841,7 @@ fn menu_bar(
 fn status_bar(
     root: &mut egui::Ui,
     line: &Line,
-    state: &EditorState,
+    state: &mut EditorState,
     overlay: &Overlay,
     focus: &Focus,
     terrain: &crate::terrain::TerrainView,
@@ -858,6 +850,19 @@ fn status_bar(
         .frame(editor_ui::bar_frame())
         .show(root, |ui| {
             ui.horizontal(|ui| {
+                // Bottom left, where the drawer comes out — the one control on
+                // the bar, so the catalogue is reachable without a menu.
+                if editor_ui::icon_button(
+                    ui,
+                    editor_ui::Icon::Drawer,
+                    state.drawer.open,
+                    t!("action-content-drawer"),
+                )
+                .clicked()
+                {
+                    state.drawer.open = !state.drawer.open;
+                }
+                editor_ui::bar_divider(ui);
                 // While a track is being drawn, the drawing is the status.
                 let status = match &state.drawing {
                     Some(drawing) => t!(
@@ -975,37 +980,6 @@ fn left_panel(
                 .small()
                 .color(colors::TEXT_SECONDARY),
             );
-            ui.add_space(2.0);
-            // What the line is wired with. Every track follows it unless it says
-            // otherwise, so this one field electrifies a whole line.
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(t!("line-power")).small());
-                let current = track_model::electrification_from_id(&line.source.electrification);
-                egui::ComboBox::from_id_salt("line-power")
-                    .width(space::FIELD)
-                    .selected_text(power_label(current))
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(current.is_none(), power_label(None))
-                            .clicked()
-                        {
-                            line.source.electrification = "none".into();
-                        }
-                        for system in track_model::PowerSystem::ALL {
-                            if ui
-                                .selectable_label(
-                                    current == Some(system),
-                                    power_label(Some(system)),
-                                )
-                                .clicked()
-                            {
-                                line.source.electrification = system.id().into();
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text(t!("line-power-hint"));
-            });
             ui.add_space(space::S);
             // A row of another panel may have asked for a section last frame.
             let mut jump = state.jump_to.take();
@@ -1311,32 +1285,36 @@ fn object_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, state: &mut
 }
 
 fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
-    ui.horizontal_wrapped(|ui| {
-        for (tool, key) in [
-            (Tool::Select, "tool-select"),
-            (Tool::DrawTrack, "tool-draw"),
-            (Tool::PlaceDevice, "tool-device"),
-            (Tool::PlaceSwitch, "tool-switch"),
-            (Tool::MarkArea, "tool-area"),
-            (Tool::PlaceObject, "tool-object"),
-            (Tool::PlaceTree, "tool-tree"),
-            (Tool::PlaceForest, "tool-forest"),
-            (Tool::Brush, "tool-brush"),
-            (Tool::PlaceMarker, "tool-marker"),
-            (Tool::TerrainBrush, "tool-terrain"),
-            (Tool::PickTile, "tool-tile"),
-        ] {
-            let mut chip = ui.selectable_label(state.tool == tool, t!(key));
-            if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
-                chip = chip.on_hover_text(hint);
-            }
-            if chip.clicked() && state.tool != tool {
-                state.tool = tool;
-                state.drawing = None;
-                state.forest_points.clear();
-            }
+    for (group, tools) in tools::TOOL_GROUPS {
+        editor_ui::subheading(ui, t!(group));
+        // Two to a row, so the palette is a grid with one left edge rather
+        // than twelve chips breaking wherever their text happens to end.
+        for pair in tools.chunks(2) {
+            ui.horizontal(|ui| {
+                for (tool, key, icon) in pair {
+                    // The number key, appended to whatever the hint says — an
+                    // accelerator nobody can see is one nobody uses.
+                    let hint = match (
+                        i18n::maybe(&format!("{key}-hint")),
+                        tools::tool_digit(*tool),
+                    ) {
+                        (Some(hint), Some(digit)) => Some(format!("{hint} ({digit})")),
+                        (Some(hint), None) => Some(hint),
+                        (None, Some(digit)) => Some(digit.to_string()),
+                        (None, None) => None,
+                    };
+                    let response =
+                        editor_ui::tool_button(ui, *icon, t!(key), state.tool == *tool, hint);
+                    if response.clicked() && state.tool != *tool {
+                        state.tool = *tool;
+                        state.drawing = None;
+                        state.forest_points.clear();
+                    }
+                }
+            });
         }
-    });
+        ui.add_space(space::XS);
+    }
 }
 
 /// Species picker of the vegetation tools and panels: the placeholder tree
@@ -1753,8 +1731,8 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
 }
 
 /// What hangs over the selected track: `(s, system)` rows over the arc length.
-/// No rows means the track says nothing and the line's own electrification
-/// applies — a line states its wire once and names only the exceptions.
+/// The wire belongs to the track, so this is the only place it is set; no rows
+/// means no wire, unless the file still carries the legacy line-wide value.
 fn electrification_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64) {
     editor_ui::subheading(ui, t!("sel-power"));
     let default_label = power_label(track_model::electrification_from_id(
@@ -2550,13 +2528,17 @@ fn signal_kind_combo(ui: &mut egui::Ui, index: usize, kind: &mut SignalKind) {
         });
 }
 
-fn signal_system_combo(ui: &mut egui::Ui, index: usize, system: &mut SignalSystem) {
-    // H/V, Ks and Hl are designations, not prose — they stay literal.
-    let label = |s: SignalSystem| match s {
+/// H/V, Ks and Hl are designations, not prose — they stay literal.
+pub(crate) fn signal_system_label(system: SignalSystem) -> &'static str {
+    match system {
         SignalSystem::HV => "H/V",
         SignalSystem::Ks => "Ks",
         SignalSystem::Hl => "Hl",
-    };
+    }
+}
+
+fn signal_system_combo(ui: &mut egui::Ui, index: usize, system: &mut SignalSystem) {
+    let label = signal_system_label;
     egui::ComboBox::from_id_salt(("sig-system", index))
         .width(space::FIELD)
         .selected_text(label(*system))
@@ -3101,6 +3083,14 @@ fn imagery_section(ui: &mut egui::Ui, overlay: &Overlay, request: &mut Request) 
                     .changed();
             } else {
                 ui.small(t!("zoom-current", level = overlay.zoom));
+            }
+        });
+        row(ui, "img-radius", |ui| {
+            if editor_ui::field(ui, &mut config.radius, 25.0, 200.0..=2_000.0, "m")
+                .on_hover_text(t!("img-radius-hint"))
+                .changed()
+            {
+                changed = true;
             }
         });
         row(ui, "img-offset", |ui| {

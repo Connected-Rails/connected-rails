@@ -9,15 +9,15 @@ window-simulator = Connected Rails
 window-vehicle-editor = Connected Rails — Fahrzeugeditor
 window-vehicle-editor-named = { $name } — Connected Rails Fahrzeugeditor
 window-vehicle-editor-unsaved = • { $name } — Connected Rails Fahrzeugeditor
-window-route-editor = Connected Rails — Streckeneditor
-window-route-editor-named = { $name } — Connected Rails Streckeneditor
-window-route-editor-unsaved = • { $name } — Connected Rails Streckeneditor
+window-route-editor = Connected Rails — Moduleditor
+window-route-editor-named = { $name } — Connected Rails Moduleditor
+window-route-editor-unsaved = • { $name } — Connected Rails Moduleditor
 
 menu-file = Datei
 menu-edit = Bearbeiten
 menu-view = Ansicht
 menu-help = Hilfe
-menu-overlay = Überlagerung
+menu-overlay = Luftbild
 menu-language = Sprache
 
 action-new = Neu
@@ -32,7 +32,7 @@ action-undo = Rückgängig
 action-redo = Wiederherstellen
 
 filter-vehicle-ron = Fahrzeug (RON)
-filter-line-ron = Strecke (RON)
+filter-line-ron = Modul (RON)
 filter-model-gltf = Modell (glTF)
 
 ## Gemeinsam
@@ -612,10 +612,10 @@ sig-node = Knoten
 sig-test-empty = Erst Lampen binden — der Test schaltet sie dann ohne Simulator.
 help-signal-conventions = Ursprung am Fuß, +Y oben, Front zum Triebfahrzeugführer = +Z · Montagepunkte sind leere Knoten „mp_…“
 
-## Streckeneditor
+## Moduleditor
 
-action-new-line = Neue Strecke
-action-open-line = Strecke öffnen…
+action-new-line = Neues Modul
+action-open-line = Modul öffnen…
 action-delete = Löschen
 action-load-imagery = Luftbild-Konfiguration laden (F5)
 action-save-imagery = Luftbild-Konfiguration speichern (F2)
@@ -624,16 +624,14 @@ overlay-next-provider = Nächster Anbieter (P)
 overlay-offline = Offline-Modus (L)
 overlay-clear-cache = Cache leeren (C)
 overlay-retry = Fehlversuche zurücksetzen (R)
-action-show-terrain = Gelände anzeigen (T)
 action-perspective-view = 3D-Ansicht (F4)
 
 # Viewport bar — icon buttons above the map, tooltips only.
+view-imagery = Luftbild auf dem Gelände
 view-top-down = Draufsicht (F4)
 view-perspective = 3D-Ansicht (F4)
 gizmo-move = Verschiebegriffe (W)
 gizmo-rotate = Drehgriff (E)
-view-imagery = Luftbild (T)
-view-terrain = Gelände (T)
 camera-speed = Kamerageschwindigkeit der 3D-Ansicht
 
 help-pan = WASD/Pfeile oder mittlere Maustaste schwenken · Mausrad oder Bild↑/Bild↓ Höhe
@@ -643,7 +641,6 @@ help-opacity = [ ] Deckkraft · , . Zoomstufe · Z automatisch
 help-offset = Ziffernblock 4/6/8/2 Bildversatz, 5 zurücksetzen
 help-draw = Gleis zeichnen: Punkte klicken · Enter schließt ab · Esc bricht ab
 help-map = Mittlere Maustaste zieht, Mausrad zoomt · WASD schwenkt · links Werkzeug wählen und klicken
-help-terrain = T zeigt das Gelände des Moduls, so wie es die Fahrt baut, anstelle des Luftbilds
 
 status-ready = Bereit
 status-position = { $lat }°, { $lon }°   Höhe { $height } m
@@ -655,10 +652,10 @@ status-saved = { $file } gespeichert
 status-save-failed = Speichern fehlgeschlagen: { $error }
 status-not-readable = { $file } nicht lesbar
 status-not-compiling = { $file } lässt sich nicht übersetzen
-status-compile-error = Strecke lässt sich nicht übersetzen: { $error }
+status-compile-error = Modul lässt sich nicht übersetzen: { $error }
 status-no-track-hit = Kein Gleis nahe dem Klick — Geräte sitzen auf einem Gleis
 status-split-at-end = Zu nah am Gleisende — mindestens 1 m innerhalb klicken
-status-split-failed = Weiche nicht gesetzt — die Strecke kompiliert nicht
+status-split-failed = Weiche nicht gesetzt — das Modul kompiliert nicht
 status-ghost-loaded = Geistermodul { $file }: { $boundaries } Grenzen
 status-route-derived = Weg gefunden: { $sections } Abschnitte, { $overlap } im Durchrutschweg, { $switches } Weichen
 status-routes-found = { $added } Fahrstraßen angelegt, { $known } schon vorhanden
@@ -668,13 +665,14 @@ status-config-unreadable = { $file } nicht lesbar ({ $error }) — Vorgabe aktiv
 status-config-created = { $file } angelegt
 status-config-not-writable = { $file } nicht beschreibbar: { $error }
 
-heading-line = Strecke
+heading-line = Modul
 line-name = Name
-line-counts = { $edges } Gleise · { $devices } Geräte
-line-power = Elektrifizierung
-line-power-hint = Was über dieser Strecke hängt, wo ein Gleis nichts sagt
+line-counts = Gleise: { $edges } · Geräte: { $devices }
 
 heading-tools = Werkzeuge
+tool-group-track = Gleis
+tool-group-equipment = Streckenausrüstung
+tool-group-landscape = Landschaft
 tool-select = Auswählen
 tool-select-hint = Klick auf Gerät oder Gleis wählt es aus · Entf löscht es (1)
 tool-draw = Gleis zeichnen
@@ -714,7 +712,7 @@ terrain-raise = Anheben/Absenken
 terrain-raise-hint = Rechnet die Höhenänderung auf das Höhenmodell auf
 terrain-level = Auf Schienenhöhe
 terrain-level-hint = Zieht den Boden auf die Höhe der nächsten Schiene — Bahnhofsvorfeld, Betriebsgelände, ebene Fläche
-terrain-count = { $count } Striche auf dieser Strecke
+terrain-count = Striche in diesem Modul: { $count }
 sel-terrain-summary = Geländestrich { $index }
 tool-tile = DGM-Kacheln
 tool-tile-hint = Zeigt das Geländekachel-Raster und wählt einzelne Kacheln per Klick — grün hat schon Höhen, blau ist gewählt. Ohne Auswahl importiert der Import den ganzen Korridor
@@ -740,7 +738,7 @@ sel-track-type-none = Standard-Gleisart auf dem ganzen Gleis.
 sel-track-type-from = Ab dieser Position auf dem Gleis
 sel-track-type-hint = Jede Zeile: ab Position s gilt diese Gleisart — Textur, Rauigkeit und Oberbau-Geschwindigkeit kommen aus track_types/*.ron eines Mods
 sel-power = Elektrifizierung
-sel-power-default = Folgt der Strecke: { $system }
+sel-power-default = Ohne Angabe: { $system }
 sel-power-from = Ab dieser Bogenlänge
 sel-power-hint = Ein eigener Abschnitt — die Lücke an einer Systemtrennstelle oder ein Gleis ohne Fahrdraht
 sel-area-summary = { $spans } Abschnitte, { $length } m Gleis
@@ -938,13 +936,13 @@ action-import-heights-all = Ganzes Modul importieren
 action-import-heights-picked = Gewählte Kacheln importieren
 action-clear-picked = Auswahl leeren
 action-drop-heights = Verweis entfernen
-status-heights-need-mod = Die Strecke zuerst in einem Mod speichern — die Höhendaten liegen daneben, im Mod
+status-heights-need-mod = Das Modul zuerst in einem Mod speichern — die Höhendaten liegen daneben, im Mod
 status-heights-no-source = Noch keine DGM-Lieferung gewählt
 status-heights-imported = { $tiles } Höhenkacheln geschrieben, { $empty } ohne Daten übersprungen — das Modul bringt sein Gelände jetzt mit
 
 heading-markers = Referenzmarker
 
-heading-module = Modul
+heading-module = Modulgrenzen
 module-boundaries = Grenzen
 boundary-none = Noch keine Grenzen — ein Gleis auswählen und an einem offenen Ende eine anlegen.
 boundary-node = Knoten { $node }
@@ -957,7 +955,7 @@ module-ghost = Nachbarmodul
 module-ghost-hint = Ein weiteres Modul, grau als Geist gezeichnet. Seine Grenzkreise sind Fangpunkte — Klicks in ihrer Nähe landen exakt auf den vereinbarten Koordinaten.
 action-load-ghost = Geist laden…
 action-clear-ghost = Entfernen
-ghost-boundaries = { $count } Grenzen als Fangpunkte
+ghost-boundaries = Grenzen als Fangpunkte: { $count }
 heading-checks = Prüfung
 check-ok = Keine Befunde.
 check-device-off-edge = Gerät { $device } liegt außerhalb seines Gleises
@@ -970,14 +968,16 @@ check-signal-device = Signal { $signal }: Gerät fehlt oder ist kein Signalgerä
 check-boundary-invalid = Grenze { $boundary }: Knoten fehlt oder ist kein Prellbock
 check-unknown-track-type = Gleis { $edge }: nennt eine Gleisart, die kein installierter Mod hat
 check-area-off-track = Gleisbereich { $area }: ein Abschnitt liegt auf keinem Gleis oder hinter dessen Ende
-check-area-no-effect = Gleisbereich { $area }: deckt nichts ab oder setzt nichts — er erreicht die Strecke nicht
+check-area-no-effect = Gleisbereich { $area }: deckt nichts ab oder setzt nichts — er erreicht das Modul nicht
 check-area-track-type = Gleisbereich { $area }: nennt eine Gleisbauart, die kein installiertes Mod kennt
-check-lzb-no-conductor = Gleis { $edge }: LZB-Gleisart, aber die Strecke verlegt keinen Linienleiter
+check-lzb-no-conductor = Gleis { $edge }: LZB-Gleisart, aber das Modul verlegt keinen Linienleiter
 heading-imagery = Luftbilder
 img-enabled = Overlay anzeigen
 img-provider = Anbieter
 img-opacity = Deckkraft
 img-zoom = Zoom
+img-radius = Laderadius
+img-radius-hint = Wie weit um die Kamera herum Kacheln geholt werden. Jeder Meter mehr sind mehr Kacheln zum Laden und im Grafikspeicher — die Anzahl darunter sagt wie viele
 img-offset = Versatz
 img-offset-hint = Ost/Nord — Luftbilder liegen oft Meter neben der Karte
 img-offline = Offline-Modus
@@ -1037,7 +1037,7 @@ hud-keys-lights = 9 Spitzensignal  0 Führerraumlicht  ,/. Instrumentenlicht
 
 menu-tagline = Deutsche Eisenbahnsimulation
 menu-drive = Fahren
-menu-drive-hint = Strecke, Fahrzeug und Szenario
+menu-drive-hint = Modul, Fahrzeug und Szenario
 menu-mods = Mods
 menu-mods-hint = Inhalte ein- und ausschalten
 menu-settings = Einstellungen
@@ -1049,7 +1049,7 @@ menu-paused = Pause
 menu-resume = Fortsetzen
 menu-resume-hint = Weiter, wo der Zug steht
 menu-step = Schritt { $step } von { $total }
-menu-select-line = Strecke auswählen
+menu-select-line = Modul auswählen
 menu-select-line-hint = Wo die Fahrt stattfindet.
 menu-select-loco = Fahrzeug auswählen
 menu-select-loco-hint = Was an der Spitze des Zuges läuft.
@@ -1059,10 +1059,10 @@ menu-select-scenario-hint = Ein Fahrplan mit Aufgabe — oder freie Hand.
 # Das Fähnchen an der Zeile sagt das, der Name selbst muss es nicht mehr.
 menu-chip-builtin = Integriert
 menu-chip-composition = Komposition
-menu-line-builtin = Beispielstrecke
+menu-line-builtin = Beispielmodul
 menu-loco-builtin = BR 101
 menu-scenario-none = Kein Szenario — freie Fahrt
-menu-free-run = Kein Fahrplan und keine Wertung: die Strecke, das Fahrzeug, und wohin Sie damit fahren.
+menu-free-run = Kein Fahrplan und keine Wertung: das Modul, das Fahrzeug, und wohin Sie damit fahren.
 # Die Tastenhinweise in der Fußleiste: ein Fähnchen je Taste.
 menu-hint-select = auswählen
 menu-hint-confirm = bestätigen
@@ -1082,12 +1082,12 @@ menu-meta-vehicle = { $mass } t · { $speed } km/h
 # Die Detailspalte neben der Liste.
 menu-fact-length = Länge
 menu-fact-signals = Signale
-menu-fact-scenery = Streckenobjekte
+menu-fact-scenery = Szenerieobjekte
 menu-fact-drive = Antrieb
 menu-fact-brake = Bremse
 menu-fact-start = Beginn
 menu-fact-timetable = Fahrplan
-menu-fact-line = Strecke
+menu-fact-line = Modul
 menu-fact-events = Ereignisse
 menu-fact-km = { $value } km
 menu-fact-m = { $value } m
@@ -1134,7 +1134,7 @@ set-factor = { $value } ×
 mods-title = Mods
 mods-none = Keine Mods installiert — ein Mod-Verzeichnis nach mods/ legen.
 mods-missing-depends = benötigt: { $depends } (fehlt oder ist abgeschaltet)
-mods-content = Inhalte: { $vehicles } Fahrzeuge, { $lines } Strecken, { $compositions } Kompositionen, { $scenarios } Szenarien, { $timetables } Fahrpläne, { $signals } Signaltypen, { $scripts } Skripte
+mods-content = Inhalte: { $vehicles } Fahrzeuge, { $lines } Module, { $compositions } Kompositionen, { $scenarios } Szenarien, { $timetables } Fahrpläne, { $signals } Signaltypen, { $scripts } Skripte
 mods-log = Warnungen:
 mods-restart = Änderung wirkt nach einem Neustart.
 mods-keys = ↑/↓ auswählen   Enter ein/aus   F9 schließen
@@ -1620,3 +1620,15 @@ graph-group-default = Kommentar
 graph-group-name = Titel
 graph-group-color = Farbe
 graph-group-remove = Kommentarrahmen entfernen
+
+## Inhalte-Schublade
+
+drawer-title = Inhalte
+drawer-filter-placeholder = Nach Name oder Mod filtern
+drawer-count-filtered = { $shown } von { $total }
+drawer-empty = Nichts vorhanden — kein installierter Mod bringt diese Art, oder der Filter trifft nichts davon.
+drawer-objects = Szenerieobjekte
+drawer-signal-types = Signaltypen
+drawer-signal-models = Signalmodelle
+drawer-track-types = Gleisarten
+action-content-drawer = Inhalte-Schublade (Strg+Leertaste)

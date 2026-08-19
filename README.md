@@ -490,9 +490,25 @@ selected element's fields on the right; the middle mouse button drags the map, t
 Every edit goes through undo/redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z), the rule check flags what
 the compiler will reject, and saving guards against discarding unsaved work.
 
+The palette is grouped by what the work is about — the track itself, what is mounted along
+it, and the landscape it runs through — and every tool carries a drawn icon beside its name.
 A bar sits above the viewport with the controls that belong to looking rather than to the
-document: view angle, gizmo mode, aerial imagery or terrain, and the camera speed of the 3D
-view. `F4` opens the same document into a **3D view** and back. It is the same orbit at a different
+document: view angle, gizmo mode, aerial imagery on or off, and the camera speed of the 3D
+view. The terrain is always drawn; the imagery is a layer draped over its shape.
+
+**Content drawer** (`Ctrl`+`Space`, or the button at the left of the status bar): a panel
+that comes up from the bottom edge with everything the installed mods brought — scenery
+objects, signal types, signal models and track types, each with the mod it came from and a
+filter over the lot. It is the one place that answers whether the editor found a newly
+installed mod at all; the tool pickers only ever show one kind. Picking an object from it
+arms the object tool with that object.
+
+Everything that has a model carries a **rendered preview** of it. The editor renders each
+one once, off to the side on its own render layer, and reads the picture back off the
+render target into an ordinary image — a target only holds its contents while an active
+camera points at it. One at a time, and only for what the drawer is actually drawing, so a
+catalogue nobody opens costs nothing. Track types show their colour instead, which is what
+a track type is on the map. `F4` opens the same document into a **3D view** and back. It is the same orbit at a different
 angle — the map is the case that looks straight down — and it is flown the way an Unreal
 viewport is: hold the right mouse button to look and fly with `WASD` (`Q`/`E` down and up,
 `Shift` faster, the wheel sets the camera speed), `Alt`+left orbits the view point, the middle
@@ -506,18 +522,24 @@ across it (`lateral_offset`) and the blue one up (`height`) — so the saved fil
 like a placement. Trees, markers and terrain strokes are free of the track and get east/north
 instead. There is no scale handle, because nothing in the file format has a scale.
 
+The palette is grouped, and the number keys count down it — the key and the button always
+agree, because both read the same list.
+
 | Tool | What a click does |
 |---|---|
+| **Track** | |
 | `1` Select | Pick a track, device or object and edit its fields; `Delete` removes it |
 | `2` Draw track | Every click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction. `Enter` or right-click finishes, `Esc` cancels |
-| `3` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
-| `4` Place switch | Splits the track and draws the branch; facing or trailing and the throw time follow in the panel |
-| Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
-| `5` Place object | Drops a mod's 3D object at its predefined offset and rotation |
-| `6` / `7` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
-| `8` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
-| `9` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
-| `0` Terrain brush | One stroke per click: raise, lower or level. The track keeps its height, cutting and embankment are laid over it afterwards |
+| `3` Place switch | Splits the track and draws the branch; facing or trailing and the throw time follow in the panel |
+| `4` Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
+| **Lineside equipment** | |
+| `5` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
+| `6` Place object | Drops a mod's 3D object at its predefined offset and rotation |
+| `7` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
+| **Landscape** | |
+| `8` / `9` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
+| `0` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
+| Terrain brush | One stroke per click: raise, lower or level. The track keeps its height, cutting and embankment are laid over it afterwards |
 | DGM tiles | Shows the elevation tile grid and picks single tiles for the height import; without a pick the whole corridor is imported |
 
 `T` swaps the aerial imagery for the module's terrain, built exactly as the run builds it —
@@ -574,8 +596,8 @@ loads, evictions and usage.
 | `F` | Frame the selection |
 | `W` / `E` | Move or rotate handles of the gizmo (3D view) |
 | `1`–`0` | Pick a tool (see the table above) |
-| `T` | Terrain view instead of the aerial imagery |
-| `O` | Overlay on/off |
+| `Ctrl`+`Space` | Content drawer: everything the installed mods bring |
+| `O` | Aerial imagery on/off — it drapes over the terrain, which is always drawn |
 | `P` | Switch provider |
 | `[` `]` | Opacity |
 | `,` `.` | Zoom level, `Z` back to target resolution |

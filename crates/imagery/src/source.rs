@@ -127,7 +127,7 @@ impl ImagerySource {
     }
 
     pub fn disk_usage(&self) -> u64 {
-        self.cache.lock().map(|c| c.disk_usage()).unwrap_or(0)
+        self.cache.lock().map(|mut c| c.disk_usage()).unwrap_or(0)
     }
 
     pub fn clear_cache(&mut self) {

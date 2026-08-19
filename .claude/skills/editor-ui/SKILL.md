@@ -92,6 +92,18 @@ the existing `Stroke` width so a row of them has one weight.
   the control beside it. Never an `icon_button` that ignores its click.
 - `bar_divider(ui)` — hairline between groups. `ui.separator()` in a
   horizontal layout stretches to the full row height and reads as a panel edge.
+- `tool_button(ui, icon, label, active, tooltip)` — icon *and* name, fixed
+  156 px so a palette lays out as a grid. A dozen tools cannot be icons alone
+  (three of the route editor's are brushes, and no 22 px drawing tells forest
+  from marking from terrain), nor text chips alone, which is what wrapped into
+  a different shape on every panel width. Group them under `subheading`s.
+- `card_entry(ui, mark, title, detail, selected, clickable)` — a catalogue
+  entry at a **fixed** 208×60, laid out by hand rather than as a frame around
+  labels. A card that sizes itself to its text gives every entry its own width
+  and baseline, and a wall of them reads as scattered; text that does not fit
+  is truncated with an ellipsis and the caller puts the whole of it in the
+  tooltip. Its `Mark` is a drawn icon, a colour (where the entry *is* one — a
+  track type), or a `TextureId` (a rendered preview of a model).
 - `bar_value(ui, …)` — the compact numeric control of a bar. `field` is a
   fixed 150 px, which is a column width, not a toolbar width; use `field` in
   forms and `bar_value` only in bars.
@@ -265,6 +277,13 @@ The vehicle editor's left panel is the reference implementation
   the latter and fallback is unreliable. Between digits and before units use
   a no-break space `\u{A0}` (`editor_ui::NBSP`), not the narrow `\u{202F}`:
   the shaper drops the narrow one after some digits.
+- **A counted noun never goes straight after `{ $n }`.** `t!` stringifies
+  every argument (`FluentValue::from(value.to_string())`), so a Fluent plural
+  selector never matches its `[one]` branch — `{ $count ->` compiles, passes
+  the parity test, and still prints "1 Einträge". Write the label form instead
+  (`Gleise: { $edges }`, `Strokes in this module: { $count }`), which is right
+  at every number in both languages and reads as the counter it is. Where a
+  count is genuinely prose, phrase it so the noun does not inflect.
 - **i18n:** every visible string through `i18n::t!`, keys in *both*
   `crates/i18n/locales/{en,de}/main.ftl` in the same commit
   (`cargo test -p i18n` enforces parity). Tooltips are `<key>-hint`; a text
@@ -360,6 +379,34 @@ The vehicle editor's left panel is the reference implementation
   camera system. Never query `ctx.egui_wants_pointer_input()` at the start of
   `draw` — the panels of the frame are not laid out yet, so it reports `false`
   over every panel and wheel scroll leaks through to the camera.
+
+## Rendering a model preview to texture
+
+The route editor's content drawer shows each mod model as a picture
+(`crates/route-editor/src/thumbnails.rs`). Four things there are not optional,
+and each of them cost a debugging round:
+
+- **Read the picture back.** A `RenderTarget::Image` holds its contents only
+  while an active camera points at it. Despawn the camera — or switch it off —
+  and the texture comes back cleared, so the preview vanishes the moment it is
+  finished. Render into a target, then `Readback::texture(target)`, and hand
+  egui the ordinary `Image` the readback writes. The target needs `COPY_SRC`
+  on top of the usual render-target usages.
+- **Keep the scene and camera alive until the readback's observer fires.**
+  Despawning them in the same frame the readback starts is a race: the target
+  is cleared before the copy happens, and the picture arrives empty *sometimes*.
+- **`Visibility` on the entity that carries `WorldAssetRoot`.** Without it the
+  glTF's own children inherit no visibility and are never rasterised. The
+  camera renders, the texture arrives, and the model is simply not in it.
+- **Wait for the load state *and* the bounds, then render for a while.** The
+  glTF being read does not mean its entities exist; the entities existing does
+  not mean the meshes and textures are on the GPU. Four frames after both were
+  still too early for a signal mast — 30 is the working figure.
+
+Render layers keep the two worlds apart (the map is layer 0). A layer does not
+reach the children a glTF spawns, so the model needs
+`Propagate(RenderLayers::layer(n))` plus
+`HierarchyPropagatePlugin::<RenderLayers>` on the app.
 
 ## Verifying changes (screenshot loop)
 

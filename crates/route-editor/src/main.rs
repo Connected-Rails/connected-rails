@@ -9,10 +9,12 @@
 //! on first start and can be reloaded at runtime (F5).
 
 mod areas;
+mod content_drawer;
 mod gizmo;
 mod overlay;
 mod signals;
 mod terrain;
+mod thumbnails;
 mod tools;
 mod ui;
 mod view;
@@ -109,6 +111,20 @@ pub struct TrackTypes {
 #[derive(Resource, Default)]
 pub struct TrackObjects {
     pub map: std::collections::BTreeMap<String, track_model::TrackObject>,
+}
+
+/// Everything the installed mods brought, as one system parameter. Four
+/// separate resources would put `draw` over Bevy's parameter limit, and they
+/// are read together anyway — the content drawer lists all of them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Catalogs<'w> {
+    pub types: Res<'w, TrackTypes>,
+    pub objects: Res<'w, TrackObjects>,
+    pub signal_types: Res<'w, signals::SignalTypes>,
+    pub signal_models: Res<'w, signals::SignalModelFiles>,
+    /// Rendered previews of their models — asked for while drawing, which is
+    /// what schedules the rendering.
+    pub thumbnails: ResMut<'w, thumbnails::Thumbnails>,
 }
 
 /// Reads `mods/*/<subdir>/*.ron`, keyed `"<mod id>:<file stem>"`.
@@ -323,6 +339,12 @@ fn main() {
     .init_resource::<EditorState>()
     .init_resource::<Ghost>()
     .init_resource::<gizmo::GizmoState>()
+    .init_resource::<thumbnails::Thumbnails>()
+    // A glTF spawns its own children, and a render layer does not reach them by
+    // itself — the content drawer's preview scene would be drawn into the map.
+    .add_plugins(bevy::app::HierarchyPropagatePlugin::<
+        bevy::camera::visibility::RenderLayers,
+    >::new(Update))
     .add_systems(Startup, setup)
     .add_systems(EguiPrimaryContextPass, ui::draw)
     .add_systems(
@@ -345,7 +367,7 @@ fn main() {
             signals::light_lamps,
             signals::show_finest_lod,
             rebase_origin,
-            tools::draw_gizmos,
+            (thumbnails::render, tools::draw_gizmos).chain(),
             gizmo::draw,
             scale_markers,
             update_title,
@@ -401,7 +423,6 @@ fn setup(
         Some(middle) => middle.eval(middle.length() / 2.0).pos,
         None => geo::to_ecef_deg(52.0, 10.0, 146.0),
     };
-    let base_height = geo::from_ecef(focus_position).2;
     let origin = RenderOrigin::new(focus_position);
 
     // Load (or create) the overlay configuration.
@@ -444,11 +465,7 @@ fn setup(
         Transform::from_xyz(-300.0, 300.0, -300.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    commands.insert_resource(Overlay::new(
-        config,
-        base_height,
-        message.unwrap_or_default(),
-    ));
+    commands.insert_resource(Overlay::new(config, message.unwrap_or_default()));
     commands.insert_resource(Focus {
         position: focus_position,
         height: 900.0,
@@ -573,43 +590,30 @@ fn rebuild(
             overlay.clear(&mut commands);
         }
     }
-    // Two ways of drawing the same line: the schematic map over the aerial
-    // imagery, or the world as the run builds it.
-    if terrain.enabled {
-        world_render::spawn_track(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            &assets,
-            &line.net,
-            &origin.0,
-        );
-        let (models, images) = signals::spawn(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            &assets,
-            &line,
-            &signal_types,
-            &signal_files,
-            &origin,
-        );
-        signal_models.0 = models;
-        lamp_images.0 = images;
-    } else {
-        spawn_track(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            &line.net,
-            &origin.0,
-        );
-        signal_models.0.clear();
-        lamp_images.0.clear();
-    }
-    // The painted areas go over whichever of the two the map is showing — over the
-    // schematic ribbon and over the built track alike, because the marking belongs to the
-    // line and not to the way it happens to be drawn.
+    // The line is drawn as the run builds it — the ground is always there to
+    // draw it on.
+    world_render::spawn_track(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &assets,
+        &line.net,
+        &origin.0,
+    );
+    let (models, images) = signals::spawn(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &assets,
+        &line,
+        &signal_types,
+        &signal_files,
+        &origin,
+    );
+    signal_models.0 = models;
+    lamp_images.0 = images;
+    // The painted areas go over the built track — the marking belongs to the
+    // line, not to the way it happens to be drawn.
     spawn_areas(
         &mut commands,
         &mut meshes,
@@ -625,7 +629,7 @@ fn rebuild(
         &line.source,
         &line.net,
         &origin.0,
-        terrain.enabled,
+        true,
     );
     // Scenery objects as the run shows them: the mod's glTF at the placement's
     // own pose, on the terrain surface where the placement says so.
@@ -684,42 +688,6 @@ fn ribbon_mesh(edge: &TrackEdge, half_width: f64, lift: f64, s0: f64, s1: f64) -
 
 /// Track ribbon as a colored quad — reference for the position in the aerial
 /// imagery, tinted per track-type section ([`type_color`]).
-fn spawn_track(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    net: &TrackNetwork,
-    origin: &RenderOrigin,
-) {
-    let type_materials: Vec<Handle<StandardMaterial>> = (0..net.types().len() as u32)
-        .map(|index| {
-            materials.add(StandardMaterial {
-                base_color: type_color(index),
-                unlit: true,
-                ..default()
-            })
-        })
-        .collect();
-
-    for edge in net.edges() {
-        let frame = EnuFrame::at(edge.anchor);
-        let (translation, rotation) = origin.frame_transform(&frame);
-        for (s0, s1, index) in edge.track_type_runs() {
-            let material = type_materials
-                .get(index as usize)
-                .unwrap_or(&type_materials[0]);
-            commands.spawn((
-                Mesh3d(meshes.add(ribbon_mesh(edge, 1.5, 0.4, s0, s1))),
-                MeshMaterial3d(material.clone()),
-                Transform::from_translation(translation).with_rotation(rotation),
-                WorldAnchored {
-                    anchor: edge.anchor,
-                },
-            ));
-        }
-    }
-}
-
 /// The marked areas as what they are: a wide coloured stroke painted over the
 /// track, one quad per stretch, in the colour the area wears.
 ///

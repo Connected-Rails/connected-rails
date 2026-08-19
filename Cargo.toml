@@ -67,5 +67,11 @@ opt-level = 3
 # Dependencies are rebuilt rarely and never stepped through in a debugger.
 debug = false
 
+# Release builds trade compile time for runtime: one codegen unit per crate and
+# thin LTO let the optimiser see across crate boundaries.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
 [patch.crates-io]
 egui-snarl = { path = "crates/egui-snarl" }

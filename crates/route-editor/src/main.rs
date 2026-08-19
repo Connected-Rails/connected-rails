@@ -10,7 +10,9 @@
 
 mod areas;
 mod content_drawer;
+mod envelope;
 mod gizmo;
+mod new_module;
 mod overlay;
 mod signals;
 mod terrain;
@@ -277,6 +279,8 @@ struct ShotPath(String);
 /// through the same code paths as the keyboard shortcuts.
 #[derive(Resource, Default)]
 pub struct Request {
+    /// Open the "new module" dialog (menu, Ctrl+N) — see [`new_module`].
+    pub new_module: bool,
     pub toggle_overlay: bool,
     pub cycle_provider: bool,
     pub toggle_offline: bool,
@@ -340,13 +344,16 @@ fn main() {
     .init_resource::<Ghost>()
     .init_resource::<gizmo::GizmoState>()
     .init_resource::<thumbnails::Thumbnails>()
+    .init_resource::<new_module::NewModule>()
     // A glTF spawns its own children, and a render layer does not reach them by
     // itself — the content drawer's preview scene would be drawn into the map.
     .add_plugins(bevy::app::HierarchyPropagatePlugin::<
         bevy::camera::visibility::RenderLayers,
     >::new(Update))
     .add_systems(Startup, setup)
-    .add_systems(EguiPrimaryContextPass, ui::draw)
+    // After `ui::draw`: the theme is installed there, and the modal belongs on
+    // top of the panels anyway.
+    .add_systems(EguiPrimaryContextPass, (ui::draw, new_module::draw).chain())
     .add_systems(
         Update,
         (

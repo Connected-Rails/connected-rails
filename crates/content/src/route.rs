@@ -22,6 +22,18 @@ pub struct GeoPoint {
     pub height: f64,
 }
 
+/// A corner of the module envelope.
+///
+/// The envelope (Zusi calls it *Hüllkurve*) is the closed polygon that bounds a
+/// module. It is stored in degrees rather than metres so it survives a change of
+/// UTM zone and reads as a place on a map, like every other geo-positioned entry
+/// of a line.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EnvelopePoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
 /// Node of the source file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeSource {
@@ -524,13 +536,154 @@ pub struct LineSource {
     /// simply has none.
     #[serde(default)]
     pub boundaries: Vec<BoundarySource>,
+    /// Where the module sits: the point the editor centres on when the module is
+    /// opened and the envelope is built around when it is created. A line that
+    /// predates the anchor simply has none — the editor then falls back to the
+    /// middle of the track it finds.
+    #[serde(default)]
+    pub anchor: Option<GeoPoint>,
+    /// The module's envelope as a closed polygon (see [`EnvelopePoint`]): what
+    /// the module may cover. Terrain strokes, trees, objects and markers have to
+    /// lie inside it, so that two neighbouring modules never shape the same
+    /// ground twice. **Empty means unbounded** — that is what every line written
+    /// before envelopes existed reads as, and it keeps working.
+    #[serde(default)]
+    pub envelope: Vec<EnvelopePoint>,
     /// Optional Lua script hook (plan 19.7), named `"<mod>:<file stem>"`.
     #[serde(default)]
     pub script: Option<String>,
 }
 
+impl Default for LineSource {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            geoid_offset: default_geoid(),
+            electrification: String::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            devices: Vec::new(),
+            objects: Vec::new(),
+            trees: Vec::new(),
+            markers: Vec::new(),
+            terrain: Vec::new(),
+            heights: Vec::new(),
+            sections: Vec::new(),
+            areas: Vec::new(),
+            signals: Vec::new(),
+            routes: Vec::new(),
+            boundaries: Vec::new(),
+            anchor: None,
+            envelope: Vec::new(),
+            script: None,
+        }
+    }
+}
+
+/// Half the edge length of the envelope a new module starts with [m].
+///
+/// Zusi's rule of thumb puts a module boundary about a kilometre ahead of a
+/// distant signal, which makes a module a few kilometres across; 2 km to each
+/// side is a line of that order that still fits on the editor's first screen.
+pub const DEFAULT_ENVELOPE_HALF_SIZE: f64 = 2000.0;
+
+/// The square envelope a new module starts with: `half_size` metres to each side
+/// of `anchor`, counter-clockwise from the south-west corner.
+pub fn default_envelope(anchor: GeoPoint, half_size: f64) -> Vec<EnvelopePoint> {
+    // Degrees per metre at this latitude — good to a few metres over a couple of
+    // kilometres, which is well inside what the user drags the corners by anyway.
+    let dlat = half_size / 111_320.0;
+    let dlon = half_size / (111_320.0 * anchor.lat.to_radians().cos().abs().max(1e-6));
+    [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        .into_iter()
+        .map(|(sx, sy)| EnvelopePoint {
+            lat: anchor.lat + sy * dlat,
+            lon: anchor.lon + sx * dlon,
+        })
+        .collect()
+}
+
 fn default_geoid() -> f64 {
     46.0
+}
+
+/// Shortest distance from a point to the outline of a polygon, both in degrees,
+/// answered in metres.
+///
+/// ponytail: the degrees are scaled to metres at the point's own latitude —
+/// over the few kilometres a module spans that is metre-true, and this is used
+/// for a click tolerance, not for a measurement.
+fn distance_to_polygon(point: glam::DVec2, polygon: &[glam::DVec2]) -> f64 {
+    let scale = glam::DVec2::new(111_320.0 * point.y.to_radians().cos().abs(), 111_320.0);
+    let p = point * scale;
+    (0..polygon.len())
+        .map(|i| {
+            let a = polygon[i] * scale;
+            let b = polygon[(i + 1) % polygon.len()] * scale;
+            let along = b - a;
+            let t = ((p - a).dot(along) / along.length_squared().max(1e-9)).clamp(0.0, 1.0);
+            (a + along * t).distance(p)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Do two sides of the envelope cross?
+///
+/// A polygon that crosses itself has no inside — ray casting answers "in" for
+/// the same place a human would call out, so everything built on the envelope
+/// (what may be placed, what the terrain covers, where the neighbour begins)
+/// silently means something else. Zusi requires a simple closed polygon for the
+/// same reason.
+///
+/// ponytail: every pair of sides, which is O(n²) — an envelope has a handful of
+/// corners, and a sweep line would be more code than the check it replaces.
+pub fn envelope_self_intersects(corners: &[EnvelopePoint]) -> bool {
+    let n = corners.len();
+    if n < 4 {
+        return false;
+    }
+    let at = |i: usize| glam::DVec2::new(corners[i % n].lon, corners[i % n].lat);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            // Neighbouring sides share a corner and always "touch" there.
+            if j == i + 1 || (i == 0 && j == n - 1) {
+                continue;
+            }
+            if segments_cross(at(i), at(i + 1), at(j), at(j + 1)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Do the segments `a1a2` and `b1b2` cross? Touching counts — a corner laid
+/// exactly onto another side is the same mistake as one dragged past it.
+fn segments_cross(a1: glam::DVec2, a2: glam::DVec2, b1: glam::DVec2, b2: glam::DVec2) -> bool {
+    let side = |p: glam::DVec2, q: glam::DVec2, r: glam::DVec2| {
+        let v = (q - p).perp_dot(r - p);
+        if v > 1e-12 {
+            1
+        } else if v < -1e-12 {
+            -1
+        } else {
+            0
+        }
+    };
+    let (d1, d2) = (side(a1, a2, b1), side(a1, a2, b2));
+    let (d3, d4) = (side(b1, b2, a1), side(b1, b2, a2));
+    if d1 != d2 && d3 != d4 {
+        return true;
+    }
+    // Collinear and overlapping: the segments lie on one line and share a span.
+    let on = |p: glam::DVec2, q: glam::DVec2, r: glam::DVec2| {
+        side(p, q, r) == 0
+            && r.x >= p.x.min(q.x) - 1e-12
+            && r.x <= p.x.max(q.x) + 1e-12
+            && r.y >= p.y.min(q.y) - 1e-12
+            && r.y <= p.y.max(q.y) + 1e-12
+    };
+    on(a1, a2, b1) || on(a1, a2, b2) || on(b1, b2, a1) || on(b1, b2, a2)
 }
 
 /// Result of the compilation.
@@ -585,6 +738,16 @@ pub enum RuleIssue {
     /// Flank protection of a route names a node that is no switch, or a
     /// signal that does not exist.
     FlankGuardInvalid { route: u32 },
+    /// The envelope crosses itself — see [`envelope_self_intersects`].
+    EnvelopeSelfIntersects,
+    /// Landscape outside the module envelope. Placing it is refused by the
+    /// editor, so this is what dragging a corner inwards afterwards leaves
+    /// behind — the ground would then be shaped by two modules at once.
+    OutsideEnvelope {
+        trees: u32,
+        terrain: u32,
+        markers: u32,
+    },
 }
 
 /// Splits a segment chain at arc length `s`: the segment containing `s` is cut
@@ -679,6 +842,42 @@ impl LineSource {
 
     pub fn to_ron(&self) -> String {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serializable")
+    }
+
+    /// Does this position lie inside the module's envelope?
+    ///
+    /// A module without an envelope bounds nothing, so everything is inside —
+    /// that is what keeps lines from before envelopes editable.
+    ///
+    /// ponytail: ray casting straight on `(lon, lat)`. Over the few kilometres a
+    /// module spans, the difference between a straight line in degrees and one on
+    /// the ellipsoid is far below the width of the drawn boundary.
+    pub fn envelope_contains(&self, lat: f64, lon: f64) -> bool {
+        self.envelope_contains_within(lat, lon, 0.0)
+    }
+
+    /// The same, with the boundary itself counting as inside up to `margin`
+    /// metres out.
+    ///
+    /// The track needs that margin: a module boundary is exactly where a rail
+    /// has to meet its neighbour's, so the last metre of track sits *on* the
+    /// polygon — where ray casting is undefined and a snapped click would be
+    /// refused for being a millimetre on the wrong side. Landscape passes 0 and
+    /// stays strictly inside.
+    pub fn envelope_contains_within(&self, lat: f64, lon: f64, margin: f64) -> bool {
+        if self.envelope.len() < 3 {
+            return true;
+        }
+        let polygon: Vec<glam::DVec2> = self
+            .envelope
+            .iter()
+            .map(|p| glam::DVec2::new(p.lon, p.lat))
+            .collect();
+        let point = glam::DVec2::new(lon, lat);
+        if crate::terrain::point_in_polygon(point, &polygon) {
+            return true;
+        }
+        margin > 0.0 && distance_to_polygon(point, &polygon) <= margin
     }
 
     /// Removes device `index`. Signals on it disappear with it; every other
@@ -1568,6 +1767,35 @@ impl LineSource {
         objects: &std::collections::BTreeMap<String, TrackObject>,
     ) -> Vec<RuleIssue> {
         let mut issues = Vec::new();
+
+        if envelope_self_intersects(&self.envelope) {
+            issues.push(RuleIssue::EnvelopeSelfIntersects);
+        }
+        // Landscape that the envelope no longer covers — see `OutsideEnvelope`.
+        if self.envelope.len() >= 3 {
+            let trees = self
+                .trees
+                .iter()
+                .filter(|t| !self.envelope_contains(t.lat, t.lon))
+                .count() as u32;
+            let terrain = self
+                .terrain
+                .iter()
+                .filter(|t| !self.envelope_contains(t.lat, t.lon))
+                .count() as u32;
+            let markers = self
+                .markers
+                .iter()
+                .filter(|m| !self.envelope_contains(m.lat, m.lon))
+                .count() as u32;
+            if trees + terrain + markers > 0 {
+                issues.push(RuleIssue::OutsideEnvelope {
+                    trees,
+                    terrain,
+                    markers,
+                });
+            }
+        }
 
         // Scenery objects: on their track, and of a kind some mod defines.
         let lengths_of = |edge: u32| -> Option<f64> {
@@ -2614,6 +2842,7 @@ mod tests {
             routes: vec![],
             boundaries: vec![],
             script: None,
+            ..Default::default()
         };
         line.compile().expect("compiles before the split");
 
@@ -2780,5 +3009,133 @@ mod tests {
         line.devices.retain(|d| d.kind != DeviceKind::LineConductor);
         let issues = line.check(&types, &objects);
         assert!(issues.contains(&RuleIssue::LzbTypeWithoutConductor { edge: 2 }));
+    }
+
+    #[test]
+    fn envelope_bounds_the_module() {
+        let anchor = GeoPoint {
+            lat: 52.0,
+            lon: 10.0,
+            height: 100.0,
+        };
+        let mut line = LineSource {
+            anchor: Some(anchor),
+            envelope: default_envelope(anchor, DEFAULT_ENVELOPE_HALF_SIZE),
+            ..Default::default()
+        };
+        assert_eq!(line.envelope.len(), 4);
+        assert!(line.envelope_contains(anchor.lat, anchor.lon));
+        // A kilometre out is still inside a 2 km half-size square, ten are not.
+        assert!(line.envelope_contains(anchor.lat + 0.009, anchor.lon));
+        assert!(!line.envelope_contains(anchor.lat + 0.09, anchor.lon));
+        assert!(!line.envelope_contains(anchor.lat, anchor.lon + 0.09));
+
+        // No envelope bounds nothing — lines from before envelopes stay editable.
+        line.envelope.clear();
+        assert!(line.envelope_contains(0.0, 0.0));
+    }
+
+    #[test]
+    fn landscape_pulled_outside_the_envelope_is_reported() {
+        let anchor = GeoPoint {
+            lat: 52.0,
+            lon: 10.0,
+            height: 100.0,
+        };
+        let mut line = LineSource {
+            anchor: Some(anchor),
+            envelope: default_envelope(anchor, DEFAULT_ENVELOPE_HALF_SIZE),
+            trees: vec![
+                TreeSource {
+                    object: String::new(),
+                    lat: 52.0,
+                    lon: 10.0,
+                    yaw_deg: 0.0,
+                    scale: 1.0,
+                },
+                TreeSource {
+                    object: String::new(),
+                    lat: 52.5,
+                    lon: 10.0,
+                    yaw_deg: 0.0,
+                    scale: 1.0,
+                },
+            ],
+            ..Default::default()
+        };
+        let types = std::collections::BTreeMap::new();
+        let objects = std::collections::BTreeMap::new();
+        assert!(
+            line.check(&types, &objects)
+                .contains(&RuleIssue::OutsideEnvelope {
+                    trees: 1,
+                    terrain: 0,
+                    markers: 0,
+                })
+        );
+        // Without an envelope there is nothing to be outside of.
+        line.envelope.clear();
+        assert!(
+            !line
+                .check(&types, &objects)
+                .iter()
+                .any(|i| matches!(i, RuleIssue::OutsideEnvelope { .. }))
+        );
+    }
+
+    #[test]
+    fn the_boundary_itself_is_inside_for_the_track() {
+        let anchor = GeoPoint {
+            lat: 52.0,
+            lon: 10.0,
+            height: 0.0,
+        };
+        let line = LineSource {
+            envelope: default_envelope(anchor, DEFAULT_ENVELOPE_HALF_SIZE),
+            ..Default::default()
+        };
+        // The eastern side, and a few metres past it.
+        let east = line.envelope[1].lon;
+        assert!(!line.envelope_contains(anchor.lat, east + 0.00005));
+        assert!(line.envelope_contains_within(anchor.lat, east + 0.00005, 10.0));
+        // Fifty metres out is past any joining tolerance.
+        assert!(!line.envelope_contains_within(anchor.lat, east + 0.0007, 10.0));
+    }
+
+    #[test]
+    fn a_crossed_envelope_is_found() {
+        let square = default_envelope(
+            GeoPoint {
+                lat: 52.0,
+                lon: 10.0,
+                height: 0.0,
+            },
+            DEFAULT_ENVELOPE_HALF_SIZE,
+        );
+        assert!(!envelope_self_intersects(&square));
+        // Swapping two corners folds the square into a bow tie.
+        let mut bow_tie = square.clone();
+        bow_tie.swap(2, 3);
+        assert!(envelope_self_intersects(&bow_tie));
+        // A triangle cannot cross itself, and neither can two points.
+        assert!(!envelope_self_intersects(&square[..3]));
+        assert!(!envelope_self_intersects(&square[..2]));
+
+        let mut line = LineSource {
+            envelope: bow_tie,
+            ..Default::default()
+        };
+        let types = std::collections::BTreeMap::new();
+        let objects = std::collections::BTreeMap::new();
+        assert!(
+            line.check(&types, &objects)
+                .contains(&RuleIssue::EnvelopeSelfIntersects)
+        );
+        line.envelope = square;
+        assert!(
+            !line
+                .check(&types, &objects)
+                .contains(&RuleIssue::EnvelopeSelfIntersects)
+        );
     }
 }

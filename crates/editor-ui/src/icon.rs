@@ -58,6 +58,8 @@ pub enum Icon {
     TerrainBrush,
     /// Pick DGM tiles — a grid with one cell taken.
     Tiles,
+    /// Module envelope — a closed polygon on its corner points.
+    Envelope,
 }
 
 /// Size of an icon button: the design system's widget height, a little wider
@@ -334,6 +336,23 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(vec![at(0.82, 0.94), at(0.82, 0.66)]),
             Shape::circle_stroke(at(0.82, 0.52), rect.width() * 0.16, stroke),
         ],
+        // The envelope: a closed run of sides with its corners marked, which is
+        // what the tool edits — the corners, not the area.
+        Icon::Envelope => {
+            let corners = [
+                at(0.12, 0.30),
+                at(0.62, 0.10),
+                at(0.92, 0.62),
+                at(0.34, 0.92),
+            ];
+            let mut shapes = vec![Shape::closed_line(corners.to_vec(), stroke)];
+            shapes.extend(
+                corners
+                    .iter()
+                    .map(|c| Shape::circle_filled(*c, LINE, stroke.color)),
+            );
+            shapes
+        }
         // A brush: handle, ferrule and the bristles that make it one.
         Icon::Brush => vec![
             line(vec![at(0.78, 0.10), at(0.44, 0.48)]),

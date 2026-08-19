@@ -69,7 +69,14 @@ pub fn draw(
         return Ok(());
     }
     state.window = windows.single().ok().cloned();
-    handle_shortcuts(&ctx, &mut line, &mut history, &mut state, &mut overlay);
+    handle_shortcuts(
+        &ctx,
+        &mut line,
+        &mut history,
+        &mut state,
+        &mut overlay,
+        &mut request,
+    );
 
     let mut root = egui::Ui::new(
         ctx.clone(),
@@ -230,6 +237,7 @@ fn handle_shortcuts(
     history: &mut History,
     state: &mut EditorState,
     overlay: &mut Overlay,
+    request: &mut Request,
 ) {
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_DRAWER)) {
         state.drawer.open = !state.drawer.open;
@@ -253,7 +261,7 @@ fn handle_shortcuts(
     }
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_NEW)) && confirm_discard(line, state, overlay)
     {
-        new_line(line, history, state);
+        request.new_module = true;
     }
 }
 
@@ -467,6 +475,7 @@ fn import_forest(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay
             let areas = polygons.len();
             let objects: Vec<String> = state.tree_object.iter().cloned().collect();
             let mut baked = 0;
+            let mut dropped = 0;
             for polygon in polygons {
                 let trees = content::terrain::fill_polygon(
                     &polygon,
@@ -476,10 +485,27 @@ fn import_forest(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay
                     tools::utm_zone_of(polygon[0].1),
                     |lat, lon| tools::clear_of_track(&line.net, lat, lon),
                 );
+                // An imported wood knows nothing of the module — it is cut to
+                // the envelope, or the neighbour inherits a forest.
+                let before = trees.len();
+                let trees: Vec<_> = trees
+                    .into_iter()
+                    .filter(|t| line.source.envelope_contains(t.lat, t.lon))
+                    .collect();
+                dropped += before - trees.len();
                 baked += trees.len();
                 line.source.trees.extend(trees);
             }
-            overlay.status = t!("status-forest-imported", count = baked, areas = areas);
+            overlay.status = if dropped == 0 {
+                t!("status-forest-imported", count = baked, areas = areas)
+            } else {
+                t!(
+                    "status-forest-imported-clipped",
+                    count = baked,
+                    areas = areas,
+                    dropped = dropped
+                )
+            };
         }
         Err(e) => report_failure(
             state,
@@ -665,9 +691,20 @@ fn import_markers(line: &mut Line, state: &mut EditorState, overlay: &mut Overla
     }
 }
 
-fn new_line(line: &mut Line, history: &mut History, state: &mut EditorState) {
+/// Empties the document and starts a new module: the name and the anchor from
+/// the dialog, and the square envelope built around that anchor.
+pub(crate) fn new_line(
+    line: &mut Line,
+    history: &mut History,
+    state: &mut EditorState,
+    name: String,
+    anchor: content::route::GeoPoint,
+    half_size: f64,
+) {
     line.source = LineSource {
-        name: "Line".into(),
+        name,
+        anchor: Some(anchor),
+        envelope: content::route::default_envelope(anchor, half_size),
         geoid_offset: 46.0,
         electrification: String::new(),
         nodes: vec![],
@@ -714,7 +751,7 @@ fn menu_bar(
                     if ui.button(t!("action-new-line")).clicked() {
                         ui.close();
                         if confirm_discard(line, state, overlay) {
-                            new_line(line, history, state);
+                            request.new_module = true;
                         }
                     }
                     if ui.button(t!("action-open-line")).clicked() {
@@ -1607,6 +1644,44 @@ fn selection_panel(
                     focus.position = position;
                 }
                 if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
+        }
+        // A corner of the module envelope: the two coordinates it is, and the
+        // one thing a corner can be besides moved — removed.
+        Selection::EnvelopePoint(i) => {
+            let Some(point) = line.source.envelope.get(i).copied() else {
+                return;
+            };
+            let position = crate::envelope::point_pos(&point, crate::envelope::height(line, focus));
+            ui.label(t!(
+                "sel-envelope-summary",
+                index = i + 1,
+                count = line.source.envelope.len()
+            ));
+            let point = &mut line.source.envelope[i];
+            editor_ui::form_grid("sel-envelope").show(ui, |ui| {
+                row(ui, "new-module-lat", |ui| {
+                    editor_ui::field(ui, &mut point.lat, 0.0001, -85.0..=85.0, "°");
+                });
+                row(ui, "new-module-lon", |ui| {
+                    editor_ui::field(ui, &mut point.lon, 0.0001, -180.0..=180.0, "°");
+                });
+            });
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked() {
+                    focus.position = position;
+                }
+                // Three corners are a polygon; two are a line, which bounds
+                // nothing.
+                let removable = line.source.envelope.len() > 3;
+                if ui
+                    .add_enabled(removable, egui::Button::new(t!("action-delete")))
+                    .on_disabled_hover_text(t!("envelope-min-points"))
+                    .clicked()
+                {
                     tools::delete_selection(line, state);
                 }
             });
@@ -2605,6 +2680,63 @@ fn payload_presets(ui: &mut egui::Ui, device: &mut content::route::DeviceSource)
 
 /// Module tooling: the line's boundaries (named buffer nodes another module
 /// may attach to) and the neighbour module drawn as a ghost.
+/// Edge length the envelope is reset to when nothing else is dialled in [km].
+const DEFAULT_ENVELOPE_KM: f64 = content::route::DEFAULT_ENVELOPE_HALF_SIZE * 2.0 / 1000.0;
+
+/// The module's own extent: where it sits, and the envelope around it.
+///
+/// The envelope is edited on the map ([`crate::envelope`]); what belongs here is
+/// what the map cannot say — how many corners it has, and the way back to a
+/// square when dragging has gone wrong. A module from before envelopes has none
+/// at all, and this is where it gets one.
+fn envelope_rows(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, focus: &mut Focus) {
+    editor_ui::subheading(ui, t!("module-envelope"));
+    if let Some(anchor) = line.source.anchor.as_mut() {
+        editor_ui::form_grid("module-anchor").show(ui, |ui| {
+            row(ui, "envelope-anchor-lat", |ui| {
+                editor_ui::field(ui, &mut anchor.lat, 0.0001, -85.0..=85.0, "°");
+            });
+            row(ui, "envelope-anchor-lon", |ui| {
+                editor_ui::field(ui, &mut anchor.lon, 0.0001, -180.0..=180.0, "°");
+            });
+        });
+    }
+    ui.small(t!("envelope-points", count = line.source.envelope.len()));
+    ui.add_space(space::XS);
+    let mut size_km = state.envelope_size.unwrap_or(DEFAULT_ENVELOPE_KM);
+    ui.horizontal(|ui| {
+        if ui.button(t!("action-edit-envelope")).clicked() {
+            state.tool = tools::Tool::EditEnvelope;
+        }
+        // Resetting needs a place to build the square around: the module's
+        // anchor, or — for a module that never had one — where the view is.
+        let reset = ui
+            .button(t!("action-reset-envelope"))
+            .on_hover_text(t!("action-reset-envelope-hint"));
+        if reset.clicked() {
+            let anchor = line.source.anchor.unwrap_or_else(|| {
+                let (lat, lon) = crate::focus_degrees(focus.position);
+                content::route::GeoPoint {
+                    lat,
+                    lon,
+                    height: 0.0,
+                }
+            });
+            line.source.anchor = Some(anchor);
+            line.source.envelope = content::route::default_envelope(anchor, size_km * 500.0);
+            state.selection = Selection::None;
+        }
+        ui.add(editor_ui::drag(&mut size_km, 0.1, 0.2..=60.0, "km"))
+            .on_hover_text(t!("new-module-size-hint"));
+        if let Some(anchor) = line.source.anchor
+            && ui.button(t!("action-center")).clicked()
+        {
+            focus.position = world_coords::geo::to_ecef_deg(anchor.lat, anchor.lon, anchor.height);
+        }
+    });
+    state.envelope_size = Some(size_km);
+}
+
 fn module_section(
     ui: &mut egui::Ui,
     line: &mut Line,
@@ -2613,6 +2745,9 @@ fn module_section(
     overlay: &mut Overlay,
     focus: &mut Focus,
 ) {
+    envelope_rows(ui, line, state, focus);
+    ui.add_space(space::S);
+
     editor_ui::subheading(ui, t!("module-boundaries"));
     if line.source.boundaries.is_empty() {
         ui.small(t!("boundary-none"));
@@ -2758,7 +2893,7 @@ fn load_ghost(ghost: &mut Ghost, state: &EditorState, overlay: &mut Overlay) {
 
 /// What the issue is about, for the center button: a world position to jump to
 /// and the selection that puts its fields on screen.
-fn issue_target(line: &Line, issue: &RuleIssue) -> (Option<EcefPos>, Selection) {
+fn issue_target(line: &Line, issue: &RuleIssue, focus: &Focus) -> (Option<EcefPos>, Selection) {
     let device_target = |device: u32| {
         let position = line
             .source
@@ -2822,6 +2957,15 @@ fn issue_target(line: &Line, issue: &RuleIssue) -> (Option<EcefPos>, Selection) 
                 .and_then(|o| tools::object_pos(&line.net, o)),
             Selection::Object(*object as usize),
         ),
+        // The first corner of the envelope: the boundary is what has to move,
+        // and this is where looking at it starts.
+        RuleIssue::OutsideEnvelope { .. } | RuleIssue::EnvelopeSelfIntersects => (
+            line.source
+                .envelope
+                .first()
+                .map(|c| crate::envelope::point_pos(c, crate::envelope::height(line, focus))),
+            Selection::None,
+        ),
     }
 }
 
@@ -2849,6 +2993,17 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::ObjectOffEdge { object } => t!("check-object-off-edge", object = object),
         RuleIssue::UnknownObject { object } => t!("check-unknown-object", object = object),
         RuleIssue::FlankGuardInvalid { route } => t!("check-flank-guard", route = route),
+        RuleIssue::EnvelopeSelfIntersects => t!("check-envelope-crossed"),
+        RuleIssue::OutsideEnvelope {
+            trees,
+            terrain,
+            markers,
+        } => t!(
+            "check-outside-envelope",
+            trees = trees,
+            terrain = terrain,
+            markers = markers
+        ),
     }
 }
 
@@ -2862,7 +3017,7 @@ fn checks_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, f
     let issues = line.issues.clone();
     for issue in &issues {
         ui.horizontal(|ui| {
-            let (position, selection) = issue_target(line, issue);
+            let (position, selection) = issue_target(line, issue, focus);
             if ui
                 .add_enabled(
                     position.is_some(),

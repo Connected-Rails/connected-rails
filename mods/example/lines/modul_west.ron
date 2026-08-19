@@ -29,6 +29,16 @@
         (kind: Main, system: Ks, device: 0, guarded: [0], signal_type: Some("example:ks_main")),
     ],
     routes: [],
+    anchor: Some((lat: 52.000000, lon: 10.014600, height: 100.0)),
+    // The module envelope: what this module covers. Terrain, trees and scenery stay
+    // inside it, so the ground between two modules belongs to exactly one of them.
+    // The route editor draws it and drags its corners (tool "Envelope").
+    envelope: [
+        (lat: 51.982034, lon: 9.985418),
+        (lat: 51.982034, lon: 10.043782),
+        (lat: 52.017966, lon: 10.043782),
+        (lat: 52.017966, lon: 9.985418),
+    ],
     boundaries: [
         (name: "nach_ost", node: 1),
     ],

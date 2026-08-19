@@ -613,6 +613,25 @@ help-signal-conventions = Origin at the foot, +Y up, front towards the driver = 
 ## Module editor
 
 action-new-line = New module
+
+# --- New module dialog -----------------------------------------------------
+new-module-title = New module
+new-module-name = Name
+new-module-name-placeholder = e.g. Göttingen – Northeim
+new-module-lat = Latitude
+new-module-lon = Longitude
+new-module-size = Module size
+new-module-size-hint = Edge length of the square envelope the module starts with; its corners are dragged into shape afterwards.
+new-module-search-placeholder = Search for a place, station or address
+action-search = Search
+new-module-searching = Searching…
+new-module-no-hits = Nothing found under that name.
+new-module-search-failed = Search failed: { $error }
+new-module-map-hint = Click sets the anchor · drag pans · wheel zooms
+new-module-envelope-note = The module starts with a square envelope of that size around the anchor; drag its corners into shape in the editor.
+action-create-module = Create module
+new-module-needs-name = The module needs a name.
+status-module-created = Module “{ $name }” created — the envelope is the square around the anchor.
 action-open-line = Open module…
 action-delete = Delete
 action-load-imagery = Load imagery configuration (F5)
@@ -969,6 +988,9 @@ check-area-off-track = Marked area { $area }: a stretch lies on no track, or pas
 check-area-no-effect = Marked area { $area }: covers nothing, or sets nothing — it does not reach the module
 check-area-track-type = Marked area { $area }: names a track type no installed mod defines
 check-lzb-no-conductor = Track { $edge }: LZB track type, but the module places no line conductor
+check-outside-envelope = Outside the envelope: trees { $trees }, terrain strokes { $terrain }, markers { $markers } — move the boundary or delete them
+check-envelope-crossed = The envelope crosses itself — a boundary like that has no inside; pull the corner back
+status-outside-envelope-track = Past the module envelope — a track may reach the boundary, not cross it
 heading-imagery = Aerial imagery
 img-enabled = Show overlay
 img-provider = Provider
@@ -1996,3 +2018,24 @@ menu-fact-author = Author
 group-checks-errors = Checks — { $errors } errors
 group-checks-warnings = Checks — { $warnings } warnings
 group-checks-both = Checks — { $errors } errors, { $warnings } warnings
+
+# --- Module envelope -------------------------------------------------------
+tool-group-module = Module
+tool-envelope = Envelope
+tool-envelope-hint = Reshape the module boundary: drag a corner, click a side to add one, Delete removes the selected corner
+module-envelope = Envelope
+envelope-points = Corners: { $count }
+envelope-anchor-lat = Anchor latitude
+envelope-anchor-lon = Anchor longitude
+envelope-min-points = A polygon needs three corners.
+action-edit-envelope = Edit
+action-reset-envelope = Reset
+action-reset-envelope-hint = Puts a square envelope back around the anchor — a module without one gets its first here.
+sel-envelope-summary = Envelope corner { $index } of { $count }
+status-envelope-none = This module has no envelope yet — reset it under Module boundaries.
+status-envelope-point-added = Corner added — drag it where it belongs.
+status-envelope-no-hit = Nothing hit: drag a corner, or click a side to add one.
+status-outside-envelope = Outside the module envelope — that ground belongs to the neighbouring module.
+status-forest-baked-clipped = { $count } trees baked, { $dropped } dropped outside the envelope
+status-forest-imported-clipped = { $count } trees from { $areas } areas, { $dropped } dropped outside the envelope
+action-cancel = Cancel

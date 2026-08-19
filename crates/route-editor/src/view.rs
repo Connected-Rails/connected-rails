@@ -128,15 +128,14 @@ pub fn camera_control(
     mut focus: ResMut<Focus>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
 ) {
+    let window = windows.single().ok();
     let dt = time.delta_secs_f64();
     let scroll: f64 = wheel.read().map(|w| w.y as f64).sum();
     let drag: Vec2 = motion.read().map(|m| m.delta).sum();
     // Mouse input only inside the viewport rect the panels leave free — the
     // hand-built panel layout is invisible to egui's own hit test, so the
     // check is ours (see `EditorState::viewport`).
-    let over_map = windows
-        .single()
-        .ok()
+    let over_map = window
         .and_then(|w| w.cursor_position())
         .is_some_and(|p| state.viewport.contains(p));
 
@@ -182,6 +181,44 @@ pub fn camera_control(
             transform.look_at(center, up);
         }
     }
+    // …and then off to the side, so the pivot ends up in the middle of what is
+    // actually visible.
+    if let Some(window) = window {
+        let shift = viewport_shift(&transform, &focus, &state, window);
+        transform.translation += shift;
+    }
+}
+
+/// How far the camera has to move sideways for the pivot to sit in the middle
+/// of the free viewport instead of the middle of the window.
+///
+/// The scene is rendered into the whole window and the panels are drawn on top
+/// of it — `bevy_egui` hangs its context on this same camera, so giving the
+/// camera a `viewport` of its own would squeeze the UI into that rect as well.
+/// Without this shift the pivot sits behind the side panel, and with it the
+/// point the imagery tiles are loaded around: the aerial picture is off-centre
+/// in the part of the window one can see, and half of what is fetched is under
+/// a panel.
+///
+/// The shift is applied to the camera, not to [`Focus::position`] — the focus
+/// stays what the status bar reports and what the tiles are centred on.
+fn viewport_shift(
+    transform: &Transform,
+    focus: &Focus,
+    state: &EditorState,
+    window: &Window,
+) -> Vec3 {
+    let free = state.viewport;
+    let (width, height) = (window.width(), window.height());
+    if free.width() < 1.0 || free.height() < 1.0 || height < 1.0 {
+        return Vec3::ZERO;
+    }
+    let offset = free.center() - Vec2::new(width, height) / 2.0;
+    // Metres per pixel on the plane through the pivot: the vertical field of
+    // view spans `2 · d · tan(fov/2)` there. Screen y counts downwards, so a
+    // free rect below the window's middle moves the camera up.
+    let per_pixel = (2.0 * focus.height * HALF_FOV.tan() / height as f64) as f32;
+    (transform.up() * offset.y - transform.right() * offset.x) * per_pixel
 }
 
 /// WASD and the arrows pan the map, PgUp/PgDn change the height — the bindings
@@ -375,5 +412,54 @@ mod tests {
         assert_eq!(focus.mode, ViewMode::TopDown);
         assert_eq!(focus.pitch, STRAIGHT_DOWN);
         assert_eq!(focus.position.0, pivot.0);
+    }
+
+    fn window(width: f32, height: f32) -> Window {
+        let mut window = Window::default();
+        window.resolution.set(width, height);
+        window
+    }
+
+    #[test]
+    fn the_camera_moves_away_from_the_panels() {
+        let mut state = EditorState::default();
+        let mut focus = focus_at(ViewMode::TopDown, 0.0, STRAIGHT_DOWN);
+        focus.height = 900.0;
+        // Identity transform: right is +X, up is +Y.
+        let transform = Transform::IDENTITY;
+        let window = window(1280.0, 720.0);
+
+        // A side panel on the left leaves the free rect to the right of the
+        // window's middle, so the camera has to move left for the pivot to end
+        // up in it.
+        state.viewport = Rect::new(480.0, 0.0, 1280.0, 720.0);
+        let shift = viewport_shift(&transform, &focus, &state, &window);
+        assert!(shift.x < 0.0, "{shift:?}");
+        assert_eq!(shift.y, 0.0);
+        // 240 px at the plane's metres per pixel.
+        let per_pixel = 2.0 * 900.0 * HALF_FOV.tan() / 720.0;
+        assert!(
+            (shift.x as f64 + 240.0 * per_pixel).abs() < 1e-3,
+            "{shift:?}"
+        );
+
+        // A bar at the top pushes the free rect down; the camera goes up.
+        state.viewport = Rect::new(0.0, 80.0, 1280.0, 720.0);
+        let shift = viewport_shift(&transform, &focus, &state, &window);
+        assert!(shift.y > 0.0, "{shift:?}");
+        assert_eq!(shift.x, 0.0);
+
+        // No panels, no shift.
+        state.viewport = Rect::new(0.0, 0.0, 1280.0, 720.0);
+        assert_eq!(
+            viewport_shift(&transform, &focus, &state, &window),
+            Vec3::ZERO
+        );
+        // An empty rect (before the first UI pass) must not move anything.
+        state.viewport = Rect::default();
+        assert_eq!(
+            viewport_shift(&transform, &focus, &state, &window),
+            Vec3::ZERO
+        );
     }
 }

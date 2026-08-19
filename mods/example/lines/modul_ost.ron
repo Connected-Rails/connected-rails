@@ -24,6 +24,14 @@
         (kind: Main, system: Ks, device: 0, guarded: [0], signal_type: Some("example:ks_main")),
     ],
     routes: [],
+    anchor: Some((lat: 51.999996, lon: 10.043700, height: 100.0)),
+    // Envelope of this module — it meets its western neighbour at the boundary.
+    envelope: [
+        (lat: 51.982030, lon: 10.014518),
+        (lat: 51.982030, lon: 10.072882),
+        (lat: 52.017963, lon: 10.072882),
+        (lat: 52.017963, lon: 10.014518),
+    ],
     boundaries: [
         (name: "von_west", node: 0),
     ],

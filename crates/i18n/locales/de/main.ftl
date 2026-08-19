@@ -614,6 +614,25 @@ help-signal-conventions = Ursprung am Fuß, +Y oben, Front zum Triebfahrzeugfüh
 ## Moduleditor
 
 action-new-line = Neues Modul
+
+# --- Neues Modul -----------------------------------------------------------
+new-module-title = Neues Modul
+new-module-name = Name
+new-module-name-placeholder = z. B. Göttingen – Northeim
+new-module-lat = Breite
+new-module-lon = Länge
+new-module-size = Modulgröße
+new-module-size-hint = Kantenlänge der quadratischen Hüllkurve, mit der das Modul startet; ihre Ecken werden danach in Form gezogen.
+new-module-search-placeholder = Ort, Bahnhof oder Adresse suchen
+action-search = Suchen
+new-module-searching = Suche läuft…
+new-module-no-hits = Unter diesem Namen nichts gefunden.
+new-module-search-failed = Suche fehlgeschlagen: { $error }
+new-module-map-hint = Klick setzt den Anker · Ziehen verschiebt · Rad zoomt
+new-module-envelope-note = Das Modul startet mit einer quadratischen Hüllkurve dieser Größe um den Anker; ihre Ecken werden im Editor in Form gezogen.
+action-create-module = Modul anlegen
+new-module-needs-name = Das Modul braucht einen Namen.
+status-module-created = Modul „{ $name }“ angelegt — die Hüllkurve ist das Quadrat um den Anker.
 action-open-line = Modul öffnen…
 action-delete = Löschen
 action-load-imagery = Luftbild-Konfiguration laden (F5)
@@ -970,6 +989,9 @@ check-area-off-track = Gleisbereich { $area }: ein Abschnitt liegt auf keinem Gl
 check-area-no-effect = Gleisbereich { $area }: deckt nichts ab oder setzt nichts — er erreicht das Modul nicht
 check-area-track-type = Gleisbereich { $area }: nennt eine Gleisbauart, die kein installiertes Mod kennt
 check-lzb-no-conductor = Gleis { $edge }: LZB-Gleisart, aber das Modul verlegt keinen Linienleiter
+check-outside-envelope = Außerhalb der Hüllkurve: Bäume { $trees }, Geländestriche { $terrain }, Marker { $markers } — Grenze verlegen oder löschen
+check-envelope-crossed = Die Hüllkurve überschneidet sich — so eine Grenze hat kein Innen; die Ecke zurückziehen
+status-outside-envelope-track = Hinter der Hüllkurve — ein Gleis darf die Grenze erreichen, nicht überschreiten
 heading-imagery = Luftbilder
 img-enabled = Overlay anzeigen
 img-provider = Anbieter
@@ -1998,3 +2020,24 @@ menu-fact-author = Autor
 group-checks-errors = Prüfungen — { $errors } Fehler
 group-checks-warnings = Prüfungen — { $warnings } Warnungen
 group-checks-both = Prüfungen — { $errors } Fehler, { $warnings } Warnungen
+
+# --- Hüllkurve -------------------------------------------------------------
+tool-group-module = Modul
+tool-envelope = Hüllkurve
+tool-envelope-hint = Modulgrenze verlegen: Ecke ziehen, Klick auf eine Seite legt eine neue an, Entf löscht die gewählte Ecke
+module-envelope = Hüllkurve
+envelope-points = Ecken: { $count }
+envelope-anchor-lat = Anker Breite
+envelope-anchor-lon = Anker Länge
+envelope-min-points = Ein Polygon braucht drei Ecken.
+action-edit-envelope = Bearbeiten
+action-reset-envelope = Zurücksetzen
+action-reset-envelope-hint = Legt wieder eine quadratische Hüllkurve um den Anker — ein Modul ohne bekommt hier seine erste.
+sel-envelope-summary = Hüllkurven-Ecke { $index } von { $count }
+status-envelope-none = Dieses Modul hat noch keine Hüllkurve — unter Modulgrenzen zurücksetzen.
+status-envelope-point-added = Ecke angelegt — an ihren Platz ziehen.
+status-envelope-no-hit = Nichts getroffen: eine Ecke ziehen oder auf eine Seite klicken, um eine anzulegen.
+status-outside-envelope = Außerhalb der Hüllkurve — dieser Boden gehört dem Nachbarmodul.
+status-forest-baked-clipped = { $count } Bäume gesetzt, { $dropped } außerhalb der Hüllkurve verworfen
+status-forest-imported-clipped = { $count } Bäume aus { $areas } Flächen, { $dropped } außerhalb der Hüllkurve verworfen
+action-cancel = Abbrechen

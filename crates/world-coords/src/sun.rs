@@ -40,6 +40,18 @@ pub fn moon_position(jd: f64, lat: f64, lon: f64) -> (f64, f64, f64) {
     (az, el, fraction)
 }
 
+/// Local mean sidereal time \[rad\]: the right ascension standing on the observer's
+/// meridian. This is what turns the star sphere — a sidereal day is four minutes
+/// short of a solar one, so the same star rises four minutes earlier every night.
+pub fn local_sidereal(jd: f64, lon: f64) -> f64 {
+    sidereal(jd - 2_451_545.0) + lon
+}
+
+/// Greenwich mean sidereal time \[rad\] at `n` days since J2000.
+fn sidereal(n: f64) -> f64 {
+    (280.460_618_37 + 360.985_647_366_29 * n).to_radians()
+}
+
 /// Ecliptic longitude of the sun \[rad\] at `n` days since J2000.
 fn sun_ecliptic_longitude(n: f64) -> f64 {
     let l = (280.460 + 0.985_647_4 * n).to_radians();
@@ -60,9 +72,7 @@ fn equatorial(n: f64, lambda: f64, beta: f64) -> (f64, f64) {
 
 /// Equatorial → horizontal coordinates at an observer.
 fn horizontal(n: f64, lat: f64, lon: f64, (ra, dec): (f64, f64)) -> (f64, f64) {
-    // Greenwich mean sidereal time as an angle.
-    let gmst = (280.460_618_37 + 360.985_647_366_29 * n).to_radians();
-    let h = gmst + lon - ra;
+    let h = sidereal(n) + lon - ra;
     let el = (lat.sin() * dec.sin() + lat.cos() * dec.cos() * h.cos()).asin();
     // Measured from south; the shift by π counts from north through east.
     let az = f64::atan2(h.sin(), h.cos() * lat.sin() - dec.tan() * lat.cos());

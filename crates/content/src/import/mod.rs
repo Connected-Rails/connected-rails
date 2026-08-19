@@ -183,7 +183,9 @@ pub fn import_line(
             cant: shift_profile(&fitted.cant, offset, len),
             speed: shift_profile(&fitted.speed, offset, len),
             track_type: vec![],
-            electrification: Vec::new(),
+            // The wire belongs to the track: every imported edge starts out
+            // saying so itself, so it can be changed one edge at a time.
+            electrification: vec![(0.0, options.electrification.clone())],
         });
         offset += len;
     }
@@ -195,7 +197,7 @@ pub fn import_line(
             options.name.clone()
         },
         geoid_offset: options.geoid_offset,
-        electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
+        electrification: String::new(),
         nodes,
         edges,
         devices: Vec::new(),

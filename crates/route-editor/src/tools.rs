@@ -24,7 +24,7 @@ use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 const DEFAULT_THROW_TIME: f64 = 6.0;
 
 /// Active tool of the viewport.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Tool {
     #[default]
     Select,
@@ -103,6 +103,79 @@ pub enum Highlight {
     Route(usize),
 }
 
+/// The palette, in the groups the work falls into: the track itself, what is
+/// mounted along it, and the landscape it runs through. Twelve tools in one
+/// wrapping row named their alternatives but showed no order at all — which
+/// group a tool belongs to is the first thing a builder needs from a palette.
+/// The number keys, in the order the palette lists its tools. Ten keys for
+/// twelve tools — the last two of the landscape group are mouse-only, which is
+/// why `tool_digit` answers `None` rather than a wrong number.
+const DIGITS: [KeyCode; 10] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+    KeyCode::Digit0,
+];
+
+/// The tools flattened out of their groups — palette order, which is what the
+/// number keys count along.
+fn palette_order() -> impl Iterator<Item = Tool> {
+    TOOL_GROUPS
+        .iter()
+        .flat_map(|(_, tools)| tools.iter().map(|(tool, _, _)| *tool))
+}
+
+/// The digit that picks `tool`, for its tooltip; `None` past the tenth.
+pub fn tool_digit(tool: Tool) -> Option<u8> {
+    palette_order()
+        .position(|candidate| candidate == tool)
+        .filter(|index| *index < DIGITS.len())
+        .map(|index| ((index + 1) % 10) as u8)
+}
+
+/// One palette entry: the tool, its i18n key and the icon on its button.
+pub type ToolEntry = (Tool, &'static str, editor_ui::Icon);
+
+pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 3] = [
+    (
+        "tool-group-track",
+        &[
+            (Tool::Select, "tool-select", editor_ui::Icon::Select),
+            (Tool::DrawTrack, "tool-draw", editor_ui::Icon::DrawTrack),
+            (Tool::PlaceSwitch, "tool-switch", editor_ui::Icon::Switch),
+            (Tool::MarkArea, "tool-area", editor_ui::Icon::Area),
+        ],
+    ),
+    (
+        "tool-group-equipment",
+        &[
+            (Tool::PlaceDevice, "tool-device", editor_ui::Icon::Device),
+            (Tool::PlaceObject, "tool-object", editor_ui::Icon::Object),
+            (Tool::PlaceMarker, "tool-marker", editor_ui::Icon::Marker),
+        ],
+    ),
+    (
+        "tool-group-landscape",
+        &[
+            (Tool::PlaceTree, "tool-tree", editor_ui::Icon::Tree),
+            (Tool::PlaceForest, "tool-forest", editor_ui::Icon::Forest),
+            (Tool::Brush, "tool-brush", editor_ui::Icon::Brush),
+            (
+                Tool::TerrainBrush,
+                "tool-terrain",
+                editor_ui::Icon::TerrainBrush,
+            ),
+            (Tool::PickTile, "tool-tile", editor_ui::Icon::Tiles),
+        ],
+    ),
+];
+
 /// Tool state, selection and what the UI pass leaves behind for the input
 /// systems: the free viewport rect and whether a text field has focus.
 #[derive(Resource, Default)]
@@ -124,6 +197,8 @@ pub struct EditorState {
     /// [m]; `None` = the regular length of the rulebook for the speed the
     /// route ends at (`content::route::regular_overlap`).
     pub overlap_length: Option<f64>,
+    /// The content drawer: what the installed mods bring, over the map.
+    pub drawer: crate::content_drawer::Drawer,
     /// Panel section to scroll to on the next frame — a row that belongs
     /// somewhere else (a signal's routes) sends the panel there.
     pub jump_to: Option<&'static str>,
@@ -1170,19 +1245,9 @@ pub fn tool_input(
             overlay.status = t!("status-split-failed");
         }
     }
-    // Tool switching from the keyboard, as every map editor has it.
-    for (key, tool) in [
-        (KeyCode::Digit1, Tool::Select),
-        (KeyCode::Digit2, Tool::DrawTrack),
-        (KeyCode::Digit3, Tool::PlaceDevice),
-        (KeyCode::Digit4, Tool::PlaceSwitch),
-        (KeyCode::Digit5, Tool::PlaceObject),
-        (KeyCode::Digit6, Tool::PlaceTree),
-        (KeyCode::Digit7, Tool::PlaceForest),
-        (KeyCode::Digit8, Tool::Brush),
-        (KeyCode::Digit9, Tool::PlaceMarker),
-        (KeyCode::Digit0, Tool::TerrainBrush),
-    ] {
+    // Tool switching from the keyboard, as every map editor has it — numbered
+    // down the palette, so the key and the button agree.
+    for (key, tool) in DIGITS.into_iter().zip(palette_order()) {
         if keys.just_pressed(key) && state.tool != tool {
             state.tool = tool;
             state.drawing = None;
@@ -2360,5 +2425,27 @@ mod brush_tests {
         let text = ron::to_string(&line.source.areas[0]).expect("serialises");
         let back: TrackAreaSource = ron::from_str(&text).expect("parses");
         assert_eq!(back.width, 6.0);
+    }
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use super::*;
+
+    /// The number keys count down the palette, not through the enum: `3` has
+    /// to be the third button the panel draws. Both sides read `TOOL_GROUPS`,
+    /// and this is what says so.
+    #[test]
+    fn the_digits_follow_the_palette() {
+        let order: Vec<Tool> = palette_order().collect();
+        assert_eq!(order.len(), 12, "every tool is in a group exactly once");
+        assert_eq!(order[0], Tool::Select);
+        assert_eq!(order[2], Tool::PlaceSwitch, "third button, third digit");
+        assert_eq!(tool_digit(Tool::Select), Some(1));
+        assert_eq!(tool_digit(Tool::PlaceSwitch), Some(3));
+        // The tenth is `0`, and the two past it have no key to name.
+        assert_eq!(tool_digit(order[9]), Some(0));
+        assert_eq!(tool_digit(order[10]), None);
+        assert_eq!(tool_digit(order[11]), None);
     }
 }

@@ -9,15 +9,15 @@ window-simulator = Connected Rails
 window-vehicle-editor = Connected Rails — Vehicle editor
 window-vehicle-editor-named = { $name } — Connected Rails Vehicle editor
 window-vehicle-editor-unsaved = • { $name } — Connected Rails Vehicle editor
-window-route-editor = Connected Rails — Route editor
-window-route-editor-named = { $name } — Connected Rails Route editor
-window-route-editor-unsaved = • { $name } — Connected Rails Route editor
+window-route-editor = Connected Rails — Module editor
+window-route-editor-named = { $name } — Connected Rails Module editor
+window-route-editor-unsaved = • { $name } — Connected Rails Module editor
 
 menu-file = File
 menu-edit = Edit
 menu-view = View
 menu-help = Help
-menu-overlay = Overlay
+menu-overlay = Imagery
 menu-language = Language
 
 action-new = New
@@ -32,7 +32,7 @@ action-undo = Undo
 action-redo = Redo
 
 filter-vehicle-ron = Vehicle (RON)
-filter-line-ron = Line (RON)
+filter-line-ron = Module (RON)
 filter-model-gltf = Model (glTF)
 
 ## Shared
@@ -610,10 +610,10 @@ sig-node = Node
 sig-test-empty = Bind lamps first — the test then lights them without the simulator.
 help-signal-conventions = Origin at the foot, +Y up, front towards the driver = +Z · mount points are empty nodes “mp_…”
 
-## Route editor
+## Module editor
 
-action-new-line = New line
-action-open-line = Open line…
+action-new-line = New module
+action-open-line = Open module…
 action-delete = Delete
 action-load-imagery = Load imagery configuration (F5)
 action-save-imagery = Save imagery configuration (F2)
@@ -622,16 +622,14 @@ overlay-next-provider = Next provider (P)
 overlay-offline = Offline mode (L)
 overlay-clear-cache = Clear cache (C)
 overlay-retry = Reset failed attempts (R)
-action-show-terrain = Show terrain (T)
 action-perspective-view = 3D view (F4)
 
 # Viewport bar — icon buttons above the map, tooltips only.
+view-imagery = Aerial imagery on the ground
 view-top-down = Top-down map (F4)
 view-perspective = 3D view (F4)
 gizmo-move = Move handles (W)
 gizmo-rotate = Rotate handle (E)
-view-imagery = Aerial imagery (T)
-view-terrain = Terrain (T)
 camera-speed = Camera speed of the 3D view
 
 help-pan = WASD/arrows or middle mouse drag pan · wheel or PgUp/PgDn height
@@ -641,7 +639,6 @@ help-opacity = [ ] opacity · , . zoom level · Z automatic
 help-offset = Numpad 4/6/8/2 image offset, 5 reset
 help-draw = Draw track: click points · Enter finishes · Esc cancels
 help-map = Middle mouse button drags, wheel zooms · WASD pans · pick a tool on the left and click
-help-terrain = T shows the module's terrain, as the run builds it, in place of the aerial imagery
 
 status-ready = Ready
 status-position = { $lat }°, { $lon }°   height { $height } m
@@ -653,10 +650,10 @@ status-saved = { $file } saved
 status-save-failed = Saving failed: { $error }
 status-not-readable = { $file } not readable
 status-not-compiling = { $file } does not compile
-status-compile-error = Line does not compile: { $error }
+status-compile-error = Module does not compile: { $error }
 status-no-track-hit = No track near the click — devices sit on a track
 status-split-at-end = Too close to the track end — click at least 1 m inside
-status-split-failed = Switch not placed — the line does not compile
+status-split-failed = Switch not placed — the module does not compile
 status-ghost-loaded = Ghost module { $file }: { $boundaries } boundaries
 status-route-derived = Path found: { $sections } sections, { $overlap } in the overlap, { $switches } switches
 status-routes-found = { $added } routes added, { $known } already there
@@ -666,13 +663,14 @@ status-config-unreadable = { $file } not readable ({ $error }) — default activ
 status-config-created = { $file } created
 status-config-not-writable = { $file } not writable: { $error }
 
-heading-line = Line
+heading-line = Module
 line-name = Name
-line-counts = { $edges } tracks · { $devices } devices
-line-power = Electrification
-line-power-hint = What hangs over this line where a track says nothing
+line-counts = Tracks: { $edges } · Devices: { $devices }
 
 heading-tools = Tools
+tool-group-track = Track
+tool-group-equipment = Lineside equipment
+tool-group-landscape = Landscape
 tool-select = Select
 tool-select-hint = Click a device or a track to inspect it · Delete removes it (1)
 tool-draw = Draw track
@@ -712,7 +710,7 @@ terrain-raise = Raise/lower
 terrain-raise-hint = Adds the height change on top of the elevation data
 terrain-level = Level to rail
 terrain-level-hint = Pulls the ground to the height of the nearest rail — a station forecourt, a depot, a level yard
-terrain-count = { $count } strokes on this line
+terrain-count = Strokes in this module: { $count }
 sel-terrain-summary = Terrain stroke { $index }
 tool-tile = DGM tiles
 tool-tile-hint = Shows the terrain tile grid and picks single tiles by clicking — green already has heights, blue is picked. Without a pick the import covers the whole corridor
@@ -738,7 +736,7 @@ sel-track-type-none = Default type over the whole track.
 sel-track-type-from = From this distance along the track
 sel-track-type-hint = Each row: from position s onwards this type applies — texture, roughness, superstructure speed limit come from track_types/*.ron of a mod
 sel-power = Electrification
-sel-power-default = Follows the line: { $system }
+sel-power-default = Nothing said here: { $system }
 sel-power-from = From this arc length onwards
 sel-power-hint = A section of its own — a gap under a system boundary, or a siding under no wire
 sel-area-summary = { $spans } stretches, { $length } m of track
@@ -936,13 +934,13 @@ action-import-heights-all = Import whole module
 action-import-heights-picked = Import picked tiles
 action-clear-picked = Clear pick
 action-drop-heights = Drop reference
-status-heights-need-mod = Save the line inside a mod first — height data lives next to it, in the mod
+status-heights-need-mod = Save the module inside a mod first — height data lives next to it, in the mod
 status-heights-no-source = No DGM delivery chosen yet
 status-heights-imported = { $tiles } height tiles written, { $empty } skipped without data — the module carries its ground now
 
 heading-markers = Reference markers
 
-heading-module = Module
+heading-module = Module boundaries
 module-boundaries = Boundaries
 boundary-none = No boundaries yet — select a track and add one at an open end.
 boundary-node = node { $node }
@@ -955,7 +953,7 @@ module-ghost = Neighbour module
 module-ghost-hint = Another module drawn as a grey ghost. Its boundary circles are snap targets — clicks near them land exactly on the agreed coordinates.
 action-load-ghost = Load ghost…
 action-clear-ghost = Clear
-ghost-boundaries = { $count } boundaries as snap targets
+ghost-boundaries = Boundaries as snap targets: { $count }
 heading-checks = Checks
 check-ok = No findings.
 check-device-off-edge = Device { $device } sits outside its track
@@ -968,14 +966,16 @@ check-signal-device = Signal { $signal }: its device is missing or not a signal 
 check-boundary-invalid = Boundary { $boundary }: node is missing or not a buffer
 check-unknown-track-type = Track { $edge }: names a track type no installed mod has
 check-area-off-track = Marked area { $area }: a stretch lies on no track, or past its end
-check-area-no-effect = Marked area { $area }: covers nothing, or sets nothing — it does not reach the line
+check-area-no-effect = Marked area { $area }: covers nothing, or sets nothing — it does not reach the module
 check-area-track-type = Marked area { $area }: names a track type no installed mod defines
-check-lzb-no-conductor = Track { $edge }: LZB track type, but the line places no line conductor
+check-lzb-no-conductor = Track { $edge }: LZB track type, but the module places no line conductor
 heading-imagery = Aerial imagery
 img-enabled = Show overlay
 img-provider = Provider
 img-opacity = Opacity
 img-zoom = Zoom
+img-radius = Load radius
+img-radius-hint = How far around the camera tiles are fetched. Every metre more is more tiles to download and hold on the graphics card — the count below says how many
 img-offset = Offset
 img-offset-hint = East/north — aerial imagery is often metres off the map
 img-offline = Offline mode
@@ -1143,7 +1143,7 @@ hud-network-connecting = connecting …
 
 menu-tagline = German railway simulation
 menu-drive = Drive
-menu-drive-hint = Line, vehicle and scenario
+menu-drive-hint = Module, vehicle and scenario
 menu-mods = Mods
 menu-mods-hint = Switch installed content on and off
 menu-settings = Settings
@@ -1155,7 +1155,7 @@ menu-paused = Paused
 menu-resume = Resume
 menu-resume-hint = Carry on where the train stands
 menu-step = Step { $step } of { $total }
-menu-select-line = Select line
+menu-select-line = Select module
 menu-select-line-hint = Where the run takes place.
 menu-select-loco = Select vehicle
 menu-select-loco-hint = What is at the head of the train.
@@ -1165,10 +1165,10 @@ menu-select-scenario-hint = A timetable and a task, or free rein.
 # the row says so, so the name itself no longer has to.
 menu-chip-builtin = Built in
 menu-chip-composition = Composition
-menu-line-builtin = Example line
+menu-line-builtin = Example module
 menu-loco-builtin = BR 101
 menu-scenario-none = No scenario — free run
-menu-free-run = No timetable and no scoring: the line, the vehicle, and wherever you take it.
+menu-free-run = No timetable and no scoring: the module, the vehicle, and wherever you take it.
 # The key hints in the footer bar: one chip per key.
 menu-hint-select = select
 menu-hint-confirm = confirm
@@ -1193,7 +1193,7 @@ menu-fact-drive = Drive
 menu-fact-brake = Brake
 menu-fact-start = Start
 menu-fact-timetable = Timetable
-menu-fact-line = Line
+menu-fact-line = Module
 menu-fact-events = Events
 menu-fact-km = { $value } km
 menu-fact-m = { $value } m
@@ -1243,7 +1243,7 @@ set-factor = { $value } ×
 mods-title = Mods
 mods-none = No mods installed — put a mod directory into mods/.
 mods-missing-depends = requires: { $depends } (missing or switched off)
-mods-content = Content: { $vehicles } vehicles, { $lines } lines, { $compositions } compositions, { $scenarios } scenarios, { $timetables } timetables, { $signals } signal types, { $scripts } scripts
+mods-content = Content: { $vehicles } vehicles, { $lines } modules, { $compositions } compositions, { $scenarios } scenarios, { $timetables } timetables, { $signals } signal types, { $scripts } scripts
 mods-log = Warnings:
 mods-restart = Change takes effect after a restart.
 mods-keys = ↑/↓ select   Enter on/off   F9 close
@@ -1729,6 +1729,18 @@ graph-group-default = Comment
 graph-group-name = Title
 graph-group-color = Colour
 graph-group-remove = Remove comment frame
+
+## Content drawer
+
+drawer-title = Content
+drawer-filter-placeholder = Filter by name or mod
+drawer-count-filtered = { $shown } of { $total }
+drawer-empty = Nothing here — no mod installed brings this kind, or the filter matches none of it.
+drawer-objects = Scenery objects
+drawer-signal-types = Signal types
+drawer-signal-models = Signal models
+drawer-track-types = Track types
+action-content-drawer = Content drawer (Ctrl+Space)
 
 ## Vehicle editor: new data panel sections and templates
 

@@ -1190,20 +1190,17 @@ that places no line conductor.
 
 ### Electrification
 
-What hangs over the track is a property of the **line**, not an assumption of the vehicle.
-A line states its wire once and names only the exceptions:
-
-```ron
-electrification: "ac-15kv",   // the whole line, where a track says nothing
-```
-
-The ids are `"ac-15kv"` (15 kV 16.7 Hz), `"ac-25kv"` (25 kV 50 Hz), `"dc-3kv"`,
-`"dc-1.5kv"`, `"third-rail"` (750 V DC) and `"none"` for a line under no wire at all. A
-track overrides it section by section, in the same shape as the other profiles:
+What hangs over the track is a property of the **track**, not an assumption of the vehicle.
+Every edge states its own wire, section by section, in the same shape as the other
+profiles:
 
 ```ron
 electrification: [(0.0, "ac-15kv"), (1200.0, "none"), (1260.0, "dc-1.5kv")],
 ```
+
+The ids are `"ac-15kv"` (15 kV 16.7 Hz), `"ac-25kv"` (25 kV 50 Hz), `"dc-3kv"`,
+`"dc-1.5kv"`, `"third-rail"` (750 V DC) and `"none"` for track under no wire at all. An
+edge that says nothing carries no wire.
 
 That example is a system boundary: sixty metres with nothing over them, because the wire
 of two systems must not be bridged by a pantograph. A siding under no wire is the same
@@ -1215,9 +1212,10 @@ decide: 25 kV is plenty of volts for a 15 kV locomotive and still the wrong syst
 the switch stays open. Running off the end of the wire drops it, exactly like a neutral
 section.
 
-The route editor edits the line's wire in the properties at the top of the left panel and
-the per-track sections in the selection panel. A line file written before there was any
-electrification reads as the German main line, so what ran on it keeps running.
+The route editor edits the wire in the selection panel, on the track that is selected —
+there is no line-wide switch. A line file written before the wire moved onto the track may
+still carry a line-wide `electrification: "ac-15kv"`; it keeps applying where an edge says
+nothing, and is kept on save, but nothing writes it any more.
 
 ### Track areas
 

@@ -13,7 +13,9 @@ use bevy_egui::egui::{
 mod curve;
 mod icon;
 pub use curve::{CurveSpec, Series, curve_editor, multi_plot, sparkline, sparkline_fn};
-pub use icon::{Icon, bar_divider, bar_value, icon_button, icon_label};
+pub use icon::{
+    Icon, Mark, bar_divider, bar_value, card_entry, icon_button, icon_label, tool_button,
+};
 
 /// Color tokens: dark neutral surfaces, one restrained blue accent.
 ///

@@ -219,12 +219,17 @@ pub struct ImageryConfig {
     /// `max_tiles` it determines how many tiles an image costs: at 0.5 m/pixel a
     /// tile is about 90 m wide.
     pub radius: f64,
-    /// Upper limit of simultaneously visible tiles.
+    /// Upper limit of simultaneously visible tiles — the hard stop that keeps a
+    /// large radius at a high zoom level from piling up thousands of textures.
+    /// `covering` cuts north to south, so a limit below what the radius asks for
+    /// leaves the southern rows empty rather than shrinking the circle.
     pub max_tiles: usize,
     /// Manual image offset against the map [m] (east/north) — aerial imagery is
     /// often off by metres relative to the track position.
     pub offset: (f64, f64),
-    /// Height of the overlay above the rail head [m]; negative = below it.
+    /// Lift of the overlay above the terrain surface [m]. The drape grid is
+    /// coarser than the terrain mesh, so without a little air its secants cut
+    /// through the ridges in between.
     pub height_offset: f64,
     pub cache: CacheConfig,
     pub request: RequestConfig,
@@ -238,10 +243,10 @@ impl Default for ImageryConfig {
             active: "esri_world_imagery".into(),
             opacity: 0.8,
             zoom: ZoomMode::Resolution(0.5),
-            radius: 600.0,
-            max_tiles: 256,
+            radius: 1_200.0,
+            max_tiles: 1_024,
             offset: (0.0, 0.0),
-            height_offset: -0.35,
+            height_offset: 1.0,
             cache: CacheConfig::default(),
             request: RequestConfig::default(),
             providers: predefined_providers(),

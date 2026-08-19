@@ -466,7 +466,7 @@ fn intern(objects: &mut Vec<String>, name: &str) -> Option<u16> {
 }
 
 /// Ray casting: is `p` inside the closed polygon?
-fn point_in_polygon(p: DVec2, polygon: &[DVec2]) -> bool {
+pub fn point_in_polygon(p: DVec2, polygon: &[DVec2]) -> bool {
     let mut inside = false;
     let mut j = polygon.len() - 1;
     for i in 0..polygon.len() {

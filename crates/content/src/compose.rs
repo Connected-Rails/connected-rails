@@ -136,6 +136,7 @@ impl Composition {
             routes: Vec::new(),
             boundaries: Vec::new(),
             script: self.script.clone(),
+            ..Default::default()
         };
 
         for (index, (name, module)) in modules.iter().enumerate() {
@@ -521,6 +522,7 @@ mod tests {
                 },
             ],
             script: None,
+            ..Default::default()
         }
     }
 

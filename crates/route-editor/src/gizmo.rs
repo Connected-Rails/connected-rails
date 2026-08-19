@@ -125,7 +125,10 @@ fn handles(
             ))
         }
         // An edge is dragged by its support points, which it already has.
-        Selection::Edge(_) | Selection::TrackArea(_) | Selection::None => None,
+        Selection::Edge(_)
+        | Selection::TrackArea(_)
+        | Selection::EnvelopePoint(_)
+        | Selection::None => None,
     }
 }
 
@@ -324,7 +327,10 @@ fn apply(line: &mut Line, selection: Selection, axis: Axis, dir: DVec3, delta: f
                 move_geo(&mut edit.lat, &mut edit.lon, focus, dir, delta);
             }
         }
-        Selection::Edge(_) | Selection::TrackArea(_) | Selection::None => {}
+        Selection::Edge(_)
+        | Selection::TrackArea(_)
+        | Selection::EnvelopePoint(_)
+        | Selection::None => {}
     }
 }
 

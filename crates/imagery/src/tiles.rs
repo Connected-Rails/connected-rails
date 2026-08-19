@@ -71,6 +71,28 @@ impl TileId {
     }
 }
 
+/// Position of a point in the tile grid, tile indices with a fraction.
+///
+/// [`TileId::from_lat_lon`] answers *which* tile a point falls in; this answers
+/// *where* in the grid it sits, which is what a map draws from — the difference
+/// between the two is the offset of the tile under the cursor.
+pub fn world_xy(lat: f64, lon: f64, z: u8) -> (f64, f64) {
+    let n = TileId::count(z) as f64;
+    let lat = lat.clamp(-MAX_LATITUDE, MAX_LATITUDE);
+    let sin = lat.to_radians().sin();
+    let x = (lon + 180.0) / 360.0 * n;
+    let y = (0.5 - ((1.0 + sin) / (1.0 - sin)).ln() / (4.0 * std::f64::consts::PI)) * n;
+    (x, y)
+}
+
+/// Inverse of [`world_xy`]: a place in the tile grid back to degrees.
+pub fn lat_lon_at(x: f64, y: f64, z: u8) -> (f64, f64) {
+    let n = TileId::count(z) as f64;
+    let lon = x / n * 360.0 - 180.0;
+    let lat = mercator_lat(1.0 - 2.0 * y / n);
+    (lat, lon)
+}
+
 /// Inverse of the Mercator mapping: normalised y coordinate (−1…1) → latitude.
 fn mercator_lat(y: f64) -> f64 {
     let a = std::f64::consts::PI * y;
@@ -200,5 +222,19 @@ mod tests {
         assert!((north - south - EARTH_CIRCUMFERENCE).abs() < 1e-6);
         let (w2, _, e2, _) = TileId::new(1, 0, 0).bounds_meters();
         assert!((e2 - w2 - EARTH_CIRCUMFERENCE / 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn world_position_round_trips() {
+        let (lat, lon) = (51.5344, 9.9328);
+        for z in [4, 13, 18] {
+            let (x, y) = world_xy(lat, lon, z);
+            let (back_lat, back_lon) = lat_lon_at(x, y, z);
+            assert!((back_lat - lat).abs() < 1e-9, "z{z}: {back_lat}");
+            assert!((back_lon - lon).abs() < 1e-9, "z{z}: {back_lon}");
+            // The whole part is the tile the point falls in.
+            let tile = TileId::from_lat_lon(lat, lon, z);
+            assert_eq!((x as u32, y as u32), (tile.x, tile.y));
+        }
     }
 }

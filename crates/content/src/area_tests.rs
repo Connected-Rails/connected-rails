@@ -42,6 +42,7 @@ fn line() -> LineSource {
         routes: vec![],
         boundaries: vec![],
         script: None,
+        ..Default::default()
     }
 }
 

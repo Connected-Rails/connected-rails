@@ -50,7 +50,7 @@ For a faster edit-compile-run loop, add `--features dev` to any of the four bina
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
 relink after a code change. The first build with the flag recompiles Bevy, and the resulting
 binary needs the Bevy DLL next to it — so use it for development only, never for a release.
-Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`).
+Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit.
 
 Train protection and door control are **vehicle equipment**, not command line options: the
 `safety` and `doors` fields of a `VehicleSpec` state which Indusi/PZB build, which Sifa and
@@ -582,6 +582,15 @@ across it (`lateral_offset`) and the blue one up (`height`) — so the saved fil
 like a placement. Trees, markers and terrain strokes are free of the track and get east/north
 instead. There is no scale handle, because nothing in the file format has a scale.
 
+**A module starts as a place, not as a blank sheet.** *File → New module* (`Ctrl+N`) asks for
+a name and the module's anchor — latitude and longitude as fields, and beneath them a small
+OpenStreetMap map with a place search: type "Göttingen Bahnhof", pick the hit, click the exact
+spot, and the coordinates fill themselves in. Around that anchor the new module gets its first
+**envelope**, a square of the module size the dialog asks for (4 km by default), whose corners
+are dragged into shape afterwards (see the *Envelope* tool below, and MODS.md → Modules). The anchor decides which elevation tiles, which aerial
+imagery and which neighbours the module will meet, so typing it blind is the one thing worth
+a dialog.
+
 The palette is grouped, and the number keys count down it — the key and the button always
 agree, because both read the same list.
 
@@ -601,6 +610,14 @@ agree, because both read the same list.
 | `0` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
 | Terrain brush | One stroke per click: raise, lower or level. The track keeps its height, cutting and embankment are laid over it afterwards |
 | DGM tiles | Shows the elevation tile grid and picks single tiles for the height import; without a pick the whole corridor is imported |
+| **Module** | |
+| Envelope | Reshapes the module boundary: drag a corner, a click on a side adds one there, `Delete` removes the selected one. Everything the module owns has to lie inside it — the landscape strictly, the track up to the boundary itself |
+
+The **scene is rendered into the whole window** and the panels are drawn on top of it —
+`bevy_egui` hangs its context on the same camera, so a camera viewport of its own would
+squeeze the UI into that rect as well. The camera is therefore shifted sideways instead, by
+exactly what the panels cover: the pivot sits in the middle of what is *visible*, and the
+imagery tiles are fetched around that point rather than around a spot behind the side panel.
 
 `T` swaps the aerial imagery for the module's terrain, built exactly as the run builds it —
 so track types, objects and vegetation can be judged against the ground they sit on. The

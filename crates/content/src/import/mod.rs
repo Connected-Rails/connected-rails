@@ -212,6 +212,7 @@ pub fn import_line(
         routes: Vec::new(),
         boundaries: Vec::new(),
         script: None,
+        ..Default::default()
     };
 
     let mut warnings = Vec::new();

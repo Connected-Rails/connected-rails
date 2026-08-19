@@ -50,6 +50,9 @@ pub enum Tool {
     /// Marks a stretch of track: the first click sets one end, the second the other. The
     /// stretch joins the selected area, or opens a new one where none is selected.
     MarkArea,
+    /// Reshapes the module envelope: drag a corner, click a side to add one,
+    /// `Delete` removes the selected corner (see [`crate::envelope`]).
+    EditEnvelope,
 }
 
 /// What the Select tool holds.
@@ -65,6 +68,8 @@ pub enum Selection {
     TerrainEdit(usize),
     /// A marked stretch of track with properties.
     TrackArea(usize),
+    /// A corner of the module envelope.
+    EnvelopePoint(usize),
 }
 
 /// The stroke the area brush is painting: one stretch of one track, growing under the
@@ -104,12 +109,13 @@ pub enum Highlight {
 }
 
 /// The palette, in the groups the work falls into: the track itself, what is
-/// mounted along it, and the landscape it runs through. Twelve tools in one
+/// mounted along it, the landscape it runs through, and the module itself.
+/// A dozen tools in one
 /// wrapping row named their alternatives but showed no order at all — which
 /// group a tool belongs to is the first thing a builder needs from a palette.
 /// The number keys, in the order the palette lists its tools. Ten keys for
-/// twelve tools — the last two of the landscape group are mouse-only, which is
-/// why `tool_digit` answers `None` rather than a wrong number.
+/// thirteen tools — the tail of the palette is mouse-only, which is why
+/// `tool_digit` answers `None` rather than a wrong number.
 const DIGITS: [KeyCode; 10] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
@@ -142,7 +148,7 @@ pub fn tool_digit(tool: Tool) -> Option<u8> {
 /// One palette entry: the tool, its i18n key and the icon on its button.
 pub type ToolEntry = (Tool, &'static str, editor_ui::Icon);
 
-pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 3] = [
+pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 4] = [
     (
         "tool-group-track",
         &[
@@ -174,6 +180,14 @@ pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 3] = [
             (Tool::PickTile, "tool-tile", editor_ui::Icon::Tiles),
         ],
     ),
+    (
+        "tool-group-module",
+        &[(
+            Tool::EditEnvelope,
+            "tool-envelope",
+            editor_ui::Icon::Envelope,
+        )],
+    ),
 ];
 
 /// Tool state, selection and what the UI pass leaves behind for the input
@@ -185,6 +199,11 @@ pub struct EditorState {
     pub drawing: Option<Drawing>,
     /// Active support-point drag of the Select tool: `(edge, point index)`.
     pub drag: Option<(usize, usize)>,
+    /// Corner of the module envelope being dragged.
+    pub envelope_drag: Option<usize>,
+    /// Edge length the envelope is reset to [km]; `None` = the default a new
+    /// module starts with.
+    pub envelope_size: Option<f64>,
     /// Kind the Place-device tool stamps.
     pub device_kind: Option<DeviceKind>,
     /// The Place-switch tool draws a trailing connection instead of a facing
@@ -301,6 +320,35 @@ impl EditorState {
             zone: self.dgm_zone(),
             ..Default::default()
         }
+    }
+}
+
+/// How far past the envelope the track may still be clicked [m].
+///
+/// A module boundary is exactly where a rail meets its neighbour's, so the last
+/// metre of track sits *on* the polygon. Snapping to a ghost boundary lands
+/// there to the millimetre, and a hand-drawn arc ends within a few metres of it
+/// — without this tolerance the one click a module transition is made of would
+/// be refused.
+const BOUNDARY_MARGIN: f64 = 10.0;
+
+/// How far outside the envelope this tool may still place something, or `None`
+/// when the envelope does not bound it at all.
+///
+/// Everything the module owns stays inside its envelope. The landscape strictly
+/// so; the track, its turnouts and its lineside equipment up to
+/// [`BOUNDARY_MARGIN`], because they are what has to reach the boundary.
+fn envelope_margin(tool: Tool) -> Option<f64> {
+    match tool {
+        Tool::PlaceTree
+        | Tool::PlaceForest
+        | Tool::PlaceObject
+        | Tool::PlaceMarker
+        | Tool::TerrainBrush => Some(0.0),
+        Tool::DrawTrack | Tool::PlaceSwitch | Tool::PlaceDevice => Some(BOUNDARY_MARGIN),
+        // Selecting, marking, picking tiles and editing the envelope place
+        // nothing — and the envelope cannot bound itself.
+        Tool::Select | Tool::Brush | Tool::MarkArea | Tool::PickTile | Tool::EditEnvelope => None,
     }
 }
 
@@ -501,9 +549,34 @@ pub fn pick_ground(
     origin: &RenderOrigin,
     focus: &Focus,
 ) -> Option<EcefPos> {
+    pick_plane(camera, camera_transform, cursor, origin, focus, None)
+}
+
+/// Cursor → point on a horizontal plane: the focus plane, or the one at
+/// ellipsoidal `height`.
+///
+/// A tool whose geometry sits at a height of its own has to pick on *that*
+/// plane. The envelope does: looking down it makes no difference, but in the 3D
+/// view a probe on the focus plane lands metres away from the corner it is
+/// supposed to be dragging.
+pub fn pick_plane(
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    cursor: Vec2,
+    origin: &RenderOrigin,
+    focus: &Focus,
+    height: Option<f64>,
+) -> Option<EcefPos> {
     let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
-    let frame = EnuFrame::at(focus.position);
-    let plane_point = origin.to_render(focus.position);
+    let on_plane = match height {
+        Some(height) => {
+            let (lat, lon, _) = geo::from_ecef(focus.position);
+            geo::to_ecef_deg(lat.to_degrees(), lon.to_degrees(), height)
+        }
+        None => focus.position,
+    };
+    let frame = EnuFrame::at(on_plane);
+    let plane_point = origin.to_render(on_plane);
     let normal = origin.dir_to_render(frame.up);
     let denominator = ray.direction.dot(normal);
     if denominator.abs() < 1e-6 {
@@ -669,6 +742,10 @@ pub fn selection_pos(line: &Line, selection: Selection, focus: &Focus) -> Option
         Selection::TerrainEdit(i) => Some(terrain_pos(line.source.terrain.get(i)?, focus)),
         // The middle of the first stretch it covers — where `F` frames it, and where the
         // map jumps to from the list.
+        Selection::EnvelopePoint(i) => Some(crate::envelope::point_pos(
+            line.source.envelope.get(i)?,
+            crate::envelope::height(line, focus),
+        )),
         Selection::TrackArea(i) => {
             let span = line.source.areas.get(i)?.spans.first()?;
             let edge = line.net.edges().get(span.edge as usize)?;
@@ -890,6 +967,13 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
                 line.source.areas.remove(i);
             }
         }
+        // A polygon cannot go below three corners, so this one can refuse — the
+        // caller says so in the status bar.
+        Selection::EnvelopePoint(i) => {
+            if !crate::envelope::remove_point(line, i) {
+                state.selection = Selection::EnvelopePoint(i);
+            }
+        }
         Selection::None => {}
     }
 }
@@ -977,8 +1061,22 @@ pub fn finish_forest(
         utm_zone_of(polygon[0].1),
         |lat, lon| clear_of_track(&line.net, lat, lon),
     );
-    overlay.status = t!("status-forest-baked", count = trees.len());
-    line.source.trees.extend(trees);
+    // A wood drawn between two corners of a concave envelope can reach past it,
+    // even though every one of its own corners was inside — the fill is what
+    // has to be cut, not the outline.
+    let (inside, outside): (Vec<_>, Vec<_>) = trees
+        .into_iter()
+        .partition(|t| line.source.envelope_contains(t.lat, t.lon));
+    overlay.status = if outside.is_empty() {
+        t!("status-forest-baked", count = inside.len())
+    } else {
+        t!(
+            "status-forest-baked-clipped",
+            count = inside.len(),
+            dropped = outside.len()
+        )
+    };
+    line.source.trees.extend(inside);
     state.selection = Selection::None;
 }
 
@@ -1178,6 +1276,9 @@ pub fn tool_input(
         Selection::Tree(i) if i >= line.source.trees.len() => {
             state.selection = Selection::None;
         }
+        Selection::EnvelopePoint(i) if i >= line.source.envelope.len() => {
+            state.selection = Selection::None;
+        }
         _ => {}
     }
     // Stale marks likewise — one out-of-range index and the sweep is void.
@@ -1204,6 +1305,18 @@ pub fn tool_input(
     let picked = view.and_then(|(c, (camera, camera_transform))| {
         pick_ground(camera, camera_transform, c, &origin.0, &focus)
     });
+    // The envelope sits at a fixed height of its own, so it is picked on that
+    // plane rather than on the focus plane.
+    let picked_envelope = view.and_then(|(c, (camera, camera_transform))| {
+        pick_plane(
+            camera,
+            camera_transform,
+            c,
+            &origin.0,
+            &focus,
+            Some(crate::envelope::height(&line, &focus)),
+        )
+    });
     // …and the same cursor as a screen-space probe, for selecting.
     let pick = view.map(|(cursor, (camera, transform))| ScreenPick {
         camera,
@@ -1211,6 +1324,16 @@ pub fn tool_input(
         origin: &origin.0,
         cursor,
     });
+
+    // A corner of the envelope owns the mouse the same way.
+    if let Some(index) = state.envelope_drag {
+        if !buttons.pressed(MouseButton::Left) {
+            state.envelope_drag = None;
+        } else if let Some(p) = picked_envelope {
+            crate::envelope::drag_point(&mut line, index, p);
+        }
+        return;
+    }
 
     // An active support-point drag owns the mouse until the button goes up.
     if let Some((edge, point)) = state.drag {
@@ -1313,6 +1436,25 @@ pub fn tool_input(
     };
     state.map_used = true;
 
+    // Everything the module owns stays inside the module. The envelope is what
+    // it covers, and ground worked past it is the neighbour's — Zusi builds to
+    // the same rule. The track is measured with a tolerance, see
+    // [`envelope_margin`].
+    if let Some(margin) = envelope_margin(state.tool) {
+        let (lat, lon, _) = geo::from_ecef(p);
+        if !line
+            .source
+            .envelope_contains_within(lat.to_degrees(), lon.to_degrees(), margin)
+        {
+            overlay.status = if margin > 0.0 {
+                t!("status-outside-envelope-track")
+            } else {
+                t!("status-outside-envelope")
+            };
+            return;
+        }
+    }
+
     match state.tool {
         Tool::DrawTrack => {
             let p = snap_ghost(p, &ghost, &focus);
@@ -1404,6 +1546,33 @@ pub fn tool_input(
         }
         Tool::PlaceForest => {
             state.forest_points.push(p);
+        }
+        Tool::EditEnvelope => {
+            if line.source.envelope.len() < 3 {
+                overlay.status = t!("status-envelope-none");
+                return;
+            }
+            // A corner outranks the side it sits on, or a corner could never be
+            // picked up again once it has been placed.
+            if let Some(pick) = pick.as_ref()
+                && let Some(index) = crate::envelope::pick_point(&line, pick, &focus)
+            {
+                state.selection = Selection::EnvelopePoint(index);
+                state.envelope_drag = Some(index);
+                return;
+            }
+            let p = picked_envelope.unwrap_or(p);
+            match crate::envelope::pick_side(&line, p, &focus, pick_radius(&focus)) {
+                Some((side, t)) => {
+                    let index = crate::envelope::insert_point(&mut line, side, t);
+                    state.selection = Selection::EnvelopePoint(index);
+                    // Straight into a drag: the corner was added where the click
+                    // landed, and it is placed by moving it from there.
+                    state.envelope_drag = Some(index);
+                    overlay.status = t!("status-envelope-point-added");
+                }
+                None => overlay.status = t!("status-envelope-no-hit"),
+            }
         }
         // Handled above, where the button is held rather than only clicked.
         Tool::MarkArea => {}
@@ -1525,7 +1694,7 @@ pub fn tool_input(
 }
 
 /// Circle gizmo lying flat on the ground at `p`.
-fn ground_circle(
+pub(crate) fn ground_circle(
     gizmos: &mut Gizmos,
     origin: &RenderOrigin,
     p: EcefPos,
@@ -1847,10 +2016,17 @@ pub fn draw_gizmos(
                 ground_circle(&mut gizmos, &origin.0, p, radius, accent);
             }
         }
-        // Trees, markers and terrain strokes are drawn below.
-        Selection::Tree(_) | Selection::Marker(_) | Selection::TerrainEdit(_) => {}
+        // Trees, markers and terrain strokes are drawn below; the envelope
+        // draws its own corners, selected one included.
+        Selection::Tree(_)
+        | Selection::Marker(_)
+        | Selection::TerrainEdit(_)
+        | Selection::EnvelopePoint(_) => {}
         Selection::None => {}
     }
+
+    // The module boundary, under everything the tools draw on top of it.
+    crate::envelope::draw(&mut gizmos, &line, &origin.0, &focus, &state);
 
     // Terrain strokes as their true footprint: the circle is the radius the
     // stroke actually reaches, so overlapping ones show where the ground is
@@ -2064,6 +2240,7 @@ mod tests {
             routes: vec![],
             boundaries: vec![],
             script: None,
+            ..Default::default()
         };
         let mut state = EditorState {
             drawing: Some(drawing),
@@ -2438,14 +2615,15 @@ mod palette_tests {
     #[test]
     fn the_digits_follow_the_palette() {
         let order: Vec<Tool> = palette_order().collect();
-        assert_eq!(order.len(), 12, "every tool is in a group exactly once");
+        assert_eq!(order.len(), 13, "every tool is in a group exactly once");
         assert_eq!(order[0], Tool::Select);
         assert_eq!(order[2], Tool::PlaceSwitch, "third button, third digit");
         assert_eq!(tool_digit(Tool::Select), Some(1));
         assert_eq!(tool_digit(Tool::PlaceSwitch), Some(3));
-        // The tenth is `0`, and the two past it have no key to name.
+        // The tenth is `0`, and everything past it has no key to name.
         assert_eq!(tool_digit(order[9]), Some(0));
-        assert_eq!(tool_digit(order[10]), None);
-        assert_eq!(tool_digit(order[11]), None);
+        for tool in &order[10..] {
+            assert_eq!(tool_digit(*tool), None, "{tool:?} has no digit");
+        }
     }
 }

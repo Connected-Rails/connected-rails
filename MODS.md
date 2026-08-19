@@ -1497,6 +1497,40 @@ module may attach:
 boundaries: [(name: "nach_ost", node: 1)],
 ```
 
+A module also states **where it sits and how far it reaches**:
+
+```ron
+anchor: Some((lat: 52.0, lon: 10.0146, height: 100.0)),
+envelope: [
+    (lat: 51.982034, lon: 9.985418),
+    (lat: 51.982034, lon: 10.043782),
+    (lat: 52.017966, lon: 10.043782),
+    (lat: 52.017966, lon: 9.985418),
+],
+```
+
+The `anchor` is the module's place — the point the editor opens on, and the point the
+envelope is built around when the module is created. The **envelope** is that boundary
+itself, the *Hüllkurve* Zusi builds modules around: a closed polygon, in file order, that
+says what this module covers. **Everything the module owns has to lie inside it**, so the ground between two modules belongs to exactly one of them and
+neither shapes the other's. A rectangle is rarely the right shape — a line follows a
+valley, and the boundary is agreed where it makes operational sense — so the polygon takes
+as many corners as it needs, and it has to be **simple**: an envelope that crosses itself has
+no inside, and the rule check says so (`check-envelope-crossed`).
+
+The track, its turnouts and its lineside equipment are bounded as well, but with ten metres of
+tolerance: a boundary is exactly where a rail meets its neighbour's, so the last metre of track
+sits *on* the polygon, where a strict test would refuse the one click a module transition is
+made of.
+
+Dragging a corner inwards afterwards does not delete anything — the editor's rule check
+reports what the envelope no longer covers (`check-outside-envelope`), so the choice between
+moving the boundary and deleting the trees stays yours.
+
+An **empty `envelope` bounds nothing**, which is what every line written before envelopes
+reads as, and what a composition of several modules produces. A module that has none gets
+one from *Module → Envelope → Reset*.
+
 A **composition** (`compositions/*.ron`) chains modules into one line:
 
 ```ron
@@ -1514,7 +1548,7 @@ extra file. `connections: [(("<mod>:<module>", "<boundary>"), (…, …))]` stat
 explicitly for the rare case where positions alone cannot decide.
 
 The route editor's *Module* panel places boundaries (select a track, add one at an open
-end) and loads the neighbour module as a grey **ghost**: its track is drawn read-only and
+end), holds the anchor and the envelope, and loads the neighbour module as a grey **ghost**: its track is drawn read-only and
 its boundary circles are snap targets, so drawing clicks near them land exactly on the
 agreed coordinates.
 

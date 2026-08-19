@@ -28,6 +28,36 @@ pub enum Icon {
     Terrain,
     /// Camera speed — a gauge.
     Speed,
+    /// Scenery object — a crate.
+    Object,
+    /// Signal — a mast carrying two lamps.
+    Signal,
+    /// Track — two rails on their sleepers.
+    Track,
+    /// The content drawer — a drawer with its handle.
+    Drawer,
+    /// Select — the arrow cursor.
+    Select,
+    /// Draw track — a polyline over its support points.
+    DrawTrack,
+    /// Place device — a box mounted beside the rail.
+    Device,
+    /// Place switch — a track branching off.
+    Switch,
+    /// Mark area — a stretch hatched over the rail.
+    Area,
+    /// Place tree — a crown on its trunk.
+    Tree,
+    /// Forest brush — a stand of three.
+    Forest,
+    /// Marking brush — a brush with its bristles.
+    Brush,
+    /// Place marker — a flag on its pole.
+    Marker,
+    /// Terrain brush — a hill under a brush stroke.
+    TerrainBrush,
+    /// Pick DGM tiles — a grid with one cell taken.
+    Tiles,
 }
 
 /// Size of an icon button: the design system's widget height, a little wider
@@ -183,9 +213,377 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 Shape::circle_filled(pivot, rect.width() * 0.07, color),
             ]
         }
+        // A crate: front face, lid and right side, the three faces a box shows.
+        Icon::Object => vec![
+            Shape::closed_line(
+                vec![
+                    at(0.10, 0.38),
+                    at(0.62, 0.38),
+                    at(0.62, 0.92),
+                    at(0.10, 0.92),
+                ],
+                stroke,
+            ),
+            Shape::closed_line(
+                vec![
+                    at(0.10, 0.38),
+                    at(0.38, 0.12),
+                    at(0.90, 0.12),
+                    at(0.62, 0.38),
+                ],
+                stroke,
+            ),
+            line(vec![at(0.62, 0.92), at(0.90, 0.66), at(0.90, 0.12)]),
+        ],
+        // A signal: the screen with its two lamps, on a mast with a foot. The
+        // upper lamp is filled — a signal shows one aspect, not two.
+        Icon::Signal => vec![
+            Shape::closed_line(
+                vec![
+                    at(0.30, 0.04),
+                    at(0.70, 0.04),
+                    at(0.70, 0.46),
+                    at(0.30, 0.46),
+                ],
+                stroke,
+            ),
+            Shape::circle_filled(at(0.50, 0.16), rect.width() * 0.07, color),
+            Shape::circle_stroke(at(0.50, 0.34), rect.width() * 0.07, stroke),
+            line(vec![at(0.50, 0.46), at(0.50, 0.94)]),
+            line(vec![at(0.32, 0.94), at(0.68, 0.94)]),
+        ],
+        // Track seen from above: two rails across their sleepers.
+        Icon::Track => vec![
+            line(vec![at(0.28, 0.04), at(0.28, 0.96)]),
+            line(vec![at(0.72, 0.04), at(0.72, 0.96)]),
+            line(vec![at(0.10, 0.22), at(0.90, 0.22)]),
+            line(vec![at(0.10, 0.50), at(0.90, 0.50)]),
+            line(vec![at(0.10, 0.78), at(0.90, 0.78)]),
+        ],
+        // The arrow cursor, as every editor draws its select tool.
+        Icon::Select => vec![Shape::closed_line(
+            vec![
+                at(0.22, 0.06),
+                at(0.22, 0.82),
+                at(0.40, 0.64),
+                at(0.52, 0.94),
+                at(0.66, 0.88),
+                at(0.54, 0.58),
+                at(0.78, 0.56),
+            ],
+            stroke,
+        )],
+        // A polyline over the points it was drawn through — track is drawn
+        // point by point, not swept.
+        Icon::DrawTrack => {
+            let points = [
+                at(0.08, 0.80),
+                at(0.38, 0.34),
+                at(0.66, 0.62),
+                at(0.94, 0.18),
+            ];
+            let mut shapes = vec![line(points.to_vec())];
+            shapes.extend(
+                points
+                    .iter()
+                    .map(|p| Shape::circle_filled(*p, rect.width() * 0.075, color)),
+            );
+            shapes
+        }
+        // A box on a mast beside the rail: a track device seen from the side.
+        Icon::Device => vec![
+            line(vec![at(0.06, 0.88), at(0.94, 0.88)]),
+            line(vec![at(0.62, 0.88), at(0.62, 0.52)]),
+            Shape::closed_line(
+                vec![
+                    at(0.42, 0.16),
+                    at(0.82, 0.16),
+                    at(0.82, 0.52),
+                    at(0.42, 0.52),
+                ],
+                stroke,
+            ),
+        ],
+        // A track branching off: the straight and the diverging route.
+        Icon::Switch => vec![
+            line(vec![at(0.08, 0.74), at(0.92, 0.74)]),
+            line(vec![at(0.32, 0.74), at(0.60, 0.36), at(0.92, 0.36)]),
+        ],
+        // A stretch of rail with the marking laid over it.
+        Icon::Area => {
+            let mut shapes = vec![line(vec![at(0.04, 0.74), at(0.96, 0.74)])];
+            // Hatching, the gesture that paints an area.
+            for i in 0..4 {
+                let x = 0.16 + 0.22 * i as f32;
+                shapes.push(line(vec![at(x, 0.52), at(x - 0.12, 0.18)]));
+            }
+            shapes.push(line(vec![at(0.10, 0.52), at(0.90, 0.52)]));
+            shapes
+        }
+        // A trunk under a round crown.
+        Icon::Tree => vec![
+            line(vec![at(0.5, 0.96), at(0.5, 0.60)]),
+            Shape::circle_stroke(at(0.5, 0.38), rect.width() * 0.30, stroke),
+        ],
+        // Three of them, the middle one taller — a stand, not one tree.
+        Icon::Forest => vec![
+            line(vec![at(0.18, 0.94), at(0.18, 0.66)]),
+            Shape::circle_stroke(at(0.18, 0.52), rect.width() * 0.16, stroke),
+            line(vec![at(0.50, 0.94), at(0.50, 0.54)]),
+            Shape::circle_stroke(at(0.50, 0.36), rect.width() * 0.20, stroke),
+            line(vec![at(0.82, 0.94), at(0.82, 0.66)]),
+            Shape::circle_stroke(at(0.82, 0.52), rect.width() * 0.16, stroke),
+        ],
+        // A brush: handle, ferrule and the bristles that make it one.
+        Icon::Brush => vec![
+            line(vec![at(0.78, 0.10), at(0.44, 0.48)]),
+            Shape::closed_line(
+                vec![
+                    at(0.30, 0.44),
+                    at(0.50, 0.62),
+                    at(0.38, 0.76),
+                    at(0.18, 0.58),
+                ],
+                stroke,
+            ),
+            line(vec![at(0.28, 0.72), at(0.10, 0.94)]),
+            line(vec![at(0.40, 0.82), at(0.24, 0.96)]),
+        ],
+        // A flag on its pole — a marker names a place.
+        Icon::Marker => vec![
+            line(vec![at(0.28, 0.06), at(0.28, 0.96)]),
+            Shape::closed_line(vec![at(0.28, 0.10), at(0.86, 0.26), at(0.28, 0.46)], stroke),
+        ],
+        // A hill with a stroke swept over it: the terrain brush shapes ground.
+        Icon::TerrainBrush => vec![
+            Shape::convex_polygon(
+                vec![at(0.04, 0.94), at(0.44, 0.42), at(0.84, 0.94)],
+                color,
+                Stroke::NONE,
+            ),
+            line(vec![at(0.14, 0.26), at(0.52, 0.10), at(0.94, 0.30)]),
+        ],
+        // A grid with one cell picked out — the height import takes tiles.
+        Icon::Tiles => vec![
+            Shape::rect_filled(
+                Rect::from_min_max(at(0.06, 0.06), at(0.48, 0.48)),
+                CornerRadius::ZERO,
+                color,
+            ),
+            Shape::rect_stroke(
+                Rect::from_min_max(at(0.52, 0.06), at(0.94, 0.48)),
+                CornerRadius::ZERO,
+                stroke,
+                egui::StrokeKind::Inside,
+            ),
+            Shape::rect_stroke(
+                Rect::from_min_max(at(0.06, 0.52), at(0.48, 0.94)),
+                CornerRadius::ZERO,
+                stroke,
+                egui::StrokeKind::Inside,
+            ),
+            Shape::rect_stroke(
+                Rect::from_min_max(at(0.52, 0.52), at(0.94, 0.94)),
+                CornerRadius::ZERO,
+                stroke,
+                egui::StrokeKind::Inside,
+            ),
+        ],
+        // A drawer pulled out of its cabinet: the case, the drawer front and
+        // its handle.
+        Icon::Drawer => vec![
+            Shape::closed_line(
+                vec![
+                    at(0.06, 0.10),
+                    at(0.94, 0.10),
+                    at(0.94, 0.90),
+                    at(0.06, 0.90),
+                ],
+                stroke,
+            ),
+            line(vec![at(0.06, 0.56), at(0.94, 0.56)]),
+            line(vec![at(0.40, 0.73), at(0.60, 0.73)]),
+        ],
     };
     painter.extend(shapes);
 }
+
+/// A tool button: the icon plus its name, pressed-in while `active`.
+///
+/// A palette of a dozen tools cannot be icons alone — three of these are
+/// brushes, and no drawing tells "forest" from "marking" from "terrain" at
+/// 22 px. It cannot be text alone either, which is what the route editor had:
+/// twelve chips of different widths wrapping wherever they happened to fit,
+/// with no way to see the groups. Icon and name together give the row a fixed
+/// height and a shape the eye can find again.
+pub fn tool_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: impl Into<String>,
+    active: bool,
+    tooltip: Option<String>,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width().min(TOOL_WIDTH), BUTTON.y + 6.0),
+        Sense::click(),
+    );
+    let fill = if active {
+        colors::ACCENT_BG
+    } else if response.hovered() {
+        colors::BG_HOVER
+    } else {
+        colors::BG_WIDGET
+    };
+    let color = if active {
+        colors::ACCENT_TEXT
+    } else {
+        colors::TEXT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(4), fill);
+    let icon_rect = Rect::from_min_size(
+        rect.left_top() + Vec2::new(PADDING, 0.0),
+        Vec2::new(rect.height(), rect.height()),
+    );
+    draw(painter, icon_rect.shrink(PADDING), icon, color);
+    painter.text(
+        Pos2::new(icon_rect.right() + 4.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label.into(),
+        egui::FontId::proportional(13.0),
+        color,
+    );
+    match tooltip {
+        Some(text) => response.on_hover_text(text),
+        None => response,
+    }
+}
+
+/// What a catalogue entry is marked with: a drawn symbol for its kind, or a
+/// colour where the entry *is* one (a track type is what it looks like).
+#[derive(Clone, Copy)]
+pub enum Mark {
+    Icon(Icon),
+    Color(Color32),
+    /// A rendered preview of the thing itself.
+    Image(egui::TextureId),
+}
+
+/// One catalogue entry: its mark, the name it carries and a line of provenance
+/// under it, at a **fixed** size.
+///
+/// Laid out by hand rather than as a frame around labels, for the same reason
+/// the LOD list is a grid and not a row of `horizontal`s: a card that sizes
+/// itself to its text gives every entry its own width and baseline, and a wall
+/// of them reads as scattered rather than as a catalogue. Text that does not
+/// fit is truncated with an ellipsis — the caller puts the whole of it in the
+/// tooltip.
+pub fn card_entry(
+    ui: &mut Ui,
+    mark: Mark,
+    title: &str,
+    detail: &str,
+    selected: bool,
+    clickable: bool,
+) -> Response {
+    let sense = if clickable {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(CARD, sense);
+    let fill = if selected {
+        colors::ACCENT_BG
+    } else if clickable && response.hovered() {
+        colors::BG_HOVER
+    } else {
+        colors::BG_CARD
+    };
+    let (title_color, detail_color) = if selected {
+        (colors::ACCENT_TEXT, colors::ACCENT_TEXT)
+    } else {
+        (colors::TEXT, colors::TEXT_SECONDARY)
+    };
+
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        CornerRadius::same(4),
+        fill,
+        Stroke::new(1.0, colors::BORDER_SUBTLE),
+        egui::StrokeKind::Inside,
+    );
+    let mark_rect = Rect::from_min_size(
+        rect.left_top() + Vec2::new(crate::space::XS, 0.0),
+        Vec2::splat(rect.height()),
+    );
+    match mark {
+        Mark::Icon(icon) => draw(
+            painter,
+            square(mark_rect).shrink(PADDING),
+            icon,
+            title_color,
+        ),
+        Mark::Color(color) => {
+            let swatch = square(mark_rect).shrink(PADDING + 2.0);
+            painter.rect(
+                swatch,
+                CornerRadius::same(3),
+                color,
+                Stroke::new(1.0, colors::BORDER),
+                egui::StrokeKind::Inside,
+            );
+        }
+        Mark::Image(texture) => {
+            // On the input well's fill: a preview is rendered on transparency,
+            // and a dark model on a card fill of nearly the same value would
+            // have no edge at all.
+            let well = square(mark_rect).shrink(2.0);
+            painter.rect_filled(well, CornerRadius::same(3), colors::BG_INPUT);
+            painter.image(
+                texture,
+                well,
+                Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+    }
+
+    let text_left = mark_rect.right() + crate::space::S;
+    let width = rect.right() - crate::space::S - text_left;
+    let cut = |text: &str, size: f32, color: Color32| {
+        ui.ctx().fonts_mut(|fonts| {
+            let mut job = egui::text::LayoutJob::single_section(
+                text.to_owned(),
+                egui::TextFormat::simple(egui::FontId::proportional(size), color),
+            );
+            job.wrap = egui::text::TextWrapping {
+                max_width: width,
+                max_rows: 1,
+                break_anywhere: false,
+                overflow_character: Some('…'),
+            };
+            fonts.layout_job(job)
+        })
+    };
+    let title = cut(title, 13.0, title_color);
+    let detail = cut(detail, 11.0, detail_color);
+    // Both lines as one block, centred in the card's height.
+    let block = title.size().y + detail.size().y;
+    let top = rect.center().y - block / 2.0;
+    painter.galley(Pos2::new(text_left, top), title, title_color);
+    painter.galley(Pos2::new(text_left, top + 16.0), detail, detail_color);
+    response
+}
+
+/// Size of a catalogue card: wide enough for a mod-qualified name, and tall
+/// enough that the mark is a picture of the model rather than a symbol beside
+/// its name.
+const CARD: Vec2 = Vec2::new(208.0, 60.0);
+
+/// Width of a tool button — two of them fit the side panel's field column, so
+/// a palette lays out as a grid instead of wrapping wherever it runs out.
+const TOOL_WIDTH: f32 = 156.0;
 
 /// The icon alone, as a label for the control next to it — no fill and no
 /// hover, so it does not read as a button that does nothing.

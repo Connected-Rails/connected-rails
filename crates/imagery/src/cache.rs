@@ -48,6 +48,11 @@ pub struct TileCache {
     memory_limit: usize,
     /// Most recently used tiles, the newest at the front.
     memory: VecDeque<(CacheKey, Arc<Vec<u8>>)>,
+    /// Has the cache directory been walked once in this session? A full walk
+    /// is thousands of files, so `stats.disk_bytes` is carried forward from
+    /// what is written and evicted instead, and the walk repeats only when the
+    /// budget is actually in reach.
+    scanned: bool,
     stats: CacheStats,
 }
 
@@ -60,6 +65,7 @@ impl TileCache {
                 .then(|| Duration::from_secs(config.max_age_days * 24 * 3600)),
             memory_limit: config.memory_tiles.max(1),
             memory: VecDeque::new(),
+            scanned: false,
             stats: CacheStats::default(),
         }
     }
@@ -126,6 +132,7 @@ impl TileCache {
         }
         std::fs::write(&path, &bytes)?;
         self.stats.stored += 1;
+        self.stats.disk_bytes += bytes.len() as u64;
         self.remember(key, Arc::new(bytes));
         self.prune();
         Ok(())
@@ -150,20 +157,24 @@ impl TileCache {
     }
 
     /// Bring the disk space back down to the budget — oldest tiles first.
+    ///
+    /// Called after every stored tile, so the walk over the cache directory has
+    /// to stay off the common path: while the running total says there is room,
+    /// nothing can need evicting and nothing is walked.
     pub fn prune(&mut self) {
         if self.max_bytes == 0 {
             return;
         }
-        let mut files = Vec::new();
-        collect(&self.directory, &mut files);
-        let total: u64 = files.iter().map(|(_, size, _)| *size).sum();
-        self.stats.disk_bytes = total;
-        if total <= self.max_bytes {
+        if self.scanned && self.stats.disk_bytes <= self.max_bytes {
+            return;
+        }
+        let mut files = self.rescan();
+        if self.stats.disk_bytes <= self.max_bytes {
             return;
         }
 
         files.sort_by_key(|(_, _, modified)| *modified);
-        let mut remaining = total;
+        let mut remaining = self.stats.disk_bytes;
         for (path, size, _) in files {
             if remaining <= self.max_bytes {
                 break;
@@ -181,13 +192,26 @@ impl TileCache {
         self.memory.clear();
         let _ = std::fs::remove_dir_all(&self.directory);
         self.stats = CacheStats::default();
+        self.scanned = true;
     }
 
-    /// Disk space used [bytes].
-    pub fn disk_usage(&self) -> u64 {
+    /// Disk space used [bytes]. The editor reads this every frame it draws the
+    /// cache panel, so the directory is walked once and the figure is carried
+    /// forward after that.
+    pub fn disk_usage(&mut self) -> u64 {
+        if !self.scanned {
+            self.rescan();
+        }
+        self.stats.disk_bytes
+    }
+
+    /// Walk the cache directory and set `disk_bytes` to what is really there.
+    fn rescan(&mut self) -> Vec<(PathBuf, u64, SystemTime)> {
         let mut files = Vec::new();
         collect(&self.directory, &mut files);
-        files.iter().map(|(_, size, _)| *size).sum()
+        self.stats.disk_bytes = files.iter().map(|(_, size, _)| *size).sum();
+        self.scanned = true;
+        files
     }
 }
 
@@ -303,6 +327,37 @@ mod tests {
         // The newest tile is still there.
         let newest = CacheKey::new("p", TileId::new(12, 4, 0));
         assert!(cache.contains(&newest, "png"));
+        std::fs::remove_dir_all(config.directory).ok();
+    }
+
+    /// The walk is skipped while there is room — but a cache that was already
+    /// over budget before this session started still has to be found and
+    /// pruned, and that is the case the skip could swallow.
+    #[test]
+    fn a_cache_already_over_budget_is_still_pruned() {
+        let mut config = temp_config("prefilled");
+        config.max_bytes = 2_500;
+        {
+            let mut filling = TileCache::new(&config);
+            filling.max_bytes = 0; // fill past the budget without evicting
+            for i in 0..5u32 {
+                let key = CacheKey::new("p", TileId::new(12, i, 0));
+                filling.store(key, "png", vec![0u8; 1000]).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+
+        // A fresh cache knows nothing about those 5000 bytes until it looks.
+        let mut cache = TileCache::new(&config);
+        assert_eq!(cache.disk_usage(), 5_000);
+        cache
+            .store(
+                CacheKey::new("p", TileId::new(12, 9, 0)),
+                "png",
+                vec![0u8; 100],
+            )
+            .unwrap();
+        assert!(cache.disk_usage() <= 2_500, "{} bytes", cache.disk_usage());
         std::fs::remove_dir_all(config.directory).ok();
     }
 

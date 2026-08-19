@@ -639,11 +639,14 @@ fn setup(
             let view = VehicleView { train, vehicle: i };
             // A vehicle with a model gets its glTF; everything else stays a body
             // (plan ch. 15.3).
-            let entity = if let Some(model) = v.spec.model.as_ref().filter(|m| !m.file.is_empty()) {
+            // Through `model_file`, so a variant's own livery is the one that loads.
+            let entity = if let Some(file) = v.spec.model_file(v.variant).filter(|f| !f.is_empty())
+            {
+                let file = file.to_string();
                 let entity = commands
                     .spawn((Transform::default(), Visibility::default(), view))
                     .id();
-                models::spawn(&mut commands, &assets, entity, &view, &model.file);
+                models::spawn(&mut commands, &assets, entity, &view, &file);
                 entity
             } else {
                 let mesh = meshes.add(Cuboid::new(3.0, 3.8, v.spec.length as f32));

@@ -14,11 +14,15 @@
 mod cab;
 mod displays;
 mod graph;
+mod meta;
+mod metrics;
 mod model;
 mod preview;
 mod settings;
 mod sounds;
+mod templates;
 mod ui;
+mod validate;
 
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;

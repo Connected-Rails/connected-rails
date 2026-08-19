@@ -8,8 +8,8 @@
 
 use crate::{colors, drag, group_digits, space};
 use bevy_egui::egui::{
-    self, Align2, CornerRadius, CursorIcon, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2,
-    pos2, vec2,
+    self, Align2, Color32, CornerRadius, CursorIcon, FontId, Pos2, Rect, RichText, Sense, Stroke,
+    Vec2, pos2, vec2,
 };
 use i18n::t;
 use std::ops::RangeInclusive;
@@ -48,6 +48,112 @@ pub fn sparkline_fn(
         })
         .collect();
     plot(ui, &points, x_unit, y_unit, false);
+}
+
+/// One named curve of a [`multi_plot`].
+pub struct Series {
+    /// Legend entry — already translated, the plot draws it as it comes.
+    pub label: String,
+    /// From [`crate::colors`], so the plots stay on the editors' palette.
+    pub color: Color32,
+    /// `(x, y)` in the units of the plot. Typed or sampled, both draw alike;
+    /// two points are a straight line, which is how a limit is drawn.
+    pub points: Vec<(f64, f64)>,
+}
+
+impl Series {
+    /// Samples `f` over `0..=x_max`, as [`sparkline_fn`] does for one curve.
+    /// Sample the simulator's own function, never a copy of it.
+    pub fn sampled(
+        label: impl Into<String>,
+        color: Color32,
+        x_max: f64,
+        f: impl Fn(f64) -> f64,
+    ) -> Self {
+        let points = (0..=SAMPLES)
+            .map(|i| {
+                let x = x_max * i as f64 / SAMPLES as f64;
+                (x, f(x))
+            })
+            .collect();
+        Self {
+            label: label.into(),
+            color,
+            points,
+        }
+    }
+}
+
+/// Samples per sampled [`Series`] — a tractive effort curve has three kinks in
+/// it and 60 segments over 200 km/h put none of them visibly off.
+const SAMPLES: usize = 60;
+
+/// Height of a [`multi_plot`], in the width the form panel happens to have.
+const PLOT_HEIGHT: f32 = 200.0;
+
+/// Several named curves over one pair of axes, with ticks, units and a legend.
+///
+/// The analysis counterpart of [`sparkline`]: the well answers "does this shape
+/// look right", this one is read for numbers — where two curves cross, how far
+/// one runs below another. Read-only like the wells; [`curve_editor`] is the
+/// one that edits.
+pub fn multi_plot(ui: &mut egui::Ui, x_unit: &str, y_unit: &str, series: &[Series]) {
+    let curves: Vec<Vec<(f64, f64)>> = series
+        .iter()
+        .map(|s| {
+            let mut points = s.points.clone();
+            points.sort_by(|a, b| a.0.total_cmp(&b.0));
+            points
+        })
+        .collect();
+    let all = curves.concat();
+    if all.len() < 2 {
+        return;
+    }
+    // One mapping for every curve — curves on separate scales cross wherever
+    // the scaling puts them, and a crossing is what this plot is read for.
+    let dom = Domain::padded(&all);
+    let width = ui.available_width().min(CANVAS.x);
+    let (outer, response) = ui.allocate_exact_size(vec2(width, PLOT_HEIGHT), Sense::hover());
+    let painter = ui.painter_at(outer);
+    painter.rect_filled(outer, CornerRadius::same(4), colors::BG_INPUT);
+    painter.rect_stroke(
+        outer,
+        CornerRadius::same(4),
+        Stroke::new(1.0, colors::BORDER_SUBTLE),
+        egui::StrokeKind::Inside,
+    );
+    let plot = plot_area(outer);
+    axes(&painter, outer, plot, dom, x_unit, y_unit);
+    for (s, points) in series.iter().zip(&curves) {
+        if points.len() < 2 {
+            continue;
+        }
+        painter.add(egui::Shape::line(
+            points.iter().map(|&p| dom.to_screen(plot, p)).collect(),
+            Stroke::new(1.5, s.color),
+        ));
+    }
+    // All curves at one x, under one guide line: that is how the crossing is
+    // read off — the eye finds it, the readout says at what speed.
+    if let Some(pointer) = response.hover_pos()
+        && plot.contains(pointer)
+    {
+        let x = dom.value_at(plot, pointer).0;
+        painter.line_segment(
+            [pos2(pointer.x, plot.top()), pos2(pointer.x, plot.bottom())],
+            Stroke::new(1.0, colors::BORDER),
+        );
+        let mut text = with_unit(x, x_unit);
+        for (s, points) in series.iter().zip(&curves) {
+            if points.len() >= 2 {
+                let y = with_unit(interpolate(points, x), y_unit);
+                text.push_str(&format!("\n{}: {y}", s.label));
+            }
+        }
+        response.clone().on_hover_text(text);
+    }
+    legend(ui, series);
 }
 
 /// What a curve is measured in and how its fields step — everything the editor
@@ -351,11 +457,7 @@ fn canvas(ui: &mut egui::Ui, spec: &CurveSpec, points: &mut Vec<(f64, f64)>) -> 
         Stroke::new(1.0, colors::BORDER_SUBTLE),
         egui::StrokeKind::Inside,
     );
-    // Margins hold the tick labels: y left, x below.
-    let plot = Rect::from_min_max(
-        pos2(outer.left() + 52.0, outer.top() + 14.0),
-        pos2(outer.right() - 14.0, outer.bottom() - 24.0),
-    );
+    let plot = plot_area(outer);
 
     // While a point is dragged the mapping is frozen: the point follows the
     // pointer, and a scale recomputed from the moving value would slide the
@@ -365,55 +467,7 @@ fn canvas(ui: &mut egui::Ui, spec: &CurveSpec, points: &mut Vec<(f64, f64)>) -> 
         .data(|d| d.get_temp::<Domain>(frozen_id))
         .unwrap_or_else(|| Domain::padded(points));
 
-    // Grid and tick labels.
-    let font = FontId::proportional(10.0);
-    for x in ticks(dom.x0, dom.x1) {
-        let sx = dom.to_screen(plot, (x, 0.0)).x;
-        painter.line_segment(
-            [pos2(sx, plot.top()), pos2(sx, plot.bottom())],
-            Stroke::new(1.0, colors::BORDER_SUBTLE),
-        );
-        painter.text(
-            pos2(sx, plot.bottom() + 4.0),
-            Align2::CENTER_TOP,
-            tick_label(x, nice_step(dom.x1 - dom.x0)),
-            font.clone(),
-            colors::TEXT_SECONDARY,
-        );
-    }
-    for y in ticks(dom.y0, dom.y1) {
-        let sy = dom.to_screen(plot, (0.0, y)).y;
-        painter.line_segment(
-            [pos2(plot.left(), sy), pos2(plot.right(), sy)],
-            Stroke::new(1.0, colors::BORDER_SUBTLE),
-        );
-        painter.text(
-            pos2(plot.left() - 6.0, sy),
-            Align2::RIGHT_CENTER,
-            tick_label(y, nice_step(dom.y1 - dom.y0)),
-            font.clone(),
-            colors::TEXT_SECONDARY,
-        );
-    }
-    // Units once per axis, in the label margins.
-    if !spec.x_unit.is_empty() {
-        painter.text(
-            pos2(plot.right(), outer.bottom() - 3.0),
-            Align2::RIGHT_BOTTOM,
-            spec.x_unit,
-            font.clone(),
-            colors::TEXT_SECONDARY,
-        );
-    }
-    if !spec.y_unit.is_empty() {
-        painter.text(
-            pos2(plot.left(), outer.top() + 2.0),
-            Align2::LEFT_TOP,
-            spec.y_unit,
-            font.clone(),
-            colors::TEXT_SECONDARY,
-        );
-    }
+    axes(&painter, outer, plot, dom, spec.x_unit, spec.y_unit);
 
     // Interactions first, drawing after — the curve is painted from this
     // frame's values, not last frame's.
@@ -560,6 +614,93 @@ fn point_table(ui: &mut egui::Ui, spec: &CurveSpec, points: &mut Vec<(f64, f64)>
         settle = true;
     }
     settle
+}
+
+// --- The framed plot -------------------------------------------------------
+
+/// The drawing area inside a framed plot. The margins carry the tick labels:
+/// y down the left, x along the bottom.
+fn plot_area(outer: Rect) -> Rect {
+    Rect::from_min_max(
+        pos2(outer.left() + 52.0, outer.top() + 14.0),
+        pos2(outer.right() - 14.0, outer.bottom() - 24.0),
+    )
+}
+
+/// Grid, tick labels and one unit per axis — everything a plot has apart from
+/// its curves. Shared by the modal [`canvas`] and by [`multi_plot`].
+fn axes(painter: &egui::Painter, outer: Rect, plot: Rect, dom: Domain, x_unit: &str, y_unit: &str) {
+    let font = FontId::proportional(10.0);
+    for x in ticks(dom.x0, dom.x1) {
+        let sx = dom.to_screen(plot, (x, 0.0)).x;
+        painter.line_segment(
+            [pos2(sx, plot.top()), pos2(sx, plot.bottom())],
+            Stroke::new(1.0, colors::BORDER_SUBTLE),
+        );
+        painter.text(
+            pos2(sx, plot.bottom() + 4.0),
+            Align2::CENTER_TOP,
+            tick_label(x, nice_step(dom.x1 - dom.x0)),
+            font.clone(),
+            colors::TEXT_SECONDARY,
+        );
+    }
+    for y in ticks(dom.y0, dom.y1) {
+        let sy = dom.to_screen(plot, (0.0, y)).y;
+        painter.line_segment(
+            [pos2(plot.left(), sy), pos2(plot.right(), sy)],
+            Stroke::new(1.0, colors::BORDER_SUBTLE),
+        );
+        painter.text(
+            pos2(plot.left() - 6.0, sy),
+            Align2::RIGHT_CENTER,
+            tick_label(y, nice_step(dom.y1 - dom.y0)),
+            font.clone(),
+            colors::TEXT_SECONDARY,
+        );
+    }
+    // Units once per axis, in the label margins.
+    if !x_unit.is_empty() {
+        painter.text(
+            pos2(plot.right(), outer.bottom() - 3.0),
+            Align2::RIGHT_BOTTOM,
+            x_unit,
+            font.clone(),
+            colors::TEXT_SECONDARY,
+        );
+    }
+    if !y_unit.is_empty() {
+        painter.text(
+            pos2(plot.left(), outer.top() + 2.0),
+            Align2::LEFT_TOP,
+            y_unit,
+            font,
+            colors::TEXT_SECONDARY,
+        );
+    }
+}
+
+/// Which colour is which curve. Under the plot, not on it — a name written
+/// next to a line sits on top of the next line as soon as two of them touch.
+fn legend(ui: &mut egui::Ui, series: &[Series]) {
+    ui.add_space(space::XS);
+    ui.horizontal_wrapped(|ui| {
+        for s in series {
+            let (mark, _) = ui.allocate_exact_size(vec2(14.0, 10.0), Sense::hover());
+            ui.painter().line_segment(
+                [
+                    pos2(mark.left(), mark.center().y),
+                    pos2(mark.right(), mark.center().y),
+                ],
+                Stroke::new(2.0, s.color),
+            );
+            ui.label(
+                RichText::new(s.label.as_str())
+                    .small()
+                    .color(colors::TEXT_SECONDARY),
+            );
+        }
+    });
 }
 
 // --- Axis arithmetic -------------------------------------------------------

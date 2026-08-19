@@ -86,7 +86,7 @@ without a matching rule shows stop.
 | `max_payload` | maximum payload [kg] |
 | `tilt_angle_deg` | maximum tilt angle [°], 0 without tilting technology |
 | `passenger_doors` | vehicle has passenger doors that follow the door control |
-| `safety` | train protection fitted: `None` or `De(pzb: Some(Pzb90V20), lzb: true, sifa: Some(TimeTime), train_type: O)` |
+| `safety` | train protection fitted: `None` or `De(pzb: Some(Pzb90V20), lzb: true, sifa: Some(TimeTime), train_type: O, gnt: false)` — `gnt: true` is the tilting speed supervision, which only does anything on a vehicle whose `tilt_angle_deg` is above zero |
 | `afb` | AFB fitted: the built-in target speed controller drives the power controller toward the cab's AFB dial and brakes like the prototype — dynamic brake first, the air brake blends in where that does not suffice; under LZB guidance the LZB's v-soll caps the dial |
 | `doors` | door control the vehicle brings: `None` / `Tb0` / `Tav` / `UicWtb` |
 | `hunting` | hunting −1 … 1, 0 = standard |
@@ -116,6 +116,8 @@ the rear of a long freight train applies seconds after the front.
 | `position` | `G` / `P` / `R`; an `R` on a valve without an R position falls back to `P` |
 | `brake_weight`, `max_force`, `max_cylinder`, `cylinder_to_reservoir` | braked weight [t], force at full pressure and standstill [N], cylinder pressure [bar], volume ratio (exhaustibility) — the two forces are those of the **loaded** vehicle, see `load_braking` |
 | `load_braking` | load braking: `None`, `Weighing` (stepless weighing valve — throttles the cylinder pressure by `mass_empty`/`max_payload`, no figures of its own), or `Changeover(empty_share: 0.4, changeover_mass_t: 40.0)` for the empty/loaded lever with the anscribed braked weights |
+| `brake_weight_g`, `brake_weight_p`, `brake_weight_r` | the anscribed braked weight [t] of that position, where the vehicle carries one per position (`G 40 / P 60 / R 71`). Absent = `brake_weight` for all three. The **R** figure replaces the standard R force bonus; the **G** figure is a brake sheet datum only — G brakes with P's force and differs in the transition time, which is simulated separately |
+| `apply_time_g`, `apply_time_p`, `release_time_g`, `release_time_p` | filling and release time of the brake cylinder [s], overriding the UIC figures (G 22/50 s, P and R 4 s). `_p` covers R as well: the changeover handle sets the timing between G and P, R differs in force |
 | `has_mg`, `mg_force` | magnetic track brake and its force [N]; it applies in `position: R` only — the anscribed "R + Mg" is that pair |
 | `has_direct`, `direct_max_cylinder` | direct (additional) brake of a traction unit |
 | `parking_force`, `spring_parking` | parking brake [N]; with `spring_parking` it is held off by air and applies by itself when the main reservoir runs empty |
@@ -359,7 +361,7 @@ The built-in palette:
 | `double-check-valve` | passes the higher of two pressures | — |
 | `retainer-valve` | holds a residual pressure through the release | position (off / slow / low / high) |
 | `ep-brake` | electropneumatic brake — applies by wire | application and release rate, vents-the-pipe flag, steps |
-| `control-valve` | control valve reading the pipe | valve type (K-GP … KE-L2d), position G/P/R, braked weight [t], load braking (weighing / changeover) |
+| `control-valve` | control valve reading the pipe | valve type (K-GP … KE-L2d), position G/P/R, braked weight [t] (overall and per position), transition times per position, load braking (weighing / changeover) |
 | `aux-reservoir` | auxiliary reservoir | volume [l] |
 | `relay-valve` | pre-controlled cylinder fed from the main reservoir | supplement flag (air supplement brake) |
 | `brake-cylinder` | the cylinder itself | maximum pressure, cylinder/reservoir volume ratio |
@@ -391,6 +393,7 @@ The built-in palette:
 | `sifa` | driver's safety device | kind: time-time / time-distance / RZM |
 | `pzb` | intermittent train protection | variant (I 54 … PZB 90 V2.0), train type O/M/U |
 | `lzb` | continuous train protection | — |
+| `gnt` | tilting speed supervision | — (needs `tilt_angle_deg` above zero on the vehicle) |
 | `doors` | door control | system (TB0 / TAV / UIC-WTB), passenger doors flag |
 | `script` | the Lua behaviour hook | script `"<mod>:<name>"` |
 
@@ -1115,6 +1118,23 @@ A `LineConductor` device marks a line conductor section — the cable, not what 
 braking curve, 5 km/h speed steps, speed rises effective at the head of the train instead of
 at its rear), `end: true` marks the last section of an LZB area, where the end procedure runs.
 The last two may be left out.
+
+A `Balise` device carries the data points of the **GNT**, the speed supervision of a tilting
+unit. Inside a GNT area the on-board unit supervises a higher profile than the regular one —
+but only while the tilting technology works:
+
+```ron
+(kind: Balise, edge: 1, s: 0.0, payload: "(profile_speed:160.0,length:2400.0)"),
+(kind: Balise, edge: 1, s: 2400.0, payload: "(profile_speed:0.0,target_speed:0.0,target_distance:0.0,length:0.0,end:true)"),
+```
+
+`profile_speed` is the GNT speed from that data point [km/h] — `0` releases nothing and
+leaves the regular profile in force. `target_speed` and `target_distance` name the point the
+braking curve leads down to; leave `target_distance` at `0` and the profile speed applies over
+the whole section. `length` is how far the data point is good for [m], measured to the rear of
+the train, and `end: true` is the sign-off at the end of the GNT area. Everything but
+`profile_speed` may be left out. A balise whose payload is not a GNT data point is ignored, so
+the same device kind stays free for ETCS later.
 
 The movement authority is not written into the line: the LZB centre builds it every step from
 the block division and the state of the interlocking. The block division is a line datum of

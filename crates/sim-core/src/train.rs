@@ -252,6 +252,109 @@ impl AxleSpec {
     }
 }
 
+/// What the data sheet says about the vehicle rather than about its physics: the entries a
+/// vehicle browser lists and sorts by (plan ch. 15).
+///
+/// Nothing here is read by the simulation. Everything is a plain value with a default, so a
+/// vehicle that states none of it costs no bytes in the file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct VehicleMeta {
+    /// Class or type designation: `"BR 101"`, `"Bmz 236"`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub class: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub manufacturer: String,
+    /// Year the vehicle was built; 0 = not stated.
+    #[serde(default, skip_serializing_if = "is_zero_year")]
+    pub build_year: u16,
+    /// Era, free-form: `"V"`, `"IV–VI"`. Not an enum — the scheme is a national one, and
+    /// a vehicle that spans two of them says so in one string.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub epoch: String,
+    /// Country of use, ISO 3166-1 alpha-2: `"DE"`, `"AT"`, `"CH"`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub country: String,
+    /// Railway the vehicle runs for: `"DB Fernverkehr"`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub operator: String,
+    /// Who built the file, not who built the vehicle.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Preview image below the `mods/` directory, addressed like [`VehicleModel::file`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub thumbnail: String,
+}
+
+fn is_zero_year(year: &u16) -> bool {
+    *year == 0
+}
+
+impl VehicleMeta {
+    /// Nothing filled in — then the whole block stays out of the file.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The same vehicle in a different dress: a livery, a running number series, an era.
+///
+/// A variant overrides **appearance and numbering only**. Everything the physics reads
+/// stays with the vehicle — otherwise every livery would be a second vehicle to balance,
+/// and a consist would no longer be reproducible from the vehicle it names.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct VehicleVariant {
+    /// How the browser lists it: `"verkehrsrot"`, `"Epoche IV"`. Mod content, like a
+    /// scenario text — not an i18n key.
+    pub name: String,
+    /// Replaces [`VehicleModel::file`]; `None` = the vehicle's own model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Running numbers the consist builder draws from, e.g. `["101 001-6", "101 002-4"]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub numbers: Vec<String>,
+    /// Replaces [`VehicleMeta::epoch`]; empty = the vehicle's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub epoch: String,
+    /// Replaces [`VehicleMeta::description`]; empty = the vehicle's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+impl VehicleVariant {
+    /// The running number this variant carries for `seed`, or `None` where it lists none.
+    ///
+    /// Deterministic on purpose: the consist is built from the scenario's seed, so every
+    /// client puts the same number on the same wagon without a byte crossing the network.
+    pub fn number(&self, seed: u64) -> Option<&str> {
+        if self.numbers.is_empty() {
+            return None;
+        }
+        let i = crate::rng::Rng::new(seed).next_u64() as usize % self.numbers.len();
+        self.numbers.get(i).map(String::as_str)
+    }
+}
+
+/// One load a wagon can carry: coal, containers, timber — a mass and the model node that
+/// shows it.
+///
+/// ponytail: the load is a node of the vehicle's own glTF, switched by
+/// [`Motion::Visibility`] like any other part — no second scene, no load model of its own.
+/// That covers a coal heap or a stack of containers modelled into the wagon, which is what
+/// a wagon has. A mod that really needs interchangeable load models gets a
+/// `model: Option<VehicleModel>` here and a second scene spawned at the vehicle.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LoadSpec {
+    /// Name of the goods: `"Kohle"`, `"Container"`. Mod content, like a scenario text.
+    pub name: String,
+    /// Mass of the load [kg].
+    pub mass: f64,
+    /// glTF node shown while this load is carried; `None` = the load is not visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+}
+
 /// Static vehicle description (from the vehicle database, RON).
 ///
 /// `PartialEq` compares the fields bit for bit, floats included. That is what
@@ -374,6 +477,18 @@ pub struct VehicleSpec {
     /// the diagram's `axle` blocks fill it in where the layout is not that even.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub running_gear: Vec<AxleSpec>,
+    /// Data sheet entries — class, era, author, preview picture. The simulation ignores
+    /// them; the vehicle browser of the consist editor lists and sorts by them.
+    #[serde(default, skip_serializing_if = "VehicleMeta::is_empty")]
+    pub meta: VehicleMeta,
+    /// Liveries and running number series of this vehicle. Empty = the vehicle comes in
+    /// exactly one dress, the one `model` and `meta` describe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<VehicleVariant>,
+    /// The loads the vehicle can carry, capped by `max_payload`. Empty = it carries
+    /// nothing visible, and `Vehicle::load` is a bare number as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loads: Vec<LoadSpec>,
 }
 
 fn default_sand_rate() -> f64 {
@@ -462,6 +577,38 @@ impl VehicleSpec {
         self.mass_empty + self.max_payload
     }
 
+    /// The variant at `index`, or `None` where the vehicle has none there.
+    pub fn variant(&self, index: usize) -> Option<&VehicleVariant> {
+        self.variants.get(index)
+    }
+
+    /// The glTF file the vehicle is drawn with in this variant — the variant's own model
+    /// where it states one, otherwise the vehicle's. App and editor read it here so that
+    /// the fallback is decided once.
+    pub fn model_file(&self, variant: Option<usize>) -> Option<&str> {
+        variant
+            .and_then(|i| self.variants.get(i))
+            .and_then(|v| v.model.as_deref())
+            .or_else(|| self.model.as_ref().map(|m| m.file.as_str()))
+    }
+
+    /// Mass of the load at `index` [kg], capped at `max_payload`. `None` = the vehicle runs
+    /// empty. A vehicle that states no maximum payload (0 = not stated) carries the load
+    /// in full.
+    pub fn payload(&self, load: Option<usize>) -> f64 {
+        let mass = load.and_then(|i| self.loads.get(i)).map_or(0.0, |l| l.mass);
+        if self.max_payload > 0.0 {
+            mass.min(self.max_payload)
+        } else {
+            mass
+        }
+    }
+
+    /// Total mass [kg] with the load at `index`: tare plus what [`Self::payload`] allows.
+    pub fn mass_with_load(&self, load: Option<usize>) -> f64 {
+        self.mass_empty + self.payload(load)
+    }
+
     /// Share of the fully loaded brake force the vehicle brakes with at a total mass of
     /// `mass_kg` — see [`crate::brakes::LoadBraking`].
     pub fn load_share(&self, mass_kg: f64) -> f64 {
@@ -476,9 +623,6 @@ impl VehicleSpec {
         self.brake.brake_weight * self.load_share(mass_kg)
     }
 
-    /// Axle load [t] at a total mass of `mass_kg` — the curve of the friction family the
-    /// vehicle runs on ([`crate::brakes::BrakeKind::friction_factor_at`]). Without an
-    /// axle count in the data sheet it stays on the reference curve.
     /// The running gear of this vehicle: what it states, or the even layout its axle
     /// count and adhesive mass imply.
     pub fn running_gear(&self) -> Vec<AxleSpec> {
@@ -489,6 +633,9 @@ impl VehicleSpec {
         }
     }
 
+    /// Axle load [t] at a total mass of `mass_kg` — the curve of the friction family the
+    /// vehicle runs on ([`crate::brakes::BrakeKind::friction_factor_at`]). Without an
+    /// axle count in the data sheet it stays on the reference curve.
     pub fn axle_load_t(&self, mass_kg: f64) -> f64 {
         if self.axles == 0 {
             return crate::brakes::REFERENCE_AXLE_LOAD;
@@ -537,6 +684,9 @@ impl Default for VehicleSpec {
             model: None,
             sounds: Vec::new(),
             graph: None,
+            meta: VehicleMeta::default(),
+            variants: Vec::new(),
+            loads: Vec::new(),
         }
     }
 }
@@ -569,6 +719,14 @@ pub struct Vehicle {
     pub spec: VehicleSpec,
     /// Payload [kg].
     pub load: f64,
+    /// The load out of `spec.loads` the vehicle carries; `None` = empty or a bare payload
+    /// mass. It decides `load` and which model node is shown, so it is part of the
+    /// deterministic state and travels with the consist, not with the renderer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_index: Option<usize>,
+    /// The variant out of `spec.variants` the vehicle runs in; `None` = the base vehicle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<usize>,
     /// Distance travelled along the track [m], monotonic in the direction of travel.
     pub x: f64,
     /// Speed [m/s], positive = direction of travel of the train.
@@ -627,6 +785,8 @@ impl Vehicle {
             signal_out: crate::signal::SignalOutputs::default(),
             spec,
             load: 0.0,
+            load_index: None,
+            variant: None,
             x: 0.0,
             v: 0.0,
             a: 0.0,
@@ -637,6 +797,20 @@ impl Vehicle {
             brake_effort: 0.0,
             doors: VehicleDoors::default(),
         }
+    }
+
+    /// Loads the vehicle with `index` out of `spec.loads` (`None` = empty) and sets `load`
+    /// to the mass that goes with it.
+    pub fn set_load(&mut self, index: Option<usize>) {
+        self.load_index = index;
+        self.load = self.spec.payload(index);
+    }
+
+    /// The glTF node the current load shows, if it shows one.
+    pub fn load_node(&self) -> Option<&str> {
+        self.load_index
+            .and_then(|i| self.spec.loads.get(i))
+            .and_then(|l| l.node.as_deref())
     }
 
     /// Total mass [kg].
@@ -810,10 +984,16 @@ impl Train {
     /// Load braking counts: a wagon that carries nothing brings the braked weight of the
     /// empty position into the brake sheet, not the anscribed loaded one.
     pub fn brake_percentage(&self) -> f64 {
+        // Per vehicle in the position its changeover handle actually stands in: a train
+        // in G is anscribed with G's braked weights, and that is the figure the brake
+        // sheet — and the LZB braking curve behind it — is worked out from.
         let weight: f64 = self
             .vehicles
             .iter()
-            .map(|v| v.spec.brake_weight_at(v.mass()))
+            .map(|v| {
+                let position = v.brake.effective_position(&v.spec.brake);
+                v.spec.brake.brake_weight_at_position(position) * v.spec.load_share(v.mass())
+            })
             .sum();
         let mass: f64 = self.vehicles.iter().map(|v| v.mass() / 1000.0).sum();
         if mass <= 0.0 {
@@ -869,7 +1049,11 @@ impl Train {
     pub fn brake_apply_time(&self) -> f64 {
         self.vehicles
             .iter()
-            .map(|v| v.brake.effective_position(&v.spec.brake).apply_time())
+            .map(|v| {
+                v.spec
+                    .brake
+                    .apply_time_at_position(v.brake.effective_position(&v.spec.brake))
+            })
             .fold(0.0, f64::max)
     }
 }
@@ -904,5 +1088,119 @@ mod vehicle_spec_tests {
         // A vehicle without a mass must not divide by zero.
         spec.mass_empty = 0.0;
         assert_eq!(spec.brake_percentage(), 0.0);
+    }
+
+    /// A vehicle that states no metadata, no variant and no load must write the same file
+    /// as before the three were introduced — an existing `.ron` may not grow empty blocks
+    /// just from being opened and saved.
+    #[test]
+    fn empty_metadata_variants_and_loads_do_not_reach_the_file() {
+        let text = ron::ser::to_string(&VehicleSpec::default()).unwrap();
+        for field in ["meta:", "variants:", "loads:"] {
+            assert!(!text.contains(field), "{field} written although empty");
+        }
+        // A vehicle that does state them writes them, and reads them back unchanged.
+        let spec = VehicleSpec {
+            meta: VehicleMeta {
+                class: "BR 101".into(),
+                build_year: 1996,
+                ..VehicleMeta::default()
+            },
+            loads: vec![LoadSpec {
+                name: "Kohle".into(),
+                mass: 25_000.0,
+                node: Some("load_coal".into()),
+            }],
+            ..VehicleSpec::default()
+        };
+        let round: VehicleSpec = ron::from_str(&ron::ser::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(round, spec);
+    }
+
+    /// The load is capped by the anscribed payload; a vehicle without one carries it whole.
+    #[test]
+    fn mass_with_load_respects_the_maximum_payload() {
+        let mut spec = VehicleSpec {
+            mass_empty: 20_000.0,
+            max_payload: 25_000.0,
+            loads: vec![
+                LoadSpec {
+                    name: "Kohle".into(),
+                    mass: 25_000.0,
+                    node: None,
+                },
+                LoadSpec {
+                    name: "Erz".into(),
+                    mass: 40_000.0,
+                    node: None,
+                },
+            ],
+            ..VehicleSpec::default()
+        };
+        assert_eq!(spec.mass_with_load(None), 20_000.0);
+        assert_eq!(spec.mass_with_load(Some(0)), 45_000.0);
+        // Overloaded: the wagon takes what it is anscribed for, not what the load weighs.
+        assert_eq!(spec.mass_with_load(Some(1)), 45_000.0);
+        // An index that does not exist is an empty wagon, not a panic.
+        assert_eq!(spec.mass_with_load(Some(9)), 20_000.0);
+        // 0 = not stated, so nothing caps the load.
+        spec.max_payload = 0.0;
+        assert_eq!(spec.mass_with_load(Some(1)), 60_000.0);
+    }
+
+    /// Every client builds the consist from the same seed, so it has to pick the same
+    /// running number — otherwise the same wagon is numbered differently on every screen.
+    #[test]
+    fn running_number_is_reproducible_from_the_seed() {
+        let variant = VehicleVariant {
+            name: "verkehrsrot".into(),
+            numbers: vec!["101 001-6".into(), "101 002-4".into(), "101 003-2".into()],
+            ..VehicleVariant::default()
+        };
+        for seed in 0..50u64 {
+            let picked = variant.number(seed).unwrap();
+            assert_eq!(variant.number(seed), Some(picked));
+            assert!(variant.numbers.iter().any(|n| n == picked));
+        }
+        // Different seeds must not all land on the same number.
+        let spread: std::collections::BTreeSet<_> =
+            (0..50u64).filter_map(|s| variant.number(s)).collect();
+        assert!(spread.len() > 1);
+        // A variant without numbers has none — the caller falls back to the vehicle name.
+        assert_eq!(VehicleVariant::default().number(1), None);
+    }
+
+    /// A variant is a dress, not a vehicle: without a model of its own it shows the base
+    /// one.
+    #[test]
+    fn variant_without_a_model_falls_back_to_the_base_model() {
+        let spec = VehicleSpec {
+            model: Some(VehicleModel {
+                file: "example/assets/br101.gltf".into(),
+                ..VehicleModel::default()
+            }),
+            variants: vec![
+                VehicleVariant {
+                    name: "verkehrsrot".into(),
+                    ..VehicleVariant::default()
+                },
+                VehicleVariant {
+                    name: "orientrot".into(),
+                    model: Some("example/assets/br101_orientrot.gltf".into()),
+                    ..VehicleVariant::default()
+                },
+            ],
+            ..VehicleSpec::default()
+        };
+        assert_eq!(spec.model_file(None), Some("example/assets/br101.gltf"));
+        assert_eq!(spec.model_file(Some(0)), Some("example/assets/br101.gltf"));
+        assert_eq!(
+            spec.model_file(Some(1)),
+            Some("example/assets/br101_orientrot.gltf")
+        );
+        // An index out of range is the base vehicle, not a missing model.
+        assert_eq!(spec.model_file(Some(9)), Some("example/assets/br101.gltf"));
+        assert_eq!(spec.variant(1).map(|v| v.name.as_str()), Some("orientrot"));
+        assert!(spec.variant(9).is_none());
     }
 }

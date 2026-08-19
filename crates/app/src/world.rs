@@ -36,6 +36,16 @@ pub fn fingerprint(line: &str, sim: &Sim) -> u64 {
     mix(sim.trains.len() as u64);
     for train in &sim.trains {
         mix(train.vehicles.len() as u64);
+        // Variant and load decide which model and which mass a vehicle has. The
+        // server builds its world from the scenario and a client from its menu, so
+        // the two can disagree here — and a disagreement over liveries and loads is
+        // to be refused at join, not discovered by two players describing different
+        // trains to each other. Nothing replicates them: they belong to the consist,
+        // and the consist is the server's (CLAUDE.md, ch. 20).
+        for vehicle in &train.vehicles {
+            mix(vehicle.variant.map_or(u64::MAX, |v| v as u64));
+            mix(vehicle.load_index.map_or(u64::MAX, |l| l as u64));
+        }
     }
     h
 }
@@ -97,6 +107,9 @@ pub fn build(mods: &mut ModRuntime, selection: &crate::menu::Selection) -> World
         .unwrap_or_else(br101);
 
     let player = spawn_train(&mut sim, TrackPosition::new(EdgeId(0), 200.0, 1), 5, loco);
+    // The livery picked in the menu. It rides on the vehicle, not on a render
+    // component, so it is part of the consist the fingerprint below compares.
+    sim.trains[player].vehicles[0].variant = selection.variant;
 
     // Second train, timetable and scenario belong to the example line — a modded line
     // brings its own scenario or none at all.

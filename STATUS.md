@@ -429,6 +429,52 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
   time against a reference body of the length over buffers.
+- **Vehicle editor completed (2026-08-19):** the gaps against Zusi 3's vehicle editor are
+  closed, and the data behind them is read by the simulator rather than sitting in the file.
+  - **Metadata, variants and loads** (`VehicleSpec::meta`/`variants`/`loads`): class,
+    manufacturer, year built, era, country, operator, author, description and a preview
+    image below `mods/`; variants that override livery, era and running numbers (drawn
+    from a seeded list, so a consist looks the same on every client) but never the
+    physics; loads with their own mass and the glTF node that shows them. The main menu's
+    vehicle browser lists all of it and dials the variant with ←/→; `models.rs` shows the
+    carried load's node and loads the variant's own model file.
+  - **Braked weight per brake position** (`brake_weight_g/_p/_r`) and the transition times
+    as vehicle data instead of the UIC constants. `Train::brake_percentage` now reports the
+    position each vehicle's changeover handle actually stands in. **G brakes with P's
+    force**: its lower anscription is the standardised consequence of the 22 s transition,
+    which the model simulates separately — scaling the force as well would count it twice.
+  - **Key figures and the tractive effort diagram**: braked weight percentage (empty,
+    laden, per position), axle load with the 22.5 t warning, adhesive mass and the adhesion
+    limit against the stated starting effort, power-to-weight ratio, balancing speed; a
+    multi-series plot of tractive effort per drive mode, dynamic brake, running resistance
+    and the adhesion limit (`editor_ui::multi_plot`).
+  - **Check report** (`vehicle-editor::validate`): errors, warnings and notes over the whole
+    file — missing figures, contradicting speeds, bindings that point at no node, LOD order,
+    a node bound twice — with the counts in the section header so a collapsed section cannot
+    hide them. All nine reference vehicles are silent.
+  - **Part function registry** (`sim_core::cab::PART_FUNCTIONS`): one source of truth for
+    what the simulator reads, offered as a picker in the parts list and checked in the
+    report. A name it does not know stays legal (`MODS.md` documents the field as free
+    text) and is reported as a note, not an error.
+  - **Display widgets** are edited in the editor, with a to-scale preview the widgets can be
+    dragged around in, instead of by hand in the RON file.
+  - **New from template**: the nine reference vehicles of `content::vehicles` as starting
+    points, each with a tooltip naming drive, brake and train protection.
+  - **GNT** (`sim_core::safety::de::gnt`): the tilting speed supervision, which is what makes
+    `tilt_angle_deg` mean something. GNT data points as `Balise` payloads (no new device
+    kind), profile release only with a working tilt system, braking curve to the target,
+    forced braking, and the return run onto the regular profile when the tilt system fails.
+    Under LZB guidance it stands down; the PZB magnets stay effective underneath it. Its
+    lamps are in the HUD and bindable as cab parts. No train data entry and no function test
+    yet — both are marked in the module.
+  - **Not done, deliberately:** ETCS and ZBS (PLAN 9.5 calls them v2+, and a half-built
+    supervision is worse than none), and a second country package.
+  - **Multiplayer limitation:** variant and load live on `Vehicle` in `sim-core`, so they are
+    deterministic and travel with the consist — but nothing produces a consist on the server
+    yet (it builds from `Selection::default()`, which is already true of the chosen
+    locomotive). They are therefore part of `world::fingerprint`, so a client that picked a
+    different livery is refused at join instead of silently seeing another train than
+    everyone else. The fix is a server-owned consist in the scenario, not replication.
 - **Localisation:** every string the user reads goes through the `i18n` crate
   (Fluent `.ftl`, English source plus German), including the simulator HUD, both editors
   and the scoring report. Language from `TRAINSIM_LANG` or the operating system,
@@ -537,7 +583,7 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   grouped by category), per-block properties and **live bake findings** (a click selects
   the offending block), and axle count and adhesive mass moved onto the wheelset block.
 - **Palette completed (2026-08-18):** the block system now covers every component the
-  simulation has a model for — **71 built-in blocks** in nine groups, over nine port
+  simulation has a model for — **72 built-in blocks** in nine groups, over nine port
   domains (shaft, force, electrical, pneumatic, signal, fuel, steam, water, heat). What
   came with it, physics first:
   - **Diesel-electric drive** (`DieselElectric`): generator, rectifier and a **load

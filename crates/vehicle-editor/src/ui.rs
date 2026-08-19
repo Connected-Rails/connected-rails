@@ -4,7 +4,7 @@
 //! forms. Every labelled field goes through [`row`], every section through
 //! `editor_ui::section`, so labels and fields line up across the whole panel.
 
-use crate::{Editor, Status, graph, model, sounds};
+use crate::{Editor, Status, graph, meta, metrics, model, sounds, templates, validate};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use editor_ui::{colors, field, space};
@@ -234,7 +234,17 @@ fn message_dialog(editor: &Editor) -> rfd::MessageDialog {
 
 /// Starts a file dialog owned by the editor window.
 fn file_dialog(editor: &Editor) -> rfd::FileDialog {
-    match dialog_parent(editor) {
+    file_dialog_for(editor.window.as_ref())
+}
+
+/// The same, for a panel that has the window handle but not the whole editor.
+///
+/// The handle is taken only when a dialog is really opened — taking it locks it, and a
+/// panel that built one every frame would pay for a dialog it never shows.
+pub(crate) fn file_dialog_for(window: Option<&bevy::window::RawHandleWrapper>) -> rfd::FileDialog {
+    // SAFETY: the handle is only handed to rfd as the dialog owner; nothing
+    // draws or resizes through it.
+    match window.map(|w| unsafe { w.get_handle() }) {
         Some(parent) => rfd::FileDialog::new().set_parent(&parent),
         None => rfd::FileDialog::new(),
     }
@@ -378,6 +388,21 @@ fn menu_bar(root: &mut egui::Ui, editor: &mut Editor, assets: &mut AssetServer) 
                         }
                         ui.close();
                     }
+                    // A new vehicle from a reference one: every traction model
+                    // has a worked example, and starting from the nearest of
+                    // them beats filling forty fields from an empty spec.
+                    ui.menu_button(t!("menu-new-from-template"), |ui| {
+                        if let Some(spec) = templates::menu(ui) {
+                            if confirm_discard(editor) {
+                                let name = spec.name.clone();
+                                *editor = Editor::default();
+                                editor.spec = spec;
+                                editor.status =
+                                    Status::Info(t!("status-new-from-template", name = name));
+                            }
+                            ui.close();
+                        }
+                    });
                     if ui
                         .add(
                             egui::Button::new(t!("action-open"))
@@ -549,13 +574,32 @@ fn import_model(editor: &mut Editor, assets: &mut AssetServer) {
 /// The sections of the data panel, in the order they are drawn: id and the
 /// i18n key of the title. The jump bar sits above the scroll area and has to
 /// name them before the first one has been laid out.
-const SECTIONS: [(&str, &str); 5] = [
+const SECTIONS: [(&str, &str); 8] = [
+    ("meta", "group-metadata"),
     ("base", "group-base-data"),
     ("gear", "group-running-gear"),
     ("coupler", "group-coupler"),
     ("resistance", "group-resistance"),
+    ("metrics", "group-key-figures"),
     ("sounds", "group-sounds"),
+    ("checks", "group-checks"),
 ];
+
+/// Title of the check section: bare while the vehicle is clean, with the counts as
+/// soon as there is something to report — a collapsed section would otherwise be a
+/// perfect hiding place for the one error that matters.
+fn checks_title(errors: usize, warnings: usize) -> String {
+    match (errors, warnings) {
+        (0, 0) => t!("group-checks"),
+        (0, w) => t!("group-checks-warnings", warnings = w.to_string()),
+        (e, 0) => t!("group-checks-errors", errors = e.to_string()),
+        (e, w) => t!(
+            "group-checks-both",
+            errors = e.to_string(),
+            warnings = w.to_string()
+        ),
+    }
+}
 
 /// A section of the data panel that the jump bar can scroll to.
 ///
@@ -570,10 +614,10 @@ fn nav_section(
     jump: Option<&str>,
     current: &mut Option<&'static str>,
     id: &'static str,
-    key: &str,
+    title: String,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let section = editor_ui::section(ui, id, t!(key), body);
+    let section = editor_ui::section(ui, id, title, body);
     if section.header_response.rect.top() <= ui.clip_rect().top() + space::XL {
         *current = Some(id);
     }
@@ -593,6 +637,23 @@ fn data_panel(
     active: &mut Option<&'static str>,
     preview: &mut crate::preview::Preview,
 ) -> f32 {
+    // Taken before the panel borrows the spec: the check report needs the node
+    // names to spot a binding whose node the loaded model no longer has.
+    let node_names: Vec<String> = editor.nodes.iter().map(|n| n.name.clone()).collect();
+    // Cloned, not borrowed: the sections below hold `editor.spec` mutably.
+    let window = editor.window.clone();
+    // From the start of the frame, like the active-section marker: a finding that
+    // appears while a value is being dragged shows up one frame later, which no one
+    // can see. Computed once — the header counts it, the section lists it.
+    let findings = validate::check(&editor.spec, &node_names);
+    let errors = findings
+        .iter()
+        .filter(|f| f.level == validate::Level::Error)
+        .count();
+    let warnings = findings
+        .iter()
+        .filter(|f| f.level == validate::Level::Warning)
+        .count();
     let width = editor
         .settings
         .panels
@@ -659,102 +720,132 @@ fn data_panel(
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     let spec = &mut editor.spec;
-                    nav_section(ui, jump, &mut current, "base", "group-base-data", |ui| {
-                        editor_ui::form_grid("base").show(ui, |ui| {
-                            row(ui, "veh-length", |ui| {
-                                field(ui, &mut spec.length, 0.1, 1.0..=100.0, "m");
-                            });
-                            row(ui, "veh-gauge", |ui| {
-                                field(ui, &mut spec.gauge, 0.001, 0.6..=2.0, "m");
-                            });
-                            row(ui, "veh-vmax", |ui| {
-                                field(ui, &mut spec.v_max, 1.0, 0.0..=400.0, "km/h");
-                            });
-                            row(ui, "veh-mass", |ui| {
-                                field(ui, &mut spec.mass_empty, 100.0, 1_000.0..=200_000.0, "kg");
-                            });
-                            row(ui, "veh-payload", |ui| {
-                                field(ui, &mut spec.max_payload, 100.0, 0.0..=120_000.0, "kg");
-                            });
-                        });
+                    nav_section(ui, jump, &mut current, "meta", t!("group-metadata"), |ui| {
+                        meta::panel(ui, spec, &node_names, window.as_ref());
                     });
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "base",
+                        t!("group-base-data"),
+                        |ui| {
+                            editor_ui::form_grid("base").show(ui, |ui| {
+                                row(ui, "veh-length", |ui| {
+                                    field(ui, &mut spec.length, 0.1, 1.0..=100.0, "m");
+                                });
+                                row(ui, "veh-gauge", |ui| {
+                                    field(ui, &mut spec.gauge, 0.001, 0.6..=2.0, "m");
+                                });
+                                row(ui, "veh-vmax", |ui| {
+                                    field(ui, &mut spec.v_max, 1.0, 0.0..=400.0, "km/h");
+                                });
+                                row(ui, "veh-mass", |ui| {
+                                    field(
+                                        ui,
+                                        &mut spec.mass_empty,
+                                        100.0,
+                                        1_000.0..=200_000.0,
+                                        "kg",
+                                    );
+                                });
+                                row(ui, "veh-payload", |ui| {
+                                    field(ui, &mut spec.max_payload, 100.0, 0.0..=120_000.0, "kg");
+                                });
+                            });
+                        },
+                    );
 
-                    nav_section(ui, jump, &mut current, "gear", "group-running-gear", |ui| {
-                        editor_ui::form_grid("gear").show(ui, |ui| {
-                            row(ui, "veh-rotating-mass", |ui| {
-                                field(ui, &mut spec.rotating_mass_factor, 0.005, 0.0..=0.5, "");
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "gear",
+                        t!("group-running-gear"),
+                        |ui| {
+                            editor_ui::form_grid("gear").show(ui, |ui| {
+                                row(ui, "veh-rotating-mass", |ui| {
+                                    field(ui, &mut spec.rotating_mass_factor, 0.005, 0.0..=0.5, "");
+                                });
+                                // Axle count and adhesive mass live on the wheelset
+                                // block — baking owns those fields now.
+                                row(ui, "veh-axle-base", |ui| {
+                                    field(ui, &mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m");
+                                });
+                                row(ui, "veh-tilt", |ui| {
+                                    field(ui, &mut spec.tilt_angle_deg, 0.5, 0.0..=12.0, "°");
+                                });
+                                row(ui, "veh-hunting", |ui| {
+                                    // Slider plus its value box span exactly one
+                                    // field width, keeping the column's right edge.
+                                    ui.spacing_mut().slider_width = 88.0;
+                                    ui.spacing_mut().interact_size.x = 54.0;
+                                    ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
+                                });
                             });
-                            // Axle count and adhesive mass live on the wheelset
-                            // block — baking owns those fields now.
-                            row(ui, "veh-axle-base", |ui| {
-                                field(ui, &mut spec.axle_base_sum, 0.1, 0.0..=40.0, "m");
-                            });
-                            row(ui, "veh-tilt", |ui| {
-                                field(ui, &mut spec.tilt_angle_deg, 0.5, 0.0..=12.0, "°");
-                            });
-                            row(ui, "veh-hunting", |ui| {
-                                // Slider plus its value box span exactly one
-                                // field width, keeping the column's right edge.
-                                ui.spacing_mut().slider_width = 88.0;
-                                ui.spacing_mut().interact_size.x = 54.0;
-                                ui.add(egui::Slider::new(&mut spec.hunting, -1.0..=1.0));
-                            });
-                        });
-                    });
+                        },
+                    );
 
-                    nav_section(ui, jump, &mut current, "coupler", "group-coupler", |ui| {
-                        editor_ui::form_grid("coupler").show(ui, |ui| {
-                            row(ui, "cpl-type", |ui| {
-                                coupler_combo(ui, &mut spec.coupler);
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "coupler",
+                        t!("group-coupler"),
+                        |ui| {
+                            editor_ui::form_grid("coupler").show(ui, |ui| {
+                                row(ui, "cpl-type", |ui| {
+                                    coupler_combo(ui, &mut spec.coupler);
+                                });
+                                row(ui, "cpl-slack", |ui| {
+                                    field(ui, &mut spec.coupler.slack, 0.005, 0.0..=0.3, "m");
+                                });
+                                row(ui, "cpl-draw", |ui| {
+                                    field(
+                                        ui,
+                                        &mut spec.coupler.draw_stiffness,
+                                        100_000.0,
+                                        100_000.0..=100_000_000.0,
+                                        "N/m",
+                                    );
+                                });
+                                row(ui, "cpl-buffer", |ui| {
+                                    field(
+                                        ui,
+                                        &mut spec.coupler.buffer_stiffness,
+                                        100_000.0,
+                                        100_000.0..=100_000_000.0,
+                                        "N/m",
+                                    );
+                                });
+                                row(ui, "cpl-damping", |ui| {
+                                    field(
+                                        ui,
+                                        &mut spec.coupler.damping,
+                                        10_000.0,
+                                        0.0..=2_000_000.0,
+                                        "N·s/m",
+                                    );
+                                });
+                                row(ui, "cpl-breaking", |ui| {
+                                    field(
+                                        ui,
+                                        &mut spec.coupler.breaking_force,
+                                        50_000.0,
+                                        100_000.0..=5_000_000.0,
+                                        "N",
+                                    );
+                                });
                             });
-                            row(ui, "cpl-slack", |ui| {
-                                field(ui, &mut spec.coupler.slack, 0.005, 0.0..=0.3, "m");
-                            });
-                            row(ui, "cpl-draw", |ui| {
-                                field(
-                                    ui,
-                                    &mut spec.coupler.draw_stiffness,
-                                    100_000.0,
-                                    100_000.0..=100_000_000.0,
-                                    "N/m",
-                                );
-                            });
-                            row(ui, "cpl-buffer", |ui| {
-                                field(
-                                    ui,
-                                    &mut spec.coupler.buffer_stiffness,
-                                    100_000.0,
-                                    100_000.0..=100_000_000.0,
-                                    "N/m",
-                                );
-                            });
-                            row(ui, "cpl-damping", |ui| {
-                                field(
-                                    ui,
-                                    &mut spec.coupler.damping,
-                                    10_000.0,
-                                    0.0..=2_000_000.0,
-                                    "N·s/m",
-                                );
-                            });
-                            row(ui, "cpl-breaking", |ui| {
-                                field(
-                                    ui,
-                                    &mut spec.coupler.breaking_force,
-                                    50_000.0,
-                                    100_000.0..=5_000_000.0,
-                                    "N",
-                                );
-                            });
-                        });
-                    });
+                        },
+                    );
 
                     nav_section(
                         ui,
                         jump,
                         &mut current,
                         "resistance",
-                        "group-resistance",
+                        t!("group-resistance"),
                         |ui| {
                             editor_ui::form_grid("resistance").show(ui, |ui| {
                                 row(ui, "res-rolling", |ui| {
@@ -837,11 +928,33 @@ fn data_panel(
                         },
                     );
 
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "metrics",
+                        t!("group-key-figures"),
+                        |ui| {
+                            metrics::panel(ui, spec);
+                        },
+                    );
+
                     // Brake, drive, equipment and behaviour are blocks on the
                     // canvas now — see the block diagram toggle in the centre.
-                    nav_section(ui, jump, &mut current, "sounds", "group-sounds", |ui| {
+                    nav_section(ui, jump, &mut current, "sounds", t!("group-sounds"), |ui| {
                         sounds::panel(ui, spec, preview);
                     });
+
+                    nav_section(
+                        ui,
+                        jump,
+                        &mut current,
+                        "checks",
+                        checks_title(errors, warnings),
+                        |ui| {
+                            validate::panel(ui, &findings);
+                        },
+                    );
                 });
             // Above the first header nothing has reported in yet.
             *active = current.or(Some(SECTIONS[0].0));
@@ -1019,6 +1132,8 @@ fn lod_list(ui: &mut egui::Ui, editor: &mut Editor) {
 }
 
 fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
+    // Built once per frame, not once per card: the list is the same for all of them.
+    let suggestions = sim_core::cab::part_function_suggestions();
     let bound: std::collections::HashSet<&str> = editor
         .spec
         .model
@@ -1084,6 +1199,7 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         changed |= motion_combo(ui, i, &mut part.motion);
+                        changed |= function_menu(ui, &mut part.function, &suggestions);
                         changed |= ui
                             .add(
                                 egui::TextEdit::singleline(&mut part.function)
@@ -1097,6 +1213,14 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
                             .changed();
                     });
                 });
+                // A name the simulator has no value for is legal — `MODS.md` says
+                // the field is free text — but the part will never move, and that
+                // is worth saying here instead of in the running simulator.
+                if !part.function.is_empty()
+                    && let Some(reason) = sim_core::cab::part_function_error(&part.function)
+                {
+                    ui.label(egui::RichText::new(t!(reason)).small().color(colors::WARN));
+                }
                 changed |= motion_params(ui, &mut part.motion);
             });
         }
@@ -1114,6 +1238,48 @@ fn parts_list(ui: &mut egui::Ui, editor: &mut Editor) {
 /// alphabetically, most of them scenery that will never be bound. A filter is
 /// the right tool here precisely because the user already knows the name they
 /// gave the object in Blender.
+/// Offers the part functions the simulator really reads, so nobody has to guess a
+/// spelling. The field beside it stays free text — a mod may bind a name `sim-core`
+/// does not know yet, and `MODS.md` promises exactly that.
+///
+/// Fixed functions are named in the user's language; the indicator names behind
+/// `gauge:`/`lamp:`/`digit:` are identifiers, so they stay as they are written.
+fn function_menu(
+    ui: &mut egui::Ui,
+    function: &mut String,
+    suggestions: &[(String, &'static str)],
+) -> bool {
+    let mut changed = false;
+    ui.menu_button("▾", |ui| {
+        for (name, key) in suggestions.iter().filter(|(n, _)| !n.contains(':')) {
+            if ui.button(t!(key)).on_hover_text(name.as_str()).clicked() {
+                *function = name.clone();
+                changed = true;
+                ui.close();
+            }
+        }
+        for (prefix, label) in sim_core::cab::PART_FUNCTION_PREFIXES {
+            ui.menu_button(t!(label), |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (name, _) in suggestions.iter().filter(|(n, _)| n.starts_with(prefix)) {
+                        if ui
+                            .button(egui::RichText::new(name.as_str()).monospace())
+                            .clicked()
+                        {
+                            *function = name.clone();
+                            changed = true;
+                            ui.close();
+                        }
+                    }
+                });
+            });
+        }
+    })
+    .response
+    .on_hover_text(t!("part-function-pick"));
+    changed
+}
+
 fn node_list(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.add(
         egui::TextEdit::singleline(&mut editor.node_filter)

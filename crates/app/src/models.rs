@@ -47,6 +47,16 @@ pub struct GlowMesh {
     base: LinearRgba,
 }
 
+/// A node that shows one of the vehicle's loads ([`sim_core::train::LoadSpec::node`]).
+///
+/// Which one is carried is [`Vehicle::load_index`] — deterministic state out of
+/// `sim-core`, so every client hides the same heaps.
+#[derive(Component)]
+pub struct LoadNode {
+    train: usize,
+    vehicle: usize,
+}
+
 /// A node moved by the simulation.
 #[derive(Component)]
 pub struct PartNode {
@@ -59,6 +69,11 @@ pub struct PartNode {
 }
 
 /// Spawns the glTF scene of a vehicle under its view entity.
+///
+/// `file` is what the vehicle is drawn with, which is `spec.model_file(vehicle.variant)`
+/// — the variant's own model where it names one, the vehicle's otherwise. The choice is
+/// the caller's because it cannot be made here: the world is built before `SimResource`
+/// exists, so at this point nothing can read the `Vehicle`.
 pub fn spawn(
     commands: &mut Commands,
     assets: &AssetServer,
@@ -114,7 +129,7 @@ pub fn bind_nodes(
         let mut found = false;
         let mut control_nodes = Vec::new();
         let mut glow_nodes = Vec::new();
-        let (mut lods, mut parts) = (0, 0);
+        let (mut lods, mut parts, mut loads) = (0, 0, 0);
         while let Some(entity) = stack.pop() {
             if let Ok(kids) = children.get(entity) {
                 stack.extend(kids.iter());
@@ -135,6 +150,22 @@ pub fn bind_nodes(
                     Visibility::Inherited,
                 ));
                 lods += 1;
+            }
+            // A load node is switched like a `Motion::Visibility` part, only that what
+            // drives it is the load the vehicle carries — `animate_parts` does both.
+            if spec
+                .loads
+                .iter()
+                .any(|load| load.node.as_deref() == Some(name.as_str()))
+            {
+                commands.entity(entity).insert((
+                    LoadNode {
+                        train: model.train,
+                        vehicle: model.vehicle,
+                    },
+                    Visibility::Inherited,
+                ));
+                loads += 1;
             }
             if let Some(control) = controls.iter().position(|c| c.node == name.as_str()) {
                 // A control node is driven by its bound input; a `parts` entry on the
@@ -236,13 +267,14 @@ pub fn bind_nodes(
         if found {
             commands.entity(root).insert(Bound);
             info!(
-                "Model {} (train {}, vehicle {}): {lods} LOD nodes, {parts} of {} parts, {} of {} controls bound",
+                "Model {} (train {}, vehicle {}): {lods} LOD nodes, {parts} of {} parts, {} of {} controls, {loads} of {} load nodes bound",
                 description.file,
                 model.train,
                 model.vehicle,
                 description.parts.len(),
                 control_nodes.len(),
-                controls.len()
+                controls.len(),
+                spec.loads.len()
             );
         }
     }
@@ -333,10 +365,19 @@ fn part_of<'a>(sim: &'a SimResource, node: &PartNode) -> Option<(&'a Part, f32)>
     Some((part, value))
 }
 
-/// Moves the bound parts according to the simulation state.
+/// Whether a load node is on show: the node of the load the vehicle carries is, every
+/// other load node of the same vehicle is not — otherwise the coal heap and the
+/// containers stand on the wagon at once.
+fn shows_load(vehicle: &Vehicle, node: &str) -> bool {
+    vehicle.load_node() == Some(node)
+}
+
+/// Moves the bound parts according to the simulation state, and shows the load the
+/// vehicle carries.
 pub fn animate_parts(
     sim: Res<SimResource>,
     mut nodes: Query<(&PartNode, &mut Transform, &mut Visibility)>,
+    mut loads: Query<(&LoadNode, &Name, &mut Visibility), Without<PartNode>>,
 ) {
     for (node, mut transform, mut visibility) in nodes.iter_mut() {
         let Some((part, value)) = part_of(&sim, node) else {
@@ -347,6 +388,26 @@ pub fn animate_parts(
             &node.base,
             value,
             &mut transform,
+            &mut visibility,
+        );
+    }
+    // The load runs through the same switch a `Motion::Visibility` part does; only what
+    // drives it is the vehicle's load rather than a part function.
+    let mut unused = Transform::IDENTITY;
+    for (node, name, mut visibility) in loads.iter_mut() {
+        let Some(vehicle) = sim
+            .0
+            .trains
+            .get(node.train)
+            .and_then(|t| t.vehicles.get(node.vehicle))
+        else {
+            continue;
+        };
+        apply_motion(
+            &Motion::Visibility,
+            &Transform::IDENTITY,
+            f32::from(shows_load(vehicle, name.as_str())),
+            &mut unused,
             &mut visibility,
         );
     }
@@ -413,6 +474,10 @@ pub fn animate_controls(
 /// `time` is the simulation clock — lamps blink and wipers sweep with it, not
 /// with the render clock, so replays look the same. `digit:` functions return
 /// `None`; their children are switched by [`animate_digits`] instead.
+///
+/// Every fixed name below is listed in [`sim_core::cab::PART_FUNCTIONS`], which
+/// is what the vehicle editor offers and checks against — a new arm belongs
+/// there too, and `every_registered_function_has_a_value` guards the way back.
 ///
 /// ponytail: only the functions for which the simulation actually has state.
 /// Destination displays need state that `sim-core` does not model yet — they
@@ -630,5 +695,106 @@ mod tests {
         assert_eq!(digit_at(Some(0.0), 0), Some(0));
         // No indicator (LZB not guiding): the whole display stays dark.
         assert_eq!(digit_at(None, 0), None);
+    }
+
+    /// Exactly one load node is on show — the one the vehicle carries — and an empty
+    /// wagon shows none of them. Two heaps standing on the same wagon is what this
+    /// guards against.
+    ///
+    /// ponytail: no test for [`sim_core::train::VehicleSpec::model_file`] here — the
+    /// file is picked at the call site of [`spawn`] (`main.rs`), and `sim-core` already
+    /// tests the fallback itself.
+    #[test]
+    fn only_the_carried_load_node_is_visible() {
+        use sim_core::train::{LoadSpec, Train, VehicleSpec};
+        use track_model::{EdgeId, TrackPosition};
+
+        let line = content::musterbahn()
+            .compile()
+            .expect("the example line compiles");
+        let spec = VehicleSpec {
+            loads: vec![
+                LoadSpec {
+                    name: "Kohle".into(),
+                    mass: 25_000.0,
+                    node: Some("coal".into()),
+                },
+                LoadSpec {
+                    name: "Container".into(),
+                    mass: 18_000.0,
+                    node: Some("container".into()),
+                },
+            ],
+            ..VehicleSpec::default()
+        };
+        let head = TrackPosition::new(EdgeId(0), 200.0, 1);
+        let vehicle = Vehicle::new(spec, head);
+        let mut sim = sim_core::Sim::new(line.net, line.interlock, 0);
+        sim.add_train(Train::assemble(vec![vehicle], head, &sim.net));
+
+        let mut app = App::new();
+        app.insert_resource(SimResource(sim));
+        app.add_systems(Update, animate_parts);
+        let nodes: Vec<Entity> = ["coal", "container"]
+            .iter()
+            .map(|name| {
+                app.world_mut()
+                    .spawn((
+                        LoadNode {
+                            train: 0,
+                            vehicle: 0,
+                        },
+                        Name::new(*name),
+                        Visibility::Inherited,
+                    ))
+                    .id()
+            })
+            .collect();
+        let shown = |app: &App| {
+            nodes
+                .iter()
+                .filter(|e| app.world().get::<Visibility>(**e) == Some(&Visibility::Inherited))
+                .count()
+        };
+
+        app.update();
+        assert_eq!(shown(&app), 0, "an empty wagon carries no heap");
+        for (load, node) in nodes.iter().enumerate() {
+            app.world_mut().resource_mut::<SimResource>().0.trains[0].vehicles[0]
+                .set_load(Some(load));
+            app.update();
+            assert_eq!(shown(&app), 1, "load {load}");
+            assert_eq!(
+                app.world().get::<Visibility>(*node),
+                Some(&Visibility::Inherited)
+            );
+        }
+        app.world_mut().resource_mut::<SimResource>().0.trains[0].vehicles[0].set_load(None);
+        app.update();
+        assert_eq!(shown(&app), 0, "unloading takes the heap off again");
+    }
+
+    /// The registry the vehicle editor offers and [`part_value`] must not drift
+    /// apart.
+    ///
+    /// ponytail: only this direction is a test — a name handled in the match but
+    /// missing from the registry cannot be enumerated, the doc comment above
+    /// [`part_value`] is what points the next arm at the list.
+    #[test]
+    fn every_registered_function_has_a_value() {
+        use sim_core::train::VehicleSpec;
+        use track_model::{EdgeId, TrackPosition};
+
+        let vehicle = Vehicle::new(
+            VehicleSpec::default(),
+            TrackPosition::new(EdgeId(0), 0.0, 1),
+        );
+        let cab = CabInputs::default();
+        for (name, _) in sim_core::cab::PART_FUNCTIONS {
+            assert!(part_value(name, &vehicle, &cab, 0.0).is_some(), "{name}");
+        }
+        // A typo yields nothing — which in the simulator is a part that never
+        // moves, and is exactly what the editor's check is there to catch.
+        assert_eq!(part_value("gauge:tippfehler", &vehicle, &cab, 0.0), None);
     }
 }

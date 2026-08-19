@@ -195,7 +195,8 @@ pub enum BrakePosition {
 }
 
 impl BrakePosition {
-    /// Filling time of the brake cylinder (0 → 95 %) [s].
+    /// Filling time of the brake cylinder (0 → 95 %) [s] — the UIC figure, used where the
+    /// vehicle states none of its own (see [`BrakeSpec::apply_time_at_position`]).
     pub fn apply_time(self) -> f64 {
         match self {
             BrakePosition::G => 22.0,
@@ -203,7 +204,8 @@ impl BrakePosition {
         }
     }
 
-    /// Release time of the brake cylinder [s].
+    /// Release time of the brake cylinder [s], the UIC figure — see
+    /// [`BrakeSpec::release_time_at_position`].
     pub fn release_time(self) -> f64 {
         match self {
             BrakePosition::G => 50.0,
@@ -221,6 +223,17 @@ impl BrakePosition {
             BrakePosition::R if v_kmh > 60.0 => 1.35,
             _ => 1.0,
         }
+    }
+}
+
+/// The position whose braked weight sets the brake *force*.
+///
+/// G and P share one rigging and one cylinder pressure; they differ in the transition
+/// time, not in the force. So a vehicle in G brakes with whatever P brakes with.
+fn force_position(position: BrakePosition) -> BrakePosition {
+    match position {
+        BrakePosition::G => BrakePosition::P,
+        other => other,
     }
 }
 
@@ -530,19 +543,48 @@ pub struct BrakeSpec {
     /// behave like the type designation suggests.
     #[serde(default)]
     pub valve_params: Option<ValveBehaviour>,
-    /// Braked weight [t] of the fully loaded vehicle — basis of the braked weight
-    /// percentage. What is left of it when the vehicle runs empty is decided by
-    /// `load_braking`.
+    /// Braked weight [t] of the fully loaded vehicle in `default_position` — basis of the
+    /// braked weight percentage. What is left of it when the vehicle runs empty is decided
+    /// by `load_braking`; position and load are two independent factors.
     pub brake_weight: f64,
+    /// Braked weight [t] in the G position, where the vehicle states one of its own — the
+    /// anscription of a coach reads G 40 t / P 60 t / R 71 t, and only the figure of
+    /// `default_position` fits in `brake_weight`. `None` = the same as `brake_weight`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brake_weight_g: Option<f64>,
+    /// The same for the P position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brake_weight_p: Option<f64>,
+    /// The same for the R position — the "R + Mg" figure where a magnetic track brake is
+    /// fitted, because that is what the anscription counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brake_weight_r: Option<f64>,
     /// Load-proportional braking (Lastabbremsung).
     #[serde(default)]
     pub load_braking: LoadBraking,
-    /// Brake force at full brake cylinder pressure and standstill [N], fully loaded.
+    /// Brake force at full brake cylinder pressure and standstill [N], fully loaded, in
+    /// `default_position` — [`BrakeSpec::max_force_at_position`] carries it over to the
+    /// other positions.
     pub max_force: f64,
     /// Highest brake cylinder pressure [bar].
     pub max_cylinder: f64,
     /// Volume ratio brake cylinder / auxiliary reservoir (exhaustibility).
     pub cylinder_to_reservoir: f64,
+    /// Filling time of the brake cylinder (0 → 95 %) in the G position [s]. The transition
+    /// times are a datum of the vehicle and stand in its data sheet; `None` leaves the UIC
+    /// figure of [`BrakePosition::apply_time`] in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_time_g: Option<f64>,
+    /// The same for the P and R positions — the changeover handle sets the transition time
+    /// in G against P, and R keeps P's timing and differs in force instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply_time_p: Option<f64>,
+    /// Release time of the brake cylinder in the G position [s]; `None` = the UIC figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_time_g: Option<f64>,
+    /// The same for the P and R positions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_time_p: Option<f64>,
     /// Magnetic track brake fitted. It works in brake position `R` only.
     #[serde(default)]
     pub has_mg: bool,
@@ -636,10 +678,17 @@ impl BrakeSpec {
             valve: ControlValve::KeGp,
             valve_params: None,
             brake_weight: brake_weight_t,
+            brake_weight_g: None,
+            brake_weight_p: None,
+            brake_weight_r: None,
             load_braking: LoadBraking::None,
             max_force: brake_weight_t * 1000.0 * G * 0.145,
             max_cylinder: 3.8,
             cylinder_to_reservoir: 0.35,
+            apply_time_g: None,
+            apply_time_p: None,
+            release_time_g: None,
+            release_time_p: None,
             has_mg: false,
             mg_force: 0.0,
             has_direct: false,
@@ -729,6 +778,63 @@ impl BrakeSpec {
     /// Volume of the brake cylinder [l], derived from the exhaustibility ratio.
     pub fn cylinder_volume(&self) -> f64 {
         self.aux_volume * self.cylinder_to_reservoir
+    }
+
+    /// Braked weight of the position where the vehicle states one of its own [t].
+    pub fn brake_weight_override(&self, position: BrakePosition) -> Option<f64> {
+        match position {
+            BrakePosition::G => self.brake_weight_g,
+            BrakePosition::P => self.brake_weight_p,
+            BrakePosition::R => self.brake_weight_r,
+        }
+    }
+
+    /// Braked weight [t] of the fully loaded vehicle in `position` — the anscribed figure
+    /// where the vehicle carries one, `brake_weight` otherwise. What the load leaves of it
+    /// is `load_braking`'s business and multiplies on top.
+    pub fn brake_weight_at_position(&self, position: BrakePosition) -> f64 {
+        self.brake_weight_override(position)
+            .unwrap_or(self.brake_weight)
+    }
+
+    /// Brake force at full cylinder pressure and standstill in `position` [N].
+    ///
+    /// Where the position states a braked weight of its own, the force goes with it;
+    /// otherwise `max_force` stands.
+    ///
+    /// **G brakes with P's force.** The G/P changeover moves no rigging — it only slows
+    /// the cylinder down — and the lower G braked weight of the anscription is the
+    /// standardised consequence of exactly that 22 s transition, which the model already
+    /// simulates ([`BrakeSpec::apply_time_at_position`]). Scaling the force by it as well
+    /// would count the same effect twice and leave a freight train braking a third worse
+    /// than its own rating. The anscribed G figure is therefore a brake sheet datum, read
+    /// by [`BrakeSpec::brake_weight_at_position`] alone.
+    pub fn max_force_at_position(&self, position: BrakePosition) -> f64 {
+        let base = self
+            .brake_weight_override(force_position(self.default_position))
+            .unwrap_or(self.brake_weight);
+        match self.brake_weight_override(force_position(position)) {
+            Some(w) if base > 0.0 => self.max_force * w / base,
+            _ => self.max_force,
+        }
+    }
+
+    /// Filling time of the brake cylinder (0 → 95 %) in `position` [s].
+    pub fn apply_time_at_position(&self, position: BrakePosition) -> f64 {
+        match position {
+            BrakePosition::G => self.apply_time_g,
+            _ => self.apply_time_p,
+        }
+        .unwrap_or_else(|| position.apply_time())
+    }
+
+    /// Release time of the brake cylinder in `position` [s].
+    pub fn release_time_at_position(&self, position: BrakePosition) -> f64 {
+        match position {
+            BrakePosition::G => self.release_time_g,
+            _ => self.release_time_p,
+        }
+        .unwrap_or_else(|| position.release_time())
     }
 }
 
@@ -1250,14 +1356,14 @@ fn update_control_valve(
     let position = state.effective_position(spec);
     let rate = if target > state.cylinder {
         // 0 → 95 % in apply_time. A relay valve fills considerably faster.
-        let base = spec.max_cylinder / position.apply_time() * 3.0;
+        let base = spec.max_cylinder / spec.apply_time_at_position(position) * 3.0;
         if spec.pilot_controlled {
             base * 2.0
         } else {
             base
         }
     } else {
-        let base = spec.max_cylinder / position.release_time() * 3.0;
+        let base = spec.max_cylinder / spec.release_time_at_position(position) * 3.0;
         if spec.has_retainer {
             base * state.retainer.release_factor()
         } else {
@@ -1381,11 +1487,19 @@ fn brake_force(
     rigging_share: f64,
 ) -> f64 {
     let cylinder = state.applied_cylinder();
+    let position = state.effective_position(spec);
+    // The R bonus stands in for the higher brake force of the rapid position. A vehicle
+    // that carries its own braked weight for the position has stated the same thing in its
+    // own figures, and only one of the two may act.
+    let high_speed = match spec.brake_weight_override(position) {
+        Some(_) => 1.0,
+        None => position.high_speed_factor(v_kmh),
+    };
     let mut f = cylinder / spec.max_cylinder
-        * spec.max_force
+        * spec.max_force_at_position(position)
         * rigging_share
         * spec.kind.friction_factor_at(v_kmh, axle_load_t)
-        * state.effective_position(spec).high_speed_factor(v_kmh);
+        * high_speed;
     // Air supplement brake: the air brake only fills up what the dynamic brake falls short
     // of, and gets out of the way again as soon as the dynamic brake can do it alone.
     // Without it, the two are blended in the longitudinal dynamics instead.
@@ -1532,6 +1646,103 @@ mod tests {
         state.position = BrakePosition::G;
         assert_eq!(state.effective_position(&spec), BrakePosition::G);
         assert_eq!(spec.default_position, BrakePosition::P);
+    }
+
+    #[test]
+    fn a_single_braked_weight_brakes_the_same_in_every_position() {
+        let spec =
+            BrakeSpec::from_brake_weight(60.0, BrakeKind::Disc).with_valve(ControlValve::KeGpr);
+        for position in [BrakePosition::G, BrakePosition::P, BrakePosition::R] {
+            assert_eq!(spec.brake_weight_at_position(position), 60.0);
+            assert_eq!(spec.max_force_at_position(position), spec.max_force);
+            assert_eq!(spec.apply_time_at_position(position), position.apply_time());
+            assert_eq!(
+                spec.release_time_at_position(position),
+                position.release_time()
+            );
+        }
+        // And the model's own bonus for the rapid position is still the only thing that
+        // separates R from P at speed.
+        let mut state = BrakeState::new(&spec);
+        state.cylinder = spec.max_cylinder;
+        state.position = BrakePosition::P;
+        let normal = brake_force(&spec, &state, 100.0, REFERENCE_AXLE_LOAD, 1.0);
+        state.position = BrakePosition::R;
+        let rapid = brake_force(&spec, &state, 100.0, REFERENCE_AXLE_LOAD, 1.0);
+        assert!(
+            (rapid / normal - 1.35).abs() < 1e-9,
+            "{rapid:.0} / {normal:.0}"
+        );
+    }
+
+    #[test]
+    fn a_coach_brakes_by_the_anscription_of_its_position() {
+        // G 40 t / P 60 t / R 71 t, the anscription of a UIC coach.
+        let mut spec =
+            BrakeSpec::from_brake_weight(60.0, BrakeKind::Disc).with_valve(ControlValve::KeGpr);
+        spec.brake_weight_g = Some(40.0);
+        spec.brake_weight_r = Some(71.0);
+        assert_eq!(spec.brake_weight_at_position(BrakePosition::G), 40.0);
+        assert_eq!(spec.brake_weight_at_position(BrakePosition::P), 60.0);
+        assert_eq!(spec.brake_weight_at_position(BrakePosition::R), 71.0);
+        // Braked weight percentage of the 40 t coach — one per position, not one for all.
+        let percentage = |p| spec.brake_weight_at_position(p) / 40.0 * 100.0;
+        assert_eq!(percentage(BrakePosition::G).round(), 100.0);
+        assert_eq!(percentage(BrakePosition::P).round(), 150.0);
+        assert_eq!(percentage(BrakePosition::R).round(), 178.0);
+
+        // The force goes with the braked weight, and the R bonus does not come on top of
+        // the stated R figure. G is the exception: it shares P's rigging, and its lower
+        // anscription is the 22 s transition the valve already simulates — counting it
+        // here as well would brake a freight train twice for the same reason.
+        let mut state = BrakeState::new(&spec);
+        state.cylinder = spec.max_cylinder;
+        let force = |state: &BrakeState| brake_force(&spec, state, 100.0, REFERENCE_AXLE_LOAD, 1.0);
+        state.position = BrakePosition::P;
+        let normal = force(&state);
+        state.position = BrakePosition::G;
+        assert!((force(&state) / normal - 1.0).abs() < 1e-9);
+        state.position = BrakePosition::R;
+        assert!((force(&state) / normal - 71.0 / 60.0).abs() < 1e-9);
+    }
+
+    /// A wagon whose changeover handle normally stands in G still brakes in P with the
+    /// same force — the reference the ratio is taken against is the P figure, not the
+    /// default position's.
+    #[test]
+    fn a_wagon_running_in_g_brakes_in_p_with_the_same_force() {
+        let mut spec = BrakeSpec::from_brake_weight(40.0, BrakeKind::CompositeK)
+            .with_default_position(BrakePosition::G);
+        spec.brake_weight_g = Some(40.0);
+        spec.brake_weight_p = Some(60.0);
+        assert_eq!(
+            spec.max_force_at_position(BrakePosition::G),
+            spec.max_force_at_position(BrakePosition::P)
+        );
+    }
+
+    #[test]
+    fn a_stated_transition_time_beats_the_uic_figure() {
+        let mut spec = BrakeSpec::from_brake_weight(60.0, BrakeKind::Disc);
+        assert_eq!(spec.apply_time_at_position(BrakePosition::G), 22.0);
+        spec.apply_time_g = Some(30.0);
+        spec.release_time_p = Some(12.0);
+        assert_eq!(spec.apply_time_at_position(BrakePosition::G), 30.0);
+        // What the vehicle says nothing about keeps the UIC figure.
+        assert_eq!(spec.apply_time_at_position(BrakePosition::P), 4.0);
+        assert_eq!(spec.release_time_at_position(BrakePosition::G), 50.0);
+        assert_eq!(spec.release_time_at_position(BrakePosition::P), 12.0);
+
+        // And it is the time the cylinder really fills in.
+        let quick = run_valve(&spec, PIPE_NOMINAL - FULL_SERVICE_DROP, 3.0);
+        spec.apply_time_p = Some(20.0);
+        let slow = run_valve(&spec, PIPE_NOMINAL - FULL_SERVICE_DROP, 3.0);
+        assert!(
+            slow.cylinder < quick.cylinder * 0.5,
+            "{:.2} bar vs {:.2} bar",
+            slow.cylinder,
+            quick.cylinder
+        );
     }
 
     #[test]

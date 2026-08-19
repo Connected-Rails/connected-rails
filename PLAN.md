@@ -289,7 +289,12 @@ pub struct ProtectionOutput { pub action: ProtectionAction, pub speed_limit: Opt
 
 - **ETCS** L1 Limited Supervision/L2 (balises are already provided for as a trackside kind; DMI display;
   scope v2 — the architecture just must not preclude it).
-- **ZBS** (Berlin S-Bahn), **GNT/tilting technology**: v2+, same trait API.
+- **ZBS** (Berlin S-Bahn): v2+, same trait API.
+- **GNT/tilting technology**: implemented (`safety::de::gnt`) — data points as `Balise`
+  payloads, profile release only with a working tilt system, braking curve to the target,
+  forced braking, return run onto the regular profile on a tilt failure. It stands down
+  under LZB guidance and leaves the PZB magnets effective. Train data entry and the
+  function test are still open.
 
 ### 9.5a Door control (implemented)
 
@@ -400,7 +405,10 @@ with a data sheet. So there are **two programs**, each its own Bevy app:
   timetable editor, aerial imagery overlay as the template. Comes early (M3), otherwise
   there is no content.
 - **`vehicle-editor`:** base data, glTF import, levels of detail, moving parts, brake and
-  traction characteristics, later cab layout and sounds.
+  traction characteristics, cab layout and sounds, and the data a vehicle browser needs —
+  metadata, variants (livery, era, running numbers) and loads. Derived figures (braked
+  weight percentage, axle load, adhesion limit, balancing speed), the tractive effort
+  diagram and a check report over the whole file are what the numbers are read against.
 
 Both are **desktop applications, not game screens**: menu bar, docked panels, the operating
 system's own file dialogs (`rfd`), status bar. UI with `bevy_egui` — a real native toolkit

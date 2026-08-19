@@ -46,7 +46,7 @@ use content::route::LineSource;
 use i18n::t;
 use sim_core::brakes::BrakeKind;
 use sim_core::drive::TractionSpec;
-use sim_core::train::VehicleSpec;
+use sim_core::train::{VehicleSpec, VehicleVariant};
 
 use crate::mods_ui::{self, ModManager};
 use crate::settings::{self, Audio, Gameplay, Graphics};
@@ -77,6 +77,9 @@ pub struct Selection {
     pub line_ref: Option<String>,
     pub loco_id: Option<String>,
     pub scenario_id: Option<String>,
+    /// Which of the vehicle's variants it runs in — the index `Vehicle::variant` takes.
+    /// `None` = the vehicle itself, which is what a vehicle without variants is.
+    pub variant: Option<usize>,
 }
 
 /// The verbs on the title screen, in order: the key of the label, and the page it opens.
@@ -160,6 +163,10 @@ pub struct MenuState {
     hovered: Option<usize>,
     /// Set by a click observer, consumed like an Enter press.
     clicked: bool,
+    /// Which variant of the highlighted vehicle the pane is showing; ← / → dial it. A
+    /// counter rather than an index — [`variant_of`] wraps it into what the vehicle has,
+    /// so moving to a vehicle with fewer variants can never point past the end.
+    variant: usize,
     /// Labels of the line and the vehicle already picked — the step rail shows them under
     /// their step, and only the menu ever needs them as text.
     chosen: [String; 2],
@@ -799,6 +806,9 @@ fn detail_node(shown: bool) -> Node {
 pub fn menu(
     keys: Res<ButtonInput<KeyCode>>,
     fonts: Res<Fonts>,
+    // Optional so the menu can be driven without an asset plugin — the tests run it
+    // headless, and the only asset it loads is a vehicle's preview image.
+    assets: Option<Res<AssetServer>>,
     mut commands: Commands,
     mut menu: ResMut<MenuState>,
     mut selection: ResMut<Selection>,
@@ -825,8 +835,10 @@ pub fn menu(
         let last = items.len() - 1;
         if keys.just_pressed(KeyCode::ArrowDown) {
             menu.selected = selectable(&items, (menu.selected + 1) % items.len(), 1);
+            menu.variant = 0;
         } else if keys.just_pressed(KeyCode::ArrowUp) {
             menu.selected = selectable(&items, (menu.selected + last) % items.len(), -1);
+            menu.variant = 0;
         } else {
             // A shrinking list (a mod switched off) must not leave the cursor past the
             // end, and a page that opens on a heading must not leave it on one.
@@ -838,6 +850,16 @@ pub fn menu(
     let dial = i32::from(keys.just_pressed(KeyCode::ArrowRight))
         - i32::from(keys.just_pressed(KeyCode::ArrowLeft));
     let entry = items.get(menu.selected);
+
+    // ← / → on the vehicle page dial the livery of the highlighted vehicle. The same
+    // pair of keys as a setting's choice, because it is the same kind of question — one
+    // of a handful of named options.
+    if menu.page == Page::Loco && dial != 0 {
+        let variants = entry.map_or(0, |entry| variant_count(entry, &mods.0));
+        if variants > 0 {
+            menu.variant = (menu.variant as i32 + dial).rem_euclid(variants as i32) as usize;
+        }
+    }
 
     if menu.page == Page::Settings {
         // Enter reads as one step forward, so a row can be worked with the keyboard
@@ -873,6 +895,11 @@ pub fn menu(
                 go(&mut menu, Page::Loco);
             }
             Page::Loco => {
+                // The dress belongs on the `Vehicle`, where it is deterministic state
+                // like the vehicle itself — `world::build` is what has to take it
+                // over from here.
+                let variants = variant_count(entry, &mods.0);
+                selection.variant = (variants > 0).then(|| menu.variant % variants);
                 selection.loco_id = id;
                 menu.chosen[1] = label;
                 go(&mut menu, Page::Scenario);
@@ -903,21 +930,27 @@ pub fn menu(
     let page = menu.page;
     let rows = if page.is_home() { verbs } else { list };
     let items = entries(page, overlay, &mods.0, &graphics, &audio, &gameplay);
-    let print = fingerprint(page, &items, menu.selected, menu.hovered);
+    let print = fingerprint(page, &items, menu.selected, menu.hovered, menu.variant);
     if menu.drawn != Some(print) {
+        let variants = page == Page::Loco
+            && items
+                .get(menu.selected)
+                .is_some_and(|entry| variant_count(entry, &mods.0) > 0);
         show_screen(&mut commands, &menu, page);
         build_steps(&mut commands, &fonts, menu.steps, page, &menu.chosen);
         build_rows(&mut commands, &fonts, rows, &items, &menu);
         build_detail(
             &mut commands,
             &fonts,
+            assets.as_deref(),
             detail,
             list,
             page,
             items.get(menu.selected),
             &mods.0,
+            menu.variant,
         );
-        build_hints(&mut commands, &fonts, hints, page);
+        build_hints(&mut commands, &fonts, hints, page, variants);
         menu.drawn = Some(print);
     }
 
@@ -962,6 +995,7 @@ fn go(menu: &mut MenuState, page: Page) {
     menu.page = page;
     menu.selected = 0;
     menu.hovered = None;
+    menu.variant = 0;
 }
 
 /// The first selectable row from `from` in direction `dir`, wrapping. The settings page
@@ -1013,9 +1047,15 @@ fn on_action_click(click: On<Pointer<Click>>, mut menu: ResMut<MenuState>) {
 }
 
 /// Everything that is drawn, in one number — the rows are rebuilt when it changes.
-fn fingerprint(page: Page, items: &[Entry], selected: usize, hovered: Option<usize>) -> u64 {
+fn fingerprint(
+    page: Page,
+    items: &[Entry],
+    selected: usize,
+    hovered: Option<usize>,
+    variant: usize,
+) -> u64 {
     let mut hasher = DefaultHasher::new();
-    (page as u8, selected, hovered, items.len()).hash(&mut hasher);
+    (page as u8, selected, hovered, items.len(), variant).hash(&mut hasher);
     for entry in items {
         (
             &entry.label,
@@ -1591,13 +1631,18 @@ fn build_value(
 
 /// The key hints, as separate chips rather than one string padded with double spaces —
 /// those collapse the moment the face is proportional.
-fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page) {
+fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page, variants: bool) {
     commands.entity(hints).despawn_related::<Children>();
     let mut keys: Vec<(&str, &str)> = vec![("↑/↓", "menu-hint-select")];
     if page == Page::Settings {
         keys.push(("←/→", "menu-hint-change"));
         keys.push(("Enter", "menu-hint-next"));
     } else {
+        // Only where there is something to dial: a vehicle that comes in one dress
+        // would be offering a key that does nothing.
+        if variants {
+            keys.push(("←/→", "menu-hint-change"));
+        }
         keys.push((
             "Enter",
             match page {
@@ -1654,14 +1699,16 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
 fn build_detail(
     commands: &mut Commands,
     fonts: &Fonts,
+    assets: Option<&AssetServer>,
     detail: Entity,
     list: Entity,
     page: Page,
     entry: Option<&Entry>,
     runtime: &mod_runtime::ModRuntime,
+    variant: usize,
 ) {
     commands.entity(detail).despawn_related::<Children>();
-    let Some(facts) = entry.and_then(|entry| facts(page, entry, runtime)) else {
+    let Some(facts) = entry.and_then(|entry| facts(page, entry, runtime, variant)) else {
         commands.entity(detail).insert(detail_node(false));
         commands.entity(list).insert(list_node(LIST_WIDTH_WIDE));
         return;
@@ -1671,8 +1718,9 @@ fn build_detail(
         .insert((detail_node(true), BackgroundColor(PANE)));
     commands.entity(list).insert(list_node(LIST_WIDTH));
 
-    // The box the route or vehicle image goes in once there is one. Empty it still gives
-    // the pane a top edge and keeps the layout honest about what is missing.
+    // The box the route or vehicle image goes in. Without one it stays the monogram,
+    // which still gives the pane a top edge and keeps the layout honest about what is
+    // missing.
     let plate = commands
         .spawn((
             Node {
@@ -1695,6 +1743,25 @@ fn build_detail(
         text(fonts, facts.monogram, Face::Mono, 42.0, SLOT),
         ChildOf(plate),
     ));
+    // The preview picture the mod ships, over the monogram rather than instead of it: a
+    // file that is not there draws nothing at all — Bevy skips an image node whose
+    // texture never arrived — and the two letters underneath stay the picture.
+    if let (Some(assets), false) = (assets, facts.thumbnail.is_empty()) {
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            ImageNode {
+                image: assets.load(crate::models::asset_path(&facts.thumbnail)),
+                image_mode: NodeImageMode::Stretch,
+                ..default()
+            },
+            ChildOf(plate),
+        ));
+    }
 
     commands.spawn((
         text(fonts, facts.title, Face::Semibold, 18.0, TEXT),
@@ -2008,23 +2075,90 @@ fn line_speed(line: &LineSource) -> Option<f64> {
         .max_by(f64::total_cmp)
 }
 
+/// How many variants the vehicle of a row comes in — 0 for a row that is not a vehicle,
+/// and for a vehicle that comes in one dress and therefore has nothing to choose.
+fn variant_count(entry: &Entry, runtime: &mod_runtime::ModRuntime) -> usize {
+    match &entry.id {
+        Some(id) => runtime
+            .mods
+            .vehicles
+            .get(id)
+            .map_or(0, |spec| spec.variants.len()),
+        None => content::vehicles::br101().variants.len(),
+    }
+}
+
+/// The variant a counter picks out of what the vehicle has: `None` where it has none,
+/// otherwise wrapped into range, so the first one is the default and the dial never
+/// points past the end.
+fn variant_of(spec: &VehicleSpec, at: usize) -> Option<usize> {
+    (!spec.variants.is_empty()).then(|| at % spec.variants.len())
+}
+
+/// The data-sheet rows of a vehicle: what [`sim_core::train::VehicleMeta`] states, and
+/// nothing it leaves empty — a row with nothing behind it says less than no row at all,
+/// and a build year of 0 means "not stated" rather than the year zero. A variant
+/// overrides the era it is shown under.
+fn meta_rows(spec: &VehicleSpec, dress: Option<&VehicleVariant>) -> Vec<(String, String)> {
+    let meta = &spec.meta;
+    let mut rows = Vec::new();
+    if let Some(dress) = dress {
+        // Between chevrons, exactly like a setting's choice — that is what says it can
+        // be dialled, here as there.
+        rows.push((t!("menu-fact-variant"), format!("‹ {} ›", dress.name)));
+    }
+    let epoch = dress
+        .map(|d| d.epoch.as_str())
+        .filter(|epoch| !epoch.is_empty())
+        .unwrap_or(&meta.epoch);
+    let year = if meta.build_year > 0 {
+        meta.build_year.to_string()
+    } else {
+        String::new()
+    };
+    for (key, value) in [
+        ("menu-fact-class", meta.class.as_str()),
+        ("menu-fact-manufacturer", meta.manufacturer.as_str()),
+        ("menu-fact-build-year", year.as_str()),
+        ("menu-fact-epoch", epoch),
+        ("menu-fact-operator", meta.operator.as_str()),
+        ("menu-fact-country", meta.country.as_str()),
+        ("menu-fact-author", meta.author.as_str()),
+    ] {
+        if !value.is_empty() {
+            rows.push((t!(key), value.to_string()));
+        }
+    }
+    rows
+}
+
 /// Everything the detail pane shows about one row.
 struct Facts {
     title: String,
     monogram: String,
     body: String,
     rows: Vec<(String, String)>,
+    /// Preview image below `mods/`; empty leaves the monogram standing.
+    thumbnail: String,
 }
 
 /// Looks the highlighted row up in the loaded content. `None` on the pages that have no
 /// detail pane, and for the "no scenario" row, which is the absence of a choice.
-fn facts(page: Page, entry: &Entry, runtime: &mod_runtime::ModRuntime) -> Option<Facts> {
+///
+/// `variant` is the counter ← / → dial; it only means anything to a vehicle.
+fn facts(
+    page: Page,
+    entry: &Entry,
+    runtime: &mod_runtime::ModRuntime,
+    variant: usize,
+) -> Option<Facts> {
     let mods = &runtime.mods;
     let base = |rows| Facts {
         title: entry.label.clone(),
         monogram: entry.monogram.clone(),
         body: String::new(),
         rows,
+        thumbnail: String::new(),
     };
     match page {
         Page::Line => {
@@ -2075,7 +2209,12 @@ fn facts(page: Page, entry: &Entry, runtime: &mod_runtime::ModRuntime) -> Option
                     &owned
                 }
             };
-            Some(base(vec![
+            // The dress first: what the vehicle is called and looked like, then what it
+            // weighs and pulls. A variant states its own era and its own sentence where
+            // it differs from the vehicle's.
+            let dress = variant_of(spec, variant).and_then(|i| spec.variants.get(i));
+            let mut rows = meta_rows(spec, dress);
+            rows.extend([
                 (
                     t!("veh-length"),
                     t!("menu-fact-m", value = i18n::decimal(spec.length, 1)),
@@ -2093,7 +2232,15 @@ fn facts(page: Page, entry: &Entry, runtime: &mod_runtime::ModRuntime) -> Option
                 ),
                 (t!("menu-fact-drive"), t!(traction_key(spec.traction()))),
                 (t!("menu-fact-brake"), t!(friction_key(&spec.brake.kind))),
-            ]))
+            ]);
+            Some(Facts {
+                body: dress
+                    .map(|d| d.description.clone())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| spec.meta.description.clone()),
+                thumbnail: spec.meta.thumbnail.clone(),
+                ..base(rows)
+            })
         }
         Page::Scenario => {
             // The free run is the absence of a scenario, not a missing one — it gets the
@@ -2251,7 +2398,7 @@ mod tests {
     fn the_detail_pane_reads_the_content() {
         let (runtime, graphics, audio, gameplay) = loaded();
         let lines = entries(Page::Line, false, &runtime, &graphics, &audio, &gameplay);
-        let line = facts(Page::Line, &lines[0], &runtime).expect("the built-in line has facts");
+        let line = facts(Page::Line, &lines[0], &runtime, 0).expect("the built-in line has facts");
         assert!(!line.rows.is_empty());
         assert!(
             line_length(&musterbahn()) > 1000.0,
@@ -2259,7 +2406,7 @@ mod tests {
         );
 
         let locos = entries(Page::Loco, false, &runtime, &graphics, &audio, &gameplay);
-        let loco = facts(Page::Loco, &locos[0], &runtime).expect("the BR 101 has facts");
+        let loco = facts(Page::Loco, &locos[0], &runtime, 0).expect("the BR 101 has facts");
         assert_eq!(loco.rows.len(), 5);
         // Mods and settings have nothing to show beside the list.
         let settings = entries(
@@ -2270,7 +2417,7 @@ mod tests {
             &audio,
             &gameplay,
         );
-        assert!(facts(Page::Settings, &settings[1], &runtime).is_none());
+        assert!(facts(Page::Settings, &settings[1], &runtime, 0).is_none());
     }
 
     /// The whole flow without a window: the title screen opens the first step, three
@@ -2467,6 +2614,94 @@ mod tests {
             gameplay.language.is_empty()
                 || i18n::LANGUAGES.iter().any(|(c, _)| *c == gameplay.language)
         );
+    }
+
+    /// A vehicle that states nothing about itself gets no rows about itself — an empty
+    /// line in the pane says less than no line at all. A build year of 0 is "not
+    /// stated", not the year zero.
+    #[test]
+    fn only_stated_metadata_becomes_a_row() {
+        use sim_core::train::VehicleMeta;
+
+        let mut spec = VehicleSpec::default();
+        assert!(meta_rows(&spec, None).is_empty());
+
+        spec.meta = VehicleMeta {
+            class: "BR 101".into(),
+            build_year: 0,
+            ..VehicleMeta::default()
+        };
+        assert_eq!(meta_rows(&spec, None).len(), 1, "the year 0 is not a row");
+        assert_eq!(meta_rows(&spec, None)[0].1, "BR 101");
+        spec.meta.build_year = 1996;
+        let rows = meta_rows(&spec, None);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|(_, value)| value == "1996"));
+        assert!(
+            rows.iter()
+                .all(|(key, value)| !key.is_empty() && !value.is_empty())
+        );
+    }
+
+    /// The variant dial: a vehicle with variants opens on the first one, the counter
+    /// wraps into what the vehicle has, and a vehicle without variants runs as itself.
+    #[test]
+    fn the_variant_dial_wraps_and_opens_on_the_first() {
+        let mut spec = VehicleSpec::default();
+        assert_eq!(variant_of(&spec, 0), None);
+        assert_eq!(variant_of(&spec, 7), None, "nothing to point at");
+
+        spec.variants = vec![
+            VehicleVariant {
+                name: "verkehrsrot".into(),
+                ..VehicleVariant::default()
+            },
+            VehicleVariant {
+                name: "orientrot".into(),
+                epoch: "IV".into(),
+                ..VehicleVariant::default()
+            },
+        ];
+        assert_eq!(variant_of(&spec, 0), Some(0));
+        assert_eq!(variant_of(&spec, 3), Some(1));
+        // The chosen dress heads the rows and overrides the era it is shown under.
+        let rows = meta_rows(&spec, spec.variants.get(1));
+        assert_eq!(rows[0].1, "‹ orientrot ›");
+        assert!(rows.iter().any(|(_, value)| value == "IV"));
+    }
+
+    /// The plate never ends up empty: the monogram is drawn whether there is a preview
+    /// image or not, so a missing file leaves the two letters standing.
+    #[test]
+    fn a_vehicle_without_a_preview_keeps_its_monogram() {
+        let (runtime, graphics, audio, gameplay) = loaded();
+        let locos = entries(Page::Loco, false, &runtime, &graphics, &audio, &gameplay);
+        for entry in &locos {
+            let facts = facts(Page::Loco, entry, &runtime, 0).expect("a vehicle has facts");
+            assert!(!facts.monogram.is_empty(), "{}", entry.label);
+        }
+        // A vehicle that ships no image says so, rather than an empty path into `mods/`.
+        let builtin = facts(Page::Loco, &locos[0], &runtime, 0).expect("the BR 101 has facts");
+        assert!(builtin.thumbnail.is_empty());
+    }
+
+    /// Every message the vehicle pane prints has to exist — `i18n` checks that the
+    /// languages agree, this checks that the key is there at all.
+    #[test]
+    fn the_vehicle_facts_have_their_messages() {
+        for key in [
+            "menu-fact-variant",
+            "menu-fact-class",
+            "menu-fact-manufacturer",
+            "menu-fact-build-year",
+            "menu-fact-epoch",
+            "menu-fact-operator",
+            "menu-fact-country",
+            "menu-fact-author",
+            "menu-hint-change",
+        ] {
+            assert!(i18n::maybe(key).is_some(), "{key}");
+        }
     }
 
     /// A slider's fill has to sit at the same place the number says. Both ends included,

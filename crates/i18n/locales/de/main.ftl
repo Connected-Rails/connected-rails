@@ -991,44 +991,152 @@ cache-summary = { $hits } Treffer ({ $disk } von der Platte), { $stored } abgele
 cache-size = { $megabytes } MB in { $directory }
 group-errors = Fehler
 
-## Simulator-Anzeige
+## Simulator-HUD
+#
+# Die Anzeige über dem laufenden Spiel. Sie ist in Zonen aufgeteilt — die Fahrt (oben
+# links), die Systeme (oben rechts), das Fahrpult (unten Mitte), die Zugsicherung (unten
+# links) und die Vorschau (unten rechts) — dazu zwei Überlagerungen auf F5 und F6.
+# Die Beschriftungen sind bewusst kurz: sie stehen neben einem Wert in einer schmalen
+# Spalte, und eine Beschriftung, die umbricht, verschiebt den Wert.
 
-hud-speed = v = { $speed } km/h   zul. { $limit } km/h   Weg { $distance } m   { $time }
-hud-network = Server { $state }   Zug { $train }   Latenz { $latency } ms   Korrektur { $correction } cm
+# Die Fahrt, oben links.
+hud-timetable = Fahrplan
+hud-platform = Gl. { $platform }
+hud-late = +{ $minutes } min
+hud-early = −{ $minutes } min
+hud-on-time = pünktlich
+hud-free-run = Freie Fahrt
+hud-score = Wertung
+hud-scenario-passed = bestanden
+hud-scenario-failed = gescheitert
+
+# Die Systeme, oben rechts. Die Melder sind die Kürzel des Führerpults und stehen in der
+# Oberfläche in Versalien — bitte bei wenigen Buchstaben bleiben.
+hud-systems = Systeme
+hud-chip-battery = Batt
+hud-chip-pantograph = Bügel
+hud-chip-main-switch = HS
+hud-chip-compressor = Presser
+hud-chip-parking = Feder
+hud-chip-sanding = Sand
+hud-chip-doors = Türen
+hud-chip-lights = Licht
+hud-chip-slip = Schleudern
+hud-chip-hot = Heiß
+# Was der Antrieb über sich sagt — eine Beschriftung je Zeile, die drei, die zutreffen.
+hud-catenary = Fahrdraht
+hud-motor-current = Motorstrom
+hud-notch = Fahrstufe
+hud-engine = Motor
+hud-fill = Füllung
+hud-converter = Wandler
+hud-generator = Generator
+hud-boiler = Kessel
+hud-water-glass = Wasserstand
+hud-fire = Feuer
+hud-dynamic-brake = E-Bremse
+
+# Das Fahrpult, unten Mitte.
+hud-unit-kmh = km/h
+hud-permitted = zul. { $speed }
+hud-supervised = üw. { $speed }
+hud-levers = Steuerung
+hud-power = Fahrschalter
+hud-brake = Bremse
+hud-effort = Kraft
+hud-air-pipe = HL { $value }
+hud-air-reservoir = HB { $value }
+hud-air-cylinder = C { $value }
+hud-reverser = Richtung
+hud-afb = AFB
+hud-odometer = Weg
+hud-forward = Vorwärts
+hud-reverse = Rückwärts
+hud-neutral = Neutral
+hud-valve-release = Fahrt
+hud-valve-lap = Abschluss
+hud-valve-fill = Füllstoß
+hud-valve-service = Betriebsbremsung { $drop }
+hud-valve-emergency = Schnellbremsung
+
+# Die Zugsicherung, unten links. Die Lampenaufschriften selbst (1000 Hz, 500 Hz, Befehl,
+# Ü, G, Ende) sind die Beschriftung eines deutschen Führerpults und bleiben, wie sie
+# sind — wie eine Baureihenbezeichnung.
+hud-protection = Zugsicherung
+hud-v-permitted = v-Soll
+hud-v-target = v-Ziel
+hud-target-distance = Zielweg
+hud-pzb-restrictive = Restriktive Überwachung
+hud-self-test = Funktionsprüfung: { $phase }
+
+# Die Vorschau, unten rechts.
+hud-ahead = Voraus
+hud-stop-in = Halt in { $distance }
+hud-in = in { $distance }
+
+# Das Band über dem Fahrpult und die Meldespalte oben.
+hud-alert-emergency = ZWANGSBREMSUNG
+hud-alert-forced = ZWANGSBREMSUNG (BETRIEBSBREMSE)
+hud-alert-cut-off = ABSCHALTUNG DER ZUGKRAFT
+hud-alert-blocked = FAHRWEG NICHT EINGESTELLT
+hud-control = { $name }: { $value } %
+
+# Die Tastenhilfe, F5.
+hud-help = Tastatur
+hud-help-close = F5 schließt · F6 zeigt die Diagnose
+hud-help-annunciators = Was die Melder bedeuten
+hud-help-driving = Fahren
+hud-help-brakes = Bremsen
+hud-help-safety = Zugsicherung
+hud-help-vehicle = Fahrzeug
+hud-help-view = Sicht
+hud-key-throttle = Fahrschalter
+hud-key-throttle-off = Fahrschalter auf null
+hud-key-reverser = Vorwärts · neutral · rückwärts
+hud-key-range = Wendegetriebe
+hud-key-afb = AFB ein und aus
+hud-key-afb-target = AFB-Sollgeschwindigkeit
+hud-key-brake = Bremsen · lösen
+hud-key-lap = Abschluss
+hud-key-fill = Füllstoß
+hud-key-emergency = Schnellbremsung
+hud-key-direct = Zusatzbremse
+hud-key-release = Lokbremse lösen
+hud-key-parking = Feststellbremse
+hud-key-ep = EP-Bremse
+hud-key-sand = Sanden
+hud-key-sifa = Sifa
+hud-key-acknowledge = Wachsam
+hud-key-free = Frei
+hud-key-override = Befehl
+hud-key-lzb = LZB Übernahme · Ende · Prüfung
+hud-key-train-type = Zugart
+hud-key-horn = Signalhorn
+hud-key-prepare = Batterie · Bügel · Hauptschalter · Presser
+hud-key-starter = Anlasser
+hud-key-lamps = Spitzensignal · Führerraumlicht
+hud-key-dimmer = Instrumentenlicht
+hud-key-wipers = Scheibenwischer
+hud-key-doors = Freigabe links · rechts · schließen
+hud-key-cameras = Führerstand · außen · Strecke · gehen
+hud-key-look = Umsehen
+hud-key-zoom = Kameraabstand
+hud-key-walk = Gehen (F4)
+hud-key-hud = Anzeige: voll · reduziert · aus
+hud-key-overlays = Diese Übersicht · Diagnose
+hud-key-mods = Mod-Verwaltung
+hud-key-pause = Pause
+
+# Die Diagnose, F6. Maschinenausgabe — sie darf so dicht sein, wie sie will.
+hud-diagnostics = Diagnose
+hud-diag-terrain = Gelände  { $tiles } Kacheln (+{ $pending }), { $triangles } Dreiecke, { $megabytes } MB, Sicht { $view } m
+hud-diag-air = Luft     R { $auxiliary } bar   Zusatz { $direct } bar   { $air } Nl verbraucht
+hud-diag-axles = Achsen   { $slipping }/{ $axles } schleudern, schlimmste { $worst } m/s
+hud-diag-temperature = Wärme    Motoren { $motor } °C   Widerstände { $resistor } °C
+hud-diag-signals = Signale  { $aspects }
+hud-diag-network = Netz     { $state }, { $latency } ms, Korrektur { $correction } cm
 hud-network-joined = verbunden
 hud-network-connecting = verbinde …
-hud-brakes = HL { $pipe } bar   C { $cylinder } bar   R { $auxiliary } bar   HB { $main } bar   Zusatz { $direct } bar   Luft { $air } Nl
-hud-traction = Fahrschalter { $throttle }   Zugkraft { $tractive } kN   Bremskraft { $braking } kN   Bremse { $valve }
-hud-afb = AFB { $state }   Ziel { $target } km/h
-hud-electrics = Batterie { $battery }   Bügel { $pantograph } %   Hauptschalter { $switch }   Fahrdraht { $voltage } V   Federspeicher { $parking }
-hud-tap = Fahrstufe { $step }/{ $steps }   Motorstrom { $current } A   Feld { $field } %   E-Bremse { $force } kN
-hud-diesel = Motor { $rpm } 1/min   Füllung { $fill } %   Wandler { $circuit }   ν { $nu }   Retarder { $retarder } %
-hud-dynamic = E-Bremse { $force } kN
-hud-axles = Achsen { $slipping }/{ $axles } { $state }, schlimmste { $worst } m/s
-hud-axles-spinning = schleudern
-hud-axles-sliding = gleiten
-hud-generator = Generator { $voltage } V   { $current } A   Leistungsregler { $regulator } %
-hud-boiler = Kessel { $pressure } bar   Wasserstand { $glass } %   Feuer { $fire } %   Rost { $coal } kg
-hud-tender = Tender { $water } l Wasser   { $coal } kg Kohle   Abblasen { $blowing }
-hud-temperature = Motoren { $motor } °C   Widerstände { $resistor } °C
-hud-protection = Zugsicherung: { $action }   Überwachung { $limit }   LM: { $lamps }
-hud-pzb = { $variant }   Zugart { $category }{ $note }
-hud-pzb-restrictive = {"   "}restriktiv
-hud-pzb-selftest = {"   "}Funktionsprüfung: { $phase }
-hud-lzb-selftest = LZB Funktionsprüfung: { $phase } (B = quittieren)
-hud-lzb = LZB { $mode } { $block }{ $cirelke }: v-Soll { $permitted }   v-Ziel { $target }   Zielentfernung { $distance } m
-hud-signals = Signale: { $aspects }
-hud-terrain = Gelände: { $tiles } Kacheln geladen (+{ $pending } in Arbeit), { $triangles } Dreiecke, { $megabytes } MB, Sichtweite { $view } m
-hud-scenario = { $number } — { $name }
-hud-scenario-passed = Szenario bestanden
-hud-scenario-failed = Szenario gescheitert
-hud-outcome = { $result }: { $reason }
-hud-score = Wertung { $total } | Zwangsbremsungen { $forced } | { $energy } kWh
-hud-control = { $name }: { $value } %
-hud-keys-walk = WASD Gehen  Umschalt Laufen  Maus Umsehen  E Ein-/Aussteigen  Linksklick Bedienen  F1 zurück zum Sitz
-hud-keys-drive = W/S Fahrschalter  A/D Bremse  E Schnellbremsung  Q Abschluss  Z Füllen  C/V Zusatzbremse  Y Wischer  6 AFB  7/8 AFB-Ziel
-hud-keys-safety = Leertaste Sifa  Bild↓ Wachsam  Ende Frei  Entf Befehl  N/M/B LZB  U Zugart  1–4 Aufrüsten  F1–F4 Kamera  F9 Mods
-hud-keys-lights = 9 Spitzensignal  0 Führerraumlicht  ,/. Instrumentenlicht
 
 ## Hauptmenü
 #
@@ -1119,7 +1227,10 @@ set-language = Sprache
 set-language-hint = Wirkt sofort, im Menü wie im Führerstand.
 set-language-system = System
 set-hud = HUD
-set-hud-hint = Die Anzeige von Geschwindigkeit, Bremsen und Zugsicherung während der Fahrt.
+set-hud-hint = Voll, oder reduziert auf die Instrumente und die Zugsicherung — F7 geht während der Fahrt durch die drei Stufen.
+set-hud-full = Voll
+set-hud-reduced = Reduziert
+set-hud-off = Aus
 set-look-speed = Umsehgeschwindigkeit
 set-look-speed-hint = Wie weit sich der Blick dreht, während die rechte Maustaste gehalten wird.
 set-reset = Auf Standard zurücksetzen

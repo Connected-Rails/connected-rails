@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-19 · `cargo test --workspace`: **520 tests green** · clippy and fmt clean.
+As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -832,6 +832,61 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   built-in ASCII subset of the same face, which left every umlaut and arrow as a box. The
   menu asks for the two Fira Sans faces by handle on top of that, for everything that is a
   sentence rather than a measurement.
+- **The in-game display is a laid-out HUD with drawn instruments** (`crates/app/src/hud.rs`,
+  `glyphs.rs`). Everything on it is either **hardware** — the instrument panel at the
+  bottom and the lamp housing beside it, a lighter surface with a lit top edge and a shadow
+  under it — or **overlay**: type on the world under one wash across the width of the
+  screen, no frame at all. Bottom centre is the **desk**: a round speedometer whose scale
+  is drawn for the vehicle's maximum speed, with the line's permitted speed as an amber
+  marker on the rim and the supervised speed as a red one over it; the **Doppelmanometer**
+  carrying brake pipe and main reservoir on one face, pale needle and red needle as in the
+  cab; the brake cylinder on its own shorter scale; and beside them the levers (power
+  controller, brake valve, effort, reverser, AFB, distance). Bottom left the **train
+  protection** as round lamps — 1000 Hz amber, 500 Hz and Befehl red, the train category,
+  Sifa, and the LZB row with the MFA's three figures — where glass and legend light
+  together in the lamp's own colour. Bottom right the **look-ahead**, signed the way the
+  line signs it: the triangle of an Lf 7 board with the speed on it, or the disc of Hp 0.
+  Top left the **run**: clock, a punctuality chip, the service, and the timetable as a
+  **route ribbon** — the stops in order down a rail, the one behind dimmed, the next one
+  the only line set large, and a wedge between them marking where the train stands with
+  the distance to the next stop beside it. Punctuality carries the delay the train left
+  the last stop with and adds however long the next scheduled arrival has been and gone; a
+  train that has not reached a stop yet is never early, which is what stopped every run
+  from opening seven minutes ahead of a stop it had not moved towards. Top right ten
+  **annunciators** of the desk as pictograms plus three rows the drive labels itself, and
+  the top centre free for scenario messages and the banner that says the protection has
+  taken the train over.
+- **The HUD's graphics are drawn rather than fetched** (`crates/app/src/glyphs.rs`): a
+  small signed-distance rasteriser (segment, circle, rounded box, triangle; coverage over
+  one texel is the anti-aliasing) and about thirty lines of geometry produce the dial
+  faces, the needles, the rim markers, the Lf 7 board, the Hp 0 disc and the ten
+  pictograms into `Image`s when the run starts. Same rule as the generated ground textures
+  and the synthesised sounds: no asset directory, no icon set, no third-party licence to
+  carry — and a pantograph that should read better at 20 px is a coordinate in that file.
+  Everything comes out white on transparent and is tinted where it is used, so one drawing
+  serves a lamp that is lit and one that is dark.
+- **The display has three steps on F7** (`settings::HudMode`): full, reduced, off, and
+  round again. Reduced keeps what the train is driven by — the desk and the protection
+  lamps — plus anything that interrupts (the banner, scenario messages), and drops what it
+  is planned by: the run, the systems and the look-ahead. It is a setting like any other,
+  so the step survives the run; `--hud <step>` sets it for a screenshot through a resource
+  of its own rather than through the setting — the settings file is written on exit whether
+  anything changed or not, so an override put into the setting would be left behind in the
+  player's preferences. A
+  settings file from before this was three steps carries `hud = true`, which the loader
+  cannot read into the enum and therefore leaves at `Full`.
+- **The display is refilled in place, never respawned.** A figure carries `Readout`, a bar
+  `Gauge`, a pointer `Needle` (a rotation of the whole square, so the spindle is the middle
+  of the instrument by construction), a lamp `Lamp`, an annunciator `Chip` and a
+  collapsible part `Block`; one loop per kind fills them from a `Frame` that reads the
+  simulation once. The eight queries live in one `#[derive(SystemParam)]` bundle — a Bevy
+  system takes sixteen parameters at most, and one system is what lets them share a single
+  look-ahead scan. Nothing that does not apply is drawn: a block with nothing to say
+  collapses instead of printing zeroes. What a driver has no use for — terrain, air detail,
+  axles, temperatures, signals, network — moved to a diagnostics overlay on **F6**, and the
+  key bindings to a sheet on **F5** that also says what the ten annunciators mean;
+  `--overlays` opens both for a screenshot. Palette and the two faces are shared with the
+  menu through `crates/app/src/theme.rs`.
 - **A composed line runs one script** — the composition's, or the single module script
   found; further module scripts are dropped with a note. Running every module's hook
   side by side needs a script list in the runtime, nothing in the format.

@@ -580,7 +580,6 @@ disp-size = Auflösung
 disp-size-hint = px — Breite × Höhe der gerenderten Textur
 disp-html = HTML-Datei
 disp-html-hint = Pfad unterhalb von mods/ — der Bildschirm wird aus dieser HTML/CSS/JS-Seite gezeichnet statt aus Widgets oder dem Skript-Hook
-disp-widgets = { $count } Widgets — werden in der Fahrzeugdatei gepflegt
 
 ## Signaleditor
 ##
@@ -1743,3 +1742,259 @@ drawer-signal-types = Signaltypen
 drawer-signal-models = Signalmodelle
 drawer-track-types = Gleisarten
 action-content-drawer = Inhalte-Schublade (Strg+Leertaste)
+
+## Fahrzeugeditor: neue Abschnitte der Datenspalte und Vorlagen
+
+group-metadata = Beschreibung
+group-key-figures = Kennzahlen
+group-checks = Prüfungen
+menu-new-from-template = Neu aus Vorlage
+status-new-from-template = Ausgehend von { $name }
+
+## Fahrzeugeditor: Bremsgewicht und Übergangszeiten je Bremsstellung
+
+brk-weight-g = Bremsgewicht G
+brk-weight-g-hint = t in Stellung G — aus der Anschrift, beladenes Fahrzeug; 0 = wie das Bremsgewicht darüber
+brk-weight-p = Bremsgewicht P
+brk-weight-p-hint = t in Stellung P — aus der Anschrift, beladenes Fahrzeug; 0 = wie das Bremsgewicht darüber
+brk-weight-r = Bremsgewicht R
+brk-weight-r-hint = t in Stellung R — bei Magnetschienenbremse der angeschriebene Wert „R + Mg“; 0 = wie das Bremsgewicht darüber
+brk-apply-time-g = Ansprechzeit G
+brk-apply-time-g-hint = s, in denen der Bremszylinder in Stellung G auf 95 % kommt; 0 = UIC-Richtwert 22 s
+brk-apply-time-p = Ansprechzeit P/R
+brk-apply-time-p-hint = s, in denen der Bremszylinder in den Stellungen P und R auf 95 % kommt; 0 = UIC-Richtwert 4 s
+brk-release-time-g = Lösezeit G
+brk-release-time-g-hint = s, in denen sich der Bremszylinder in Stellung G leert; 0 = UIC-Richtwert 50 s
+brk-release-time-p = Lösezeit P/R
+brk-release-time-p-hint = s, in denen sich der Bremszylinder in den Stellungen P und R leert; 0 = UIC-Richtwert 17 s
+
+## Fahrzeugeditor: Verzeichnis der Teilfunktionen
+
+partfn-pantograph = Stromabnehmer
+partfn-door-left = Tür links
+partfn-door-right = Tür rechts
+partfn-wiper = Scheibenwischer
+partfn-gauge-speed = Geschwindigkeitsmesser
+partfn-gauge-brake-pipe = Manometer Hauptluftleitung
+partfn-gauge-cylinder = Manometer Bremszylinder
+partfn-gauge-main-reservoir = Manometer Hauptluftbehälter
+partfn-gauge-tractive-effort = Zugkraftmesser
+partfn-switch-throttle = Stellung des Fahrschalters
+partfn-switch-reverser = Stellung des Richtungsschalters
+partfn-switch-direct-brake = Stellung der Zusatzbremse
+partfn-switch-cab-light = Führerstandsbeleuchtung
+partfn-switch-instrument-light = Instrumentenbeleuchtung
+partfn-lamp-main-switch = Leuchtmelder Hauptschalter
+partfn-lamp-sanding = Leuchtmelder Sanden
+partfn-prefix-gauge = Zeiger eines Melders
+partfn-prefix-lamp = Leuchtmelder
+partfn-prefix-digit = Ziffer einer Zifferanzeige
+partfn-unknown = Der Simulator kennt keine Funktion dieses Namens — das Teil bleibt in Ruhelage
+partfn-unknown-indicator = Kein Zugsicherungssystem veröffentlicht einen Melder dieses Namens
+partfn-digit-needs-place = Eine Ziffer braucht ihre Dezimalstelle: digit:Melder:Stelle
+
+## Fahrzeugeditor: Neu aus Vorlage
+
+tpl-group-powered = Triebfahrzeuge
+tpl-group-hauled = Wagen
+tpl-name = { $base } (Kopie)
+tpl-br101-hint = Drehstromantrieb mit Umrichter und Nutzbremse, Scheibenbremse in Stellung R, PZB 90 und LZB an Bord — die moderne Streckenlok.
+tpl-br110-hint = Trafo mit Schaltwerk auf Reihenschlussmotoren, keine E-Bremse, Klotzbremse in Stellung P, nur Indusi und Sifa.
+tpl-br218-hint = Dieselhydraulisch: drehzahlgeregelter Motor und zwei Wandler, Klotzbremse in Stellung P, PZB 90 und Sifa.
+tpl-br232-hint = Dieselelektrisch: Motor, Generator und Leistungsregler auf sechs Gleichstrommotoren, Klotzbremse in Stellung P, PZB 90 und Sifa.
+tpl-br52-hint = Dampf: Feuer, Kessel und Zylinder als ein Kreislauf, Klotzbremse in Stellung G, keine Zugsicherung.
+tpl-railcar-hint = Dieseltriebwagen mit zwei Motoren, hydrodynamischer Bremse im Getriebe, Scheiben- und Magnetschienenbremse, PZB 90 und Türautomatik.
+tpl-coach-hint = Reisezugwagen ohne Antrieb, KE-GPR-Scheibenbremse in Stellung P, Türen, aber keine eigene Zugsicherung.
+tpl-eaos-hint = Offener Güterwagen ohne Antrieb, Klotzbremse in Stellung G mit Umstellung leer/beladen, keine Zugsicherung.
+tpl-eaos-k-hint = Derselbe Wagen mit K-Ventil: abstufbar bremsend, aber einlösig — vor dem nächsten kräftigen Bremsen muss er erst wieder aufgefüllt werden.
+
+## Fahrzeugeditor: Display-Widgets
+##
+## Der code-freie Inhalt eines Bildschirms: Beschriftungen, Werte und Balken in
+## Texturpixeln, in Listenreihenfolge gezeichnet — ein späteres Widget deckt ein
+## früheres ab. Die Vorschau zeigt das Layout, nicht die Anzeigewerte; die sind
+## Simulationszustand.
+
+disp-widget-list = Widgets
+disp-widgets-empty = keine Widgets — der Bildschirm bleibt schwarz, solange ihn nicht das Fahrzeugskript zeichnet
+disp-widget-count = { $count } Widgets
+disp-html-overrides = die HTML-Seite zeichnet diesen Bildschirm allein — eine daneben gepflegte Widget-Liste erreicht die Textur nie
+disp-preview-note = Layout-Vorschau, die Werte sind Platzhalter — ein Widget mit der Maus ziehen setzt es
+action-add-widget = Widget hinzufügen
+action-add-widget-hint = ein Element des code-freien Bildschirminhalts — Beschriftung, Wert oder Balken
+action-widget-up = einen Platz nach vorn — ein früheres Widget wird von den späteren überdeckt
+action-widget-down = einen Platz nach hinten — ein späteres Widget liegt obenauf
+disp-widget-kind = Art
+disp-widget-kind-hint = der Wechsel behält Position, Farbe und Quelle
+disp-widget-label = Beschriftung
+disp-widget-value = Wert
+disp-widget-bar = Balken
+disp-widget-untitled = (ohne Text)
+disp-widget-pos = Position
+disp-widget-pos-hint = px von der linken oberen Ecke der Textur
+disp-widget-text = Text
+disp-widget-size = Schriftgröße
+disp-widget-size-hint = px — Höhe der Zeichen auf der Textur
+disp-widget-box = Balkengröße
+disp-widget-box-hint = px — Breite × Höhe des vollen Balkens
+disp-widget-source = Quelle
+disp-widget-source-hint = die Größe, der Wert oder Balken folgen
+disp-source-indicator = Anzeiger …
+disp-widget-indicator = Anzeiger
+disp-widget-indicator-hint = benannter Anzeigewert der Zugbeeinflussung (mfa_v_soll, mfa_zielentfernung); 0, solange er fehlt
+disp-widget-indicator-placeholder = mfa_v_soll
+disp-widget-decimals = Nachkommastellen
+disp-widget-unit = Einheit
+disp-widget-unit-hint = wird mit Leerzeichen hinter die Zahl geschrieben; leer lässt sie weg
+disp-widget-scale = Skalierung
+disp-widget-scale-hint = der Wert wird vor der Formatierung damit multipliziert — 3,6 macht aus m/s km/h
+disp-widget-max = Vollausschlag
+disp-widget-max-hint = der Wert, bei dem der Balken voll ist
+disp-widget-color = Farbe
+disp-widget-color-hint = lineares RGBA von Text oder Balken
+
+## Fahrzeugeditor: Metadaten, Varianten und Ladegut
+
+meta-class = Baureihe
+meta-class-hint = Baureihe oder Gattung, wie sie angeschrieben ist: BR 101, Bmz 236
+meta-manufacturer = Hersteller
+meta-manufacturer-hint = Wer das Fahrzeug gebaut hat — Adtranz, Siemens, MBB
+meta-year = Baujahr
+meta-year-hint = Jahr der Ablieferung; wo die Quelle nichts sagt, bleibt das Feld leer
+meta-year-unset = keine Angabe
+meta-epoch = Epoche
+meta-epoch-hint = Freier Text, und er darf zwei umfassen: V, IV–VI
+meta-country = Land
+meta-country-hint = Wo das Fahrzeug fährt. Die Liste führt die Länder, für die der Simulator Signale und Zugsicherung hat; alles andere kommt als ISO-3166-1-alpha-2-Code in das Feld daneben
+meta-country-unset = keine Angabe
+meta-country-other = Code
+meta-operator = Betreiber
+meta-operator-hint = Die Bahn, für die das Fahrzeug fährt: DB Fernverkehr, ÖBB
+meta-author = Autor
+meta-author-hint = Wer diese Datei gebaut hat, nicht wer das Fahrzeug gebaut hat
+meta-thumbnail = Vorschaubild
+meta-thumbnail-hint = Bild, mit dem der Fahrzeugbrowser das Fahrzeug listet. Es muss wie das Modell unterhalb von mods/ liegen
+meta-thumbnail-placeholder = mod/assets/…
+meta-thumbnail-pick = Bild unterhalb von mods/ auswählen
+meta-description = Beschreibung
+meta-description-placeholder = Was der Fahrzeugbrowser zu diesem Fahrzeug sagt
+filter-image = Bild
+
+var-heading = Varianten
+var-empty = Keine Varianten — das Fahrzeug fährt in einer Ausführung, ohne Betriebsnummer
+action-add-variant = Variante hinzufügen
+action-add-variant-hint = eine Lackierung, eine Nummernreihe, eine Epoche — nur Aussehen, nie Physik
+var-name-placeholder = Name der Variante
+var-model = Modell
+var-model-hint = glTF-Datei, mit der diese Variante gezeichnet wird; leer = das Modell des Fahrzeugs
+var-model-placeholder = leer = Basismodell
+var-model-none = Kein Modell — weder die Variante noch das Fahrzeug nennt eines
+var-model-effective = Gezeichnet als { $file }
+var-epoch = Epoche
+var-epoch-hint = Leer = die Epoche des Fahrzeugs
+var-numbers = Betriebsnummern
+var-numbers-hint = Eine je Zeile. Der Zugbildner zieht eine davon, bestimmt durch den Startwert des Szenarios — so sieht jeder Spieler dieselbe Nummer am selben Fahrzeug
+var-numbers-placeholder = 101 001-6
+var-description = Beschreibung
+var-description-placeholder = Leer = die Beschreibung des Fahrzeugs
+
+load-heading = Ladegut
+load-empty = Kein Ladegut — das Fahrzeug fährt leer
+action-add-load = Ladegut hinzufügen
+action-add-load-hint = Gut, seine Masse und der Modellknoten, der es zeigt
+load-name-placeholder = Name des Guts
+load-mass = Masse
+load-mass-hint = kg Ladegut, zusätzlich zur Eigenmasse
+load-node = Modellknoten
+load-node-hint = glTF-Knoten, der bei dieser Ladung sichtbar wird — ein Kohlehaufen, ein Containerstapel. Leer = die Ladung ist nicht zu sehen
+load-node-placeholder = leer = unsichtbar
+load-total = Gesamtmasse { $mass } t
+load-capped = Schwerer als die zulässige Zuladung — das Fahrzeug trägt davon { $max } t
+
+## Vehicle editor: key figures and the tractive effort diagram
+
+key-mass = Masse
+key-mass-hint = Eigenmasse, hinter dem Pfeil die Masse mit der vollen Zuladung
+key-axle-load = Radsatzlast
+key-axle-load-hint = Gesamtmasse durch die Zahl der Radsätze. Streckenklasse D trägt 22,5 t, Klasse C 20 t, Klasse B 18 t
+key-axle-load-warn = Radsatzlast { $load } t liegt über den { $limit } t der Streckenklasse D — das Fahrzeug ist auf Strecken beschränkt, die sie tragen
+key-brake-percentage = Bremshundertstel
+key-brake-percentage-hint = Bremsgewicht bezogen auf die Masse. Die Zahl, in der ein Bremszettel geschrieben ist, und die erste Stelle, an der ein vertipptes Bremsgewicht auffällt
+key-brake-percentage-g = … in Stellung G
+key-brake-percentage-p = … in Stellung P
+key-brake-percentage-r = … in Stellung R
+key-adhesive-mass = Reibungsmasse
+key-adhesive-mass-hint = Masse auf den angetriebenen Radsätzen — davon muss die Zugkraft getragen werden
+key-adhesion-limit = Haftungsgrenze
+key-adhesion-limit-hint = Zugkraft, die die trockene Schiene im Stand trägt, nach Curtius/Kniffler. Darüber schleudern die Räder
+key-starting-effort = Anfahrzugkraft
+key-starting-effort-hint = Zugkraft im Stand, in der stärksten Antriebsart
+key-power-weight = Leistungsgewicht
+key-power-weight-hint = Höchste Leistung am Rad bezogen auf die Masse — wie zügig das Fahrzeug beschleunigt, unabhängig von seiner Größe
+key-balancing-speed = Beharrungsgeschwindigkeit
+key-balancing-speed-hint = Wo die Zugkraft auf den Fahrwiderstand gefallen ist: was das Fahrzeug in der Ebene aus sich heraus fährt
+key-above-v-max = über v max
+key-slip-warn = Anfahrzugkraft { $force } kN liegt über den { $limit } kN, die die Reibungsmasse trägt — das Fahrzeug schleudert bei jedem Anfahren
+plot-tractive-effort = Zugkraft (km/h → N)
+plot-resistance = Fahrwiderstand
+plot-dynamic-brake = Dynamische Bremse
+plot-adhesion-limit = Haftungsgrenze
+
+## Fahrzeugeditor: Auswahl der Teilfunktion
+
+part-function-pick = Eine Funktion wählen, die der Simulator ausliest
+
+## Vehicle editor: check report
+## Findings of the file-wide check next to the data panel. Every one of them names
+## what to do, not only what is wrong.
+
+check-length = Länge über Puffer ist 0 — trag sie in Metern ein, sonst steht das nächste Fahrzeug des Zuges in diesem drin
+check-mass = Eigenmasse ist 0 — trag sie in Kilogramm ein; ohne sie hat das Fahrzeug weder Trägheit noch Gewicht auf der Schiene
+check-gauge = Spurweite ist 0 — trag sie in Metern ein (1,435 für Normalspur), sonst passt das Fahrzeug auf keine Strecke
+check-axles = Keine Achszahl — die Bremse rechnet mit der Referenzachslast statt mit der dieses Fahrzeugs, und keine Zugliste stimmt. Trag die Zahl der Achsen ein
+check-rotating-mass = Zuschlag für rotierende Massen { $value } liegt außerhalb von 0 … 0,5 — ein Wagen hat etwa 0,05, ein Triebfahrzeug etwa 0,25
+check-load-over-payload = Ladung „{ $load }“ wiegt { $mass } t und damit mehr als die zulässige Zuladung von { $max } t — das Fahrzeug trägt nur die Zuladung. Erhöhe sie, oder mach die Ladung leichter
+check-doors = Fahrgasttüren, aber keine Türsteuerung — ein Triebfahrzeug gibt seine Türen selbst frei, so öffnet sie nie jemand. Wähle eine Türsteuerung
+check-no-brake-weight = Kein Bremsgewicht — das Fahrzeug wird ungebremst mitgeschleppt. Trag den angeschriebenen Wert in Tonnen ein
+check-no-brake-force = Keine Bremskraft — der Zylinder drückt nichts ans Rad. Trag die Kraft der voll angelegten Bremse in Newton ein
+check-brake-percentage = Die Bremshundertstel ergeben { $value } % — prüfe das Bremsgewicht von { $weight } t gegen die Eigenmasse; ein europäischer Bremszettel bleibt zwischen 30 und 250 %
+check-load-braking = Voll beladen erreicht das Fahrzeug bei { $payload } t Zuladung nur noch { $value } % Bremshundertstel — das Bremsgewicht folgt der Last nicht. Bau ein Wiegeventil ein, oder eine Umstellvorrichtung Leer/Beladen
+check-drive-no-adhesion = Das Fahrzeug hat einen Antrieb, aber keine Treibachse bringt seine Kraft auf die Schiene — es fährt nicht an. Trag den Anteil der Masse auf Treibachsen ein, oder markiere Achsen im Schaltbild als angetrieben
+check-adhesion-no-drive = Gewicht auf Treibachsen, aber keine Antriebskette — der Wert bewirkt nichts. Setz den Reibungsmassenanteil auf 0, oder ergänze einen Antrieb
+check-no-v-max = Keine Höchstgeschwindigkeit angegeben — Tacho und AFB fallen auf 160 km/h zurück. Trag die Grenze des Laufwerks ein
+check-drive-over-v-max = Der Antrieb zieht bis { $drive } km/h und damit über die Laufwerksgrenze von { $vehicle } km/h hinaus — dort bremst das Fahrzeug nichts ein. Erhöhe die Höchstgeschwindigkeit, oder begrenze den Antrieb
+check-tractive-effort = Die Anfahrzugkraft von { $force } kN liegt über dem, was eine trockene Schiene hält ({ $limit } kN) — das Fahrzeug schleudert, statt anzufahren. Verringere die Kraft, oder bring mehr Gewicht auf die Treibachsen
+check-model-no-file = Das Modell nennt keine glTF-Datei — trag die Datei unterhalb von mods/ ein, oder nimm das Modell heraus
+check-part-node = Bewegtes Teil an „{ $node }“: Das Modell hat keinen Knoten dieses Namens — das Teil bewegt sich nie. Korrigiere den Namen, oder nimm das Teil heraus
+check-part-function = Bewegtes Teil an „{ $node }“: { $reason }. Das Teil bleibt stehen; wähle eine Funktion, die der Simulator auswertet — es sei denn, ein eigener Mod liest diese hier
+check-control-node = Führerstandsbedienung an „{ $node }“: Das Modell hat keinen Knoten dieses Namens — die Bedienung lässt sich nicht anfassen. Korrigiere den Namen
+check-display-node = Anzeige „{ $name }“ an „{ $node }“: Das Modell hat keinen Knoten dieses Namens — der Bildschirm bleibt dunkel. Korrigiere den Namen
+check-load-node = Ladung „{ $load }“ zeigt „{ $node }“: Das Modell hat keinen Knoten dieses Namens — die Ladung bleibt unsichtbar. Korrigiere den Namen, oder lass den Knoten leer
+check-node-twice = Knoten „{ $node }“ ist mehrfach belegt — nur die erste Bindung wirkt, die übrigen fallen weg. Gib jedem Teil einen eigenen Knoten
+check-lod-duplicate = Detailstufe { $level } ist zweimal aufgeführt — eine Sichtweite je Stufe
+check-lod-order = Die Sichtweite von Stufe { $level } ist nicht größer als die der Stufe davor — führe die Stufen mit steigender Weite auf, die gröbste zuletzt
+check-lod-no-nodes = Detailstufe { $level } ist aufgeführt, aber kein Knoten heißt _LOD{ $level } — die Stufe zeichnet nichts. Nimm sie heraus, oder benenne die Knoten um
+check-lod-missing = Das Modell bringt _LOD-Knoten mit, aber das Fahrzeug führt keine Stufen auf — alle Stufen zeichnen gleichzeitig übereinander. Übernimm die Stufen aus der Datei
+
+## GNT — Geschwindigkeitsüberwachung Neigetechnik
+
+blk-gnt = GNT
+blk-gnt-hint = Geschwindigkeitsüberwachung Neigetechnik — gibt im GNT-Bereich die höheren Bogengeschwindigkeiten eines Neigezuges frei. Setzt einen Neigewinkel über null am Fahrzeug voraus
+bake-gnt-without-tilt = GNT an einem Fahrzeug ohne Neigetechnik — Neigewinkel setzen, sonst entfällt die Ausrüstung
+
+## Hauptmenü: das Datenblatt des Fahrzeugs in der Detailspalte
+
+menu-fact-variant = Variante
+menu-fact-class = Baureihe
+menu-fact-manufacturer = Hersteller
+menu-fact-build-year = Baujahr
+menu-fact-epoch = Epoche
+menu-fact-operator = Betreiber
+menu-fact-country = Land
+menu-fact-author = Autor
+
+## Fahrzeugeditor: Überschrift des Prüfabschnitts
+
+group-checks-errors = Prüfungen — { $errors } Fehler
+group-checks-warnings = Prüfungen — { $warnings } Warnungen
+group-checks-both = Prüfungen — { $errors } Fehler, { $warnings } Warnungen

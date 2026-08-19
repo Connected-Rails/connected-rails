@@ -82,6 +82,7 @@ pub fn br101() -> VehicleSpec {
             lzb: true,
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::O,
+            gnt: false,
         },
         // AFB-capable lever — under LZB guidance the loco runs the braking curve itself.
         afb: true,
@@ -97,7 +98,7 @@ pub fn br101() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -162,6 +163,7 @@ pub fn br110() -> VehicleSpec {
             lzb: false,
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::O,
+            gnt: false,
         },
         // The tap-changer loco predates the AFB.
         afb: false,
@@ -176,7 +178,7 @@ pub fn br110() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -288,6 +290,7 @@ pub fn br218() -> VehicleSpec {
             lzb: false,
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::M,
+            gnt: false,
         },
         afb: false,
         doors: DoorSystem::Tb0,
@@ -301,7 +304,7 @@ pub fn br218() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -405,6 +408,7 @@ pub fn br232() -> VehicleSpec {
             lzb: false,
             sifa: Some(SifaKind::TimeTime),
             train_type: TrainType::M,
+            gnt: false,
         },
         afb: false,
         doors: DoorSystem::Tb0,
@@ -416,7 +420,7 @@ pub fn br232() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -469,7 +473,7 @@ pub fn br52() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -518,7 +522,7 @@ pub fn passenger_coach() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -571,7 +575,7 @@ pub fn freight_wagon() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -699,6 +703,7 @@ pub fn railcar() -> VehicleSpec {
             lzb: false,
             sifa: Some(SifaKind::TimeDistance),
             train_type: TrainType::M,
+            gnt: false,
         },
         // Modern railcar: the target speed controller is part of the drive electronics.
         afb: true,
@@ -713,7 +718,7 @@ pub fn railcar() -> VehicleSpec {
         signal: Default::default(),
         supply: Default::default(),
         sand_rate: 4.0,
-        running_gear: Vec::new(),
+        ..Default::default()
     }
 }
 

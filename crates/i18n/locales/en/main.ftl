@@ -580,7 +580,6 @@ disp-size = Resolution
 disp-size-hint = px — width × height of the rendered texture
 disp-html = HTML file
 disp-html-hint = path below mods/ — the screen is drawn from this HTML/CSS/JS page instead of widgets or the script hook
-disp-widgets = { $count } widgets — edited in the vehicle file
 
 ## Signal editor
 ##
@@ -1742,3 +1741,258 @@ drawer-signal-types = Signal types
 drawer-signal-models = Signal models
 drawer-track-types = Track types
 action-content-drawer = Content drawer (Ctrl+Space)
+
+## Vehicle editor: new data panel sections and templates
+
+group-metadata = Description
+group-key-figures = Key figures
+group-checks = Checks
+menu-new-from-template = New from template
+status-new-from-template = Started from { $name }
+
+## Vehicle editor: braked weight and transition times per brake position
+
+brk-weight-g = Braked weight G
+brk-weight-g-hint = t in the G position — from the anscription, loaded vehicle; 0 = the same as the braked weight above
+brk-weight-p = Braked weight P
+brk-weight-p-hint = t in the P position — from the anscription, loaded vehicle; 0 = the same as the braked weight above
+brk-weight-r = Braked weight R
+brk-weight-r-hint = t in the R position — the anscribed "R + Mg" figure where a magnetic track brake is fitted; 0 = the same as the braked weight above
+brk-apply-time-g = Application time G
+brk-apply-time-g-hint = s the brake cylinder takes to 95 % in the G position; 0 = the UIC figure of 22 s
+brk-apply-time-p = Application time P/R
+brk-apply-time-p-hint = s the brake cylinder takes to 95 % in the P and R positions; 0 = the UIC figure of 4 s
+brk-release-time-g = Release time G
+brk-release-time-g-hint = s the brake cylinder takes to empty in the G position; 0 = the UIC figure of 50 s
+brk-release-time-p = Release time P/R
+brk-release-time-p-hint = s the brake cylinder takes to empty in the P and R positions; 0 = the UIC figure of 17 s
+
+## Vehicle editor: part function registry
+
+partfn-pantograph = Pantograph
+partfn-door-left = Door, left
+partfn-door-right = Door, right
+partfn-wiper = Windscreen wiper
+partfn-gauge-speed = Speedometer
+partfn-gauge-brake-pipe = Brake pipe gauge
+partfn-gauge-cylinder = Brake cylinder gauge
+partfn-gauge-main-reservoir = Main reservoir gauge
+partfn-gauge-tractive-effort = Tractive effort gauge
+partfn-switch-throttle = Power controller position
+partfn-switch-reverser = Reverser position
+partfn-switch-direct-brake = Direct brake position
+partfn-switch-cab-light = Cab light
+partfn-switch-instrument-light = Instrument backlighting
+partfn-lamp-main-switch = Main switch lamp
+partfn-lamp-sanding = Sanding lamp
+partfn-prefix-gauge = Pointer of an indicator
+partfn-prefix-lamp = Indicator lamp
+partfn-prefix-digit = Digit of a numeric display
+partfn-unknown = The simulator knows no function of this name — the part stays at rest
+partfn-unknown-indicator = No train protection system publishes an indicator of this name
+partfn-digit-needs-place = A digit needs its decimal place: digit:indicator:place
+
+## Vehicle editor: new from template
+
+tpl-group-powered = Powered vehicles
+tpl-group-hauled = Hauled vehicles
+tpl-name = { $base } (copy)
+tpl-br101-hint = Three-phase drive with a converter and a regenerative brake, disc brake in position R, PZB 90 and LZB on board — the modern main line loco.
+tpl-br110-hint = Transformer with a tap changer on series-wound motors, no electric brake, block brake in position P, Indusi and Sifa only.
+tpl-br218-hint = Diesel-hydraulic: speed-governed engine and two torque converters, block brake in position P, PZB 90 and Sifa.
+tpl-br232-hint = Diesel-electric: engine, generator and load regulator on six DC motors, block brake in position P, PZB 90 and Sifa.
+tpl-br52-hint = Steam: fire, boiler and cylinders as one loop, block brake in position G, no train protection.
+tpl-railcar-hint = Diesel railcar with two engines, hydrodynamic brake in the transmission, disc and magnetic track brake, PZB 90 and automatic doors.
+tpl-coach-hint = Hauled passenger coach without a drive, KE-GPR disc brake in position P, doors but no train protection of its own.
+tpl-eaos-hint = Open freight wagon without a drive, block brake in position G with an empty/loaded changeover, no train protection.
+tpl-eaos-k-hint = The same wagon with a K control valve: graduated application, but single-release — it has to be recharged before it brakes properly again.
+
+## Vehicle editor: display widgets
+##
+## The code-free content of a screen: labels, values and bars placed in texture
+## pixels and drawn in list order, so a later widget covers an earlier one. The
+## preview shows the layout, not the readings — those are simulation state.
+
+disp-widget-list = Widgets
+disp-widgets-empty = no widgets — the screen stays black unless the vehicle script draws it
+disp-widget-count = { $count } widgets
+disp-html-overrides = the HTML page draws this screen on its own — a widget list kept beside it never reaches the texture
+disp-preview-note = layout preview, the values are placeholders — drag a widget to place it
+action-add-widget = Add widget
+action-add-widget-hint = one element of the code-free screen content — a label, a value or a bar
+action-widget-up = one place earlier — an earlier widget is covered by the later ones
+action-widget-down = one place later — a later widget is drawn on top
+disp-widget-kind = Kind
+disp-widget-kind-hint = switching keeps the position, the colour and the source
+disp-widget-label = Label
+disp-widget-value = Value
+disp-widget-bar = Bar
+disp-widget-untitled = (no text)
+disp-widget-pos = Position
+disp-widget-pos-hint = px from the top left corner of the texture
+disp-widget-text = Text
+disp-widget-size = Text size
+disp-widget-size-hint = px — the height of the glyphs on the texture
+disp-widget-box = Bar size
+disp-widget-box-hint = px — width × height of the full bar
+disp-widget-source = Source
+disp-widget-source-hint = the quantity the value or the bar follows
+disp-source-indicator = Indicator …
+disp-widget-indicator = Indicator
+disp-widget-indicator-hint = named readout of the train protection (mfa_v_soll, mfa_zielentfernung); 0 while it is absent
+disp-widget-indicator-placeholder = mfa_v_soll
+disp-widget-decimals = Decimals
+disp-widget-unit = Unit
+disp-widget-unit-hint = written after the number with a space; empty leaves it off
+disp-widget-scale = Scale
+disp-widget-scale-hint = the value is multiplied by this before it is formatted — 3.6 turns m/s into km/h
+disp-widget-max = Full scale
+disp-widget-max-hint = the value at which the bar is full
+disp-widget-color = Colour
+disp-widget-color-hint = linear RGBA of the text or the bar
+
+## Vehicle editor: metadata, variants and loads
+
+meta-class = Class
+meta-class-hint = Class or type designation as it is anscribed: BR 101, Bmz 236
+meta-manufacturer = Manufacturer
+meta-manufacturer-hint = Who built the vehicle — Adtranz, Siemens, MBB
+meta-year = Year built
+meta-year-hint = Year the vehicle was delivered; leave it unset where the file does not say
+meta-year-unset = not stated
+meta-epoch = Era
+meta-epoch-hint = Free text, and free to span two: V, IV–VI
+meta-country = Country
+meta-country-hint = Where the vehicle runs. The list holds the countries the simulator has signals and train protection for; anything else takes its ISO 3166-1 alpha-2 code in the field beside it
+meta-country-unset = not stated
+meta-country-other = code
+meta-operator = Operator
+meta-operator-hint = The railway the vehicle runs for: DB Fernverkehr, ÖBB
+meta-author = Author
+meta-author-hint = Who built this file, not who built the vehicle
+meta-thumbnail = Preview image
+meta-thumbnail-hint = Picture the vehicle browser lists the vehicle with. Like the model it has to lie below mods/
+meta-thumbnail-placeholder = mod/assets/…
+meta-thumbnail-pick = Pick a picture below mods/
+meta-description = Description
+meta-description-placeholder = What the vehicle browser says about this vehicle
+filter-image = Image
+
+var-heading = Variants
+var-empty = No variants — the vehicle runs in one appearance, without a running number
+action-add-variant = Add variant
+action-add-variant-hint = a livery, a number series, an era — appearance only, never physics
+var-name-placeholder = Name of the variant
+var-model = Model
+var-model-hint = glTF file this variant is drawn with; empty = the vehicle's own model
+var-model-placeholder = empty = base model
+var-model-none = No model — neither the variant nor the vehicle states one
+var-model-effective = Drawn as { $file }
+var-epoch = Era
+var-epoch-hint = Empty = the era of the vehicle
+var-numbers = Running numbers
+var-numbers-hint = One per line. The consist builder draws one from them, decided by the scenario's seed — so every player sees the same number on the same vehicle
+var-numbers-placeholder = 101 001-6
+var-description = Description
+var-description-placeholder = Empty = the description of the vehicle
+
+load-heading = Loads
+load-empty = No loads — the vehicle runs empty
+action-add-load = Add load
+action-add-load-hint = goods, their mass, and the model node that shows them
+load-name-placeholder = Name of the goods
+load-mass = Mass
+load-mass-hint = kg of goods, on top of the tare mass
+load-node = Model node
+load-node-hint = glTF node shown while this load is carried — a coal heap, a stack of containers. Empty = the load cannot be seen
+load-node-placeholder = empty = invisible
+load-total = Total mass { $mass } t
+load-capped = Heavier than the maximum payload — the vehicle carries { $max } t of it
+
+## Vehicle editor: key figures and the tractive effort diagram
+
+key-mass = Mass
+key-mass-hint = Tare mass, and behind the arrow the mass with the full payload
+key-axle-load = Axle load
+key-axle-load-hint = Total mass over the number of axles. Line class D carries 22.5 t, class C 20 t, class B 18 t
+key-axle-load-warn = Axle load { $load } t is over the { $limit } t of line class D — the vehicle is restricted to lines that carry it
+key-brake-percentage = Braked weight percentage
+key-brake-percentage-hint = Braked weight over mass. The figure a brake sheet is written in, and the first place a mistyped braked weight shows up
+key-brake-percentage-g = … in position G
+key-brake-percentage-p = … in position P
+key-brake-percentage-r = … in position R
+key-adhesive-mass = Adhesive mass
+key-adhesive-mass-hint = Mass on the driven axles — what the tractive effort has to be carried by
+key-adhesion-limit = Adhesion limit
+key-adhesion-limit-hint = Tractive effort the dry rail carries at standstill, after Curtius/Kniffler. Above it the wheels spin
+key-starting-effort = Starting tractive effort
+key-starting-effort-hint = Tractive effort at standstill, of the strongest drive mode
+key-power-weight = Power-to-weight ratio
+key-power-weight-hint = Highest power at the wheel over the mass — how briskly the vehicle accelerates, whatever its size
+key-balancing-speed = Balancing speed
+key-balancing-speed-hint = Where the tractive effort has fallen to the running resistance: what the vehicle runs at on the level, on its own
+key-above-v-max = above v max
+key-slip-warn = Starting tractive effort { $force } kN is over the { $limit } kN the adhesive mass carries — the vehicle spins its wheels on every start
+plot-tractive-effort = Tractive effort (km/h → N)
+plot-resistance = Running resistance
+plot-dynamic-brake = Dynamic brake
+plot-adhesion-limit = Adhesion limit
+
+## Vehicle editor: part function picker
+
+part-function-pick = Pick a function the simulator reads
+
+## Vehicle editor: check report
+## Findings of the file-wide check next to the data panel. Every one of them names
+## what to do, not only what is wrong.
+
+check-length = Length over buffers is 0 — state it in metres, otherwise the next vehicle of the consist stands inside this one
+check-mass = Tare mass is 0 — state it in kilogrammes; the vehicle has no inertia and no weight on the rail without it
+check-gauge = Track gauge is 0 — state it in metres (1.435 for standard gauge), otherwise the vehicle fits no line
+check-axles = No axle count — the brake runs on the reference axle load instead of this vehicle's, and no consist list adds up. State the number of axles
+check-rotating-mass = Rotating mass allowance { $value } lies outside 0 … 0.5 — a coach carries about 0.05, a powered vehicle about 0.25
+check-load-over-payload = Load "{ $load }" weighs { $mass } t, more than the maximum payload of { $max } t — the vehicle carries only the maximum. Raise the payload or lighten the load
+check-doors = Passenger doors, but no door control — a powered vehicle releases its own doors, so nothing would ever open them. Pick a door system
+check-no-brake-weight = No braked weight — the vehicle is dragged along unbraked. State the anscribed figure in tonnes
+check-no-brake-force = No brake force — the cylinder pushes nothing against the wheel. State the force of the fully applied brake in newtons
+check-brake-percentage = Braked weight percentage comes out at { $value } % — check the braked weight of { $weight } t against the tare mass; a European brake sheet stays between 30 and 250 %
+check-load-braking = Fully loaded the vehicle only reaches { $value } % braked weight for { $payload } t of payload — the braked weight does not follow the load. Fit a weighing valve, or an empty/loaded changeover
+check-drive-no-adhesion = The vehicle has a drive, but no driven axle carries its force to the rail — it will not move. State the share of the mass on driven axles, or mark axles as driven in the diagram
+check-adhesion-no-drive = Weight on driven axles, but no drive chain — the figure does nothing. Set the adhesive mass share to 0, or add a drive
+check-no-v-max = No top speed stated — speedometer and AFB fall back to 160 km/h. State the running gear limit
+check-drive-over-v-max = The drive pulls to { $drive } km/h, past the running gear limit of { $vehicle } km/h — nothing stops the vehicle there. Raise the top speed, or cap the drive
+check-tractive-effort = Starting tractive effort of { $force } kN is above what a dry rail holds ({ $limit } kN) — the vehicle spins its wheels instead of starting. Lower the force, or put more weight on the driven axles
+check-model-no-file = The model names no glTF file — state the file below mods/, or take the model out
+check-part-node = Moving part on "{ $node }": the model has no node of that name — the part never moves. Correct the name, or take the part out
+check-part-function = Moving part on "{ $node }": { $reason }. The part stays where it is; pick a function the simulator evaluates, unless a mod of your own reads this one
+check-control-node = Cab control on "{ $node }": the model has no node of that name — the control cannot be operated. Correct the name
+check-display-node = Display "{ $name }" on "{ $node }": the model has no node of that name — the screen stays dark. Correct the name
+check-load-node = Load "{ $load }" shows "{ $node }": the model has no node of that name — the load stays invisible. Correct the name, or leave the node empty
+check-node-twice = Node "{ $node }" is bound more than once — only the first binding acts, the others are dropped. Give each part a node of its own
+check-lod-duplicate = Level of detail { $level } is listed twice — one view distance per level
+check-lod-order = The view distance of level { $level } is not greater than that of the level before it — list the levels coarsest last, with rising distances
+check-lod-no-nodes = Level of detail { $level } is listed, but no node is named _LOD{ $level } — the level draws nothing. Take it out, or rename the nodes
+check-lod-missing = The model carries _LOD nodes, but the vehicle lists no levels — every level draws at once, on top of the others. Take the levels over from the file
+
+## GNT — speed supervision for tilting technology
+
+blk-gnt = GNT
+blk-gnt-hint = Speed supervision for tilting technology — releases the higher curve speeds of a tilting unit inside a GNT area. Needs a tilt angle above zero on the vehicle
+bake-gnt-without-tilt = GNT on a vehicle without tilting technology — set a tilt angle, otherwise the equipment is dropped
+
+## Main menu: the vehicle's data sheet in the detail pane
+
+menu-fact-variant = Variant
+menu-fact-class = Class
+menu-fact-manufacturer = Manufacturer
+menu-fact-build-year = Built
+menu-fact-epoch = Era
+menu-fact-operator = Operator
+menu-fact-country = Country
+menu-fact-author = Author
+
+## Vehicle editor: check section header
+
+group-checks-errors = Checks — { $errors } errors
+group-checks-warnings = Checks — { $warnings } warnings
+group-checks-both = Checks — { $errors } errors, { $warnings } warnings

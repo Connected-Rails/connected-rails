@@ -328,6 +328,12 @@ pub enum SafetyEquipment {
         /// vehicle editor.
         #[serde(default)]
         train_type: de::TrainType,
+        /// GNT — the speed supervision that releases the higher curve speeds of a
+        /// tilting unit (plan 9.5). It presupposes tilting technology:
+        /// [`crate::blocks::bake`] only writes it for a vehicle whose
+        /// `tilt_angle_deg` is greater than zero.
+        #[serde(default)]
+        gnt: bool,
     },
 }
 
@@ -341,10 +347,12 @@ impl SafetyEquipment {
                 lzb,
                 sifa,
                 train_type,
+                gnt,
             } => SafetySystems::De(de::DeSafety {
                 sifa: sifa.map(de::Sifa::with_kind),
                 pzb: pzb.map(|v| de::Pzb::with_variant(v, train_type)),
                 lzb: lzb.then(de::Lzb80::new),
+                gnt: gnt.then(de::Gnt::new),
             }),
         }
     }
@@ -422,6 +430,7 @@ mod train_type_switch {
             lzb: false,
             sifa: None,
             train_type: de::TrainType::O,
+            gnt: false,
         }
         .build();
         systems.set_train_type(de::TrainType::M, 10.0);

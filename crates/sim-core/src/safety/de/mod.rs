@@ -1,5 +1,6 @@
-//! Country package Germany: Sifa, PZB 90, LZB 80 (plan 9.2–9.4).
+//! Country package Germany: Sifa, PZB 90, LZB 80, GNT (plan 9.2–9.5).
 
+pub mod gnt;
 pub mod lzb;
 pub mod pzb;
 pub mod sifa;
@@ -10,6 +11,7 @@ use crate::safety::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use gnt::{Gnt, GntDataPoint, GntMode};
 pub use lzb::{Lzb80, LzbBlockMode, LzbMode, LzbSection, LzbTelegram};
 pub use pzb::{MagnetFrequency, MagnetPayload, Pzb, Pzb90, PzbTrip, PzbVariant, TrainType};
 pub use sifa::{Sifa, SifaKind};
@@ -20,6 +22,9 @@ pub struct DeSafety {
     pub sifa: Option<Sifa>,
     pub pzb: Option<Pzb>,
     pub lzb: Option<Lzb80>,
+    /// Speed supervision for tilting technology — only on units that can tilt.
+    #[serde(default)]
+    pub gnt: Option<Gnt>,
 }
 
 impl DeSafety {
@@ -34,6 +39,7 @@ impl DeSafety {
             sifa: Some(Sifa::new()),
             pzb: Some(Pzb::with_variant(variant, train_type)),
             lzb: None,
+            gnt: None,
         }
     }
 
@@ -51,7 +57,14 @@ impl DeSafety {
             sifa: Some(Sifa::new()),
             pzb: None,
             lzb: Some(Lzb80::new()),
+            gnt: None,
         }
+    }
+
+    /// Adds the GNT — the equipment of a tilting unit (BR 611/612 and their kin).
+    pub fn with_gnt(mut self) -> Self {
+        self.gnt = Some(Gnt::new());
+        self
     }
 
     /// Replaces the Sifa build (time-time, time-distance, RZM).
@@ -67,6 +80,9 @@ impl DeSafety {
         }
         if let Some(l) = &mut self.lzb {
             l.power_on();
+        }
+        if let Some(g) = &mut self.gnt {
+            g.power_on();
         }
     }
 
@@ -89,6 +105,7 @@ impl DeSafety {
         let lzb_guiding = self
             .lzb
             .is_some_and(|l| l.is_guiding() && !l.signals_binding());
+        let lzb_authority = self.lzb.is_some_and(|l| l.is_guiding());
         if let Some(l) = &mut self.lzb {
             out = out.merge(l.update(dt, train, cab, events));
         }
@@ -98,6 +115,15 @@ impl DeSafety {
             if !lzb_guiding {
                 out = out.merge(pzb_out);
             }
+        }
+
+        // The GNT sits above the PZB, not instead of it: it only raises the line speed
+        // between two signals, so the magnets stay effective underneath it in every case.
+        // Against the LZB it is the other way round — while the LZB guides, its authority
+        // already covers the line and the GNT stands down (plan 9.5, `gnt`).
+        if let Some(g) = &mut self.gnt {
+            g.stand_by(lzb_authority);
+            out = out.merge(g.update(dt, train, cab, events));
         }
         out
     }
@@ -112,6 +138,9 @@ impl DeSafety {
         }
         if let Some(l) = &self.lzb {
             v.extend(l.indicators());
+        }
+        if let Some(g) = &self.gnt {
+            v.extend(g.indicators());
         }
         v
     }
@@ -202,6 +231,53 @@ mod tests {
         let out = de.update(0.1, &state, &CabInputs::default(), &[magnet_2000()]);
         assert_eq!(out.action, ProtectionAction::None);
         assert_eq!(out.speed_limit, Some(160.0), "the LZB supervises");
+    }
+
+    fn gnt_point() -> TracksideEvent {
+        TracksideEvent {
+            device: DeviceKind::Balise,
+            payload: ron::to_string(&GntDataPoint::section(160.0, 4000.0)).unwrap(),
+            s_offset: 0.0,
+            active: true,
+        }
+    }
+
+    /// The GNT raises the line speed between two signals — it never replaces the signal
+    /// protection, so the PZB magnets keep working underneath it.
+    #[test]
+    fn the_gnt_leaves_the_pzb_magnets_alone() {
+        let mut de = DeSafety::pzb(TrainType::M).with_gnt();
+        let state = SafetyTrainState {
+            v_kmh: 140.0,
+            line_speed: 120.0,
+            train_length: 100.0,
+            ..Default::default()
+        };
+        let out = de.update(0.1, &state, &CabInputs::default(), &[gnt_point()]);
+        assert_eq!(out.speed_limit, Some(160.0), "the GNT profile is released");
+
+        let out = de.update(0.1, &state, &CabInputs::default(), &[magnet_2000()]);
+        assert_eq!(out.action, ProtectionAction::EmergencyBrake);
+    }
+
+    /// Under LZB guidance the movement authority is the binding one; the GNT stands down
+    /// instead of publishing a second, higher supervision next to it.
+    #[test]
+    fn lzb_guidance_puts_the_gnt_on_standby() {
+        let mut de = DeSafety::pzb_lzb(TrainType::O).with_gnt();
+        let state = SafetyTrainState {
+            v_kmh: 120.0,
+            line_speed: 120.0,
+            train_length: 200.0,
+            ..Default::default()
+        };
+        de.update(0.1, &state, &CabInputs::default(), &[gnt_point()]);
+        assert_eq!(de.gnt.unwrap().mode(), GntMode::Supervising);
+
+        take_over(&mut de, &state, LzbBlockMode::Full);
+        let out = de.update(0.1, &state, &CabInputs::default(), &[gnt_point()]);
+        assert_eq!(de.gnt.unwrap().mode(), GntMode::Off);
+        assert_eq!(out.speed_limit, Some(160.0), "the LZB alone supervises");
     }
 
     #[test]

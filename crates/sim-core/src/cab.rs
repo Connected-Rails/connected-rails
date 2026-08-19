@@ -749,6 +749,131 @@ impl CabControl {
     }
 }
 
+/// Part functions the simulator evaluates (`app::models::part_value`), as
+/// `(name, i18n key of the label)` — the fixed names; the families that take an
+/// indicator are in [`PART_FUNCTION_PREFIXES`].
+///
+/// `Part::function` is free text, so a typo in it is only noticed as a part that
+/// does not move. This is the list the editor offers and checks against, and
+/// `app::models`' `every_registered_function_has_a_value` keeps it honest.
+pub const PART_FUNCTIONS: &[(&str, &str)] = &[
+    ("pantograph", "partfn-pantograph"),
+    ("door_left", "partfn-door-left"),
+    ("door_right", "partfn-door-right"),
+    ("wiper", "partfn-wiper"),
+    ("gauge:speed", "partfn-gauge-speed"),
+    ("gauge:brake_pipe", "partfn-gauge-brake-pipe"),
+    ("gauge:cylinder", "partfn-gauge-cylinder"),
+    ("gauge:main_reservoir", "partfn-gauge-main-reservoir"),
+    ("gauge:tractive_effort", "partfn-gauge-tractive-effort"),
+    ("switch:throttle", "partfn-switch-throttle"),
+    ("switch:reverser", "partfn-switch-reverser"),
+    ("switch:direct_brake", "partfn-switch-direct-brake"),
+    ("switch:cab_light", "partfn-switch-cab-light"),
+    ("switch:instrument_light", "partfn-switch-instrument-light"),
+    ("lamp:main_switch", "partfn-lamp-main-switch"),
+    ("lamp:sanding", "partfn-lamp-sanding"),
+];
+
+/// The function families that take an indicator name of the fitted train
+/// protection, as `(prefix, i18n key of the label)`: `gauge:<indicator>` moves a
+/// pointer, `lamp:<indicator>` a lamp, and `digit:<indicator>:<place>` shows one
+/// digit of a numeric display (place 0 = ones).
+pub const PART_FUNCTION_PREFIXES: &[(&str, &str)] = &[
+    ("gauge:", "partfn-prefix-gauge"),
+    ("lamp:", "partfn-prefix-lamp"),
+    ("digit:", "partfn-prefix-digit"),
+];
+
+/// Every indicator name [`crate::safety::SafetySystems::indicators`] can publish
+/// — the names the HUD prints, and what goes behind the prefixes above. Whether
+/// one carries a lamp or a number depends on the system it belongs to; a
+/// `gauge:` on a pure lamp leaves the part at its rest position.
+///
+/// ponytail: a hand-written copy of names that sit spread over the country
+/// packages. `indicators_match_a_fully_equipped_vehicle` compares it against
+/// what the systems actually publish, so it cannot go stale unnoticed.
+pub const SAFETY_INDICATORS: &[&str] = &[
+    "sifa",
+    "pzb_1000hz",
+    "pzb_500hz",
+    "pzb_befehl",
+    // Train category lamp of the PZB, named after its check speed — which one
+    // exists depends on the build state and the train type switch.
+    "55",
+    "60",
+    "70",
+    "75",
+    "80",
+    "85",
+    "90",
+    "95",
+    "lzb_ue",
+    "lzb_g",
+    "lzb_ende",
+    "lzb_stoerung",
+    "lzb_b",
+    "lzb_v40",
+    // MFA values — only while the LZB guides.
+    "mfa_v_soll",
+    "mfa_v_ziel",
+    "mfa_zielentfernung",
+    // GNT: ready, supervising, fault, forced braking, and the speed it supervises.
+    "gnt_bereit",
+    "gnt_ue",
+    "gnt_stoerung",
+    "gnt_b",
+    "gnt_v_soll",
+];
+
+/// Why the simulator has no value for `function` — the i18n key of the message,
+/// or `None` when the name is one it evaluates. An unrecognised name is not
+/// fatal (the part simply stays at rest), but it is what a typo looks like.
+pub fn part_function_error(function: &str) -> Option<&'static str> {
+    if PART_FUNCTIONS.iter().any(|(name, _)| *name == function) {
+        return None;
+    }
+    let Some((prefix, _)) = PART_FUNCTION_PREFIXES
+        .iter()
+        .find(|(prefix, _)| function.starts_with(prefix))
+    else {
+        return Some("partfn-unknown");
+    };
+    let rest = &function[prefix.len()..];
+    let indicator = if *prefix == "digit:" {
+        // `digit:<indicator>:<place>` — the place is the last segment, exactly
+        // as `app::models`' `digit_function` splits it.
+        match rest.rsplit_once(':') {
+            Some((name, place)) if place.parse::<u32>().is_ok() => name,
+            _ => return Some("partfn-digit-needs-place"),
+        }
+    } else {
+        rest
+    };
+    (!SAFETY_INDICATORS.contains(&indicator)).then_some("partfn-unknown-indicator")
+}
+
+/// `true` while the simulator has a value for this part function.
+pub fn part_function_valid(function: &str) -> bool {
+    part_function_error(function).is_none()
+}
+
+/// Every part function worth offering in a picker, as `(name, i18n key of the
+/// label)`: the fixed ones, then one entry per prefix and indicator. `digit:`
+/// comes with place 0, the author edits the place.
+pub fn part_function_suggestions() -> Vec<(String, &'static str)> {
+    let fixed = PART_FUNCTIONS
+        .iter()
+        .map(|(name, key)| ((*name).to_string(), *key));
+    let prefixed = PART_FUNCTION_PREFIXES.iter().flat_map(|(prefix, key)| {
+        SAFETY_INDICATORS.iter().map(move |indicator| {
+            let suffix = if *prefix == "digit:" { ":0" } else { "" };
+            (format!("{prefix}{indicator}{suffix}"), *key)
+        })
+    });
+    fixed.chain(prefixed).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,15 +1026,37 @@ mod tests {
         );
     }
 
-    #[test]
-    fn lzb_v_soll_caps_the_afb_dial() {
-        use crate::safety::de::lzb::{Lzb80, LzbTelegram};
-        use crate::safety::{
-            SafetySystems, SafetyTrainState, TracksideEvent, TrainProtectionSystem,
-        };
+    /// An LZB in guidance: telegram received, takeover acknowledged. Only then
+    /// does it publish v-soll, v-ziel and the distance to the target.
+    /// A GNT that has passed a data point and supervises a released profile — the
+    /// only state in which it publishes `gnt_v_soll`.
+    fn supervising_gnt() -> crate::safety::de::gnt::Gnt {
+        use crate::safety::de::gnt::{Gnt, GntDataPoint};
+        use crate::safety::{SafetyTrainState, TracksideEvent, TrainProtectionSystem};
         use track_model::DeviceKind;
 
-        // Drive an LZB into guidance: telegram received, takeover acknowledged.
+        let mut gnt = Gnt::new();
+        let event = TracksideEvent {
+            device: DeviceKind::Balise,
+            payload: ron::to_string(&GntDataPoint::section(160.0, 1000.0)).unwrap(),
+            s_offset: 0.0,
+            active: true,
+        };
+        gnt.update(
+            0.1,
+            &SafetyTrainState::default(),
+            &CabInputs::default(),
+            &[event],
+        );
+        assert!(gnt.supervised_speed().is_some());
+        gnt
+    }
+
+    fn guiding_lzb() -> crate::safety::de::Lzb80 {
+        use crate::safety::de::lzb::{Lzb80, LzbTelegram};
+        use crate::safety::{SafetyTrainState, TracksideEvent, TrainProtectionSystem};
+        use track_model::DeviceKind;
+
         let mut lzb = Lzb80::new();
         let telegram = LzbTelegram {
             permitted_speed: 60.0,
@@ -934,13 +1081,20 @@ mod tests {
         };
         lzb.update(0.1, &state, &takeover, &[]);
         assert!(lzb.is_guiding());
+        lzb
+    }
+
+    #[test]
+    fn lzb_v_soll_caps_the_afb_dial() {
+        use crate::safety::SafetySystems;
 
         let mut train = train();
         train.vehicles[0].spec.afb = true;
         train.vehicles[0].safety = SafetySystems::De(crate::safety::de::DeSafety {
             sifa: None,
             pzb: None,
-            lzb: Some(lzb),
+            lzb: Some(guiding_lzb()),
+            gnt: None,
         });
         let cab = CabInputs {
             afb: true,
@@ -974,5 +1128,74 @@ mod tests {
         let text = ron::ser::to_string(&spec).unwrap();
         let back: CabSpec = ron::from_str(&text).unwrap();
         assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn part_functions_are_checked_against_the_registry() {
+        assert!(part_function_valid("gauge:speed"));
+        assert!(part_function_valid("lamp:pzb_1000hz"));
+        assert!(part_function_valid("digit:mfa_v_soll:2"));
+        // A digit without its decimal place, a typo behind the prefix, and a
+        // typo in a fixed name.
+        assert_eq!(
+            part_function_error("digit:mfa_v_soll"),
+            Some("partfn-digit-needs-place")
+        );
+        assert_eq!(
+            part_function_error("gauge:tippfehler"),
+            Some("partfn-unknown-indicator")
+        );
+        assert_eq!(part_function_error("pantorgaph"), Some("partfn-unknown"));
+        // Everything the editor offers passes its own check.
+        for (name, _) in part_function_suggestions() {
+            assert!(part_function_valid(&name), "{name}");
+        }
+    }
+
+    /// [`SAFETY_INDICATORS`] is written out by hand, so it is compared against
+    /// what a vehicle with every fitting actually publishes.
+    #[test]
+    fn indicators_match_a_fully_equipped_vehicle() {
+        use crate::safety::de::{DeSafety, PzbVariant, SifaKind, TrainType};
+        use crate::safety::{SafetyEquipment, SafetySystems};
+        use std::collections::BTreeSet;
+
+        let mut seen = BTreeSet::new();
+        // The train category lamp is named after its check speed, so every build
+        // state and every position of the train type switch adds a name.
+        for pzb in [
+            PzbVariant::I54,
+            PzbVariant::I60,
+            PzbVariant::I60M,
+            PzbVariant::I60R,
+            PzbVariant::Pzb60,
+            PzbVariant::Pzb90V15,
+            PzbVariant::Pzb90V20,
+        ] {
+            for train_type in [TrainType::O, TrainType::M, TrainType::U] {
+                let systems = SafetyEquipment::De {
+                    pzb: Some(pzb),
+                    lzb: true,
+                    sifa: Some(SifaKind::TimeTime),
+                    train_type,
+                    gnt: true,
+                }
+                .build();
+                seen.extend(systems.indicators().iter().map(|i| i.name));
+            }
+        }
+        // The MFA values exist only while the LZB guides, and `gnt_v_soll` only
+        // while the GNT supervises a released profile.
+        let guiding = SafetySystems::De(DeSafety {
+            sifa: None,
+            pzb: None,
+            lzb: Some(guiding_lzb()),
+            gnt: Some(supervising_gnt()),
+        });
+        seen.extend(guiding.indicators().iter().map(|i| i.name));
+        assert_eq!(
+            seen,
+            SAFETY_INDICATORS.iter().copied().collect::<BTreeSet<_>>()
+        );
     }
 }

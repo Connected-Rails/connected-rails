@@ -1490,6 +1490,48 @@ impl Registry {
                     ),
                     choice("position", "brk-default-position", &["g", "p", "r"], "p"),
                     num("brake_weight", "brk-weight", "t", 0.0, 500.0, 1.0, 50.0),
+                    // Braked weight and transition times per brake position. 0 = the
+                    // vehicle states none of its own and the figure above (a time: the
+                    // UIC one) stands.
+                    num("brake_weight_g", "brk-weight-g", "t", 0.0, 500.0, 1.0, 0.0),
+                    num("brake_weight_p", "brk-weight-p", "t", 0.0, 500.0, 1.0, 0.0),
+                    num("brake_weight_r", "brk-weight-r", "t", 0.0, 500.0, 1.0, 0.0),
+                    num(
+                        "apply_time_g",
+                        "brk-apply-time-g",
+                        "s",
+                        0.0,
+                        120.0,
+                        0.5,
+                        0.0,
+                    ),
+                    num(
+                        "apply_time_p",
+                        "brk-apply-time-p",
+                        "s",
+                        0.0,
+                        120.0,
+                        0.5,
+                        0.0,
+                    ),
+                    num(
+                        "release_time_g",
+                        "brk-release-time-g",
+                        "s",
+                        0.0,
+                        200.0,
+                        0.5,
+                        0.0,
+                    ),
+                    num(
+                        "release_time_p",
+                        "brk-release-time-p",
+                        "s",
+                        0.0,
+                        200.0,
+                        0.5,
+                        0.0,
+                    ),
                     choice(
                         "load_braking",
                         "brk-load",
@@ -1863,6 +1905,7 @@ impl Registry {
                 ],
             ),
             def("lzb", Equipment, vec![], vec![], vec![]),
+            def("gnt", Equipment, vec![], vec![], vec![]),
             def(
                 "doors",
                 Equipment,
@@ -2506,6 +2549,13 @@ fn pipe_end(b: &Baker, end: &str) -> bool {
     cocks.any(|c| b.param(c, "end").choice() == end)
 }
 
+/// A braked weight or transition time left at zero is not stated at all — the model falls
+/// back on the base figure, which is what a vehicle with a single anscription wants.
+fn stated(b: &Baker, block: &GraphBlock, id: &str) -> Option<f64> {
+    let value = b.num(block, id);
+    (value > 0.0).then_some(value)
+}
+
 fn brake_kind_from(b: &Baker, rigging: &GraphBlock) -> BrakeKind {
     match b.param(rigging, "kind").choice() {
         "disc" => BrakeKind::Disc,
@@ -2580,10 +2630,17 @@ fn bake_brakes(b: &mut Baker, spec: &mut VehicleSpec) {
         valve: control_valve_from(b.param(cv, "valve").choice()),
         valve_params: None,
         brake_weight: b.num(cv, "brake_weight"),
+        brake_weight_g: stated(b, cv, "brake_weight_g"),
+        brake_weight_p: stated(b, cv, "brake_weight_p"),
+        brake_weight_r: stated(b, cv, "brake_weight_r"),
         load_braking,
         max_force: b.num(rigging, "max_force"),
         max_cylinder: b.num(cylinder, "max_cylinder"),
         cylinder_to_reservoir: b.num(cylinder, "cylinder_to_reservoir"),
+        apply_time_g: stated(b, cv, "apply_time_g"),
+        apply_time_p: stated(b, cv, "apply_time_p"),
+        release_time_g: stated(b, cv, "release_time_g"),
+        release_time_p: stated(b, cv, "release_time_p"),
         has_mg: mg.is_some(),
         mg_force: mg.map_or(0.0, |m| b.num(m, "force")),
         has_direct: direct.is_some(),
@@ -2770,7 +2827,21 @@ fn bake_equipment(b: &mut Baker, spec: &mut VehicleSpec) {
         )
     });
     let lzb = b.find("lzb").is_some();
-    spec.safety = if sifa.is_none() && pzb.is_none() && !lzb {
+    // The GNT releases the higher curve speeds of a tilting unit — on a vehicle that cannot
+    // tilt there is nothing for it to release, so the equipment is dropped rather than
+    // written out as a fitting that never does anything.
+    let gnt = match b.find("gnt") {
+        None => false,
+        Some(g) => {
+            let tilting = spec.tilt_angle_deg > 0.0;
+            if !tilting {
+                b.issues
+                    .push(BakeIssue::warn(Some(g.id), "bake-gnt-without-tilt"));
+            }
+            tilting
+        }
+    };
+    spec.safety = if sifa.is_none() && pzb.is_none() && !lzb && !gnt {
         SafetyEquipment::None
     } else {
         SafetyEquipment::De {
@@ -2778,6 +2849,7 @@ fn bake_equipment(b: &mut Baker, spec: &mut VehicleSpec) {
             lzb,
             sifa,
             train_type: pzb.map(|(_, t)| t).unwrap_or_default(),
+            gnt,
         }
     };
 
@@ -3657,6 +3729,19 @@ fn synth_brakes(
         ),
     );
     s.set_num(cv, "brake_weight", brake.brake_weight);
+    // Zero is "not stated" on the way back too, so a vehicle with one anscription keeps a
+    // diagram without per-position figures in it.
+    for (param, value) in [
+        ("brake_weight_g", brake.brake_weight_g),
+        ("brake_weight_p", brake.brake_weight_p),
+        ("brake_weight_r", brake.brake_weight_r),
+        ("apply_time_g", brake.apply_time_g),
+        ("apply_time_p", brake.apply_time_p),
+        ("release_time_g", brake.release_time_g),
+        ("release_time_p", brake.release_time_p),
+    ] {
+        s.set_num(cv, param, value.unwrap_or(0.0));
+    }
     let (load, empty_share, changeover) = match brake.load_braking {
         LoadBraking::None => ("none", 0.6, 0.0),
         LoadBraking::Weighing => ("weighing", 0.6, 0.0),
@@ -3865,6 +3950,7 @@ fn synth_equipment(s: &mut Synth, reg: &Registry, spec: &VehicleSpec) {
         lzb,
         sifa,
         train_type,
+        gnt,
     } = spec.safety
     {
         if let Some(kind) = sifa {
@@ -3915,6 +4001,9 @@ fn synth_equipment(s: &mut Synth, reg: &Registry, spec: &VehicleSpec) {
         }
         if lzb {
             place(s, "lzb");
+        }
+        if gnt {
+            place(s, "gnt");
         }
     }
 
@@ -4073,7 +4162,7 @@ mod tests {
     /// saying so in `MODS.md` and `STATUS.md` fails rather than drifts.
     #[test]
     fn the_palette_has_the_documented_number_of_blocks() {
-        assert_eq!(Registry::builtin().defs.len(), 71);
+        assert_eq!(Registry::builtin().defs.len(), 72);
         // Every category is actually used — an empty group in the palette is a mistake.
         for category in BlockCategory::ALL {
             assert!(
@@ -4233,7 +4322,7 @@ mod tests {
             signal: Default::default(),
             supply: Default::default(),
             sand_rate: 4.0,
-            running_gear: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -4280,6 +4369,49 @@ mod tests {
     #[test]
     fn round_trip_plain_wagon() {
         assert_round_trip(&test_spec());
+    }
+
+    /// The GNT is equipment like the PZB, so it has to survive spec → graph → spec — and it
+    /// only exists on a vehicle that can actually tilt.
+    #[test]
+    fn round_trip_gnt_on_a_tilting_unit() {
+        let mut spec = test_spec();
+        spec.tilt_angle_deg = 8.0;
+        spec.safety = SafetyEquipment::De {
+            pzb: Some(crate::safety::de::PzbVariant::Pzb90V20),
+            lzb: false,
+            sifa: Some(crate::safety::de::SifaKind::TimeTime),
+            train_type: crate::safety::de::TrainType::M,
+            gnt: true,
+        };
+        assert_round_trip(&spec);
+    }
+
+    #[test]
+    fn gnt_without_tilting_technology_is_dropped_with_a_warning() {
+        let reg = Registry::builtin();
+        let mut spec = test_spec();
+        spec.tilt_angle_deg = 8.0;
+        spec.safety = SafetyEquipment::De {
+            pzb: None,
+            lzb: false,
+            sifa: None,
+            train_type: Default::default(),
+            gnt: true,
+        };
+        let graph = from_spec(&spec, &reg);
+
+        // The same graph on a vehicle that cannot tilt: the equipment falls away.
+        let mut baked = spec.clone();
+        baked.tilt_angle_deg = 0.0;
+        let issues = bake(&graph, &reg, &mut baked);
+        assert_eq!(baked.safety, SafetyEquipment::None);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.key == "bake-gnt-without-tilt" && i.severity == Severity::Warning),
+            "{issues:?}"
+        );
     }
 
     #[test]
@@ -4392,6 +4524,23 @@ mod tests {
         })];
         spec.brake = BrakeSpec::from_brake_weight(80.0, BrakeKind::Block)
             .as_traction_unit(ControlValve::KeGp, 40_000.0);
+        assert_round_trip(&spec);
+    }
+
+    /// The anscription of a coach is G 40 t / P 60 t / R 71 t plus its own transition
+    /// times — none of it may be lost on the first save in the editor.
+    #[test]
+    fn round_trip_braked_weight_and_times_per_position() {
+        let mut spec = test_spec();
+        spec.brake =
+            BrakeSpec::from_brake_weight(60.0, BrakeKind::Disc).with_valve(ControlValve::KeGpr);
+        spec.brake.brake_weight_g = Some(40.0);
+        spec.brake.brake_weight_p = Some(60.0);
+        spec.brake.brake_weight_r = Some(71.0);
+        spec.brake.apply_time_g = Some(24.0);
+        spec.brake.apply_time_p = Some(3.5);
+        spec.brake.release_time_g = Some(45.0);
+        spec.brake.release_time_p = Some(15.0);
         assert_round_trip(&spec);
     }
 

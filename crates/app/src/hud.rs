@@ -325,6 +325,8 @@ pub enum Block {
     Safety,
     Lzb,
     LzbValues,
+    /// The GNT's lamp row - only on a tilting unit, and only inside a GNT area.
+    Gnt,
     /// The marker for a supervised speed only exists while something supervises one.
     Supervision,
     /// The look-ahead, and which of the two signs it shows.
@@ -1582,6 +1584,33 @@ fn build_safety(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings, par
         drawings,
         lzb,
         "lzb_stoerung",
+        BRAND,
+        "Stör",
+    );
+
+    // GNT: the tilting supervision sits under the LZB, because it raises the line
+    // speed the signals or the LZB allow rather than replacing either.
+    let gnt = child(
+        commands,
+        safety,
+        (
+            Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(2.0),
+                ..default()
+            },
+            Block::Gnt,
+        ),
+    );
+    lamp(commands, fonts, drawings, gnt, "gnt_bereit", ACCENT, "GNT");
+    lamp(commands, fonts, drawings, gnt, "gnt_ue", ACCENT, "Ü");
+    lamp(commands, fonts, drawings, gnt, "gnt_b", WARN, "B");
+    lamp(
+        commands,
+        fonts,
+        drawings,
+        gnt,
+        "gnt_stoerung",
         BRAND,
         "Stör",
     );
@@ -3031,6 +3060,7 @@ impl<'a> Frame<'a> {
                 .is_some_and(|v| v.spec.afb),
             Block::Safety => !self.indicators.is_empty(),
             Block::Lzb => self.indicators.iter().any(|i| i.name.starts_with("lzb_")),
+            Block::Gnt => self.indicators.iter().any(|i| i.name.starts_with("gnt_")),
             Block::LzbValues => self.mfa("mfa_v_soll").is_some(),
             Block::Supervision => self.supervision().is_some(),
             Block::Ahead => self.ahead.is_some(),

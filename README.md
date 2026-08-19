@@ -17,6 +17,8 @@ cargo test --workspace     # all acceptance tests (headless, no GPU)
 cargo run -p app           # start the simulator (main menu: drive, mods, settings, quit)
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
+cargo run -p app -- --screenshot shot.png --overlays   # …with the F5 and F6 overlays open
+cargo run -p app -- --screenshot shot.png --hud reduced # …with the display on one of its three steps
 cargo run -p app -- --menu --screenshot screenshots/menu.png   # …of the menu instead
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
@@ -111,7 +113,7 @@ resumes.
 | | `vsync` | Caps the frame rate at the monitor's. |
 | `[audio]` | `master` | Linear master volume, 0 … 1. |
 | `[gameplay]` | `language` | `en`, `de`, or empty for the system's. |
-| | `hud` | Draw the readout while driving. |
+| | `hud` | How much of the display is drawn: `Full`, `Reduced` or `Off` (`F7` walks the three). |
 | | `look_speed` | Factor on the mouse look speed, 0.2 … 3.0. |
 
 `TRAINSIM_LANG` stays the outermost override: where it is set, the stored `language` is
@@ -286,6 +288,62 @@ or the whole corridor.
 `sim-core` is a pure Rust library with a fixed time step (200 Hz). The Bevy app ticks it and
 mirrors the state into ECS components — simulation logic does not belong there.
 
+## The display
+
+The HUD says what a driver could read off the desk without leaning forward, plus the two
+things no desk shows: what the run is supposed to do, and what the line ahead is about to
+ask for.
+
+Everything on it is either **hardware** or **overlay**, and the two never look alike.
+Hardware is the instrument panel at the bottom and the lamp housing beside it: a lighter
+surface with a lit top edge and a shadow under it, round instruments with needles that
+turn. Overlay is the run and the systems at the top: type on the world under one wash
+across the width of the screen, with no frame at all.
+
+| Zone | What stands there |
+|---|---|
+| Bottom centre | **The desk** — the speedometer with the line's permitted speed marked on its rim and the supervised speed over it, the Doppelmanometer carrying brake pipe (pale needle) and main reservoir (red needle) as in the cab, the brake cylinder on its own gauge, and beside them the levers: power controller, brake valve, effort, reverser, AFB, distance run |
+| Bottom left | **Train protection** — the round lamps of a German desk, 1000 Hz, 500 Hz, Befehl, the train category and Sifa, with the LZB row under them and the MFA's v-soll, v-target and target distance while the LZB is guiding. Glass and legend light together in the lamp's own colour |
+| Bottom right | **Look-ahead** — signed the way the line signs it: the triangle of an Lf 7 board with the speed on it, or the disc of Hp 0, and how far off it is |
+| Top left | **The run** — clock, punctuality, service, and the timetable as a route ribbon: the stops in order down a rail, the wedge marking where the train stands with the distance to the next stop beside it, the next stop the only line set large. The score sits under a rule at the foot |
+| Top right | **Systems** — ten annunciators of the desk (battery, pantograph, main switch, compressor, spring brake, sanding, doors, lights, wheel slip, hot motors) and three rows the drive labels itself: wire and motor current on an electric, engine and fill on a diesel, boiler, water glass and fire on a steam locomotive |
+| Top centre | Scenario messages, and over the desk the banner that says the train protection has taken over |
+
+**The timetable is a route ribbon, not a list of fields.** A "next stop / platform /
+departure" block says where the train goes next; a ribbon says where it *is*. The rail
+carries the stops in order — the one behind dimmed, the next one large, the two after it
+between the two — and the wedge sits between the stop behind and the stop ahead with the
+remaining distance beside it. The rows have fixed roles, so their weight is built once
+rather than switched every frame.
+
+**Punctuality is worked out, not printed.** The delay a train left the last stop with is
+carried, and on top of that it is late by however long the scheduled arrival at the next
+stop has been and gone. A train that has not reached a stop yet is never *early*: without
+that rule every run would open by announcing itself seven minutes ahead of a stop it has
+not moved towards.
+
+**The graphics are drawn, not fetched** (`crates/app/src/glyphs.rs`): dial faces, needles,
+rim markers, the Lf 7 board, the Hp 0 disc and the ten pictograms are a few lines of
+geometry each, rasterised by a small signed-distance rasteriser when the run starts. There
+is no asset directory, no icon set, and no third-party licence to carry — and a pantograph
+that should read better at 20 px is a coordinate in that file rather than a new download.
+The speedometer's scale comes from the vehicle's maximum speed and is drawn once, so the
+figures on the face stay put while the line's limit changes.
+
+Nothing that does not apply is drawn: the AFB row exists on a vehicle fitted with one, the
+LZB lamps where an LZB is, the look-ahead when something is actually coming. `F5` opens the
+keyboard as a sheet — with a legend of what the ten annunciators mean — and `F6` the
+diagnostics: terrain, air detail, axles, temperatures, signals and the network, which is
+where everything a driver has no use for lives.
+
+**`F7` walks three steps** — full, reduced, off — and rounds back. The reduced step keeps
+what the train is *driven* by (the desk and the protection lamps) and everything that
+interrupts (the banner, scenario messages), and drops what it is *planned* by: the run, the
+systems and the look-ahead. It is the step for driving by the cab's own instruments without
+giving up the train protection; off is the one for a photograph. The step is a setting like
+any other (`[gameplay] hud` — `Full`, `Reduced`, `Off`), so it survives the run, and
+`--hud <step>` sets it for a screenshot without writing the settings file.
+
 ## Key bindings
 
 | Key | Function |
@@ -313,6 +371,8 @@ mirrors the state into ECS components — simulation logic does not belong there
 | `,` / `.` | Instrument backlighting dimmer down / up |
 | `Esc` | Pause: resume, settings, quit — the world stands still under the overlay |
 | `F1`–`F4` | Camera: driver's seat / external / lineside / first person |
+| `F5` / `F6` | Keyboard sheet / diagnostics overlay |
+| `F7` | Display: full → reduced → off, and round again |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 | `WASD` / `Shift` | First person (`F4`): walk (1.5 m/s) and run (5 m/s) through the train and over the ground. The walker falls where the ground drops away, climbs what is no higher than a step, is stopped by what stands at chest height and walks on through the train from vehicle to vehicle. The mouse looks around on its own, the cursor is caught on the crosshair and the driving keys rest until `F1` puts the driver back on the seat |

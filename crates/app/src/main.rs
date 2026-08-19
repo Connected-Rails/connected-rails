@@ -6,6 +6,8 @@
 mod audio;
 mod cab;
 mod displays;
+mod glyphs;
+mod hud;
 mod menu;
 mod models;
 mod mods_ui;
@@ -14,6 +16,7 @@ mod render;
 mod settings;
 mod signals;
 mod streaming;
+mod theme;
 mod ui;
 mod walk;
 mod world;
@@ -245,6 +248,7 @@ fn main() {
     .init_resource::<walk::Walker>()
     .init_resource::<cab::CabMouse>()
     .init_resource::<mods_ui::ModManager>()
+    .init_resource::<hud::Overlays>()
     .init_resource::<menu::MenuState>()
     .init_resource::<menu::Selection>()
     // HTML cab screens hold a boa script context, which is `!Send` — a non-send
@@ -268,8 +272,9 @@ fn main() {
         menu::menu.run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
     )
     .add_systems(Update, pause_on_escape.run_if(in_state(GameState::Driving)))
-    // Runs in every state: the pause menu needs its cursor back.
-    .add_systems(Update, ui::grab_cursor)
+    // Both run in every state: the pause menu needs its cursor back, and the HUD has to
+    // go away behind the overlay rather than shine through it.
+    .add_systems(Update, (ui::grab_cursor, hud::hud_visibility))
     // The sound table and the display cameras need the trains, which `setup` only
     // creates when its commands are applied — the chain inserts that sync point.
     .add_systems(
@@ -295,7 +300,7 @@ fn main() {
             update_precipitation,
             streaming::stream_terrain,
             terrain_visibility,
-            ui::update_hud,
+            hud::update_hud,
             audio::update_audio,
             mods_ui::mod_manager,
         )
@@ -334,7 +339,7 @@ fn main() {
         assets
             .insert(AssetId::default(), Font::from_bytes(UI_FONT.to_vec()))
             .expect("the default font slot takes the full Fira Mono");
-        menu::Fonts {
+        theme::Fonts {
             sans: assets.add(Font::from_bytes(MENU_FONT.to_vec())),
             semibold: assets.add(Font::from_bytes(MENU_FONT_SEMIBOLD.to_vec())),
         }
@@ -353,7 +358,7 @@ fn main() {
         .world_mut()
         .resource_mut::<Assets<Image>>()
         .add(wallpaper);
-    app.insert_resource(menu::Wallpaper(wallpaper));
+    app.insert_resource(theme::Wallpaper(wallpaper));
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
@@ -435,7 +440,20 @@ fn setup(
     mut manager: ResMut<mods_ui::ModManager>,
     selection: Res<menu::Selection>,
     graphics: Res<settings::Graphics>,
+    fonts: Res<theme::Fonts>,
 ) {
+    // `--hud full|reduced|off` puts the display in one of its three steps for a
+    // screenshot, which cannot press F7. It goes into a resource of its own rather than
+    // into the setting: the settings file is written on exit whether anything changed or
+    // not, and a photograph must not leave its step behind in the player's preferences.
+    if let Some(step) = arg("--hud") {
+        match step.as_str() {
+            "off" => commands.insert_resource(hud::HudOverride(settings::HudMode::Off)),
+            "reduced" => commands.insert_resource(hud::HudOverride(settings::HudMode::Reduced)),
+            "full" => commands.insert_resource(hud::HudOverride(settings::HudMode::Full)),
+            other => warn!("unknown --hud step {other}"),
+        }
+    }
     // A mod was toggled on the menu: reload, so the world is built from the set on disk.
     if manager.restart_needed {
         mods.0 = ModRuntime::load("mods");
@@ -771,7 +789,31 @@ fn setup(
         ));
     }
 
-    ui::spawn_hud(&mut commands);
+    // `--overlays` opens the key sheet and the diagnostics from the start. A screenshot
+    // cannot press F5, in the same way it cannot press a key on the menu — `--menu <page>`
+    // is there for that reason and this is the same one.
+    if std::env::args().any(|a| a == "--overlays") {
+        commands.insert_resource(hud::Overlays {
+            help: true,
+            diagnostics: true,
+        });
+    }
+    ui::spawn_crosshair(&mut commands);
+    // The speedometer is drawn for one scale, so the face has to be made after the
+    // vehicle is known — a dial whose figures changed with the line would be a bar chart
+    // pretending to be an instrument.
+    let v_max = {
+        let train = &sim.trains[player];
+        train
+            .vehicles
+            .get(train.cab)
+            .map(|v| v.spec.v_max)
+            .filter(|v| *v > 0.0)
+            .unwrap_or(160.0)
+    };
+    let drawings = hud::Drawings::draw(&mut images, v_max);
+    hud::spawn_hud(&mut commands, &fonts, &drawings);
+    commands.insert_resource(drawings);
     mods_ui::spawn_panel(&mut commands);
 
     // A character model for the walker (plan ch. 12.4): `--character <file>` takes the

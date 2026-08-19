@@ -79,6 +79,53 @@ impl Default for Audio {
     }
 }
 
+/// How much of the head-up display is drawn (`hud.rs`). Three steps rather than a
+/// switch, because the two reasons to turn a HUD off are different ones: driving by the
+/// cab's own instruments still wants the train protection in view, and a photograph wants
+/// nothing at all.
+///
+/// The step between them keeps what a driver *drives* by — the desk and the protection
+/// lamps, plus anything that interrupts — and drops what is information rather than
+/// driving: the run, the systems, the look-ahead. Cycled with F7 in the run and dialled
+/// on the settings page.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Default, PartialEq)]
+pub enum HudMode {
+    #[default]
+    Full,
+    Reduced,
+    Off,
+}
+
+impl HudMode {
+    /// One step of F7 (`dir` +1) or of the settings page's chevrons.
+    pub fn cycle(self, dir: i32) -> Self {
+        const ORDER: [HudMode; 3] = [HudMode::Full, HudMode::Reduced, HudMode::Off];
+        let at = ORDER.iter().position(|m| *m == self).unwrap_or(0) as i32;
+        ORDER[(at + dir).rem_euclid(ORDER.len() as i32) as usize]
+    }
+
+    /// Is anything drawn at all?
+    pub fn drawn(self) -> bool {
+        self != HudMode::Off
+    }
+
+    /// Are the zones that inform rather than instrument drawn — the run, the systems and
+    /// the look-ahead?
+    pub fn informs(self) -> bool {
+        self == HudMode::Full
+    }
+
+    /// What this step is called on the settings page.
+    pub fn key(self) -> &'static str {
+        match self {
+            HudMode::Full => "set-hud-full",
+            HudMode::Reduced => "set-hud-reduced",
+            HudMode::Off => "set-hud-off",
+        }
+    }
+}
+
 /// Everything that is neither picture nor sound.
 #[derive(Resource, SettingsGroup, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Resource, SettingsGroup, Default)]
@@ -86,8 +133,11 @@ impl Default for Audio {
 pub struct Gameplay {
     /// A code out of `i18n::LANGUAGES`; empty means whatever the system asks for.
     pub language: String,
-    /// Draw the HUD while driving.
-    pub hud: bool,
+    /// How much of the HUD is drawn while driving.
+    ///
+    /// A settings file from before this was three steps carries `hud = true`; the loader
+    /// keeps the default for a field it cannot read, so such a file comes up on `Full`.
+    pub hud: HudMode,
     /// Factor on the built-in mouse look speed.
     pub look_speed: f32,
 }
@@ -96,7 +146,7 @@ impl Default for Gameplay {
     fn default() -> Self {
         Self {
             language: String::new(),
-            hud: true,
+            hud: HudMode::Full,
             look_speed: 1.0,
         }
     }
@@ -114,6 +164,7 @@ pub fn plugin(app: &mut App) {
     app.register_type::<Graphics>()
         .register_type::<Audio>()
         .register_type::<Gameplay>()
+        .register_type::<HudMode>()
         .add_plugins(SettingsPlugin::new(APP_ID));
     // `TRAINSIM_LANG` stays the outermost override: a scripted or CI run sets it and
     // must not be steered by whatever the user last picked in the menu. Without it the

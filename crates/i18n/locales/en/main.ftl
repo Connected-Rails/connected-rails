@@ -991,43 +991,151 @@ cache-size = { $megabytes } MB in { $directory }
 group-errors = Errors
 
 ## Simulator HUD
+#
+# The display over the running game. It is laid out in four zones — the run (top left),
+# the systems (top right), the driving strip (bottom centre), the train protection
+# (bottom left) and the look-ahead (bottom right) — plus two overlays on F5 and F6.
+# Labels are short on purpose: they stand beside a figure in a narrow column, and a
+# label that wraps moves the figure.
 
-hud-speed = v = { $speed } km/h   max { $limit } km/h   distance { $distance } m   { $time }
-hud-network = Server { $state }   Train { $train }   Latency { $latency } ms   Correction { $correction } cm
+# The run, top left.
+hud-timetable = Timetable
+hud-platform = Pl. { $platform }
+hud-late = +{ $minutes } min
+hud-early = −{ $minutes } min
+hud-on-time = on time
+hud-free-run = Free run
+hud-score = Score
+hud-scenario-passed = passed
+hud-scenario-failed = failed
+
+# The systems, top right. The annunciators are the abbreviations of a driver's desk and
+# are set in capitals in the interface — keep them to a few letters.
+hud-systems = Systems
+hud-chip-battery = Batt
+hud-chip-pantograph = Panto
+hud-chip-main-switch = Main
+hud-chip-compressor = Comp
+hud-chip-parking = Park
+hud-chip-sanding = Sand
+hud-chip-doors = Doors
+hud-chip-lights = Lights
+hud-chip-slip = Slip
+hud-chip-hot = Hot
+# What the drive says about itself — one label per row, whichever three apply.
+hud-catenary = Contact line
+hud-motor-current = Motor current
+hud-notch = Notch
+hud-engine = Engine
+hud-fill = Fill
+hud-converter = Converter
+hud-generator = Generator
+hud-boiler = Boiler
+hud-water-glass = Water glass
+hud-fire = Fire
+hud-dynamic-brake = Dynamic brake
+
+# The driving strip, bottom centre.
+hud-unit-kmh = km/h
+hud-permitted = max { $speed }
+hud-supervised = sup { $speed }
+hud-levers = Levers
+hud-power = Power
+hud-brake = Brake
+hud-effort = Effort
+hud-air-pipe = HL { $value }
+hud-air-reservoir = HB { $value }
+hud-air-cylinder = C { $value }
+hud-reverser = Reverser
+hud-afb = AFB
+hud-odometer = Distance
+hud-forward = Forward
+hud-reverse = Reverse
+hud-neutral = Neutral
+hud-valve-release = Release
+hud-valve-lap = Lap
+hud-valve-fill = Fill
+hud-valve-service = Service { $drop }
+hud-valve-emergency = Emergency
+
+# The train protection, bottom left. The lamp legends themselves (1000 Hz, 500 Hz,
+# Befehl, Ü, G, Ende) are the markings of a German cab and stay as they are, the way a
+# type designation does.
+hud-protection = Train protection
+hud-v-permitted = v permitted
+hud-v-target = v target
+hud-target-distance = target
+hud-pzb-restrictive = Restrictive supervision
+hud-self-test = Function test: { $phase }
+
+# The look-ahead, bottom right.
+hud-ahead = Ahead
+hud-stop-in = Stop in { $distance }
+hud-in = in { $distance }
+
+# The banner over the driving strip, and the message column at the top.
+hud-alert-emergency = EMERGENCY BRAKE
+hud-alert-forced = FORCED BRAKE APPLICATION
+hud-alert-cut-off = TRACTION CUT OFF
+hud-alert-blocked = ROUTE NOT SET
+hud-control = { $name }: { $value } %
+
+# The key help, F5.
+hud-help = Keyboard
+hud-help-close = F5 closes · F6 shows the diagnostics
+hud-help-annunciators = What the annunciators mean
+hud-help-driving = Driving
+hud-help-brakes = Brakes
+hud-help-safety = Train protection
+hud-help-vehicle = Vehicle
+hud-help-view = View
+hud-key-throttle = Power controller
+hud-key-throttle-off = Power controller to zero
+hud-key-reverser = Forward · neutral · reverse
+hud-key-range = Range selector
+hud-key-afb = AFB on and off
+hud-key-afb-target = AFB target speed
+hud-key-brake = Brake · release
+hud-key-lap = Lap
+hud-key-fill = Fill position
+hud-key-emergency = Emergency brake
+hud-key-direct = Direct brake
+hud-key-release = Release the loco brake
+hud-key-parking = Parking brake
+hud-key-ep = EP brake
+hud-key-sand = Sanding
+hud-key-sifa = Sifa
+hud-key-acknowledge = Acknowledge
+hud-key-free = Free
+hud-key-override = Override (Befehl)
+hud-key-lzb = LZB take over · end · test
+hud-key-train-type = Train category
+hud-key-horn = Horn
+hud-key-prepare = Battery · pantograph · main switch · compressor
+hud-key-starter = Engine starter
+hud-key-lamps = Headlights · cab light
+hud-key-dimmer = Instrument dimmer
+hud-key-wipers = Wipers
+hud-key-doors = Release left · right · close
+hud-key-cameras = Cab · outside · lineside · walk
+hud-key-look = Look around
+hud-key-zoom = Camera distance
+hud-key-walk = Walk (F4)
+hud-key-hud = Display: full · reduced · off
+hud-key-overlays = This sheet · diagnostics
+hud-key-mods = Mod manager
+hud-key-pause = Pause
+
+# The diagnostics, F6. Machine output — it may be as dense as it likes.
+hud-diagnostics = Diagnostics
+hud-diag-terrain = Terrain  { $tiles } tiles (+{ $pending }), { $triangles } tri, { $megabytes } MB, view { $view } m
+hud-diag-air = Air      AR { $auxiliary } bar   direct { $direct } bar   { $air } Nl used
+hud-diag-axles = Axles    { $slipping }/{ $axles } slipping, worst { $worst } m/s
+hud-diag-temperature = Heat     motors { $motor } °C   resistors { $resistor } °C
+hud-diag-signals = Signals  { $aspects }
+hud-diag-network = Network  { $state }, { $latency } ms, correction { $correction } cm
 hud-network-joined = connected
 hud-network-connecting = connecting …
-hud-brakes = BP { $pipe } bar   C { $cylinder } bar   AR { $auxiliary } bar   MR { $main } bar   Direct { $direct } bar   Air { $air } Nl
-hud-traction = Power controller { $throttle }   Tractive effort { $tractive } kN   Braking effort { $braking } kN   Brake { $valve }
-hud-afb = AFB { $state }   target { $target } km/h
-hud-electrics = Battery { $battery }   Pantograph { $pantograph } %   Main switch { $switch }   Contact line { $voltage } V   Spring brake { $parking }
-hud-tap = Notch { $step }/{ $steps }   Motor current { $current } A   Field { $field } %   Dynamic brake { $force } kN
-hud-diesel = Engine { $rpm } 1/min   Fill { $fill } %   Circuit { $circuit }   ν { $nu }   Retarder { $retarder } %
-hud-dynamic = Dynamic brake { $force } kN
-hud-axles = Axles { $slipping }/{ $axles } { $state }, worst { $worst } m/s
-hud-axles-spinning = spinning
-hud-axles-sliding = sliding
-hud-generator = Generator { $voltage } V   { $current } A   Load regulator { $regulator } %
-hud-boiler = Boiler { $pressure } bar   Glass { $glass } %   Fire { $fire } %   Grate { $coal } kg
-hud-tender = Tender { $water } l water   { $coal } kg coal   Blowing off { $blowing }
-hud-temperature = Motors { $motor } °C   Resistors { $resistor } °C
-hud-protection = Train protection: { $action }   Supervision { $limit }   Lamps: { $lamps }
-hud-pzb = { $variant }   Train category { $category }{ $note }
-hud-pzb-restrictive = {"   "}restrictive
-hud-pzb-selftest = {"   "}Function test: { $phase }
-hud-lzb-selftest = LZB function test: { $phase } (B = acknowledge)
-hud-lzb = LZB { $mode } { $block }{ $cirelke }: v permitted { $permitted }   v target { $target }   target distance { $distance } m
-hud-signals = Signals: { $aspects }
-hud-terrain = Terrain: { $tiles } tiles loaded (+{ $pending } in progress), { $triangles } triangles, { $megabytes } MB, view { $view } m
-hud-scenario = { $number } — { $name }
-hud-scenario-passed = Scenario passed
-hud-scenario-failed = Scenario failed
-hud-outcome = { $result }: { $reason }
-hud-score = Score { $total } | Forced brake applications { $forced } | { $energy } kWh
-hud-control = { $name }: { $value } %
-hud-keys-walk = WASD walk  Shift run  Mouse look around  E door in/out  Left click operate  F1 back to the seat
-hud-keys-drive = W/S power controller  A/D brake  E emergency  Q lap  Z fill  C/V direct brake  Y wiper  6 AFB  7/8 AFB target
-hud-keys-safety = Space Sifa  PgDn acknowledge  End free  Del override  N/M/B LZB  U train category  1–4 preparation  F1–F4 camera  F9 mods
-hud-keys-lights = 9 headlights  0 cab light  ,/. instrument dimmer
 
 ## Main menu
 #
@@ -1118,7 +1226,10 @@ set-language = Language
 set-language-hint = Applies right away, to the menu as well as to the cab.
 set-language-system = System
 set-hud = HUD
-set-hud-hint = The readout of speed, brakes and train protection while driving.
+set-hud-hint = Full, or reduced to the instruments and the train protection — F7 walks the three steps while driving.
+set-hud-full = Full
+set-hud-reduced = Reduced
+set-hud-off = Off
 set-look-speed = Look sensitivity
 set-look-speed-hint = How far the view turns while the right mouse button is held.
 set-reset = Reset to defaults

@@ -39,7 +39,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
-use bevy::text::FontSource;
 use bevy::ui::widget::NodeImageMode;
 use bevy::ui::{BackgroundGradient, ColorStop, LinearGradient, ScrollPosition};
 use content::musterbahn;
@@ -51,43 +50,11 @@ use sim_core::train::VehicleSpec;
 
 use crate::mods_ui::{self, ModManager};
 use crate::settings::{self, Audio, Gameplay, Graphics};
+use crate::theme::{
+    ACCENT, BASE, BRAND, CHIP, Face, Fonts, HAIRLINE, PANE, ROW, ROW_ACTIVE, ROW_HOVER, SLOT, TEXT,
+    TEXT_BRIGHT, TEXT_DIM, TEXT_FAINT, TEXT_MID, TRACK, WARN, Wallpaper, rule, text,
+};
 use crate::{GameState, Mods};
-
-// Surfaces, opaque and in tiers, and neutral rather than blue — a blue-black dark theme
-// with one warm accent is the look every generated dashboard wears.
-/// The page behind everything.
-const BASE: Color = Color::srgb(0.047, 0.047, 0.055);
-/// Footer bar and detail pane.
-const PANE: Color = Color::srgb(0.078, 0.078, 0.094);
-/// A row at rest …
-const ROW: Color = Color::srgb(0.102, 0.102, 0.122);
-/// … under the cursor …
-const ROW_HOVER: Color = Color::srgb(0.137, 0.137, 0.161);
-/// … and the one the selection sits on.
-const ROW_ACTIVE: Color = Color::srgb(0.173, 0.173, 0.204);
-/// The leading slot of a row, which will hold artwork once there is any.
-const SLOT: Color = Color::srgb(0.149, 0.149, 0.173);
-/// Slider track and the off state of a toggle.
-const TRACK: Color = Color::srgb(0.200, 0.200, 0.231);
-/// Key cap in the footer.
-const CHIP: Color = Color::srgb(0.118, 0.118, 0.137);
-/// Rules and panel edges — opaque, so they do not change with what is behind them.
-const HAIRLINE: Color = Color::srgb(0.165, 0.165, 0.192);
-
-/// Selection and focus: warm bone white, no hue of its own. Everything the cursor is on
-/// simply becomes brighter, which is what keeps the one saturated colour below meaningful.
-const ACCENT: Color = Color::srgb(0.949, 0.941, 0.918);
-/// Traffic red (RAL 3020), the colour German railways are painted and signed in. It marks
-/// the wordmark and fills the button that starts something — nothing else.
-const BRAND: Color = Color::srgb(0.882, 0.000, 0.059);
-/// Amber, for the one thing that is neither: a mod that is missing a dependency.
-const WARN: Color = Color::srgb(0.878, 0.663, 0.231);
-
-const TEXT_BRIGHT: Color = Color::srgb(0.976, 0.973, 0.965);
-const TEXT: Color = Color::srgb(0.902, 0.902, 0.910);
-const TEXT_MID: Color = Color::srgb(0.627, 0.627, 0.659);
-const TEXT_DIM: Color = Color::srgb(0.459, 0.459, 0.494);
-const TEXT_FAINT: Color = Color::srgb(0.333, 0.333, 0.361);
 
 /// Height of a row, of a section heading on the settings page, and the gap below either.
 /// The list scrolls by the running sum of these, so a heading may be shorter than a row
@@ -102,37 +69,6 @@ const ROW_GAP: f32 = 6.0;
 const LIST_WIDTH: f32 = 520.0;
 const LIST_WIDTH_WIDE: f32 = 760.0;
 const DETAIL_WIDTH: f32 = 380.0;
-
-/// The three faces the menu uses. Mono is the app's default font handle, so it needs no
-/// handle of its own.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Face {
-    Sans,
-    Semibold,
-    Mono,
-}
-
-/// Handles of the two proportional faces, put into `Assets<Font>` while the app is built.
-#[derive(Resource, Default, Clone)]
-pub struct Fonts {
-    pub sans: Handle<Font>,
-    pub semibold: Handle<Font>,
-}
-
-/// The picture behind the menu. Compiled in like the fonts, so the binary stays
-/// self-contained and there is no asset directory to ship beside it.
-#[derive(Resource, Default, Clone)]
-pub struct Wallpaper(pub Handle<Image>);
-
-impl Fonts {
-    fn source(&self, face: Face) -> FontSource {
-        match face {
-            Face::Sans => FontSource::Handle(self.sans.clone()),
-            Face::Semibold => FontSource::Handle(self.semibold.clone()),
-            Face::Mono => FontSource::default(),
-        }
-    }
-}
 
 /// The player's choices. `None` means the built-in default — `setup` falls back to the
 /// example line, the BR 101 and no scenario for exactly that case.
@@ -396,7 +332,8 @@ impl Setting {
             Setting::Bloom => Control::Toggle(graphics.bloom),
             Setting::Fullscreen => Control::Toggle(graphics.fullscreen),
             Setting::VSync => Control::Toggle(graphics.vsync),
-            Setting::Hud => Control::Toggle(gameplay.hud),
+            // Three steps, so it is dialled like the language rather than switched.
+            Setting::Hud => Control::Choice,
             Setting::Language => Control::Choice,
             Setting::Reset => Control::Action,
         }
@@ -420,6 +357,7 @@ impl Setting {
                 value = i18n::decimal(f64::from(gameplay.look_speed), 1)
             ),
             Setting::Language => language_name(&gameplay.language),
+            Setting::Hud => t!(gameplay.hud.key()),
             _ => String::new(),
         }
     }
@@ -453,7 +391,7 @@ fn change(
             gameplay.language = next_language(&gameplay.language, dir);
             settings::apply_language(&gameplay.language);
         }
-        Setting::Hud => gameplay.hud = !gameplay.hud,
+        Setting::Hud => gameplay.hud = gameplay.hud.cycle(dir),
         Setting::LookSpeed => gameplay.look_speed = step(gameplay.look_speed, dir, LOOK_SPEED),
         Setting::Reset => {
             *graphics = Graphics::default();
@@ -848,31 +786,6 @@ fn detail_node(shown: bool) -> Node {
         overflow: Overflow::clip(),
         ..default()
     }
-}
-
-/// A one pixel hairline. Opaque, so it does not change with what lies behind it.
-fn rule(width: Val) -> impl Bundle {
-    (
-        Node {
-            width,
-            height: Val::Px(1.0),
-            flex_shrink: 0.0,
-            ..default()
-        },
-        BackgroundColor(HAIRLINE),
-    )
-}
-
-fn text(fonts: &Fonts, content: String, face: Face, size: f32, color: Color) -> impl Bundle {
-    (
-        Text::new(content),
-        TextFont {
-            font: fonts.source(face),
-            font_size: bevy::text::FontSize::Px(size),
-            ..default()
-        },
-        TextColor(color),
-    )
 }
 
 // ---------------------------------------------------------------------------------

@@ -974,6 +974,23 @@ module-ghost-hint = Ein weiteres Modul, grau als Geist gezeichnet. Seine Grenzkr
 action-load-ghost = Geist laden…
 action-clear-ghost = Entfernen
 ghost-boundaries = Grenzen als Fangpunkte: { $count }
+# --- Time of day -----------------------------------------------------------
+# The sky over the module. Latitude and longitude are the module's anchor, so
+# only the date and the clock are edited here.
+heading-sky = Tageszeit
+sky-date = Datum
+sky-date-hint = Tag, Monat und Jahr. Das Datum entscheidet, wie hoch die Sonne steigt und wo sie aufgeht — im Simulator kommt es aus der Startzeit des Szenarios.
+sky-time = Uhrzeit
+sky-time-hint = Ortszeit. Mit dem Regler darunter lässt sich ein ganzer Tag durchfahren.
+sky-zone = Zeitzone
+sky-zone-hint = Wie weit die Ortszeit der Weltzeit vorausläuft. Deutschland: 1 im Winter, 2 im Sommer.
+sky-overcast = Bewölkung
+sky-overcast-hint = 0 ist ein klarer Himmel, 1 eine geschlossene Decke: die Sonne wird gedämpft, ihre Schatten verschwinden, die Sterne sind weg.
+sky-scrub = Tag durchfahren
+sky-sun-at = Sonne { $elevation }° über dem Horizont, { $azimuth }° aus Nord
+sky-moon-at = Mond { $elevation }° über dem Horizont, { $phase } % beleuchtet
+sky-place = Aus dem Modulanker: { $lat }°, { $lon }°
+
 heading-checks = Prüfung
 check-ok = Keine Befunde.
 check-device-off-edge = Gerät { $device } liegt außerhalb seines Gleises

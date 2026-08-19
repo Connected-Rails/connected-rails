@@ -36,12 +36,12 @@ use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
 use sim_core::train::{Train, Vehicle, VehicleSpec, Weather};
 use track_model::TrackPosition;
-use world_coords::{RenderOrigin, sun};
+use world_coords::RenderOrigin;
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
 // `update_daylight`, read by everything that switches with darkness: the
 // headlights here, the mods' `_NIGHT` nodes in `world-render`.
 use bevy::gltf::GltfAssetLabel;
-use world_render::Daylight;
+use world_render::{Daylight, sky};
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
 /// the menu apply without restarting the process.
@@ -100,14 +100,6 @@ const PRECIP_PERIOD: f32 = 24.0;
 /// Sight distance that stands in for "clear" [m] — far beyond the camera's far
 /// plane, so the fog is invisible without a weather that pulls it in.
 const CLEAR_VISIBILITY: f32 = 100_000.0;
-
-/// The one directional light that is the sun (`update_daylight`).
-#[derive(Component)]
-struct Sun;
-
-/// Second, dim directional light for moonlit nights.
-#[derive(Component)]
-struct Moon;
 
 /// Which train is driven by the player.
 #[derive(Resource)]
@@ -196,6 +188,8 @@ fn main() {
         "--frames",
         "--screenshot",
         "--connect",
+        "--time",
+        "--date",
     ];
     // `--menu` overrules them again — the only way to put the menu itself in front of
     // `--screenshot`, which would otherwise photograph the world behind it. It takes an
@@ -234,7 +228,9 @@ fn main() {
     // The mixer (`audio.rs`) — opened here rather than in `Startup`, because the initial
     // state transition into `Driving` runs before any startup schedule.
     .add_plugins(audio::plugin)
-    .insert_resource(ClearColor(Color::srgb(0.55, 0.68, 0.82)))
+    // The atmosphere covers every pixel the world does not; this is only what
+    // shows before the first sky pass.
+    .insert_resource(ClearColor(Color::BLACK))
     // Mouse picking for the 3D cab: only marked control meshes catch the ray —
     // without the marker requirement every terrain tile would compete for it.
     .add_plugins(MeshPickingPlugin)
@@ -292,7 +288,7 @@ fn main() {
             displays::update_displays,
             rebase_origin,
             sync_vehicles,
-            update_daylight,
+            feed_sky,
             update_headlights,
             walk::walk_player,
             ui::camera_control,
@@ -435,6 +431,9 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain_materials: ResMut<Assets<render::TerrainMaterial>>,
+    mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
+    mut star_materials: ResMut<Assets<sky::StarMaterial>>,
+    mut moon_materials: ResMut<Assets<sky::MoonMaterial>>,
     assets: Res<AssetServer>,
     mut mods: ResMut<Mods>,
     mut manager: ResMut<mods_ui::ModManager>,
@@ -465,11 +464,28 @@ fn setup(
     let mods = &mut mods.0;
 
     let world::World {
-        sim,
+        mut sim,
         player,
         drivers,
         line: line_source,
     } = world::build(mods, &selection);
+    // `--time 21:40` and `--date 2026-10-03` move the run's wall clock, the way
+    // `--hud` moves the display: a screenshot cannot open the scenario file, and
+    // the night sky is exactly what a rendering smoke test wants to see.
+    if let Some(clock) = arg("--time")
+        && let Some((hour, minute)) = parse_pair(&clock, ':')
+    {
+        sim.start.hour = hour;
+        sim.start.minute = minute;
+    }
+    if let Some(date) = arg("--date") {
+        let parts: Vec<_> = date.split('-').filter_map(|p| p.parse().ok()).collect();
+        if let [year, month, day] = parts[..] {
+            sim.start.year = year as i32;
+            sim.start.month = month;
+            sim.start.day = day;
+        }
+    }
     // Both sides of a multiplayer run have to have built the same world; the fingerprint
     // is what says so on joining (`net.rs`).
     let fingerprint = world::fingerprint(&line_source.name, &sim);
@@ -720,36 +736,30 @@ fn setup(
         }
     }
 
-    // Sun, moon and sky follow the scenario clock (`update_daylight`).
-    commands.spawn((
-        Sun,
-        DirectionalLight {
-            illuminance: 20_000.0,
-            shadow_maps_enabled: graphics.shadows,
-            ..default()
-        },
-        Transform::from_xyz(200.0, 400.0, 200.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
-        Moon,
-        DirectionalLight {
-            illuminance: 0.0,
-            color: Color::srgb(0.75, 0.82, 1.0),
-            ..default()
-        },
-        Transform::default(),
-    ));
+    // Atmosphere, sun, moon and stars — all of them off the scenario clock and
+    // the georeferenced place (`feed_sky`).
+    sky::spawn(
+        &mut commands,
+        &mut meshes,
+        &mut media,
+        &mut star_materials,
+        &mut moon_materials,
+        graphics.shadows,
+    );
     let camera = commands
         .spawn((
             Camera3d::default(),
             // HDR: emissive lamp lenses glow at night (M6 night lighting) — the glow
             // itself is bloom, which the settings can switch off.
             bevy::camera::Hdr,
+            // The sky lights the scene itself; what stays here is the floor a
+            // moonless night needs to keep the ground off pure black (`feed_sky`).
             AmbientLight {
                 color: Color::srgb(0.7, 0.8, 1.0),
-                brightness: 250.0,
+                brightness: 20.0,
                 ..default()
             },
+            sky::camera_settings(),
             Projection::Perspective(PerspectiveProjection {
                 far: 20_000.0,
                 ..default()
@@ -908,6 +918,13 @@ fn lod_range(lod: u8) -> f32 {
 }
 
 /// Value of a command line option (`--name <value>`).
+/// Splits `"21:40"` into its two numbers — the one shape both `--time` and the
+/// date parsing need.
+fn parse_pair(text: &str, separator: char) -> Option<(u32, u32)> {
+    let (left, right) = text.split_once(separator)?;
+    Some((left.trim().parse().ok()?, right.trim().parse().ok()?))
+}
+
 pub(crate) fn arg(name: &str) -> Option<String> {
     std::env::args().skip_while(|a| a != name).nth(1)
 }
@@ -1021,98 +1038,53 @@ fn sync_vehicles(
     }
 }
 
-/// Transform and light of one celestial body, disjoint from the other one.
-type BodyLight<'w, 's, B, Other> = Query<
-    'w,
-    's,
-    (&'static mut Transform, &'static mut DirectionalLight),
-    (With<B>, Without<Other>),
->;
-
-/// Sun and moon follow the wall clock (plan ch. 14): position from date, time and the
-/// georeferenced location, light and sky colour from the sun's elevation; the weather
-/// dims the sun, greys the sky and pulls the distance fog in (M6).
-// A Bevy system takes its resources as parameters — the argument count says nothing here.
-#[allow(clippy::too_many_arguments)]
-fn update_daylight(
+/// Feeds the sky (`world_render::sky`) from the run: the scenario's clock, the
+/// place the render origin sits at, and the weather. Sun, moon, stars and the
+/// scattering that makes the sky blue all follow from those three — the whole
+/// day/night cycle of plan ch. 14 is this system plus that module.
+///
+/// What stays here is the two things the sky does not own: the ambient floor a
+/// moonless night needs, and the distance fog the weather pulls in (M6).
+fn feed_sky(
     sim: Res<SimResource>,
     origin: Res<Origin>,
-    graphics: Res<settings::Graphics>,
-    mut clear: ResMut<ClearColor>,
-    mut daylight: ResMut<Daylight>,
-    mut sun: BodyLight<Sun, Moon>,
-    mut moon: BodyLight<Moon, Sun>,
+    daylight: Res<Daylight>,
+    mut sky: ResMut<sky::Sky>,
     mut ambient: Query<&mut AmbientLight, With<ui::CabCamera>>,
     mut fog: Query<&mut DistanceFog, With<ui::CabCamera>>,
 ) {
-    let (lat, lon, _) = world_coords::geo::from_ecef(origin.0.position());
+    let (latitude, longitude, _) = world_coords::geo::from_ecef(origin.0.position());
     let start = sim.0.start;
-    let jd = sun::julian_date(
-        start.year,
-        start.month,
-        start.day,
-        start.seconds_ut() + sim.0.time,
-    );
-
-    let (az, el) = sun::sun_position(jd, lat, lon);
-    let e = el.to_degrees() as f32;
-    // Daylight factor: ramps up through civil twilight, 1 in full daylight.
-    let day = ((e + 6.0) / 12.0).clamp(0.0, 1.0);
-    daylight.0 = day;
-
-    // Weather (M6): an overcast sky dims the sun and greys the sky; the
-    // visibility pulls the camera's distance fog in.
     let weather = sim.0.weather;
-    let overcast: f32 = match weather {
-        Weather::Clear => 0.0,
-        Weather::Rain => 0.8,
-        Weather::Snow => 0.6,
-        Weather::Fog => 0.7,
+    *sky = sky::Sky {
+        year: start.year,
+        month: start.month,
+        day: start.day,
+        seconds: start.seconds() + sim.0.time,
+        utc_offset: start.utc_offset,
+        latitude,
+        longitude,
+        overcast: match weather {
+            Weather::Clear => 0.0,
+            Weather::Rain => 0.8,
+            Weather::Snow => 0.6,
+            Weather::Fog => 0.7,
+        },
     };
 
-    if let Ok((mut tf, mut light)) = sun.single_mut() {
-        *tf = Transform::from_rotation(look_at_body(az, el));
-        light.illuminance = 20_000.0 * (1.0 - 0.85 * overcast) * el.sin().max(0.0) as f32;
-        light.shadow_maps_enabled = graphics.shadows && e > 0.0 && overcast < 0.5;
-        let c = lerp3(
-            (1.0, 0.60, 0.30),
-            (1.0, 1.0, 1.0),
-            (e / 15.0).clamp(0.0, 1.0),
-        );
-        light.color = Color::srgb(c.0, c.1, c.2);
+    let night = 1.0 - daylight.0;
+    for mut ambient in &mut ambient {
+        // The sky's own image-based light carries the day; this is the floor
+        // underneath it, so a night without a moon is dark and not blind.
+        ambient.brightness = 8.0 + 24.0 * night;
     }
-
-    let (maz, mel, phase) = sun::moon_position(jd, lat, lon);
-    let moonlight = if mel > 0.0 {
-        phase as f32 * (1.0 - day)
-    } else {
-        0.0
-    };
-    if let Ok((mut tf, mut light)) = moon.single_mut() {
-        *tf = Transform::from_rotation(look_at_body(maz, mel));
-        // ponytail: a real full moon is ~0.25 lx and invisible without auto-exposure —
-        // the night is lit artistically bright instead.
-        light.illuminance = 40.0 * moonlight;
-    }
-
-    for mut a in &mut ambient {
-        a.brightness = 6.0 + 244.0 * day + 10.0 * moonlight;
-        let c = lerp3((0.45, 0.55, 0.85), (0.7, 0.8, 1.0), day);
-        a.color = Color::srgb(c.0, c.1, c.2);
-    }
-
-    // Sky: night ↔ day, with a warm band while the sun crosses the horizon;
-    // overcast weather greys it all out (at night it stays dark).
-    let sky = lerp3((0.01, 0.02, 0.05), (0.55, 0.68, 0.82), day);
-    let dawn = (1.0 - (e / 10.0).abs()).clamp(0.0, 0.6);
-    let sky = lerp3(sky, (0.83, 0.52, 0.32), dawn);
-    let sky = lerp3(sky, (0.56, 0.58, 0.61), overcast * day);
-    clear.0 = Color::srgb(sky.0, sky.1, sky.2);
-
     for mut fog in &mut fog {
-        fog.color = clear.0;
+        // Only bad weather draws it: `CLEAR_VISIBILITY` sits beyond the far plane,
+        // and the haze of a clear day is the atmosphere's aerial perspective.
         let visibility = weather.visibility().map_or(CLEAR_VISIBILITY, |v| v as f32);
         fog.falloff = FogFalloff::from_visibility(visibility);
+        let grey = lerp3((0.05, 0.06, 0.08), (0.62, 0.65, 0.70), daylight.0);
+        fog.color = Color::srgb(grey.0, grey.1, grey.2);
     }
 }
 
@@ -1150,15 +1122,6 @@ fn update_headlights(
     for mut lamp in &mut cab_lamp {
         lamp.intensity = if on { 60_000.0 } else { 0.0 };
     }
-}
-
-/// Rotation of a directional light shining *from* azimuth/elevation onto the scene.
-/// The render space is ENU-aligned: +X east, +Y up, −Z north.
-fn look_at_body(azimuth: f64, elevation: f64) -> Quat {
-    let (sa, ca) = azimuth.sin_cos();
-    let (se, ce) = elevation.sin_cos();
-    let to_body = Vec3::new((ce * sa) as f32, se as f32, (-ce * ca) as f32);
-    Transform::default().looking_to(-to_body, Vec3::Y).rotation
 }
 
 fn lerp3(a: (f32, f32, f32), b: (f32, f32, f32), t: f32) -> (f32, f32, f32) {

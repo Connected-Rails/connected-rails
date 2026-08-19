@@ -29,6 +29,8 @@ use std::collections::BTreeMap;
 use track_model::{Facing, TrackEdge, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
+pub mod sky;
+
 /// Registers the splat shader and its material. Both programs add it after
 /// `DefaultPlugins` — the embedded registry only exists once the asset plugin
 /// has run.
@@ -39,6 +41,7 @@ impl Plugin for WorldRenderPlugin {
         embedded_asset!(app, "terrain_splat.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .init_resource::<Daylight>()
+            .add_plugins(sky::plugin)
             .add_systems(Update, switch_night_nodes);
     }
 }

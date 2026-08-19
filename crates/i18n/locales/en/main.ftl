@@ -973,6 +973,23 @@ module-ghost-hint = Another module drawn as a grey ghost. Its boundary circles a
 action-load-ghost = Load ghost…
 action-clear-ghost = Clear
 ghost-boundaries = Boundaries as snap targets: { $count }
+# --- Time of day -----------------------------------------------------------
+# The sky over the module. Latitude and longitude are the module's anchor, so
+# only the date and the clock are edited here.
+heading-sky = Time of day
+sky-date = Date
+sky-date-hint = Day, month and year. The date decides how high the sun climbs and which way it rises, and it is what the simulator reads out of the scenario's start time.
+sky-time = Time
+sky-time-hint = Local clock. Drag the slider below to run a whole day past.
+sky-zone = Time zone
+sky-zone-hint = How far the local clock runs ahead of UT. Germany: 1 in winter, 2 in summer.
+sky-overcast = Cloud cover
+sky-overcast-hint = 0 is a clear sky, 1 a closed deck: the sun is dimmed, its shadows go, and the stars are gone.
+sky-scrub = Run the day past
+sky-sun-at = Sun { $elevation }° above the horizon, { $azimuth }° from north
+sky-moon-at = Moon { $elevation }° above the horizon, { $phase } % lit
+sky-place = From the module's anchor: { $lat }°, { $lon }°
+
 heading-checks = Checks
 check-ok = No findings.
 check-device-off-edge = Device { $device } sits outside its track

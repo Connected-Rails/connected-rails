@@ -38,6 +38,20 @@ SOFTWARE.
 The `editor-ui` and `screenshot` skills are project-specific and covered by the
 EUPL like the rest of the repository.
 
+## Star catalogue in `crates/world-render/src/stars.bin`
+
+The night sky is the real one. `stars.bin` holds the naked-eye stars — right
+ascension, declination, apparent magnitude and colour index — filtered out of
+the [HYG database](https://github.com/astronexus/HYG-Database) by
+`tools/gen_stars.py`. The database is compiled by David Nash (Astronomy Nexus)
+from the Hipparcos, Yale Bright Star and Gliese catalogues and is used here
+under the Creative Commons Attribution-ShareAlike 4.0 International licence
+(<https://creativecommons.org/licenses/by-sa/4.0/>).
+
+Attribution: *The HYG database, © David Nash / Astronomy Nexus, CC BY-SA 4.0.*
+The file is data, not code: it is read by `world_render::sky` and shipped inside
+the binary, and any redistribution of it stays under CC BY-SA 4.0.
+
 ## Rust dependencies
 
 Crates pulled in by Cargo are not vendored here; their licences are those

@@ -20,6 +20,7 @@ cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and ex
 cargo run -p app -- --screenshot shot.png --overlays   # …with the F5 and F6 overlays open
 cargo run -p app -- --screenshot shot.png --hud reduced # …with the display on one of its three steps
 cargo run -p app -- --menu --screenshot screenshots/menu.png   # …of the menu instead
+cargo run -p app -- --screenshot night.png --time 22:30 --date 2026-01-15  # …at another hour of another day
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
 cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
@@ -437,6 +438,13 @@ an assembly of shared parts.
 All are desktop applications, not game screens: menu bar, docked panels, the operating
 system's own file dialogs. `--frames N` and `--screenshot file.png` work in all of them.
 
+The route editor draws the module under the simulator's own sky. Its **Time of day**
+section sets the date, the clock, the time zone and the cloud cover, and a slider runs a
+whole day past in one drag — which is how you find out that the platform lies in the
+shadow of its own canopy all morning. Latitude and longitude are not edited there: they
+are the module's anchor, the same pair a run reads, so both programs put the sun over the
+same hillside. Underneath, the panel reads out where the sun and the moon actually stand.
+
 ## Language
 
 Simulator and editors speak **English and German**. The language comes from the operating
@@ -711,7 +719,15 @@ in the mod) — without one, only the scenario's own points count. A timetable i
 seconds since midnight, wrapping around every 24 h). `start:` sets date and local time
 of the run (default: midsummer noon) — it anchors `Daily` timetables, puts the sun
 and moon where they belong for the georeferenced line, and paints the season: meadows
-turn through October, ground and trees go under snow from November to March. A mod's
+turn through October, ground and trees go under snow from November to March. The sky
+those two stand in is a scattering model, not a gradient: Rayleigh and Mie through the
+look-up tables of Hillaire's technique, so noon is blue, sunset is red and a valley
+twenty kilometres off lies in haze, all of it out of the sun's elevation alone. Behind
+them stand the real stars — the naked-eye HYG catalogue, held in equatorial coordinates
+and turned by the latitude and the sidereal time, so the pole star sits at the latitude's
+altitude and everything rises four minutes earlier each night. The moon is a disk half a
+degree wide, lit from where the sun really is, which is where its phase comes from.
+`--time 22:30` and `--date 2026-01-15` move the clock of a run for a screenshot. A mod's
 track object may bring its own `autumn_model`/`winter_model` glTF — optional, and
 whatever it leaves out keeps the year-round model.
 `SetWeather(Clear | Rain | Snow | Fog)` changes the weather: sky, visibility and

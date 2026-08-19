@@ -35,7 +35,7 @@ use overlay::{Overlay, OverlayTile};
 use tools::EditorState;
 use track_model::{DeviceKind, TrackEdge, TrackNetwork};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
-use world_render::WorldAnchored;
+use world_render::{WorldAnchored, sky};
 
 /// Geographic position of a world point in **degrees** — `geo::from_ecef` returns radians,
 /// while both the tile grid and the display work in degrees.
@@ -377,7 +377,8 @@ fn main() {
             (thumbnails::render, tools::draw_gizmos).chain(),
             gizmo::draw,
             scale_markers,
-            update_title,
+            // Nested only because a schedule tuple stops at twenty entries.
+            (feed_sky, update_title),
             confirm_close,
         )
             .chain(),
@@ -395,6 +396,19 @@ fn main() {
 #[derive(Resource)]
 struct LinePath(Option<String>);
 
+/// Puts the module's own place under the sky. The date and the clock come from
+/// the time panel; latitude and longitude hang off the module's anchor, exactly
+/// as they do in the simulator — the same module therefore gets the same sun in
+/// both programs. A module that has no anchor yet falls back to where the view is.
+fn feed_sky(line: Res<Line>, focus: Res<Focus>, mut sky: ResMut<sky::Sky>) {
+    let (lat, lon) = match line.source.anchor {
+        Some(anchor) => (anchor.lat, anchor.lon),
+        None => focus_degrees(focus.position),
+    };
+    sky.latitude = lat.to_radians();
+    sky.longitude = lon.to_radians();
+}
+
 #[allow(clippy::too_many_arguments)]
 fn setup(
     mut commands: Commands,
@@ -405,6 +419,9 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut terrain_materials: ResMut<Assets<world_render::TerrainMaterial>>,
+    mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
+    mut star_materials: ResMut<Assets<sky::StarMaterial>>,
+    mut moon_materials: ResMut<Assets<sky::MoonMaterial>>,
 ) {
     // Load the line.
     let (source, path) = match &line_path.0 {
@@ -453,24 +470,28 @@ fn setup(
             ..default()
         }),
         Transform::default(),
+        // The sky lights the module itself; this is the floor that keeps the
+        // relief readable when the time panel is set to the middle of the night.
         AmbientLight {
-            color: Color::WHITE,
-            brightness: 400.0,
+            color: Color::srgb(0.75, 0.82, 1.0),
+            brightness: 60.0,
             ..default()
         },
+        sky::camera_settings(),
         PrimaryEguiContext,
     ));
-    // Light from the north-west at about 35° — the cartographic hillshade
-    // angle. Everything but the terrain is drawn unlit, so this light exists
-    // to make the ground's relief readable from straight above.
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 9_000.0,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Transform::from_xyz(-300.0, 300.0, -300.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
+    // The same sky the simulator draws, over the same module: the sun where the
+    // module's anchor and the date on the time panel put it (`feed_sky`). A
+    // builder judging a cutting at eight in the morning in October gets what the
+    // run would show.
+    sky::spawn(
+        &mut commands,
+        &mut meshes,
+        &mut media,
+        &mut star_materials,
+        &mut moon_materials,
+        false,
+    );
 
     commands.insert_resource(Overlay::new(config, message.unwrap_or_default()));
     commands.insert_resource(Focus {

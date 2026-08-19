@@ -54,6 +54,7 @@ pub fn draw(
     mut ghost: ResMut<Ghost>,
     terrain: Res<crate::terrain::TerrainView>,
     mut gizmo: ResMut<crate::gizmo::GizmoState>,
+    mut sky: ResMut<world_render::sky::Sky>,
     mut catalogs: crate::Catalogs,
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
@@ -110,6 +111,7 @@ pub fn draw(
         &mut overlay,
         &mut request,
         &mut focus,
+        &mut sky,
         &mut active,
     );
 
@@ -947,12 +949,13 @@ fn status_bar(
 /// key of the title. The jump bar sits above the scroll area and has to name
 /// them before the first one has been laid out. Editing first, template
 /// configuration after, diagnostics last.
-const SECTIONS: [(&str, &str); 8] = [
+const SECTIONS: [(&str, &str); 9] = [
     ("tools", "heading-tools"),
     ("selection", "heading-selection"),
     ("areas", "heading-areas"),
     ("interlock", "heading-interlock"),
     ("module", "heading-module"),
+    ("sky", "heading-sky"),
     ("checks", "heading-checks"),
     ("imagery", "heading-imagery"),
     ("cache", "heading-cache"),
@@ -990,6 +993,7 @@ fn left_panel(
     overlay: &mut Overlay,
     request: &mut Request,
     focus: &mut Focus,
+    sky: &mut world_render::sky::Sky,
     active: &mut Option<&'static str>,
 ) {
     egui::Panel::left("info")
@@ -1284,6 +1288,10 @@ fn left_panel(
 
                     nav_section(ui, jump, &mut current, "module", "heading-module", |ui| {
                         module_section(ui, line, state, ghost, overlay, focus);
+                    });
+
+                    nav_section(ui, jump, &mut current, "sky", "heading-sky", |ui| {
+                        sky_section(ui, sky);
                     });
 
                     nav_section(ui, jump, &mut current, "checks", "heading-checks", |ui| {
@@ -2735,6 +2743,77 @@ fn envelope_rows(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, fo
         }
     });
     state.envelope_size = Some(size_km);
+}
+
+/// Time of day over the module: the date and the clock the sky is drawn for.
+///
+/// Latitude and longitude are deliberately *not* here — they are the module's
+/// anchor, three sections up, and the simulator reads the very same pair. The
+/// sun that comes over the hill at half past six in this panel is the one the
+/// run shows, because both are the same function of the same two numbers.
+///
+/// The slider is the point of the whole thing: dragging a day past in one
+/// second is how a builder finds out that the platform lies in the shadow of
+/// its own canopy all morning.
+fn sky_section(ui: &mut egui::Ui, sky: &mut world_render::sky::Sky) {
+    editor_ui::form_grid("sky").show(ui, |ui| {
+        row(ui, "sky-date", |ui| {
+            // Not `field`: three of those at the shared width run off the panel.
+            ui.add(editor_ui::drag(&mut sky.day, 0.05, 1.0..=31.0, ""));
+            ui.add(editor_ui::drag(&mut sky.month, 0.03, 1.0..=12.0, ""));
+            ui.add(editor_ui::drag(&mut sky.year, 0.05, 1970.0..=2200.0, ""));
+        });
+        let (mut hour, mut minute) = (sky.hour(), sky.minute());
+        let mut clock_changed = false;
+        row(ui, "sky-time", |ui| {
+            clock_changed = editor_ui::field(ui, &mut hour, 0.03, 0.0..=23.0, "h").changed()
+                | editor_ui::field(ui, &mut minute, 0.1, 0.0..=59.0, "min").changed();
+        });
+        if clock_changed {
+            sky.set_clock(hour, minute);
+        }
+        row(ui, "sky-zone", |ui| {
+            editor_ui::field(ui, &mut sky.utc_offset, 0.02, -12.0..=14.0, "h");
+        });
+        row(ui, "sky-overcast", |ui| {
+            editor_ui::field(ui, &mut sky.overcast, 0.01, 0.0..=1.0, "");
+        });
+    });
+
+    let mut hours = sky.seconds / 3600.0;
+    if ui
+        .add(
+            egui::Slider::new(&mut hours, 0.0..=24.0)
+                .show_value(false)
+                .text(t!("sky-scrub")),
+        )
+        .changed()
+    {
+        sky.seconds = hours * 3600.0;
+    }
+
+    // Where the two bodies actually stand — the check that the date, the clock
+    // and the anchor together mean what the builder thought they meant.
+    let julian = sky.julian_date();
+    let (azimuth, elevation) = world_coords::sun::sun_position(julian, sky.latitude, sky.longitude);
+    let (_, moon_elevation, phase) =
+        world_coords::sun::moon_position(julian, sky.latitude, sky.longitude);
+    ui.add_space(space::XS);
+    ui.small(t!(
+        "sky-sun-at",
+        elevation = format!("{:.0}", elevation.to_degrees()),
+        azimuth = format!("{:.0}", azimuth.to_degrees()),
+    ));
+    ui.small(t!(
+        "sky-moon-at",
+        elevation = format!("{:.0}", moon_elevation.to_degrees()),
+        phase = format!("{:.0}", phase * 100.0),
+    ));
+    ui.small(t!(
+        "sky-place",
+        lat = format!("{:.3}", sky.latitude.to_degrees()),
+        lon = format!("{:.3}", sky.longitude.to_degrees()),
+    ));
 }
 
 fn module_section(

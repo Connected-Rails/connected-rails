@@ -730,10 +730,21 @@ degree wide, lit from where the sun really is, which is where its phase comes fr
 `--time 22:30` and `--date 2026-01-15` move the clock of a run for a screenshot. A mod's
 track object may bring its own `autumn_model`/`winter_model` glTF — optional, and
 whatever it leaves out keeps the year-round model.
-`SetWeather(Clear | Rain | Snow | Fog)` changes the weather: sky, visibility and
-precipitation in the renderer, plus the rail condition the weather implies (rain wets
-the rail, snow makes it slippery). `SetRail(Dry | Wet | Slippery)` sets the rail alone
-— leaves and frost have no weather to come from.
+`SetWeather(Clear | Cloudy | Overcast | Fog | Drizzle | Rain | Storm | Thunderstorm |
+Sleet | Snow | Blizzard | Hail | Frost)` moves the weather there over five minutes — a
+front, not a switch. Every preset is a set of physical numbers (cover, cloud base,
+precipitation rate, wind, sight, temperature, thunder), and everything downstream reads
+those rather than the name: volumetric clouds and their shadows, the haze in the
+atmosphere, the rain and snow around the camera, and the water and snow that gather on
+the ground and decide what the wheels find on the rail. A scenario can also start in a
+weather (`weather: Rain` beside its `start`), and `--weather snow` places one for a
+screenshot; in a normal run the same flag lets the front *move in* over five minutes —
+a first drizzle, single drops on the glass, the rail greasy before wet. `--wipers 2`
+starts with them running. `SetRail(Dry | Wet | Slippery)` still
+sets the rail by hand — leaves and sanded rail have no weather to come from — and holds
+until the weather next changes. From the driver's seat the rain is on the glass too: a
+vehicle names its panes in `cab: (windscreen: [...])`, and the wiper clears the strip its
+blade has just crossed.
 
 ## Contributing
 

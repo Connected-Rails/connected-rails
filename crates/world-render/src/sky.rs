@@ -40,13 +40,14 @@
 use crate::Daylight;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::Camera3d;
-use bevy::light::atmosphere::ScatteringMedium;
+use bevy::light::atmosphere::{Falloff, PhaseFunction, ScatteringMedium, ScatteringTerm};
 use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight, SunDisk, light_consts::lux};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::AtmosphereSettings;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
+use sim_core::weather::Weather;
 use std::f32::consts::TAU;
 use world_coords::sun;
 
@@ -85,9 +86,22 @@ pub struct Sky {
     pub latitude: f64,
     /// Observer's geodetic longitude \[rad\].
     pub longitude: f64,
-    /// Cloud cover, 0 = clear … 1 = closed deck. Dims the sun, kills its shadows
-    /// and puts out the stars.
-    pub overcast: f32,
+    /// Surface water the rain has left, 0 … 1 — `sim_core::weather::Timeline`
+    /// integrates it, the material shaders read it (`crate::weather`).
+    pub wetness: f32,
+    /// Lying snow, 0 = bare … 1 = closed cover. Same journey.
+    pub snow: f32,
+    /// How much of the sun the clouds are taking away right here, 0 … 1.
+    /// Written by the cloud pass; 0 while there is none.
+    pub cloud_shadow: f32,
+    /// A lightning channel lighting the sky, 1 … 0
+    /// (`sim_core::weather::Strike::brightness`).
+    pub flash: f32,
+    /// The weather (plan 14.1). The sky reads three things out of it: the cover,
+    /// which dims the sun and puts out the stars; the visibility, which becomes a
+    /// scattering term of the atmosphere itself; and the depth of a ground fog
+    /// layer, which decides how high that term reaches.
+    pub weather: Weather,
 }
 
 impl Default for Sky {
@@ -103,7 +117,11 @@ impl Default for Sky {
             utc_offset: 2.0,
             latitude: 52.0_f64.to_radians(),
             longitude: 10.0_f64.to_radians(),
-            overcast: 0.0,
+            wetness: 0.0,
+            snow: 0.0,
+            cloud_shadow: 0.0,
+            flash: 0.0,
+            weather: Weather::default(),
         }
     }
 }
@@ -137,7 +155,11 @@ impl Sky {
 
 /// The directional light that is the sun. Its disk is drawn by the atmosphere.
 #[derive(Component)]
-pub struct Sun;
+pub struct Sun {
+    /// What the graphics setting said. The cover switches the sun's shadows off
+    /// and on again, and without this the switch would only work once.
+    pub shadows: bool,
+}
 
 /// The second, dim directional light: what the moon puts on the ground.
 #[derive(Component)]
@@ -158,7 +180,7 @@ struct MoonDisk;
 /// inside both programs' far planes (20 km in the simulator, 60 km in the editor).
 /// The bodies are unit-sized in the mesh and scaled here, so their angular size
 /// does not depend on it.
-const SKY_RADIUS: f32 = 9_000.0;
+pub(crate) const SKY_RADIUS: f32 = 9_000.0;
 
 /// Illuminance the sun is given \[lx\].
 ///
@@ -173,7 +195,7 @@ const SKY_RADIUS: f32 = 9_000.0;
 /// version is `lux::RAW_SUNLIGHT` here plus an `Exposure` that rides from EV 13 at
 /// noon down to the night — worth doing once the artificial lights (headlights, cab
 /// lamps, the `_NIGHT` emissives in the mods) are in physical units too.
-const SUN_ILLUMINANCE: f32 = lux::RAW_SUNLIGHT * 0.15;
+pub(crate) const SUN_ILLUMINANCE: f32 = lux::RAW_SUNLIGHT * 0.15;
 
 /// Illuminance of a full moon at the zenith \[lx\].
 ///
@@ -217,11 +239,11 @@ pub fn spawn(
     // One planet. Its default transform puts the ground at y = 0, which is where
     // the render origin sits.
     commands.spawn(Atmosphere::earth(
-        media.add(ScatteringMedium::earth(256, 256)),
+        media.add(ScatteringMedium::earth(LUT_RESOLUTION, LUT_RESOLUTION)),
     ));
 
     commands.spawn((
-        Sun,
+        Sun { shadows },
         DirectionalLight {
             illuminance: SUN_ILLUMINANCE,
             shadow_maps_enabled: shadows,
@@ -274,8 +296,12 @@ pub fn camera_settings() -> (AtmosphereSettings, AtmosphereEnvironmentMapLight) 
 type BodyLight<'w, 's, B, Other> = Query<
     'w,
     's,
-    (&'static mut Transform, &'static mut DirectionalLight),
-    (With<B>, Without<Other>),
+    (
+        &'static B,
+        &'static mut Transform,
+        &'static mut DirectionalLight,
+    ),
+    Without<Other>,
 >;
 
 /// Transform and material of one of the two drawn bodies. `Other` is the body it
@@ -295,6 +321,11 @@ type BodyMesh<'w, 's, B, Other, M> = Query<
 fn update(
     sky: Res<Sky>,
     mut daylight: ResMut<Daylight>,
+    atmosphere: Query<&Atmosphere>,
+    mut media: ResMut<Assets<ScatteringMedium>>,
+    mut settings: Query<&mut AtmosphereSettings>,
+    // Visibility the medium was last built for — see below.
+    mut built: Local<f32>,
     mut star_materials: ResMut<Assets<StarMaterial>>,
     mut moon_materials: ResMut<Assets<MoonMaterial>>,
     camera: Query<&GlobalTransform, (With<Camera3d>, With<AtmosphereSettings>)>,
@@ -303,6 +334,31 @@ fn update(
     mut stars: BodyMesh<Stars, MoonDisk, StarMaterial>,
     mut disk: BodyMesh<MoonDisk, Stars, MoonMaterial>,
 ) {
+    // The weather's sight, as a scattering term of the atmosphere itself: fog is
+    // then made of the same integral as the sky, so it is blue at dusk and bright
+    // around the sun without anything here saying so (plan 14.1). Rebuilding the
+    // medium costs a LUT, so it happens on a real change and not every frame.
+    let visibility = sky.weather.visibility.max(50.0);
+    if (visibility / *built - 1.0).abs() > 0.03 {
+        *built = visibility;
+        if let Ok(atmosphere) = atmosphere.single()
+            && let Some(mut medium) = media.get_mut(&atmosphere.medium)
+        {
+            *medium = ScatteringMedium::earth(LUT_RESOLUTION, LUT_RESOLUTION);
+            if let Some(term) = haze(visibility, sky.weather.fog_depth) {
+                medium.terms.push(term);
+            }
+        }
+    }
+    for mut settings in &mut settings {
+        // The aerial-perspective LUT spreads its slices linearly out to this
+        // distance and clamps beyond it. Left at the default 32 km over 32 slices,
+        // a 300 m fog would sit inside the first slice and never be integrated;
+        // six visibilities is where a target is down to 10^-10 of its contrast, so
+        // nothing is left visible past the end of the table.
+        settings.aerial_view_lut_max_distance = (visibility * 6.0).clamp(2_000.0, 32_000.0);
+    }
+
     let jd = sky.julian_date();
     let (lat, lon) = (sky.latitude, sky.longitude);
     let (sun_az, sun_el) = sun::sun_position(jd, lat, lon);
@@ -313,13 +369,16 @@ fn update(
     // headlights, the night windows and the cab lamps hang off this alone.
     daylight.0 = ((elevation + 6.0) / 12.0).clamp(0.0, 1.0);
 
-    if let Ok((mut transform, mut light)) = sun.single_mut() {
+    let cover = sky.weather.cover;
+    if let Ok((marker, mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-sun_dir, Vec3::Y);
         // The light keeps the raw above-atmosphere value whatever the elevation:
         // the atmosphere reddens and dims it on its own, and a light dimmed here
         // would take the twilight sky down with it.
-        light.illuminance = SUN_ILLUMINANCE * (1.0 - 0.85 * sky.overcast);
-        light.shadow_maps_enabled = light.shadow_maps_enabled && sky.overcast < 0.5;
+        light.illuminance = SUN_ILLUMINANCE * (1.0 - 0.85 * cover);
+        // A closed deck casts no shadow of its own. It comes back when it clears,
+        // which is why this reads the setting and not the light's own state.
+        light.shadow_maps_enabled = marker.shadows && cover < 0.5;
     }
 
     let (moon_az, moon_el, phase) = sun::moon_position(jd, lat, lon);
@@ -332,16 +391,16 @@ fn update(
     } else {
         0.0
     };
-    if let Ok((mut transform, mut light)) = moon.single_mut() {
+    if let Ok((_, mut transform, mut light)) = moon.single_mut() {
         *transform = Transform::default().looking_to(-moon_dir, Vec3::Y);
-        light.illuminance = MOON_ILLUMINANCE * moonlight * (1.0 - sky.overcast);
+        light.illuminance = MOON_ILLUMINANCE * moonlight * (1.0 - cover);
     }
 
     // Stars and moon ride at the camera: they are a background, not scenery, and
     // the render origin moves under them.
     let eye = camera.iter().next().map_or(Vec3::ZERO, |t| t.translation());
     // Clouds swallow the stars long before they swallow the moon.
-    let clear = 1.0 - sky.overcast;
+    let clear = 1.0 - cover;
     if let Ok((mut transform, material)) = stars.single_mut() {
         *transform = Transform::from_translation(eye)
             .with_rotation(sky_rotation(sun::local_sidereal(jd, lon), lat))
@@ -364,6 +423,49 @@ fn update(
             material.params.moon = Vec3::splat(MOON_LUMINANCE).extend(clear);
         }
     }
+}
+
+/// Resolution of the medium's falloff and phase look-up tables. The default 256
+/// resolves a 1.2 km scale height in five samples, which is enough for the haze
+/// terms below and cheap enough to rebuild while the weather moves.
+const LUT_RESOLUTION: u32 = 256;
+
+/// The scattering the weather adds to clear air, or `None` when the air is already
+/// clearer than the model's own.
+///
+/// Koschmieder: a dark target is lost against the horizon after `3.912 / β` metres,
+/// which turns a meteorological visibility straight into an extinction coefficient.
+pub(crate) fn haze_extinction(visibility: f32) -> f32 {
+    (3.912 / visibility.max(50.0) - CLEAR_AIR).max(0.0)
+}
+
+/// Scale height of the haze \[m\] — how far up the air the weather thickened
+/// reaches. A fog lies low, a summer haze fills the boundary layer.
+pub(crate) fn haze_height(fog_depth: f32) -> f32 {
+    if fog_depth > 0.0 { 600.0 } else { 1_500.0 }
+}
+
+/// What the earth medium's own Mie term already extinguishes \[1/m\].
+const CLEAR_AIR: f32 = 8.4e-6;
+
+fn haze(visibility: f32, fog_depth: f32) -> Option<ScatteringTerm> {
+    let beta = haze_extinction(visibility);
+    if beta <= 0.0 {
+        return None;
+    }
+    // The scale is that height in kilometres over the 60 km the falloff parameter
+    // spans — the same convention the earth medium's own terms are written in.
+    let height = haze_height(fog_depth) / 1_000.0;
+    Some(ScatteringTerm {
+        // Water droplets scatter almost everything they take out of the beam,
+        // which is why fog is bright and not dark.
+        absorption: Vec3::splat(beta * 0.02),
+        scattering: Vec3::splat(beta * 0.98),
+        falloff: Falloff::Exponential {
+            scale: height / 60.0,
+        },
+        phase: PhaseFunction::Mie { asymmetry: 0.7 },
+    })
 }
 
 /// Rotation from J2000 equatorial coordinates into render space (+X east, +Y up,

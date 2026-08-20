@@ -59,7 +59,7 @@ use kira::track::{
 };
 use kira::{AudioManager, AudioManagerSettings, Capacities, Decibels, DefaultBackend, Mix, Tween};
 use sim_core::sound::{SoundSpec, SoundState};
-use sim_core::train::{VehicleSpec, Weather};
+use sim_core::train::VehicleSpec;
 use sim_core::{sound, synth};
 use std::collections::HashMap;
 use std::path::Path;
@@ -427,7 +427,20 @@ pub fn update_audio(
                 .net
                 .track_type_at(vehicle.pos.edge, vehicle.pos.s)
                 .roughness;
-            state.rain = f64::from(sim.weather == Weather::Rain);
+            // The rain quantity is how hard it falls, not whether it does: a
+            // drizzle is not a downpour with the volume turned down.
+            let weather = sim.weather.now;
+            state.rain = if weather.precip.is_liquid() {
+                f64::from((weather.rate / 6.0).min(1.0))
+            } else {
+                0.0
+            };
+            // The clap arrives `distance / 343 m/s` after the flash, and rolls
+            // for longer the further away it struck.
+            state.thunder = sim
+                .weather
+                .lightning(sim.time)
+                .map_or(0.0, |strike| f64::from(strike.thunder(sim.time, dt)));
             states.insert((t, v), state);
         }
     }

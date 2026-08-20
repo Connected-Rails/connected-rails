@@ -57,6 +57,16 @@ pub struct LoadNode {
     vehicle: usize,
 }
 
+/// A pane the rain runs down: the material of a `cab: (windscreen: [...])` node
+/// (plan 14.1), fed by [`update_windscreens`].
+#[derive(Component)]
+pub struct Windscreen {
+    train: usize,
+    vehicle: usize,
+    /// Index in the vehicle's `windscreen` list; the wiper belongs to pane 0.
+    pane: usize,
+}
+
 /// A node moved by the simulation.
 #[derive(Component)]
 pub struct PartNode {
@@ -104,6 +114,7 @@ pub fn bind_nodes(
     named: Query<(&Name, &Transform)>,
     handles: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut panes: ResMut<Assets<world_render::windscreen::WindscreenMaterial>>,
 ) {
     for (root, model) in roots.iter() {
         let Some(spec) = sim
@@ -123,12 +134,18 @@ pub fn bind_nodes(
             .as_ref()
             .map(|c| c.controls.as_slice())
             .unwrap_or_default();
+        let windscreens = description
+            .cab
+            .as_ref()
+            .map(|c| c.windscreen.as_slice())
+            .unwrap_or_default();
 
         // Walk the whole subtree; the scene is only there a few frames after the spawn.
         let mut stack = vec![root];
         let mut found = false;
         let mut control_nodes = Vec::new();
         let mut glow_nodes = Vec::new();
+        let mut pane_nodes = Vec::new();
         let (mut lods, mut parts, mut loads) = (0, 0, 0);
         while let Some(entity) = stack.pop() {
             if let Ok(kids) = children.get(entity) {
@@ -166,6 +183,9 @@ pub fn bind_nodes(
                     Visibility::Inherited,
                 ));
                 loads += 1;
+            }
+            if let Some(pane) = windscreens.iter().position(|pane| pane == name.as_str()) {
+                pane_nodes.push((entity, pane));
             }
             if let Some(control) = controls.iter().position(|c| c.node == name.as_str()) {
                 // A control node is driven by its bound input; a `parts` entry on the
@@ -264,6 +284,37 @@ pub fn bind_nodes(
                 ));
             }
         }
+        // The panes: their own material, so the water on them is not the water on
+        // every other piece of glass in the model.
+        for (node, pane) in &pane_nodes {
+            let mut stack = vec![*node];
+            while let Some(entity) = stack.pop() {
+                if let Ok(kids) = children.get(entity) {
+                    stack.extend(kids.iter());
+                }
+                let Ok(handle) = handles.get(entity) else {
+                    continue;
+                };
+                let Some(base) = materials.get(&handle.0).cloned() else {
+                    continue;
+                };
+                commands
+                    .entity(entity)
+                    .remove::<MeshMaterial3d<StandardMaterial>>()
+                    .insert((
+                        Windscreen {
+                            train: model.train,
+                            vehicle: model.vehicle,
+                            pane: *pane,
+                        },
+                        MeshMaterial3d(panes.add(world_render::windscreen::WindscreenMaterial {
+                            base,
+                            extension: default(),
+                        })),
+                    ));
+            }
+        }
+
         if found {
             commands.entity(root).insert(Bound);
             info!(
@@ -554,6 +605,53 @@ fn part_value(function: &str, vehicle: &Vehicle, cab: &CabInputs, time: f64) -> 
         }
     };
     Some(value as f32)
+}
+
+/// Feeds every windscreen: what the weather has put on it, how fast the train
+/// is running, and the wiper's own sweep — mode and geometry, from which the
+/// shader reconstructs the blade's whole arc analytically (plan 14.1).
+pub fn update_windscreens(
+    sim: Res<SimResource>,
+    mut materials: ResMut<Assets<world_render::windscreen::WindscreenMaterial>>,
+    panes: Query<(
+        &Windscreen,
+        &MeshMaterial3d<world_render::windscreen::WindscreenMaterial>,
+    )>,
+) {
+    let weather = sim.0.weather.now;
+    let wetness = sim.0.weather.wetness;
+    for (pane, handle) in &panes {
+        let Some(vehicle) = sim
+            .0
+            .trains
+            .get(pane.train)
+            .and_then(|train| train.vehicles.get(pane.vehicle))
+        else {
+            continue;
+        };
+        // The wiper clears the pane it is mounted on — the first in the list.
+        let wiper = if pane.pane == 0 {
+            vehicle
+                .spec
+                .model
+                .as_ref()
+                .and_then(|model| model.cab.as_ref())
+                .and_then(|cab| cab.wiper.as_ref())
+        } else {
+            None
+        };
+        let mode = sim.0.controls[pane.train].wipers;
+        if let Some(mut material) = materials.get_mut(&handle.0) {
+            material.extension.params = world_render::windscreen::params(
+                weather,
+                wetness,
+                vehicle.v as f32,
+                sim.0.time,
+                mode,
+                wiper,
+            );
+        }
+    }
 }
 
 /// Wiper travel 0 … 1: a triangle sweep (0 → 1 → 0) driven by the simulation

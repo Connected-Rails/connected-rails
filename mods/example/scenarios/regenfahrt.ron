@@ -1,23 +1,32 @@
-// Rain run on the example line — the M6 weather rendering on show: an overcast
-// sky, rain streaks around the camera, and the wet rail the weather implies.
-// After a while the rain gives way to fog, which pulls the visibility in.
+// Rain run on the example line — the weather of plan 14.1 on show: a run that
+// starts in the rain (`weather:`, placed rather than moved to, so the rail is
+// already wet), turns into a thunderstorm, and ends in fog.
+//
+// Every change takes five minutes: weather moves in over a front, it does not
+// switch. Watch the cover thicken, the drops get heavier, the ground darken and
+// the sight close in — and, in the thunderstorm, the deck light up from the
+// inside with the thunder a few seconds behind it.
 //
 // Run it with:
 //   cargo run -p app -- --scenario example:regenfahrt --camera outside
 (
     name: "Regenfahrt",
-    description: "The example line in the rain; fog closes in later.",
+    description: "The example line in the rain; a thunderstorm passes, fog closes in later.",
     start: (year: 2026, month: 8, day: 15, hour: 6, minute: 45, utc_offset: 2.0),
+    weather: Rain,
     player_train: 0,
     events: [
         (
-            name: "rain",
-            trigger: Time(0.0),
-            actions: [SetWeather(Rain)],
+            name: "thunderstorm",
+            trigger: Time(240.0),
+            actions: [
+                SetWeather(Thunderstorm),
+                Message("Thunderstorm ahead — expect poor adhesion."),
+            ],
         ),
         (
             name: "fog",
-            trigger: Time(45.0),
+            trigger: Time(900.0),
             actions: [
                 SetWeather(Fog),
                 Message("Fog — visibility down to a few hundred metres."),

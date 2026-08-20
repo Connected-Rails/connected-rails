@@ -81,6 +81,10 @@ pub enum Quantity {
     /// rail (see `TrackType::roughness`). The app fills it from the track;
     /// jointed or worn track sits above 1, slab track below.
     Roughness,
+    /// Thunder over the vehicle: 1 the moment the clap arrives, rolling off
+    /// after it — the far strike rolls for seconds, the near one cracks
+    /// (`crate::weather::Strike::thunder`).
+    Thunder,
     /// Rain falling on the vehicle (0/1). Filled in by the app like
     /// `Roughness` — the weather lives outside the vehicle state. A rain
     /// loop conditions or scales its volume on it.
@@ -96,7 +100,7 @@ pub enum Quantity {
 impl Quantity {
     /// Every plain quantity, in the order the editor lists them. The editor
     /// appends `Control(…)` for each [`CabControl::ALL`] entry itself.
-    pub const ALL: [Quantity; 21] = [
+    pub const ALL: [Quantity; 22] = [
         Quantity::Speed,
         Quantity::Distance,
         Quantity::EngineRpm,
@@ -118,6 +122,7 @@ impl Quantity {
         Quantity::Alert,
         Quantity::Roughness,
         Quantity::Rain,
+        Quantity::Thunder,
     ];
 
     /// Range a slider offers for this quantity — what the vehicle editor's sound preview
@@ -169,6 +174,7 @@ impl Quantity {
             Quantity::Alert => "snd-quantity-alert",
             Quantity::Roughness => "snd-quantity-roughness",
             Quantity::Rain => "snd-quantity-rain",
+            Quantity::Thunder => "snd-quantity-thunder",
             // The control labels the cab editor already has.
             Quantity::Control(control) => control.key(),
         }
@@ -229,6 +235,9 @@ pub struct SoundState {
     /// Rain on the vehicle (0/1), filled in by the app like `roughness`.
     #[serde(default)]
     pub rain: f64,
+    /// Thunder, 1 as the clap arrives and rolling off after it.
+    #[serde(default)]
+    pub thunder: f64,
 }
 
 fn neutral_roughness() -> f64 {
@@ -268,6 +277,7 @@ impl Default for SoundState {
             afb_target: 0.0,
             roughness: neutral_roughness(),
             rain: 0.0,
+            thunder: 0.0,
         }
     }
 }
@@ -296,6 +306,7 @@ impl SoundState {
             Quantity::Alert => self.alert,
             Quantity::Roughness => self.roughness,
             Quantity::Rain => self.rain,
+            Quantity::Thunder => self.thunder,
             Quantity::Control(control) => match control {
                 CabControl::AfbTarget => self.afb_target,
                 CabControl::Battery => self.battery,
@@ -343,6 +354,7 @@ impl SoundState {
             Quantity::Alert => self.alert = value,
             Quantity::Roughness => self.roughness = value,
             Quantity::Rain => self.rain = value,
+            Quantity::Thunder => self.thunder = value,
             Quantity::Control(control) => match control {
                 CabControl::AfbTarget => self.afb_target = value,
                 CabControl::Battery => self.battery = value,
@@ -423,6 +435,7 @@ impl SoundState {
             },
             roughness: neutral_roughness(),
             rain: 0.0,
+            thunder: 0.0,
         }
     }
 }

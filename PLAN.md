@@ -384,8 +384,178 @@ cycle per vehicle). Vehicles take part when `VehicleSpec::passenger_doors` is se
 - Terrain from the DGM (importer, ch. 15), texture splatting; vegetation/buildings as streamed instances.
 - Overhead line procedurally from the line data (masts, catenary as mesh/shader curves).
 - Day/night (sun position by date/location — the position is georeferenced after all), weather
-  (rain/snow/fog, affects adhesion ch. 6 and visibility), seasons v2.
+  (rain/snow/fog, affects adhesion ch. 6 and visibility — design in 14.1), seasons v2.
 - Night lighting: signals, platforms, cab instrument lighting, headlights/marker lights.
+
+### 14.1 Weather
+
+What is there today is one enum (`Weather::{Clear, Rain, Snow, Fog}`), a hand-set overcast
+value that dims the sun, a grey `DistanceFog` and two scrolling particle columns. It works,
+and every part of it is the placeholder for something the same code can grow into. The whole
+of what follows rests on one decision that is already made for the sky: **weather is a pure
+function of the scenario clock**, so it costs nothing on the wire and two clients standing
+next to each other stand in the same rain.
+
+**The state.** `sim_core::weather::Weather` becomes a struct, not an enum: cloud cover and
+cloud base, precipitation (kind and intensity in mm/h), wind (speed, bearing, gustiness), fog
+(visibility and the depth of the layer), temperature, and a thunder probability. A scenario
+carries a **timeline** of those keyframes; `Action::SetWeather` sets one. Everything between
+two keyframes is interpolation, and everything a renderer wants is read from that — which is
+why nothing here is replicated and the server only ever sends a timeline change, i.e. a
+scenario action it already sends. The two values that are *not* interpolated are the
+accumulations, `wetness` and `snow_depth`: they integrate in the fixed 200 Hz step out of
+precipitation and temperature, dry off slowly, and are what `RailCondition` should come from
+(rain on a long-dry rail is slippery before it is merely wet; snow at 0 °C is not snow at
+−10 °C). The wind is a real quantity, not decoration: it slants the streaks (it already
+does), moves the foliage and the clouds, and drives a blowing snow.
+
+**Clouds.** A ground-based camera never enters a cloud, and that one fact buys the whole
+performance argument. The clouds are raymarched — Perlin-Worley shape noise (64³) with a
+curl-perturbed detail octave (32³), coverage and type from the weather state, and the Nubis
+model's lighting: Beer-Powder attenuation, a dual-lobe Henyey-Greenstein phase for the silver
+lining, and three octaves of *multiple* scattering, without which a cloud renders as a dark
+smudge whatever the sun does. But **not per screen pixel**: the march writes a 768 × 384
+equirectangular panorama through an offscreen camera, and a sky dome samples it. That is
+295 k pixels a frame whatever the window is, against 2 M at 1080p, and it is why this can be
+half a millisecond where a screen-space march is two to four. One layer with a height profile
+that runs from fair-weather cumulus to a closed deck; a cirrus sheet above it is the next
+step.
+
+The dome needs **no render-graph node**: Bevy's atmosphere draws in `render_sky` between the
+opaque and the transparent pass, so a transparent mesh at `SKY_RADIUS` composites over the
+finished sky exactly the way the stars and the moon already do, and opaque geometry occludes
+it through the depth test. The sun colour the clouds are lit with is the almanac direction
+the atmosphere is already given, so dawn turns the cloud bases orange without a second system
+knowing what dawn is.
+
+*Ceilings.* No translation parallax (a panorama is a direction map) and no flying into a
+cloud. At a 1.5 km base and 90 km/h that error is metres against kilometres; the upgrade path,
+if it ever shows, is the half-resolution screen-space march with temporal reconstruction that
+Nubis and Bitsquid describe — same shader, different target.
+
+**Cloud shadows** are worth more than the clouds themselves: two noise lookups in the shared
+weather shader, thresholded by the same cover and drifting with the same wind, dapple the
+sunlight over the landscape — which is what makes a sky look like it is moving. Not the
+shadow *of* the clouds overhead (no sun-angle offset, no parallax against the layer): nobody
+can check the mapping, and what would show is a shadow that stood still.
+
+**Lightning** is a strike schedule seeded from the scenario clock — same seed, same flash on
+every client — that brightens the cloud panorama around the strike, boosts a flash light for
+two frames, and hands the mixer (ch. 13) a thunder delayed by `distance / 343 m/s`.
+
+**Fog and haze.** Bevy 0.19's `ScatteringMedium` takes any number of scattering terms, so
+weather visibility is **one more term in the atmosphere itself** — a Mie term whose extinction
+comes straight out of Koschmieder's `3.912 / visibility`, on an exponential falloff with the
+scale height of the layer (1.5 km of summer haze, 600 m of fog). The aerial-perspective LUT
+carries it, the existing `render_sky` pass applies it to every opaque fragment, and the haze
+is blue at dusk and bright around the sun because it is the same integral the sky is. Two
+numbers follow the weather: `AtmosphereSettings::aerial_view_lut_max_distance` (six
+visibilities, clamped to 2 … 32 km — left at its default of 32 km over 32 slices, a 300 m fog
+sits inside the first slice and is never integrated at all), and the extinction the cloud
+dome fades itself with, or a fog would close the view to 300 m and still show crisp cumulus
+overhead.
+
+What the medium cannot do is the *near* field: its look-up tables are cut for a planet, and
+below about 3 km of sight they do not resolve the first few hundred metres — the fog thins out
+instead of closing. So `DistanceFog` stays, with `FogFalloff::from_visibility` and a colour
+taken from the hour, and it does the near field alone below `CLEAR_VISIBILITY` (8 km). Two
+models for one haze, matched at the seam; the honest fix is a fog volume that carries the
+whole sight rather than only a layer of it.
+
+Mist that lies **in** a valley rather than everywhere is Bevy's `FogVolume` with a 3D noise
+density texture, plus `VolumetricFog` on the camera: one box riding with the camera in foggy
+weather, and boxes the route editor places along rivers and hollows. It costs half to one
+millisecond and is a graphics setting. Bevy's volumetric fog lights from directional lights
+only, so a **headlight beam** in fog stays what it always is in this trade: an additive cone
+mesh with a soft depth fade, thirty lines, on the light that already exists.
+
+**Precipitation.** The camera-locked column of crossed quads stays — one draw call, and the
+slant into the relative wind is already right. What changes is its material:
+
+- Per-particle randomness in vertex attributes, so the *intensity* thins the field by
+  discarding particles above a threshold and one mesh covers drizzle to downpour.
+- Streaks *blended towards the colour of the air*, not added. A drop is a lens (Garg &
+  Nayar): it carries the sky's own luminance, so against a bright sky it all but vanishes and
+  against a dark cutting it stands out — an additive streak is always brighter than what is
+  behind it, which is the flat white overlay that dates a rain effect by a decade. Looking
+  towards the sun the curtain glows (forward scattering, the clouds' own Henyey-Greenstein);
+  its profile is a Gaussian, because motion blur has no edges; the far field melts into the
+  haze; and a slow world-space noise lets the shower pass in swathes instead of a raster.
+- A near layer of few, big streaks, with the nearest arm's length faded out in the shader as
+  a *sphere* around the eye — a hole in the mesh was a tube along the fall axis, and pointed
+  straight down the view the moment the wind slanted the column: a gap in the rain at speed.
+- Streaks stretched along the fall axis by the apparent speed (terminal velocity is constant;
+  what grows is the smear across the eye), the same light over the longer line drawn dimmer,
+  and the wind swaying in strength and direction with the gusts. Each drop carries its own
+  brightness and length, or the field reads as a pattern rather than as rain.
+- Snow is the same field, slower, drifting sideways in the gusts; sleet and hail are those
+  two fields under other parameters.
+- **No rain in a tunnel**: `track_type`'s `enclosure` value already says where a tunnel is
+  (the audio reverb reads it), so the field fades out on it. Station roofs and bridges would
+  want the top-down occlusion depth map that Skyrim Community Shaders renders — skipped until
+  it looks wrong.
+- No splash particles. The impact is in the ground material, below, where it is nearly free.
+
+**Material effects.** One WGSL include, `weather.wgsl`, one uniform (wetness, snow depth,
+time, wind, cloud shadow), shared by two materials: the terrain's `TerrainSplat`, which gets
+the fields, and a new `ExtendedMaterial<StandardMaterial, WeatherExt>` that the object
+spawner swaps in for every mod glTF material at load — so a mod's building gets wet and snowy
+without the mod knowing that weather exists. Per fragment:
+
+- **Wet** — albedo darkened by up to 0.7 × wetness × porosity, roughness pulled towards
+  water's, a specular floor at F₀ = 0.02: Lagarde's wet-surface model, which is what the
+  industry ships.
+- **Ripples** — a cell grid, a random drop time per cell, an expanding annulus as a normal,
+  on up-facing surfaces and only while it rains. Procedural, no texture, and it is the splash
+  and the puddle surface in one.
+- **Snow lying** — `smoothstep` on the world normal's y (it does not stick to a steep face)
+  × snow depth × occlusion × a temperature term, blended to a white, low-roughness layer with
+  a noisy edge. The rail head stays clear, because the wheels polish it — the one place the
+  effect has to be told to stop.
+
+`Season` (ch. 14 "seasons v2") stays what it is: the slow, baked, seasonal base. The material
+layer is the fast one on top, so a February line without snowfall still shows its season.
+
+**Cab glass.** Screen-space droplets on the windscreen — SDF drops with trails refracting the
+frame behind them, running up the glass with speed, cleared by the wiper control that is
+already bound. One shader on one mesh, and it is the effect a train simulator is judged on.
+
+The hook is content, not shader: nothing in a glTF says which mesh **is** the windscreen —
+the example loco drew its windows as one primitive of the body, with the same `glass`
+material the three cab displays use. So the pane is named in the vehicle's own file,
+`cab: (windscreen: ["windscreen_front", ...])`, and the model generator gives it a node and
+UVs of its own (`u` across the pane, `v` up it — the frame the wiper sweeps in). The runtime
+swaps that node's material for the rain shader and feeds it the water on the glass, the
+speed, and the wiper's mode and geometry (`cab: (wiper: ...)` — pivot, length and sweep, the
+same numbers that pose the 3D blade). The shader reconstructs the blade's sweep analytically
+from the clock, so the cleared *arc* around the real pivot, the bulge of pushed water at the
+blade's edge, and the drawn blade cannot drift apart. The water itself: beads at two scales
+that pop in and are drunk back into the glass, running drops that accelerate, wiggle and
+leave trails of shrinking beads — down the glass at a stand, up it once the airflow beats
+gravity, stretched with speed — all read as spherical caps whose *slope* tilts the normal, so
+every rim catches the sky and darkens against it: the refraction ring, faked from the slope
+alone. What is *not* modelled: true refraction of the scene behind (Bevy's transmission pass
+would hide everything the transparent pass draws beyond the glass — the falling rain, the
+clouds, the stars — so it is the wrong tool here).
+
+**Time of day** is not integrated afterwards, because nothing here is a second sky: clouds are
+lit from the almanac's sun, fog is a term in the same scattering medium, wet surfaces mirror
+the same environment map, and `Daylight` gates the lights as before. The one feedback kept is
+what the cover does to the sun — illuminance and shadows — and that reads the cloud pass's
+actual coverage instead of a hand-set `overcast`.
+
+**Budget** at 1080p on mid-range hardware, 60 fps: clouds ≤ 0.6 ms, ground mist 0.5–1 ms,
+precipitation ≤ 0.4 ms, the material term about 5 % of the opaque pass, windscreen ≤ 0.2 ms.
+The mist is a graphics setting of its own (`Graphics::mist`), because a raymarch per pixel
+costs the same whatever else is on the screen; the rest follows the weather alone.
+
+**Order of work**, each step shippable on its own: (1) the weather state and its timeline in
+`sim-core`; (2) the haze in the scattering medium; (3) the material layer — the largest visual
+return per line in the whole list; (4) clouds and cloud shadows; (5) the precipitation
+material, wind, tunnel occlusion; (6) lightning and thunder, the mist volume, windscreen
+drops. All of it is in; what is left of the list is the mist volumes a builder places by hand,
+which wants a place in the line format first — the one that rides with the camera is there and
+is what foggy weather draws.
 
 ## 15. Content pipeline & editor
 

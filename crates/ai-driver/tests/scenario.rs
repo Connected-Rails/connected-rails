@@ -5,7 +5,8 @@ use content::vehicles::{br101, passenger_coach};
 use content::{musterbahn, re_4711, to_musterstadt};
 use sim_core::Sim;
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
-use sim_core::train::{RailCondition, Train, Vehicle, Weather};
+use sim_core::train::{RailCondition, Train, Vehicle};
+use sim_core::weather::{Precip, Preset, TRANSITION};
 use track_model::{EdgeId, TrackPosition};
 
 fn scenario_sim(start: TrackPosition) -> (Sim, usize) {
@@ -65,16 +66,24 @@ fn events_fire_one_after_another() {
         (rain - block - 30.0).abs() < 0.5,
         "delay observed: {block} → {rain}"
     );
-    // `SetWeather(Rain)` sets the world's weather and the rail condition it implies.
-    assert_eq!(sim.weather, Weather::Rain, "weather applied");
+    // `SetWeather(Rain)` moves the sky over the transition rather than switching it.
+    let clear = Preset::Clear.weather();
+    assert_eq!(sim.weather.now.precip, Precip::None, "not raining yet");
+    for _ in 0..(TRANSITION / Sim::DT) as usize {
+        sim.step(Sim::DT);
+    }
+    assert_eq!(sim.weather.now.precip, Precip::Rain, "weather applied");
+    assert!(
+        sim.weather.now.visibility < clear.visibility,
+        "rain pulls visibility in"
+    );
+    assert!(sim.weather.wetness > 0.3, "the rail is getting wet");
+    // Five minutes in it is washed and merely wet; the greasy first film is
+    // `sim_core::weather`'s own test.
     assert_eq!(
         sim.trains[t].rail,
         RailCondition::Wet,
         "rail follows the weather"
-    );
-    assert!(
-        sim.weather.visibility().is_some(),
-        "rain pulls visibility in"
     );
 }
 
@@ -210,6 +219,7 @@ fn switch_and_route_actions_are_wired() {
             name: "Stellwerkstest".into(),
             description: String::new(),
             start: Default::default(),
+            weather: Preset::Clear,
             player_train: 0,
             events: vec![Event {
                 name: "stellen".into(),

@@ -164,6 +164,39 @@ pub struct CabSpec {
     /// Mouse-operable controls.
     #[serde(default)]
     pub controls: Vec<CabControlSpec>,
+    /// glTF nodes that are windscreens — the panes the rain runs down and the
+    /// wipers clear (plan 14.1). The node's own material is replaced by the
+    /// rain-on-glass shader, so the pane wants to be a node of its own with UVs
+    /// that run across it in `u` and up it in `v`: that is the frame the wiper
+    /// sweeps in. Everything else about the glass stays as the model has it.
+    #[serde(default)]
+    pub windscreen: Vec<String>,
+    /// The wiper on the *first* pane of [`windscreen`](Self::windscreen): where
+    /// its arm pivots and how far it sweeps, so the cleared arc on the glass is
+    /// the arc the modelled blade actually draws. `None` = drops, but nothing
+    /// clears them.
+    #[serde(default)]
+    pub wiper: Option<WiperSpec>,
+}
+
+/// Geometry of a windscreen wiper, in the pane's own frame (plan 14.1).
+///
+/// The same numbers pose the 3D blade (a `parts` entry rotating the wiper node)
+/// and clear the water in the glass shader — one source, so the streak on the
+/// pane is exactly where the blade is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WiperSpec {
+    /// Pivot of the arm in the pane's UV (u across, v up).
+    pub pivot: [f32; 2],
+    /// Length of the blade from the pivot \[m\].
+    pub length: f32,
+    /// Angle of the blade at travel 0, from the pane's up axis towards +u \[°\].
+    pub rest_degrees: f32,
+    /// Sweep from travel 0 to 1, positive towards +u \[°\] — the same number the
+    /// blade node's `Rotate` motion uses.
+    pub sweep_degrees: f32,
+    /// Size of the pane \[m\], u then v — what turns its UVs back into metres.
+    pub pane: [f32; 2],
 }
 
 impl Default for CabSpec {
@@ -172,6 +205,8 @@ impl Default for CabSpec {
             // The spot the hard-wired cab camera used before there was data for it.
             eye: [-0.6, 2.8, -8.0],
             controls: Vec::new(),
+            windscreen: Vec::new(),
+            wiper: None,
         }
     }
 }
@@ -1124,6 +1159,14 @@ mod tests {
                     degrees: -40.0,
                 },
             }],
+            windscreen: vec!["windscreen_front".into()],
+            wiper: Some(WiperSpec {
+                pivot: [0.26, 0.05],
+                length: 0.6,
+                rest_degrees: 0.0,
+                sweep_degrees: 75.0,
+                pane: [1.84, 1.1],
+            }),
         };
         let text = ron::ser::to_string(&spec).unwrap();
         let back: CabSpec = ron::from_str(&text).unwrap();

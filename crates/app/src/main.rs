@@ -276,7 +276,9 @@ fn main() {
     .add_systems(OnEnter(GameState::Paused), menu::spawn_pause)
     .add_systems(
         Update,
-        menu::menu.run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
+        (menu::menu, menu::scroll_menu)
+            .chain()
+            .run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
     )
     .add_systems(Update, pause_on_escape.run_if(in_state(GameState::Driving)))
     // Both run in every state: the pause menu needs its cursor back, and the HUD has to

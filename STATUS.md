@@ -897,7 +897,11 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   of a web dashboard and reads as one whatever it is coloured; the step rail is the
   breadcrumb, and Esc is the way home. Keyboard and mouse drive the same selection index:
   ↑/↓ or hover selects, Enter or a left click confirms, ←/→ dial a setting, Esc goes one
-  step back. Every page is the same list of rows (leading slot, label, provenance chip,
+  step back. A long page scrolls to either: the keyboard is followed by `scroll_into_view`
+  when the selection moves, and the wheel writes the offset itself (`scroll_menu`) — Bevy's
+  UI keeps a scroll offset on the node but moves it for nobody. Following the selection
+  every frame rather than only when it moves is what would make the wheel unusable, so it
+  is a courtesy and not an invariant. Every page is the same list of rows (leading slot, label, provenance chip,
   second line, control), so a new page is a `match` arm and nothing else. The rows are
   rebuilt whenever a fingerprint of what they show changes, rather than patched in place —
   a row is four nodes deep and differently shaped per page, and the menu is idle the rest

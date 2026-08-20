@@ -24,7 +24,7 @@ Danach das PNG mit **Read** ansehen — das Bild ist die Antwort, nicht die Loga
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
 | `--hud <stufe>` | Nur Simulator: `full`, `reduced` oder `off` — die drei Stufen der Anzeige (F7). Schreibt die Einstellungsdatei nicht. |
 | `--overlays` | Nur Simulator: öffnet die Tastenhilfe (F5) und die Diagnose (F6) von Anfang an — beide sind sonst nur per Tastendruck erreichbar. |
-| `--menu [seite]` | Nur Simulator: fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe, Titelbildschirm), `line`, `loco`, `scenario`, `mods`, `settings`. |
+| `--menu [seite]` | Nur Simulator: fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe, Titelbildschirm), `line`, `loco`, `scenario`, `mods`, `settings`, `controls`. |
 
 `--frames` ist der einzige Hebel auf den Zeitpunkt: mehr Frames = mehr Simulationszeit vor dem Bild
 (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für geladenes Overlay, 60 reichen

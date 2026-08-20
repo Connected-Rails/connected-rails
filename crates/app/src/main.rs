@@ -4,6 +4,7 @@
 //! Simulation logic does **not** belong here.
 
 mod audio;
+mod bindings;
 mod cab;
 mod displays;
 mod glyphs;
@@ -210,7 +211,7 @@ fn main() {
     // Settings before the window: loading happens while the plugin is built, so the
     // stored language translates the title and the stored window mode creates the
     // window — no flip on the first frame.
-    app.add_plugins(settings::plugin);
+    app.add_plugins((settings::plugin, bindings::plugin));
     let graphics = app.world().resource::<settings::Graphics>().clone();
     app.add_plugins(
         DefaultPlugins
@@ -280,7 +281,10 @@ fn main() {
     .add_systems(Update, pause_on_escape.run_if(in_state(GameState::Driving)))
     // Both run in every state: the pause menu needs its cursor back, and the HUD has to
     // go away behind the overlay rather than shine through it.
-    .add_systems(Update, (ui::grab_cursor, hud::hud_visibility))
+    .add_systems(
+        Update,
+        (ui::grab_cursor, hud::hud_visibility, hud::refresh_help_caps),
+    )
     // The sound table and the display cameras need the trains, which `setup` only
     // creates when its commands are applied — the chain inserts that sync point.
     .add_systems(
@@ -479,11 +483,12 @@ fn tear_down_run(
     commands.remove_resource::<BeforeRun>();
 }
 
-/// Esc during a run raises the pause overlay, which also holds the settings. Leaving it
-/// again is the overlay's own job — this system only runs while `Driving`, so the Esc that
-/// resumes cannot bounce straight back into the pause.
-fn pause_on_escape(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<GameState>>) {
-    if keys.just_pressed(KeyCode::Escape) {
+/// The pause key during a run raises the overlay, which also holds the settings. Leaving
+/// it again is the overlay's own job — this system only runs while `Driving`, so the Esc
+/// that resumes cannot bounce straight back into the pause. The menu's own Esc stays a
+/// key rather than a binding: whatever the pause is bound to, there is always a way out.
+fn pause_on_escape(input: bindings::Input, mut next: ResMut<NextState<GameState>>) {
+    if input.just_pressed(bindings::Action::Pause) {
         next.set(GameState::Paused);
     }
 }
@@ -524,10 +529,11 @@ fn setup(
     mut manager: ResMut<mods_ui::ModManager>,
     selection: Res<menu::Selection>,
     graphics: Res<settings::Graphics>,
+    binds: Res<bindings::Binds>,
     fonts: Res<theme::Fonts>,
 ) {
     // `--hud full|reduced|off` puts the display in one of its three steps for a
-    // screenshot, which cannot press F7. It goes into a resource of its own rather than
+    // screenshot, which cannot press a key. It goes into a resource of its own rather than
     // into the setting: the settings file is written on exit whether anything changed or
     // not, and a photograph must not leave its step behind in the player's preferences.
     if let Some(step) = arg("--hud") {
@@ -950,7 +956,7 @@ fn setup(
             .unwrap_or(160.0)
     };
     let drawings = hud::Drawings::draw(&mut images, v_max);
-    hud::spawn_hud(&mut commands, &fonts, &drawings);
+    hud::spawn_hud(&mut commands, &fonts, &drawings, &binds);
     commands.insert_resource(drawings);
     mods_ui::spawn_panel(&mut commands);
 

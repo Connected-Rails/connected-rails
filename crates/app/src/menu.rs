@@ -48,6 +48,7 @@ use sim_core::brakes::BrakeKind;
 use sim_core::drive::TractionSpec;
 use sim_core::train::{VehicleSpec, VehicleVariant};
 
+use crate::bindings::{self, Action, Bind, Bindable, Bindings, Binds, Rebind};
 use crate::mods_ui::{self, ModManager};
 use crate::settings::{self, Audio, Gameplay, Graphics};
 use crate::theme::{
@@ -114,6 +115,10 @@ enum Page {
     Scenario,
     Mods,
     Settings,
+    /// The keyboard and the controllers, one row per action. A page of its own rather
+    /// than a group on the settings page: sixty rows under a heading would bury the
+    /// dozen settings above them.
+    Controls,
 }
 
 impl Page {
@@ -133,6 +138,7 @@ impl Page {
         match self {
             Page::Root | Page::Pause => None,
             Page::Line | Page::Mods | Page::Settings => Some(Page::home(overlay)),
+            Page::Controls => Some(Page::Settings),
             Page::Loco => Some(Page::Line),
             Page::Scenario => Some(Page::Loco),
         }
@@ -163,6 +169,9 @@ pub struct MenuState {
     hovered: Option<usize>,
     /// Set by a click observer, consumed like an Enter press.
     clicked: bool,
+    /// The row of the controls page that is waiting for its new key, button or axis.
+    /// While it is set, the whole keyboard belongs to that row rather than to the menu.
+    rebinding: Option<Bindable>,
     /// Which variant of the highlighted vehicle the pane is showing; ← / → dial it. A
     /// counter rather than an index — [`variant_of`] wraps it into what the vehicle has,
     /// so moving to a vehicle with fewer variants can never point past the end.
@@ -200,6 +209,7 @@ impl Page {
             "scenario" => Some(Page::Scenario),
             "mods" => Some(Page::Mods),
             "settings" => Some(Page::Settings),
+            "controls" => Some(Page::Controls),
             _ => None,
         }
     }
@@ -249,6 +259,8 @@ struct Entry {
     verb: bool,
     /// Which setting the row changes, if any …
     setting: Option<Setting>,
+    /// … or what it binds, on the controls page.
+    binding: Option<Bindable>,
     /// … and how it is operated, read off the settings when the row is built.
     control: Option<Control>,
 }
@@ -282,6 +294,8 @@ enum Setting {
     Language,
     Hud,
     LookSpeed,
+    /// Opens [`Page::Controls`]; it holds no value of its own.
+    Controls,
     Reset,
 }
 
@@ -320,7 +334,12 @@ const SETTINGS: [(&str, &[Setting]); 3] = [
     ("set-audio", &[Setting::Volume]),
     (
         "set-gameplay",
-        &[Setting::Language, Setting::Hud, Setting::LookSpeed],
+        &[
+            Setting::Language,
+            Setting::Hud,
+            Setting::LookSpeed,
+            Setting::Controls,
+        ],
     ),
 ];
 
@@ -344,6 +363,7 @@ impl Setting {
             Setting::Language => "set-language",
             Setting::Hud => "set-hud",
             Setting::LookSpeed => "set-look-speed",
+            Setting::Controls => "set-controls",
             Setting::Reset => "set-reset",
         }
     }
@@ -370,7 +390,7 @@ impl Setting {
             // Three steps, so it is dialled like the language rather than switched.
             Setting::Hud => Control::Choice,
             Setting::Language => Control::Choice,
-            Setting::Reset => Control::Action,
+            Setting::Controls | Setting::Reset => Control::Action,
         }
     }
 
@@ -434,6 +454,75 @@ fn fraction(value: f32, range: (f32, f32, f32)) -> f32 {
     ((value - min) / (max - min)).clamp(0.0, 1.0)
 }
 
+/// A row of the controls page is waiting for what works it. Returns whether it has it.
+///
+/// Esc leaves the binding as it was and Backspace takes it away entirely, on either kind
+/// of row. Beyond that a button row takes the next key or controller button pressed — the
+/// two halves are set apart, so one control can answer to both — and a lever row takes the
+/// next stick or trigger moved, because a lever bound to a button would be back to nudging.
+///
+/// Whatever else was on that key, button or axis lets go of it. Two levers moving on one
+/// press, with nothing on screen saying why, is not a binding but a bug report.
+fn capture(
+    row: Bindable,
+    keys: &ButtonInput<KeyCode>,
+    pads: &Query<&Gamepad>,
+    binds: &mut Binds,
+    bindings: &mut Bindings,
+) -> bool {
+    if keys.just_pressed(KeyCode::Escape) {
+        return true;
+    }
+    let cleared = keys.just_pressed(KeyCode::Backspace);
+    match row {
+        Bindable::Button(action) => {
+            let mut bind = binds.get(action);
+            if cleared {
+                bind = Bind::default();
+            } else if let Some(key) = keys.get_just_pressed().next() {
+                bind.key = Some(*key);
+            } else if let Some(button) = pads.iter().flat_map(Gamepad::get_just_pressed).next() {
+                bind.pad = Some(*button);
+            } else {
+                return false;
+            }
+            free_button(binds, action, bind);
+            binds.bind(action, bind);
+        }
+        Bindable::Lever(lever) => {
+            let input = if cleared {
+                None
+            } else if let Some(moved) = bindings::moved(pads) {
+                Some(moved)
+            } else {
+                return false;
+            };
+            for other in bindings::LEVERS.iter().map(|row| row.0) {
+                if other != lever && input.is_some() && binds.lever(other) == input {
+                    binds.bind_lever(other, None);
+                }
+            }
+            binds.bind_lever(lever, input);
+        }
+    }
+    *bindings = Bindings::of(binds);
+    true
+}
+
+/// Takes the key and the controller button of `bind` off every other action.
+fn free_button(binds: &mut Binds, action: Action, bind: Bind) {
+    for other in bindings::rows().map(|row| row.0).filter(|a| *a != action) {
+        let mut taken = binds.get(other);
+        if taken.key.is_some() && taken.key == bind.key {
+            taken.key = None;
+        }
+        if taken.pad.is_some() && taken.pad == bind.pad {
+            taken.pad = None;
+        }
+        binds.bind(other, taken);
+    }
+}
+
 /// Applies one step of ← (`dir` −1) or → / Enter (`dir` +1) to a setting.
 fn change(
     setting: Setting,
@@ -465,6 +554,8 @@ fn change(
         }
         Setting::Hud => gameplay.hud = gameplay.hud.cycle(dir),
         Setting::LookSpeed => gameplay.look_speed = step(gameplay.look_speed, dir, LOOK_SPEED),
+        // Opening a page is not changing a value — `menu` does it, where the page is.
+        Setting::Controls => {}
         Setting::Reset => {
             *graphics = Graphics::default();
             *audio = Audio::default();
@@ -882,6 +973,7 @@ pub fn menu(
     mut graphics: ResMut<Graphics>,
     mut audio: ResMut<Audio>,
     mut gameplay: ResMut<Gameplay>,
+    mut rebind: Rebind,
     mut next: ResMut<NextState<GameState>>,
     mut exit: MessageWriter<AppExit>,
     mut labels: Query<(&MenuLabel, &mut Text)>,
@@ -893,109 +985,156 @@ pub fn menu(
         return;
     };
     let overlay = menu.overlay;
-    let items = entries(menu.page, overlay, &mods.0, &graphics, &audio, &gameplay);
-    if items.is_empty() {
-        menu.selected = 0;
+    // A row waiting for its new key owns the whole keyboard: ↑/↓, Enter and Esc are what
+    // the player is about to bind, not what works the menu. The page is still drawn below,
+    // so the row can say that it is waiting.
+    if let Some(action) = menu.rebinding {
+        if capture(
+            action,
+            &keys,
+            &rebind.pads,
+            &mut rebind.binds,
+            &mut rebind.bindings,
+        ) {
+            menu.rebinding = None;
+        }
     } else {
-        let last = items.len() - 1;
-        if keys.just_pressed(KeyCode::ArrowDown) {
-            menu.selected = selectable(&items, (menu.selected + 1) % items.len(), 1);
-            menu.variant = 0;
-        } else if keys.just_pressed(KeyCode::ArrowUp) {
-            menu.selected = selectable(&items, (menu.selected + last) % items.len(), -1);
-            menu.variant = 0;
+        let items = entries(
+            menu.page,
+            overlay,
+            &mods.0,
+            &graphics,
+            &audio,
+            &gameplay,
+            &rebind.binds,
+            menu.rebinding,
+        );
+        if items.is_empty() {
+            menu.selected = 0;
         } else {
-            // A shrinking list (a mod switched off) must not leave the cursor past the
-            // end, and a page that opens on a heading must not leave it on one.
-            menu.selected = selectable(&items, menu.selected.min(last), 1);
+            let last = items.len() - 1;
+            if keys.just_pressed(KeyCode::ArrowDown) {
+                menu.selected = selectable(&items, (menu.selected + 1) % items.len(), 1);
+                menu.variant = 0;
+            } else if keys.just_pressed(KeyCode::ArrowUp) {
+                menu.selected = selectable(&items, (menu.selected + last) % items.len(), -1);
+                menu.variant = 0;
+            } else {
+                // A shrinking list (a mod switched off) must not leave the cursor past the
+                // end, and a page that opens on a heading must not leave it on one.
+                menu.selected = selectable(&items, menu.selected.min(last), 1);
+            }
         }
-    }
 
-    let confirmed = keys.just_pressed(KeyCode::Enter) || std::mem::take(&mut menu.clicked);
-    let dial = i32::from(keys.just_pressed(KeyCode::ArrowRight))
-        - i32::from(keys.just_pressed(KeyCode::ArrowLeft));
-    let entry = items.get(menu.selected);
+        let confirmed = keys.just_pressed(KeyCode::Enter) || std::mem::take(&mut menu.clicked);
+        let dial = i32::from(keys.just_pressed(KeyCode::ArrowRight))
+            - i32::from(keys.just_pressed(KeyCode::ArrowLeft));
+        let entry = items.get(menu.selected);
 
-    // ← / → on the vehicle page dial the livery of the highlighted vehicle. The same
-    // pair of keys as a setting's choice, because it is the same kind of question — one
-    // of a handful of named options.
-    if menu.page == Page::Loco && dial != 0 {
-        let variants = entry.map_or(0, |entry| variant_count(entry, &mods.0));
-        if variants > 0 {
-            menu.variant = (menu.variant as i32 + dial).rem_euclid(variants as i32) as usize;
+        // ← / → on the vehicle page dial the livery of the highlighted vehicle. The same
+        // pair of keys as a setting's choice, because it is the same kind of question — one
+        // of a handful of named options.
+        if menu.page == Page::Loco && dial != 0 {
+            let variants = entry.map_or(0, |entry| variant_count(entry, &mods.0));
+            if variants > 0 {
+                menu.variant = (menu.variant as i32 + dial).rem_euclid(variants as i32) as usize;
+            }
         }
-    }
 
-    if menu.page == Page::Settings {
-        // Enter reads as one step forward, so a row can be worked with the keyboard
-        // alone and a click does the obvious thing.
-        let dir = if confirmed { 1 } else { dial };
-        if dir != 0
-            && let Some(setting) = entry.and_then(|e| e.setting)
-        {
-            change(setting, dir, &mut graphics, &mut audio, &mut gameplay);
-        }
-    } else if confirmed && let Some(entry) = entry {
-        let id = entry.id.clone();
-        let label = entry.label.clone();
-        match menu.page {
-            // The title screen: a verb opens its page, or leaves.
-            Page::Root => match VERBS.get(menu.selected).and_then(|(_, page)| *page) {
-                Some(page) => go(&mut menu, page),
-                None => {
-                    exit.write(AppExit::Success);
+        if menu.page == Page::Settings {
+            // Enter reads as one step forward, so a row can be worked with the keyboard
+            // alone and a click does the obvious thing.
+            let dir = if confirmed { 1 } else { dial };
+            if dir != 0
+                && let Some(setting) = entry.and_then(|e| e.setting)
+            {
+                // The controls row holds no value — Enter walks into the page it names.
+                if setting == Setting::Controls {
+                    go(&mut menu, Page::Controls);
+                } else {
+                    change(setting, dir, &mut graphics, &mut audio, &mut gameplay);
                 }
-            },
-            // The pause overlay: resume, settings, back to the title screen, or leave.
-            Page::Pause => match menu.selected {
-                0 => next.set(GameState::Driving),
-                1 => go(&mut menu, Page::Settings),
-                2 => next.set(GameState::Menu),
-                _ => {
-                    exit.write(AppExit::Success);
+            }
+        } else if confirmed && let Some(entry) = entry {
+            let id = entry.id.clone();
+            let label = entry.label.clone();
+            match menu.page {
+                // The title screen: a verb opens its page, or leaves.
+                Page::Root => match VERBS.get(menu.selected).and_then(|(_, page)| *page) {
+                    Some(page) => go(&mut menu, page),
+                    None => {
+                        exit.write(AppExit::Success);
+                    }
+                },
+                // The pause overlay: resume, settings, back to the title screen, or leave.
+                Page::Pause => match menu.selected {
+                    0 => next.set(GameState::Driving),
+                    1 => go(&mut menu, Page::Settings),
+                    2 => next.set(GameState::Menu),
+                    _ => {
+                        exit.write(AppExit::Success);
+                    }
+                },
+                Page::Line => {
+                    selection.line_ref = id;
+                    menu.chosen[0] = label;
+                    go(&mut menu, Page::Loco);
                 }
-            },
-            Page::Line => {
-                selection.line_ref = id;
-                menu.chosen[0] = label;
-                go(&mut menu, Page::Loco);
+                Page::Loco => {
+                    // The dress belongs on the `Vehicle`, where it is deterministic state
+                    // like the vehicle itself — `world::build` is what has to take it
+                    // over from here.
+                    let variants = variant_count(entry, &mods.0);
+                    selection.variant = (variants > 0).then(|| menu.variant % variants);
+                    selection.loco_id = id;
+                    menu.chosen[1] = label;
+                    go(&mut menu, Page::Scenario);
+                }
+                Page::Scenario => {
+                    selection.scenario_id = id;
+                    next.set(GameState::Driving);
+                }
+                Page::Mods => {
+                    mods_ui::toggle(&mut mods.0, menu.selected, &mut manager);
+                    // Reload right away, so the selection lists show what is enabled now.
+                    // Every mod stays in `manifests` either way, so the row keeps its index.
+                    mods.0 = mod_runtime::ModRuntime::load("mods");
+                }
+                Page::Settings => {}
+                // Enter on a binding row hands the keyboard over to it; the one row
+                // that binds nothing is the one that puts every key back.
+                Page::Controls => match entry.binding {
+                    Some(action) => menu.rebinding = Some(action),
+                    None => {
+                        *rebind.binds = Binds::default();
+                        *rebind.bindings = Bindings::default();
+                    }
+                },
             }
-            Page::Loco => {
-                // The dress belongs on the `Vehicle`, where it is deterministic state
-                // like the vehicle itself — `world::build` is what has to take it
-                // over from here.
-                let variants = variant_count(entry, &mods.0);
-                selection.variant = (variants > 0).then(|| menu.variant % variants);
-                selection.loco_id = id;
-                menu.chosen[1] = label;
-                go(&mut menu, Page::Scenario);
-            }
-            Page::Scenario => {
-                selection.scenario_id = id;
-                next.set(GameState::Driving);
-            }
-            Page::Mods => {
-                mods_ui::toggle(&mut mods.0, menu.selected, &mut manager);
-                // Reload right away, so the selection lists show what is enabled now.
-                // Every mod stays in `manifests` either way, so the row keeps its index.
-                mods.0 = mod_runtime::ModRuntime::load("mods");
-            }
-            Page::Settings => {}
         }
-    }
-    if keys.just_pressed(KeyCode::Escape) {
-        match menu.page.back(overlay) {
-            Some(back) => go(&mut menu, back),
-            // Esc on the overlay's own root is the way out of the pause: the run goes on.
-            None if overlay => next.set(GameState::Driving),
-            None => {}
+        if keys.just_pressed(KeyCode::Escape) {
+            match menu.page.back(overlay) {
+                Some(back) => go(&mut menu, back),
+                // Esc on the overlay's own root is the way out of the pause: the run goes on.
+                None if overlay => next.set(GameState::Driving),
+                None => {}
+            }
         }
     }
 
     // The page and the values may have changed above — re-read before drawing.
     let page = menu.page;
     let rows = if page.is_home() { verbs } else { list };
-    let items = entries(page, overlay, &mods.0, &graphics, &audio, &gameplay);
+    let items = entries(
+        page,
+        overlay,
+        &mods.0,
+        &graphics,
+        &audio,
+        &gameplay,
+        &rebind.binds,
+        menu.rebinding,
+    );
     let print = fingerprint(page, &items, menu.selected, menu.hovered, menu.variant);
     if menu.drawn != Some(print) {
         let variants = page == Page::Loco
@@ -1062,6 +1201,9 @@ fn go(menu: &mut MenuState, page: Page) {
     menu.selected = 0;
     menu.hovered = None;
     menu.variant = 0;
+    // Leaving the page while a row waits for its key: the wait goes with it, or the next
+    // page would swallow the first thing pressed on it.
+    menu.rebinding = None;
 }
 
 /// The first selectable row from `from` in direction `dir`, wrapping. The settings page
@@ -1653,7 +1795,9 @@ fn build_control(
             commands.spawn((
                 text(
                     fonts,
-                    "▸".into(),
+                    // An arrow, not a solid triangle: Fira Mono has no ▸ and draws a
+                    // notdef box where the row should say that Enter does something.
+                    "→".into(),
                     Face::Mono,
                     14.0,
                     if on { ACCENT } else { TEXT_DIM },
@@ -1702,6 +1846,13 @@ fn build_value(
 fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page, variants: bool) {
     commands.entity(hints).despawn_related::<Children>();
     let mut keys: Vec<(&str, &str)> = vec![("↑/↓", "menu-hint-select")];
+    if page == Page::Controls {
+        keys.push(("Enter", "ctl-hint-rebind"));
+        keys.push(("Backspace", "ctl-hint-clear"));
+        keys.push(("Esc", "menu-hint-back"));
+        build_hint_chips(commands, fonts, hints, &keys);
+        return;
+    }
     if page == Page::Settings {
         keys.push(("←/→", "menu-hint-change"));
         keys.push(("Enter", "menu-hint-next"));
@@ -1726,6 +1877,11 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
         Page::Pause => keys.push(("Esc", "menu-hint-resume")),
         _ => keys.push(("Esc", "menu-hint-back")),
     }
+    build_hint_chips(commands, fonts, hints, &keys);
+}
+
+/// The chips themselves, once the page has decided which keys it offers.
+fn build_hint_chips(commands: &mut Commands, fonts: &Fonts, hints: Entity, keys: &[(&str, &str)]) {
     for (cap, label) in keys {
         let chip = commands
             .spawn((
@@ -1750,11 +1906,11 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
             ))
             .id();
         commands.spawn((
-            text(fonts, cap.into(), Face::Mono, 11.0, TEXT_MID),
+            text(fonts, (*cap).into(), Face::Mono, 11.0, TEXT_MID),
             ChildOf(cap_box),
         ));
         commands.spawn((
-            text(fonts, t!(label), Face::Sans, 12.0, TEXT_DIM),
+            text(fonts, t!(*label), Face::Sans, 12.0, TEXT_DIM),
             ChildOf(chip),
         ));
     }
@@ -1924,6 +2080,7 @@ fn title(page: Page) -> String {
         Page::Scenario => t!("menu-select-scenario"),
         Page::Mods => t!("mods-title"),
         Page::Settings => t!("menu-settings"),
+        Page::Controls => t!("ctl-title"),
     }
 }
 
@@ -1933,6 +2090,7 @@ fn caption(page: Page, runtime: &mod_runtime::ModRuntime, manager: &ModManager) 
     match page {
         Page::Root | Page::Pause => String::new(),
         Page::Settings => t!("set-stored"),
+        Page::Controls => t!("ctl-caption"),
         Page::Mods => mods_ui::details(runtime, manager, true),
         Page::Line => t!("menu-select-line-hint"),
         Page::Loco => t!("menu-select-loco-hint"),
@@ -1961,6 +2119,9 @@ fn origin(id: &str) -> String {
 
 /// The rows of a page. Every selection page opens with the built-in default, so the list
 /// is never empty and the run starts even with no mod installed.
+// The rows of a page depend on everything a page can show; the argument count says
+// nothing here either.
+#[allow(clippy::too_many_arguments)]
 fn entries(
     page: Page,
     overlay: bool,
@@ -1968,6 +2129,8 @@ fn entries(
     graphics: &Graphics,
     audio: &Audio,
     gameplay: &Gameplay,
+    binds: &Binds,
+    rebinding: Option<Bindable>,
 ) -> Vec<Entry> {
     let mods = &runtime.mods;
     // The row every selection page opens with. It carries a chip rather than "(built-in)"
@@ -2092,7 +2255,80 @@ fn entries(
                 ..default()
             }))
             .collect(),
+        // One row per action, under the heading of the group it belongs to. The value
+        // column is machine output in two halves — the key, and the controller button —
+        // which is why it is one mono string rather than a control.
+        Page::Controls => bindings::ACTIONS
+            .iter()
+            .flat_map(|(heading, group)| {
+                std::iter::once(Entry {
+                    label: t!(heading),
+                    heading: true,
+                    ..default()
+                })
+                .chain(group.iter().map(|(action, name, _, _)| Entry {
+                    label: t!(&format!("ctl-{name}")),
+                    value: if rebinding == Some(Bindable::Button(*action)) {
+                        t!("ctl-press")
+                    } else {
+                        bound(binds.get(*action))
+                    },
+                    binding: Some(Bindable::Button(*action)),
+                    ..default()
+                }))
+            })
+            // The three that have a position rather than a direction. Their key column is
+            // empty by construction: a key cannot hold a lever, which is the whole reason
+            // they are a group of their own.
+            .chain(std::iter::once(Entry {
+                label: t!("ctl-group-levers"),
+                heading: true,
+                ..default()
+            }))
+            .chain(bindings::LEVERS.iter().map(|(lever, name)| Entry {
+                label: t!(&format!("ctl-{name}")),
+                hint: t!("ctl-lever-hint"),
+                value: if rebinding == Some(Bindable::Lever(*lever)) {
+                    t!("ctl-move")
+                } else {
+                    lever_bound(binds.lever(*lever))
+                },
+                binding: Some(Bindable::Lever(*lever)),
+                ..default()
+            }))
+            // The only row that binds nothing: it puts every key back.
+            .chain(std::iter::once(Entry {
+                label: t!("ctl-reset"),
+                hint: t!("ctl-reset-hint"),
+                control: Some(Control::Action),
+                ..default()
+            }))
+            .collect(),
     }
+}
+
+/// The right-hand column of a controls row: the key, then the controller button, each a
+/// dash where there is none.
+///
+/// Two columns in one mono string, padded to the widest label either of them has. The
+/// zone is right-aligned, so without the padding the keys would step left and right down
+/// the page with every controller button that is longer than the one above it.
+fn bound(bind: Bind) -> String {
+    let key = bind
+        .key
+        .map_or_else(|| t!("ctl-unbound"), bindings::key_label);
+    let pad = bind
+        .pad
+        .map_or_else(|| t!("ctl-unbound"), bindings::pad_label);
+    format!("{key:>7}  {pad:<13}")
+}
+
+/// The same two columns for a lever row. The key half is a dash and stays one: a key has
+/// no position to give, which is what the group is about.
+fn lever_bound(input: Option<bevy::input::gamepad::GamepadInput>) -> String {
+    let axis = input.map_or_else(|| t!("ctl-unbound"), bindings::input_label);
+    let none = t!("ctl-unbound");
+    format!("{none:>7}  {axis:<13}")
 }
 
 fn named(id: &str, name: &str, meta: String) -> Entry {
@@ -2346,7 +2582,7 @@ fn facts(
                 ..base(Vec::new())
             })
         }
-        Page::Root | Page::Pause | Page::Mods | Page::Settings => None,
+        Page::Root | Page::Pause | Page::Mods | Page::Settings | Page::Controls => None,
     }
 }
 
@@ -2376,6 +2612,8 @@ fn friction_key(kind: &BrakeKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the lever tests name the type — the page itself reads it out of `LEVERS`.
+    use crate::bindings::Lever;
 
     fn app() -> App {
         let mut app = App::new();
@@ -2387,6 +2625,8 @@ mod tests {
             .init_resource::<Graphics>()
             .init_resource::<Audio>()
             .init_resource::<Gameplay>()
+            .init_resource::<Binds>()
+            .init_resource::<Bindings>()
             .init_resource::<Fonts>()
             .init_resource::<Wallpaper>()
             // The example mod is the run's content; a missing directory is not an error,
@@ -2432,12 +2672,30 @@ mod tests {
         let runtime = mod_runtime::ModRuntime::load("does-not-exist");
         let (graphics, audio, gameplay) = default();
         for page in [Page::Line, Page::Loco, Page::Scenario, Page::Settings] {
-            let items = entries(page, false, &runtime, &graphics, &audio, &gameplay);
+            let items = entries(
+                page,
+                false,
+                &runtime,
+                &graphics,
+                &audio,
+                &gameplay,
+                &Binds::default(),
+                None,
+            );
             assert!(!items.is_empty(), "{page:?} is empty");
         }
         // The defaults carry no id — `setup` reads that as "use the built-in".
         for page in [Page::Line, Page::Loco, Page::Scenario] {
-            let items = entries(page, false, &runtime, &graphics, &audio, &gameplay);
+            let items = entries(
+                page,
+                false,
+                &runtime,
+                &graphics,
+                &audio,
+                &gameplay,
+                &Binds::default(),
+                None,
+            );
             assert!(items[0].id.is_none(), "{page:?}");
         }
     }
@@ -2449,7 +2707,16 @@ mod tests {
     fn every_row_says_where_it_comes_from() {
         let (runtime, graphics, audio, gameplay) = loaded();
         for page in [Page::Line, Page::Loco] {
-            for entry in entries(page, false, &runtime, &graphics, &audio, &gameplay) {
+            for entry in entries(
+                page,
+                false,
+                &runtime,
+                &graphics,
+                &audio,
+                &gameplay,
+                &Binds::default(),
+                None,
+            ) {
                 assert!(
                     !entry.chip.is_empty(),
                     "{page:?}: {} has no chip",
@@ -2465,7 +2732,16 @@ mod tests {
     #[test]
     fn the_detail_pane_reads_the_content() {
         let (runtime, graphics, audio, gameplay) = loaded();
-        let lines = entries(Page::Line, false, &runtime, &graphics, &audio, &gameplay);
+        let lines = entries(
+            Page::Line,
+            false,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+            &Binds::default(),
+            None,
+        );
         let line = facts(Page::Line, &lines[0], &runtime, 0).expect("the built-in line has facts");
         assert!(!line.rows.is_empty());
         assert!(
@@ -2473,7 +2749,16 @@ mod tests {
             "the example line is km long"
         );
 
-        let locos = entries(Page::Loco, false, &runtime, &graphics, &audio, &gameplay);
+        let locos = entries(
+            Page::Loco,
+            false,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+            &Binds::default(),
+            None,
+        );
         let loco = facts(Page::Loco, &locos[0], &runtime, 0).expect("the BR 101 has facts");
         assert_eq!(loco.rows.len(), 5);
         // Mods and settings have nothing to show beside the list.
@@ -2484,6 +2769,8 @@ mod tests {
             &graphics,
             &audio,
             &gameplay,
+            &Binds::default(),
+            None,
         );
         assert!(facts(Page::Settings, &settings[1], &runtime, 0).is_none());
     }
@@ -2561,6 +2848,8 @@ mod tests {
             .init_resource::<Graphics>()
             .init_resource::<Audio>()
             .init_resource::<Gameplay>()
+            .init_resource::<Binds>()
+            .init_resource::<Bindings>()
             .init_resource::<Fonts>()
             .init_resource::<Wallpaper>()
             .insert_resource(Mods(mod_runtime::ModRuntime::load("../../mods")))
@@ -2611,8 +2900,19 @@ mod tests {
             &graphics,
             &audio,
             &gameplay,
+            &Binds::default(),
+            None,
         );
-        let paused = entries(Page::Settings, true, &runtime, &graphics, &audio, &gameplay);
+        let paused = entries(
+            Page::Settings,
+            true,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+            &Binds::default(),
+            None,
+        );
         let settings = |items: &[Entry]| -> Vec<Setting> {
             items.iter().filter_map(|entry| entry.setting).collect()
         };
@@ -2631,6 +2931,96 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The controls page: Enter hands the keyboard over, the next key becomes the
+    /// binding, and whatever else answered to that key lets go of it. The whole point of
+    /// the page is this one exchange, so it is the one thing under test.
+    #[test]
+    fn a_row_takes_the_next_key_and_takes_it_off_whoever_had_it() {
+        let mut app = app();
+        app.world_mut().resource_mut::<MenuState>().page = Page::Controls;
+        app.update();
+        assert_eq!(
+            app.world().resource::<MenuState>().selected,
+            1,
+            "row 0 is the driving heading"
+        );
+
+        // O works the pre-controlled brake until this row takes it.
+        assert_eq!(
+            app.world().resource::<Binds>().get(Action::EpBrake).key,
+            Some(KeyCode::KeyO)
+        );
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.world().resource::<MenuState>().rebinding,
+            Some(Bindable::Button(Action::ThrottleUp)),
+            "Enter puts the row into waiting"
+        );
+
+        key(&mut app, KeyCode::KeyO);
+        let world = app.world();
+        assert_eq!(world.resource::<MenuState>().rebinding, None);
+        assert_eq!(
+            world.resource::<Binds>().get(Action::ThrottleUp).key,
+            Some(KeyCode::KeyO)
+        );
+        assert_eq!(
+            world.resource::<Binds>().get(Action::EpBrake).key,
+            None,
+            "one key, one lever"
+        );
+        // Both changes reach the settings file, and nothing else does.
+        assert_eq!(
+            world.resource::<Bindings>().binds,
+            ["throttle-up KeyO DPadUp", "ep-brake - -"]
+        );
+    }
+
+    /// The three levers stand under the buttons, with an empty key column and the bound
+    /// axis in the controller one — a lever is bound to an axis or to nothing.
+    #[test]
+    fn the_lever_rows_show_the_axis_and_no_key() {
+        let (runtime, graphics, audio, gameplay) = loaded();
+        let mut binds = Binds::default();
+        binds.bind_lever(
+            Lever::BrakeValve,
+            Some(bevy::input::gamepad::GamepadInput::Button(
+                GamepadButton::RightTrigger2,
+            )),
+        );
+        let items = entries(
+            Page::Controls,
+            false,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+            &binds,
+            None,
+        );
+        let row = |lever: Lever| {
+            items
+                .iter()
+                .find(|entry| entry.binding == Some(Bindable::Lever(lever)))
+                .unwrap_or_else(|| panic!("{} has no row", lever.name()))
+        };
+        assert!(
+            row(Lever::BrakeValve).value.contains("RightTrigger2"),
+            "the bound axis stands in the controller column"
+        );
+        // Unbound, and its key column is a dash whether it is bound or not.
+        let throttle = &row(Lever::Throttle).value;
+        assert_eq!(throttle.split_whitespace().count(), 2, "two dashes");
+        // Every lever is on the page, under a heading of its own.
+        assert_eq!(
+            items
+                .iter()
+                .filter(|entry| matches!(entry.binding, Some(Bindable::Lever(_))))
+                .count(),
+            bindings::LEVERS.len()
+        );
     }
 
     /// The settings page opens on a value, not on the heading above it, and ← / → dial
@@ -2663,6 +3053,8 @@ mod tests {
             app.world().resource::<Graphics>(),
             app.world().resource::<Audio>(),
             app.world().resource::<Gameplay>(),
+            &Binds::default(),
+            None,
         );
         assert!(!items[selected].heading);
     }
@@ -2753,7 +3145,16 @@ mod tests {
     #[test]
     fn a_vehicle_without_a_preview_keeps_its_monogram() {
         let (runtime, graphics, audio, gameplay) = loaded();
-        let locos = entries(Page::Loco, false, &runtime, &graphics, &audio, &gameplay);
+        let locos = entries(
+            Page::Loco,
+            false,
+            &runtime,
+            &graphics,
+            &audio,
+            &gameplay,
+            &Binds::default(),
+            None,
+        );
         for entry in &locos {
             let facts = facts(Page::Loco, entry, &runtime, 0).expect("a vehicle has facts");
             assert!(!facts.monogram.is_empty(), "{}", entry.label);

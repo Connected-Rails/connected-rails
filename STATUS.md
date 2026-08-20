@@ -574,6 +574,28 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   Any run flag on the command line (`--line`, `--frames`, …) skips the menu, so CLI and CI
   invocations stay non-interactive, and a flag beats the menu's choice where both are set;
   `--menu` puts the menu back in front, which is the only way to photograph it.
+- **Key bindings are the player's** (`crates/app/src/bindings.rs`, page `--menu controls`):
+  Bevy brings the raw devices and nothing above them, so a thin layer sits in between — a
+  table of some sixty actions with their default key and controller button, a `Binds`
+  resource subscripted by `Action as usize`, and one `SystemParam` that every driving
+  system asks for in place of `ButtonInput<KeyCode>`. Settings → Key bindings lists them by
+  group; `Enter` on a row takes the next key **or controller button** pressed, `Backspace`
+  clears it, `Esc` cancels, and binding a key takes it off whoever had it, so one key only
+  ever works one lever. Kept in the settings file under `[controls]` as one line per
+  rebound row and nothing else, so a changed default still reaches everyone who never
+  touched that row. A controller answers to the same bindings on every connected pad. **The
+  three controls that have a position rather than a direction** — power controller,
+  driver's brake valve, direct brake — are a group of their own (`Lever`), bound to a stick
+  axis or an analogue trigger instead of to a key: `Enter` on such a row takes the next axis
+  moved past half travel, and the axis then drives the lever absolutely, after and over the
+  keys. Nothing is bound there out of the box, because a bound lever writes its control
+  every frame and would hold the brake valve at Release for anyone with a pad plugged in;
+  lap, fill and emergency stay on their keys, emergency latching until one leaves it. The
+  two sticks that look and walk are the exception in the other direction — always on, never
+  bindable, because they are not levers of the desk. The
+  key sheet on **F5** no longer spells its caps out — each line names the actions it stands
+  for and is rewritten the moment a binding changes, so a rebinding made in the pause
+  overlay reaches the sheet standing behind it.
 - **Cross-cutting (ch. 16):** fixed time step, seeded RNG, state hash with determinism test,
   full serialisation for save/load.
 - **Block diagram (2026-08-17, `sim_core::blocks` + vehicle editor):** drive, brake and

@@ -13,6 +13,7 @@
 //! rebase leaves alone. `--character <file>` hangs a model on him; it is only ever seen
 //! from the outside cameras, because in the walk the eye sits inside its head.
 
+use crate::bindings::{Action, Input};
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 use sim_core::doors::DoorPhase;
@@ -76,11 +77,12 @@ pub enum Place {
 #[derive(Component)]
 pub struct CharacterModel;
 
-/// Walks the player: WASD over the ground or through the train, E through a door.
+/// Walks the player: four bound keys or the left stick over the ground and through the
+/// train, one more through a door.
 // A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn walk_player(
-    keys: Res<ButtonInput<KeyCode>>,
+    input: Input,
     time: Res<Time>,
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
@@ -111,14 +113,14 @@ pub fn walk_player(
         vehicle: seat,
         eye: eye_point(&train.vehicles[seat]),
     });
-    let pace = if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+    let pace = if input.pressed(Action::WalkRun) {
         RUN
     } else {
         WALK
     };
     // The rain field follows the camera, so its quads sit in the way of every ray.
     let filter = |entity: Entity| !precipitation.contains(entity);
-    let door = keys.just_pressed(KeyCode::KeyE);
+    let door = input.just_pressed(Action::WalkDoor);
 
     // Everything below happens in render space, aboard as much as outside; the frame of
     // the vehicle only carries the walk in and out of it.
@@ -147,7 +149,7 @@ pub fn walk_player(
         }
         None => Quat::from_rotation_y(state.yaw),
     };
-    let direction = turn * pressed_direction(&keys).normalize_or_zero();
+    let direction = turn * pressed_direction(&input).normalize_or_zero();
     if direction.length_squared() > 0.5 {
         feet = step(&mut ray, feet, direction, pace * dt, &filter);
     }
@@ -347,22 +349,25 @@ fn beside(
     Some(origin.from_render(outside.with_y(ground + EYE_HEIGHT)))
 }
 
-/// WASD as a direction in the walker's own frame: −Z ahead, X to the right.
-fn pressed_direction(keys: &ButtonInput<KeyCode>) -> Vec3 {
+/// The four walking keys and a controller's left stick as one direction in the walker's
+/// own frame: −Z ahead, X to the right. The stick is added rather than chosen between, so
+/// a hand on each device does not fight itself.
+fn pressed_direction(input: &Input) -> Vec3 {
     let mut step = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
+    if input.pressed(Action::WalkForward) {
         step += Vec3::NEG_Z;
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if input.pressed(Action::WalkBack) {
         step += Vec3::Z;
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if input.pressed(Action::WalkLeft) {
         step += Vec3::NEG_X;
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if input.pressed(Action::WalkRight) {
         step += Vec3::X;
     }
-    step
+    let stick = input.walk();
+    step + Vec3::new(stick.x, 0.0, -stick.y)
 }
 
 /// Eye point of a vehicle in its model space — the cab's own, or the guess

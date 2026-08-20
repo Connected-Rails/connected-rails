@@ -414,6 +414,10 @@ pub fn plugin(app: &mut App) {
     let _ = system_language();
     app.register_type::<Graphics>()
         .register_type::<Audio>()
+        // The key and controller bindings are a settings group like any other; they have
+        // to be registered before `SettingsPlugin`, or the file's `[controls]` is read
+        // into nothing (`bindings.rs`).
+        .register_type::<crate::bindings::Bindings>()
         .register_type::<Gameplay>()
         .register_type::<HudMode>()
         .register_type::<AntiAliasing>()

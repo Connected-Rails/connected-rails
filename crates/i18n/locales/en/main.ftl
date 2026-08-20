@@ -1322,12 +1322,118 @@ set-hud-reduced = Reduced
 set-hud-off = Off
 set-look-speed = Look sensitivity
 set-look-speed-hint = How far the view turns while the right mouse button is held.
+set-controls = Key bindings
+set-controls-hint = Which key and which controller button work each lever of the desk.
 set-reset = Reset to defaults
 set-reset-hint = Puts every setting on this page back to how it shipped.
 # Units of the values on the right of a settings row.
 set-metres = { $value } m
 set-percent = { $value } %
 set-factor = { $value } ×
+
+## Key bindings
+
+# The page behind the key bindings row of the settings page: one row per action, the key
+# on the left of the value column and the controller button on the right. The names are
+# the levers themselves, so they read the same here as they do in the key help (F5).
+
+ctl-title = Key bindings
+ctl-caption = Enter takes the next key or controller button pressed — on a lever row, the next stick or trigger moved. Backspace takes the binding away.
+# What a row waiting for its new key says in place of its bindings.
+ctl-press = press a key …
+# Nothing is bound to this half of the row.
+ctl-unbound = —
+ctl-hint-rebind = rebind
+ctl-hint-clear = clear
+ctl-reset = Reset all bindings
+ctl-reset-hint = Puts every key and controller button back to how it shipped.
+
+ctl-group-driving = Driving
+ctl-group-brakes = Brakes
+ctl-group-safety = Train protection
+ctl-group-vehicle = Vehicle
+ctl-group-view = View and overlays
+ctl-group-walk = On foot
+
+ctl-throttle-up = Power up
+ctl-throttle-down = Power down
+ctl-throttle-off = Power to zero
+ctl-reverser-forward = Reverser forward
+ctl-reverser-neutral = Reverser neutral
+ctl-reverser-back = Reverser reverse
+ctl-road-gear = Range selector
+ctl-afb = Cruise control on/off
+ctl-afb-down = Target speed down
+ctl-afb-up = Target speed up
+
+ctl-brake-apply = Brake valve apply
+ctl-brake-release = Brake valve release
+ctl-brake-lap = Brake valve lap
+ctl-brake-fill = Brake valve fill
+ctl-brake-emergency = Emergency brake
+ctl-direct-brake-apply = Direct brake apply
+ctl-direct-brake-release = Direct brake release
+ctl-loco-brake-release = Release the loco brake
+ctl-parking-brake = Parking brake
+ctl-ep-brake = Pre-controlled brake
+ctl-sanding = Sanding
+
+ctl-sifa = Sifa acknowledge
+ctl-pzb-acknowledge = PZB acknowledge
+ctl-pzb-free = PZB free
+ctl-pzb-override = PZB override
+ctl-lzb-takeover = LZB takeover
+ctl-lzb-end = LZB end
+ctl-lzb-test = LZB test
+ctl-train-type = Train type switch
+ctl-horn = Horn
+
+ctl-battery = Battery
+ctl-pantograph = Pantograph
+ctl-main-switch = Main switch
+ctl-compressor = Compressor
+ctl-engine-start = Engine starter
+ctl-headlights = Headlights
+ctl-cab-light = Cab light
+ctl-instrument-light-up = Instrument light brighter
+ctl-instrument-light-down = Instrument light dimmer
+ctl-wipers = Wipers
+ctl-door-left = Release doors left
+ctl-door-right = Release doors right
+ctl-door-close = Close doors
+
+ctl-view-cab = Cab view
+ctl-view-outside = Outside view
+ctl-view-wayside = Lineside view
+ctl-view-walk = Stand up and walk
+ctl-look-left = Look left
+ctl-look-right = Look right
+ctl-look-up = Look up
+ctl-look-down = Look down
+ctl-zoom-in = Move camera closer
+ctl-zoom-out = Move camera away
+ctl-help-overlay = Key help
+ctl-diagnostics = Diagnostics
+ctl-hud-mode = HUD step
+ctl-mod-manager = Mod manager
+ctl-pause = Pause menu
+
+ctl-walk-forward = Walk forward
+ctl-walk-back = Walk back
+ctl-walk-left = Walk left
+ctl-walk-right = Walk right
+ctl-walk-run = Run
+ctl-walk-door = Through the door
+
+# The levers that have a position rather than a direction: only a stick or a trigger can
+# hold one, so their rows take an axis and their key column stays empty.
+ctl-group-levers = Levers on an axis
+ctl-lever-hint = Bind a stick or a trigger and it holds this lever where you put it; the keys for it stop being read.
+ctl-lever-throttle = Power controller
+ctl-lever-brake-valve = Driver's brake valve
+ctl-lever-direct-brake = Direct brake
+# What a lever row waiting for its axis says in place of its binding.
+ctl-move = move an axis …
 
 ## Mod manager
 

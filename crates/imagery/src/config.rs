@@ -76,6 +76,10 @@ pub struct Provider {
     /// Mandatory credit of the provider — belongs visibly in the image.
     #[serde(default)]
     pub attribution: String,
+    /// Licence or copyright page the credit links to. OpenStreetMap's
+    /// attribution guidelines ask for the link, not just the name.
+    #[serde(default)]
+    pub attribution_url: Option<String>,
     /// Access key for `{key}`.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -358,6 +362,7 @@ pub fn predefined_providers() -> Vec<Provider> {
             tile_size: 256,
             format: ImageFormat::Jpeg,
             attribution: "Esri, Maxar, Earthstar Geographics".into(),
+            attribution_url: None,
             api_key: None,
             note: "Observe the Esri terms of use.".into(),
         },
@@ -375,6 +380,7 @@ pub fn predefined_providers() -> Vec<Provider> {
             tile_size: 256,
             format: ImageFormat::Png,
             attribution: "© Bundesamt für Kartographie und Geodäsie".into(),
+            attribution_url: None,
             api_key: None,
             note: "Open data from the BKG; no aerial imagery, but a good reference map.".into(),
         },
@@ -387,7 +393,8 @@ pub fn predefined_providers() -> Vec<Provider> {
             max_zoom: 19,
             tile_size: 256,
             format: ImageFormat::Png,
-            attribution: "© OpenStreetMap-Mitwirkende".into(),
+            attribution: "© OpenStreetMap contributors".into(),
+            attribution_url: Some("https://www.openstreetmap.org/copyright".into()),
             api_key: None,
             note: "Editor use only, no bulk fetching (Tile Usage Policy).".into(),
         },
@@ -407,6 +414,7 @@ pub fn predefined_providers() -> Vec<Provider> {
             tile_size: 512,
             format: ImageFormat::Jpeg,
             attribution: "Landesvermessungsamt".into(),
+            attribution_url: None,
             api_key: None,
             note: "Template: enter the endpoint and layer of the desired DOP service. \
                    The German states usually serve their orthophotos as WMS."
@@ -430,6 +438,7 @@ mod tests {
             tile_size: 256,
             format: ImageFormat::Png,
             attribution: String::new(),
+            attribution_url: None,
             api_key: Some("secret".into()),
             note: String::new(),
         }

@@ -3446,7 +3446,14 @@ fn imagery_section(ui: &mut egui::Ui, overlay: &Overlay, request: &mut Request) 
     if let Some(provider) = overlay.config().provider()
         && !provider.attribution.is_empty()
     {
-        ui.small(format!("© {}", provider.attribution));
+        // The credit already carries its own © where the provider uses one.
+        match &provider.attribution_url {
+            Some(url) => ui.hyperlink_to(
+                egui::RichText::new(&provider.attribution).small(),
+                url.clone(),
+            ),
+            None => ui.small(&provider.attribution),
+        };
     }
 
     if changed {

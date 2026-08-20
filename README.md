@@ -702,8 +702,12 @@ the tile in EPSG:3857:
     tile_size: 512,
     format: Jpeg,
     attribution: "Geobasis NRW",
+    attribution_url: Some("https://www.geoportal.nrw/nutzungsbedingungen"),
 )
 ```
+
+`attribution` is the credit the service requires; `attribution_url` is optional and turns it
+into a link to the licence, which OpenStreetMap's attribution guidelines ask for.
 
 Availability and terms of use of each service must be checked before use; for bulk fetching,
 put your own access keys into the configuration.

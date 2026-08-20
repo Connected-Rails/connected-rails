@@ -339,6 +339,7 @@ mod tests {
                 tile_size: 256,
                 format: ImageFormat::Png,
                 attribution: String::new(),
+                attribution_url: None,
                 api_key: None,
                 note: String::new(),
             }],

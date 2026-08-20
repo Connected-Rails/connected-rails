@@ -34,6 +34,9 @@ const MAP: egui::Vec2 = egui::vec2(520.0, 300.0);
 const YEARS: std::ops::RangeInclusive<u32> = 1835..=2100;
 /// Edge length of a tile as drawn [px]; the tiles themselves are 256².
 const TILE: f32 = 256.0;
+/// Scroll [points] a wheel notch reports where the platform counts in pixels
+/// rather than lines — egui's own default for the length of a line.
+const NOTCH: f32 = 50.0;
 
 /// The answer of a running place search, once it arrives. Behind a mutex so the
 /// dialog works as a Bevy resource: a `Receiver` is `Send`, but not `Sync`.
@@ -59,6 +62,8 @@ pub struct NewModule {
     search: Option<Search>,
     searching: bool,
     error: String,
+    /// Wheel scroll that has not yet added up to a whole zoom level [points].
+    scroll: f32,
     map: Option<Map>,
 }
 
@@ -68,6 +73,8 @@ struct Map {
     source: ImagerySource,
     textures: HashMap<TileId, egui::TextureHandle>,
     attribution: String,
+    /// Licence page the credit links to, where the provider names one.
+    attribution_url: Option<String>,
 }
 
 impl Map {
@@ -79,14 +86,14 @@ impl Map {
         // A 520×300 map is nine tiles at most, and OSM's tile policy asks for
         // restraint — two workers keep it moving without hammering the service.
         config.request.parallel = 2;
-        let attribution = config
-            .provider()
-            .map(|p| p.attribution.clone())
-            .unwrap_or_default();
+        let provider = config.provider();
+        let attribution = provider.map(|p| p.attribution.clone()).unwrap_or_default();
+        let attribution_url = provider.and_then(|p| p.attribution_url.clone());
         Self {
             source: ImagerySource::new(config),
             textures: HashMap::new(),
             attribution,
+            attribution_url,
         }
     }
 }
@@ -107,6 +114,7 @@ impl NewModule {
         self.search = None;
         self.searching = false;
         self.error.clear();
+        self.scroll = 0.0;
     }
 
     /// What the year field opens on. Whole years out of the wall clock — a
@@ -399,6 +407,19 @@ fn search_row(ui: &mut egui::Ui, dialog: &mut NewModule) {
     ui.add_space(space::S);
 }
 
+/// How many wheel notches an input event is worth, whichever unit the platform
+/// reports the wheel in.
+fn notches(event: &egui::Event) -> f32 {
+    match event {
+        egui::Event::MouseWheel { unit, delta, .. } => match unit {
+            egui::MouseWheelUnit::Line => delta.y,
+            egui::MouseWheelUnit::Point => delta.y / NOTCH,
+            egui::MouseWheelUnit::Page => delta.y,
+        },
+        _ => 0.0,
+    }
+}
+
 /// The map: OpenStreetMap tiles around the anchor. Click sets the anchor, drag
 /// pans, the wheel zooms.
 fn map(ui: &mut egui::Ui, dialog: &mut NewModule) {
@@ -420,15 +441,34 @@ fn map(ui: &mut egui::Ui, dialog: &mut NewModule) {
         dialog.lat = lat;
         dialog.lon = lon;
     }
+    // The map says what the pointer does: cross hairs to place the anchor, a
+    // closed hand while the map is being pulled along.
+    if response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if response.hovered() {
+        ui.ctx()
+            .set_cursor_icon(match ui.input(|i| i.pointer.any_down()) {
+                true => egui::CursorIcon::Grabbing,
+                false => egui::CursorIcon::Crosshair,
+            });
+    }
     if response.hovered() {
-        let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        if wheel.abs() > 1.0 {
-            let step = if wheel > 0.0 { 1 } else { -1 };
+        // One notch of the wheel is one zoom level. `smooth_scroll_delta`
+        // spreads that notch over several frames, and stepping per frame races
+        // through the whole stack — so the wheel events are read directly,
+        // banked, and spent a notch at a time. A trackpad's stream of small
+        // deltas adds up in the same account.
+        dialog.scroll += ui.input(|i| i.events.iter().map(notches).sum::<f32>());
+        let step = dialog.scroll as i32;
+        if step != 0 {
+            dialog.scroll -= step as f32;
             dialog.zoom = (dialog.zoom as i32 + step).clamp(2, 18) as u8;
             let (nx, ny) = imagery::tiles::world_xy(dialog.lat, dialog.lon, dialog.zoom);
             cx = nx;
             cy = ny;
         }
+    } else {
+        dialog.scroll = 0.0;
     }
 
     // Decoded tiles arrive on the worker threads; upload whatever is ready.
@@ -502,14 +542,30 @@ fn map(ui: &mut egui::Ui, dialog: &mut NewModule) {
         painter.circle_filled(marker, 2.5, colors::ACCENT);
     }
 
-    // The credit the tile services require, on the image itself.
-    painter.text(
-        rect.right_bottom() - egui::vec2(space::XS, space::XS),
-        egui::Align2::RIGHT_BOTTOM,
-        &map.attribution,
+    // The credit the tile services require, on the image itself and linking to
+    // the licence — OSM's attribution guidelines ask for both, and a plate
+    // behind it keeps it readable over whatever the tiles happen to show.
+    let text = egui::RichText::new(&map.attribution).size(10.0);
+    let galley = painter.layout_no_wrap(
+        map.attribution.clone(),
         egui::FontId::proportional(10.0),
-        colors::TEXT_SECONDARY,
+        colors::TEXT,
     );
+    let credit = egui::Rect::from_min_size(
+        rect.right_bottom() - galley.size() - egui::vec2(space::XS, space::XS),
+        galley.size(),
+    );
+    painter.rect_filled(credit.expand(space::XS / 2.0), 2.0, colors::BG_PANEL);
+    match &map.attribution_url {
+        // Registered after the map, so a click on the credit follows the link
+        // instead of dropping the anchor behind it.
+        Some(url) => {
+            ui.put(credit, egui::Hyperlink::from_label_and_url(text, url));
+        }
+        None => {
+            painter.galley(credit.min, galley, colors::TEXT);
+        }
+    }
     ui.label(
         egui::RichText::new(t!("new-module-map-hint"))
             .small()
@@ -518,5 +574,30 @@ fn map(ui: &mut egui::Ui, dialog: &mut NewModule) {
     // Tiles arrive on other threads; keep the frames coming while any are out.
     if map.source.pending() > 0 || dialog.searching {
         ui.ctx().request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A wheel notch is one zoom level, whichever unit the platform reports it
+    /// in — the pixel-counting one is what used to race through the stack.
+    #[test]
+    fn a_notch_is_one_zoom_level() {
+        let wheel = |unit, y| egui::Event::MouseWheel {
+            unit,
+            delta: egui::vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        assert_eq!(notches(&wheel(egui::MouseWheelUnit::Line, 1.0)), 1.0);
+        assert_eq!(notches(&wheel(egui::MouseWheelUnit::Point, NOTCH)), 1.0);
+        assert_eq!(notches(&wheel(egui::MouseWheelUnit::Point, -NOTCH)), -1.0);
+        // Below a notch nothing happens yet; the rest is banked for later.
+        let mut banked = notches(&wheel(egui::MouseWheelUnit::Point, NOTCH * 0.4));
+        assert_eq!(banked as i32, 0);
+        banked += notches(&wheel(egui::MouseWheelUnit::Point, NOTCH * 0.7));
+        assert_eq!(banked as i32, 1);
     }
 }

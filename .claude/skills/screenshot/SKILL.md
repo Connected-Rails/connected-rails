@@ -5,32 +5,57 @@ description: Screenshot von Simulator oder Editor aufnehmen und ansehen. Nutzen,
 
 # Screenshot
 
-Beide Binaries können sich selbst fotografieren und beenden sich danach — kein Fenster-Gefummel, kein manuelles Zutun.
+Alle vier Binaries können sich selbst fotografieren und beenden sich danach — kein
+Fenster-Gefummel, kein manuelles Zutun.
 
 ```bash
-cargo build -p app -p editor            # einmal, danach direkt die Binaries aufrufen
+cargo build -p app -p route-editor -p signal-editor -p vehicle-editor   # einmal
 
-./target/debug/train-sim.exe --screenshot screenshots/hud.png
-./target/debug/train-sim-editor.exe strecke.ron --screenshot screenshots/editor.png
+./target/debug/train-sim.exe              --screenshot screenshots/hud.png
+./target/debug/trainsim-route-editor.exe  modul.ron   --screenshot screenshots/modul.png
+./target/debug/trainsim-signal-editor.exe signal.ron  --screenshot screenshots/signal.png
+./target/debug/trainsim-vehicle-editor.exe fahrzeug.ron --screenshot screenshots/fahrzeug.png
 ```
 
 Danach das PNG mit **Read** ansehen — das Bild ist die Antwort, nicht die Logausgabe.
 
-## Optionen
+**Ohne `--features dev` bauen.** Ein Dev-Build linkt Bevy dynamisch; das Binary findet die
+DLL dann nur über `cargo run -p <crate> --features dev -- --screenshot …`, direkt aufgerufen
+bricht es mit „cannot open shared object file" ab.
+
+## Optionen für alle
 
 | Flag | Wirkung |
 |---|---|
 | `--screenshot <datei.png>` | Aufnahme des Fensters, danach Ende. Verzeichnis wird angelegt. |
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
-| `--hud <stufe>` | Nur Simulator: `full`, `reduced` oder `off` — die drei Stufen der Anzeige (F7). Schreibt die Einstellungsdatei nicht. |
-| `--overlays` | Nur Simulator: öffnet die Tastenhilfe (F5) und die Diagnose (F6) von Anfang an — beide sind sonst nur per Tastendruck erreichbar. |
-| `--menu [seite]` | Nur Simulator: fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe, Titelbildschirm), `line`, `loco`, `scenario`, `mods`, `settings`, `controls`. |
 
-`--frames` ist der einzige Hebel auf den Zeitpunkt: mehr Frames = mehr Simulationszeit vor dem Bild
-(KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für geladenes Overlay, 60 reichen
-für Geometrie und HUD.
+`--frames` ist der einzige Hebel auf den Zeitpunkt: mehr Frames = mehr Simulationszeit vor dem
+Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für geladenes Overlay,
+60 reichen für Geometrie und HUD.
 
-Editor zusätzlich: Streckendatei als erstes Argument (ohne: Beispielstrecke), `--imagery <konfig.ron>`.
+## Nur Simulator (`train-sim`)
+
+| Flag | Wirkung |
+|---|---|
+| `--hud <stufe>` | `full`, `reduced` oder `off` — die drei Stufen der Anzeige (F7). Schreibt die Einstellungsdatei nicht. |
+| `--overlays` | Öffnet Tastenhilfe (F5) und Diagnose (F6) von Anfang an — sonst nur per Tastendruck erreichbar. |
+| `--menu [seite]` | Fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe), `line`, `loco`, `scenario`, `mods`, `settings`, `controls`. |
+| `--camera <modus>` | `outside` für die Außenkamera (Fahrzeugmodelle), `walk` für zu Fuß — beides sonst nur über F4. |
+| `--time HH:MM` | Startuhrzeit der Fahrt, etwa `21:40` für den Nachthimmel. |
+| `--date JJJJ-MM-TT` | Startdatum — entscheidet über die Jahreszeit von Boden und Bewuchs. |
+| `--weather <preset>` | `clear`, `cloudy`, `overcast`, `fog`, `drizzle`, `rain`, `storm`, `thunderstorm`, `sleet`, `snow`, `blizzard`, `hail`, `frost`. Zusammen mit `--screenshot` sofort gesetzt statt eingezogen. |
+| `--wipers <0-3>` | Startet mit laufendem Scheibenwischer — ein Führerstandshebel, und ein Screenshot hat keine Hände. |
+| `--character <datei>` | Modell für den Fußgänger, gleiche `mods://`-Pfade wie Fahrzeugmodelle. |
+
+## Nur Moduleditor (`trainsim-route-editor`)
+
+Modul­datei als erstes Argument (ohne: Beispielmodul), `--imagery <konfig.ron>` für eine andere
+Bildmaterial-Konfiguration als `imagery.ron`.
+
+## Nur Fahrzeugeditor (`trainsim-vehicle-editor`)
+
+`--window 1280x2000` — feste Fenstergröße für reproduzierbare Bilder.
 
 ## Arbeitsweise
 
@@ -42,8 +67,10 @@ Editor zusätzlich: Streckendatei als erstes Argument (ohne: Beispielstrecke), `
 ## Grenzen
 
 - Es wird immer der **Startzustand plus N Frames** aufgenommen: keine Tastatureingaben, also
-  Führerstandskamera (F2/F3 und Fahrschalter sind nur interaktiv erreichbar) und Zug im Anfangszustand.
-  Fahrdynamik prüft man über `cargo test`, nicht über Bilder. Im Menü ersetzt `--menu <seite>` die
-  fehlende Tastatur; die Auswahl steht dabei immer auf der ersten Zeile.
+  Führerstandskamera und Fahrschalter nur so weit, wie ein Flag oben hinreicht. Fahrdynamik prüft
+  man über `cargo test`, nicht über Bilder. Im Menü ersetzt `--menu <seite>` die fehlende Tastatur;
+  die Auswahl steht dabei immer auf der ersten Zeile.
+- Dialoge der Editoren, die erst ein Menübefehl öffnet (etwa „Neues Modul"), sind so nicht
+  erreichbar — dafür bleibt nur der laufende Editor und ein Blick von Hand.
 - Braucht eine GPU und eine Desktop-Sitzung. In headless-CI schlägt es fehl — dort bleibt `--frames` als
   reiner Rendering-Smoke-Test.

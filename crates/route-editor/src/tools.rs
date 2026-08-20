@@ -276,10 +276,22 @@ pub struct EditorState {
     /// background `Ui`, which egui's area hit test never sees — so "is the
     /// mouse over UI?" is answered against this rect, not by egui.
     pub viewport: Rect,
+    /// The pointer is over an egui area of its own — a floating window, an
+    /// open menu, a tooltip. Those are not cut out of [`Self::viewport`], so
+    /// the mouse-over test asks egui about them (see [`Self::over_viewport`]).
+    pub pointer_over_ui: bool,
     /// A text field owns the keyboard — Delete/Enter/WASD belong to it then.
     pub typing: bool,
     /// Owner for native dialogs; a parentless dialog may open behind the window.
     pub window: Option<bevy::window::RawHandleWrapper>,
+    /// The file dialog that is up, and what it was opened for. It runs on a
+    /// thread of its own (see `ui::ask_for_file`), so the answer arrives some
+    /// frames later — behind a mutex because a `Receiver` is `Send` but not
+    /// `Sync`, and this state is a Bevy resource.
+    pub pending_file: Option<(
+        crate::ui::FileAsk,
+        std::sync::Mutex<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
+    )>,
     /// Comment-loss warning shown once per session (see the vehicle editor).
     pub warned_about_comments: bool,
     /// Whether the user has moved the map or used a tool yet — until then the
@@ -288,6 +300,12 @@ pub struct EditorState {
 }
 
 impl EditorState {
+    /// Whether the mouse is on the map itself, and not on anything drawn over
+    /// it — what every mouse binding of the viewport is gated on.
+    pub fn over_viewport(&self, cursor: Vec2) -> bool {
+        self.viewport.contains(cursor) && !self.pointer_over_ui
+    }
+
     pub fn device_kind(&self) -> DeviceKind {
         self.device_kind.clone().unwrap_or(DeviceKind::Signal)
     }
@@ -1299,7 +1317,7 @@ pub fn tool_input(
         .single()
         .ok()
         .and_then(|w| w.cursor_position())
-        .filter(|c| state.viewport.contains(*c));
+        .filter(|c| state.over_viewport(*c));
     let view = cursor.zip(camera.single().ok());
     // Ground point under the cursor, while it is over the free viewport.
     let picked = view.and_then(|(c, (camera, camera_transform))| {
@@ -2122,7 +2140,7 @@ pub fn draw_gizmos(
         .single()
         .ok()
         .and_then(|w| w.cursor_position())
-        .filter(|c| state.viewport.contains(*c))
+        .filter(|c| state.over_viewport(*c))
         .and_then(|c| {
             let (camera, camera_transform) = camera.single().ok()?;
             pick_ground(camera, camera_transform, c, &origin.0, &focus)

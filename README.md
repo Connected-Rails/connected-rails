@@ -633,8 +633,10 @@ instead. There is no scale handle, because nothing in the file format has a scal
 **A module starts as a place, not as a blank sheet.** *File → New module* (`Ctrl+N`) asks for
 a name and the module's anchor — latitude and longitude as fields, and beneath them a small
 OpenStreetMap map with a place search: type "Göttingen Bahnhof", pick the hit, click the exact
-spot, and the coordinates fill themselves in. Around that anchor the new module gets its first
-**envelope**, a square of the module size the dialog asks for (4 km by default), whose corners
+spot, and the coordinates fill themselves in. The dialog also asks what the module portrays —
+the **year** and whether it is a rebuild of a real place or invented — and both are written into
+the module file. Around that anchor the new module gets its first
+**envelope**, a square of the initial size the dialog asks for (4 km by default), whose corners
 are dragged into shape afterwards (see the *Envelope* tool below, and MODS.md → Modules). The anchor decides which elevation tiles, which aerial
 imagery and which neighbours the module will meet, so typing it blind is the one thing worth
 a dialog.

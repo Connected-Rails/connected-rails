@@ -137,7 +137,7 @@ pub fn camera_control(
     // check is ours (see `EditorState::viewport`).
     let over_map = window
         .and_then(|w| w.cursor_position())
-        .is_some_and(|p| state.viewport.contains(p));
+        .is_some_and(|p| state.over_viewport(p));
 
     if !state.typing {
         if keys.just_pressed(KeyCode::F4) {

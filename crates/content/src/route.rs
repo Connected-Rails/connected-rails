@@ -486,6 +486,14 @@ pub enum FlankSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LineSource {
     pub name: String,
+    /// The year the module portrays — the state of the line a driver is meant
+    /// to find. Nothing in the simulation reads it yet; it is what a module
+    /// says about itself. A module that does not care simply has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    /// Whether the module is invented rather than a rebuild of a real place.
+    #[serde(default)]
+    pub fictional: bool,
     /// Geoid undulation for the height conversion [m] (plan 4.2).
     #[serde(default = "default_geoid")]
     pub geoid_offset: f64,
@@ -558,6 +566,8 @@ impl Default for LineSource {
     fn default() -> Self {
         Self {
             name: String::new(),
+            year: None,
+            fictional: false,
             geoid_offset: default_geoid(),
             electrification: String::new(),
             nodes: Vec::new(),

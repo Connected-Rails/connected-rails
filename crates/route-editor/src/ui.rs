@@ -124,6 +124,14 @@ pub fn draw(
     // layout is invisible to egui's own pointer hit test.
     let free = root.available_rect_before_wrap();
     state.viewport = Rect::new(free.min.x, free.min.y, free.max.x, free.max.y);
+    // A floating window — the new-module dialog, an open menu, a tooltip — is
+    // not part of the hand-built layout, so it is not cut out of `free`. egui
+    // knows where it is; without asking, a wheel over the dialog zooms the map
+    // underneath it as well.
+    state.pointer_over_ui = ctx
+        .pointer_interact_pos()
+        .and_then(|p| ctx.layer_id_at(p))
+        .is_some_and(|layer| layer.order != egui::Order::Background);
     state.typing = ctx.memory(|m| m.focused().is_some());
     viewport_hint(&ctx, &root, &state, &focus);
     Ok(())
@@ -259,7 +267,7 @@ fn handle_shortcuts(
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_OPEN))
         && confirm_discard(line, state, overlay)
     {
-        open(line, history, state, overlay);
+        open(state);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_NEW)) && confirm_discard(line, state, overlay)
     {
@@ -305,6 +313,89 @@ fn file_dialog(state: &EditorState) -> rfd::FileDialog {
     match dialog_parent(state) {
         Some(parent) => rfd::FileDialog::new().set_parent(&parent),
         None => rfd::FileDialog::new(),
+    }
+}
+
+/// What the file dialog that is up was opened for — the answer arrives frames
+/// later, and this is what [`poll_file_dialog`] does with it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileAsk {
+    Open,
+    ImportForest,
+    ImportMarkers,
+    Ghost,
+    DgmFolder,
+}
+
+/// Puts a native file dialog up on a thread of its own and remembers what its
+/// answer is for.
+///
+/// The Windows file dialog runs a message loop of its own while it is open.
+/// Started on winit's thread — the one the whole editor runs on — that loop is
+/// nested inside the event handling the editor is already in, and the editor
+/// stops answering; the dialog itself may never appear. On its own thread it
+/// is only a dialog, and the editor keeps drawing behind it.
+fn ask_for_file(
+    state: &mut EditorState,
+    ask: FileAsk,
+    pick: impl FnOnce(rfd::FileDialog) -> Option<PathBuf> + Send + 'static,
+) {
+    // One at a time: a second dialog would be owned by a window the first one
+    // has already disabled.
+    if state.pending_file.is_some() {
+        return;
+    }
+    let window = state.window.clone();
+    let (answer, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // SAFETY: the handle is only handed to rfd as the dialog owner, which
+        // is a window handle used as a number — nothing draws or resizes
+        // through it, and Windows owns dialogs across threads.
+        let parent = window.as_ref().map(|w| unsafe { w.get_handle() });
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(parent) = &parent {
+            dialog = dialog.set_parent(parent);
+        }
+        answer.send(pick(dialog)).ok();
+    });
+    state.pending_file = Some((ask, std::sync::Mutex::new(receiver)));
+}
+
+/// Takes the answer of the file dialog, once it has arrived, and runs what it
+/// was asked for.
+pub fn poll_file_dialog(
+    mut line: ResMut<Line>,
+    mut history: ResMut<History>,
+    mut state: ResMut<EditorState>,
+    mut overlay: ResMut<Overlay>,
+    mut ghost: ResMut<Ghost>,
+) {
+    let Some((_, receiver)) = &state.pending_file else {
+        return;
+    };
+    let answer = match receiver.lock() {
+        Ok(receiver) => receiver.try_recv(),
+        // Poisoned: the dialog thread panicked, so no answer is coming.
+        Err(_) => Err(std::sync::mpsc::TryRecvError::Disconnected),
+    };
+    let path = match answer {
+        Ok(path) => path,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+    };
+    let Some((ask, _)) = state.pending_file.take() else {
+        return;
+    };
+    // No path means the dialog was called off, which is not an event.
+    let Some(path) = path else {
+        return;
+    };
+    match ask {
+        FileAsk::Open => opened(path, &mut line, &mut history, &mut state, &mut overlay),
+        FileAsk::ImportForest => forest_imported(path, &mut line, &mut state, &mut overlay),
+        FileAsk::ImportMarkers => markers_imported(path, &mut line, &mut state, &mut overlay),
+        FileAsk::Ghost => ghost_loaded(path, &mut ghost, &state, &mut overlay),
+        FileAsk::DgmFolder => state.dgm_source = Some(path.display().to_string()),
     }
 }
 
@@ -410,13 +501,22 @@ fn write_line(line: &mut Line, state: &EditorState, overlay: &mut Overlay, path:
     }
 }
 
-fn open(line: &mut Line, history: &mut History, state: &mut EditorState, overlay: &mut Overlay) {
-    let Some(path) = file_dialog(state)
-        .add_filter(t!("filter-line-ron"), &["ron"])
-        .pick_file()
-    else {
-        return;
-    };
+/// File ▸ Open module: asks for the file, [`opened`] takes it from there.
+fn open(state: &mut EditorState) {
+    let filter = t!("filter-line-ron");
+    ask_for_file(state, FileAsk::Open, move |dialog| {
+        dialog.add_filter(filter, &["ron"]).pick_file()
+    });
+}
+
+/// The module the user picked, read and put in place of the current one.
+fn opened(
+    path: PathBuf,
+    line: &mut Line,
+    history: &mut History,
+    state: &mut EditorState,
+    overlay: &mut Overlay,
+) {
     let parsed = std::fs::read_to_string(&path)
         .map_err(|e| e.to_string())
         .and_then(|text| LineSource::from_ron(&text).map_err(|e| e.to_string()));
@@ -459,13 +559,15 @@ fn open(line: &mut Line, history: &mut History, state: &mut EditorState, overlay
 /// TreeSource`] that can be moved or deleted like a hand-set one. An optional
 /// aid; whoever wants every tree hand-set simply never uses it. Species and
 /// density come from the vegetation tool options.
-fn import_forest(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay) {
-    let Some(path) = file_dialog(state)
-        .add_filter(t!("filter-overpass-json"), &["json"])
-        .pick_file()
-    else {
-        return;
-    };
+fn import_forest(state: &mut EditorState) {
+    let filter = t!("filter-overpass-json");
+    ask_for_file(state, FileAsk::ImportForest, move |dialog| {
+        dialog.add_filter(filter, &["json"]).pick_file()
+    });
+}
+
+/// The Overpass extract the user picked, baked into trees.
+fn forest_imported(path: PathBuf, line: &mut Line, state: &mut EditorState, overlay: &mut Overlay) {
     let parsed = std::fs::read_to_string(&path)
         .map_err(|e| e.to_string())
         .and_then(|text| content::import::parse_forests(&text).map_err(|e| e.to_string()));
@@ -654,13 +756,20 @@ fn import_heights(line: &mut Line, state: &mut EditorState, overlay: &mut Overla
 /// crossings, platforms, kilometre marks. They are drawing aids, not
 /// equipment: nothing is wired, and every layer can be hidden or deleted
 /// again in the marker panel.
-fn import_markers(line: &mut Line, state: &mut EditorState, overlay: &mut Overlay) {
-    let Some(path) = file_dialog(state)
-        .add_filter(t!("filter-overpass-json"), &["json"])
-        .pick_file()
-    else {
-        return;
-    };
+fn import_markers(state: &mut EditorState) {
+    let filter = t!("filter-overpass-json");
+    ask_for_file(state, FileAsk::ImportMarkers, move |dialog| {
+        dialog.add_filter(filter, &["json"]).pick_file()
+    });
+}
+
+/// The Overpass extract the user picked, turned into reference markers.
+fn markers_imported(
+    path: PathBuf,
+    line: &mut Line,
+    state: &mut EditorState,
+    overlay: &mut Overlay,
+) {
     let parsed = std::fs::read_to_string(&path)
         .map_err(|e| e.to_string())
         .and_then(|text| content::import::parse_markers(&text).map_err(|e| e.to_string()));
@@ -695,6 +804,7 @@ fn import_markers(line: &mut Line, state: &mut EditorState, overlay: &mut Overla
 
 /// Empties the document and starts a new module: the name and the anchor from
 /// the dialog, and the square envelope built around that anchor.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn new_line(
     line: &mut Line,
     history: &mut History,
@@ -702,9 +812,13 @@ pub(crate) fn new_line(
     name: String,
     anchor: content::route::GeoPoint,
     half_size: f64,
+    year: u32,
+    fictional: bool,
 ) {
     line.source = LineSource {
         name,
+        year: Some(year),
+        fictional,
         anchor: Some(anchor),
         envelope: content::route::default_envelope(anchor, half_size),
         geoid_offset: 46.0,
@@ -759,7 +873,7 @@ fn menu_bar(
                     if ui.button(t!("action-open-line")).clicked() {
                         ui.close();
                         if confirm_discard(line, state, overlay) {
-                            open(line, history, state, overlay);
+                            open(state);
                         }
                     }
                     ui.separator();
@@ -775,11 +889,11 @@ fn menu_bar(
                     ui.separator();
                     if ui.button(t!("action-import-forest")).clicked() {
                         ui.close();
-                        import_forest(line, state, overlay);
+                        import_forest(state);
                     }
                     if ui.button(t!("action-import-markers")).clicked() {
                         ui.close();
-                        import_markers(line, state, overlay);
+                        import_markers(state);
                     }
                     ui.separator();
                     if ui.button(t!("action-load-imagery")).clicked() {
@@ -1287,7 +1401,7 @@ fn left_panel(
                     });
 
                     nav_section(ui, jump, &mut current, "module", "heading-module", |ui| {
-                        module_section(ui, line, state, ghost, overlay, focus);
+                        module_section(ui, line, state, ghost, focus);
                     });
 
                     nav_section(ui, jump, &mut current, "sky", "heading-sky", |ui| {
@@ -2827,7 +2941,6 @@ fn module_section(
     line: &mut Line,
     state: &mut EditorState,
     ghost: &mut Ghost,
-    overlay: &mut Overlay,
     focus: &mut Focus,
 ) {
     envelope_rows(ui, line, state, focus);
@@ -2909,7 +3022,7 @@ fn module_section(
     }
     ui.horizontal(|ui| {
         if ui.button(t!("action-load-ghost")).clicked() {
-            load_ghost(ghost, state, overlay);
+            load_ghost(state);
         }
         if ghost.net.is_some() && ui.button(t!("action-clear-ghost")).clicked() {
             ghost.path = None;
@@ -2933,13 +3046,15 @@ fn module_section(
 
 /// Loads another module read-only: its track becomes the grey ghost, its
 /// boundaries become snap targets for the drawing tools.
-fn load_ghost(ghost: &mut Ghost, state: &EditorState, overlay: &mut Overlay) {
-    let Some(path) = file_dialog(state)
-        .add_filter(t!("filter-line-ron"), &["ron"])
-        .pick_file()
-    else {
-        return;
-    };
+fn load_ghost(state: &mut EditorState) {
+    let filter = t!("filter-line-ron");
+    ask_for_file(state, FileAsk::Ghost, move |dialog| {
+        dialog.add_filter(filter, &["ron"]).pick_file()
+    });
+}
+
+/// The neighbouring module the user picked, read as the grey ghost.
+fn ghost_loaded(path: PathBuf, ghost: &mut Ghost, state: &EditorState, overlay: &mut Overlay) {
     let parsed = std::fs::read_to_string(&path)
         .map_err(|e| e.to_string())
         .and_then(|text| LineSource::from_ron(&text).map_err(|e| e.to_string()))
@@ -3135,10 +3250,8 @@ fn height_section(
 ) {
     editor_ui::form_grid("heights").show(ui, |ui| {
         row(ui, "dgm-source", |ui| {
-            if ui.button(t!("action-choose-dgm")).clicked()
-                && let Some(dir) = file_dialog(state).pick_folder()
-            {
-                state.dgm_source = Some(dir.display().to_string());
+            if ui.button(t!("action-choose-dgm")).clicked() {
+                ask_for_file(state, FileAsk::DgmFolder, |dialog| dialog.pick_folder());
             }
         });
         row(ui, "dgm-zone", |ui| {

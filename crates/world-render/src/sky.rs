@@ -4,13 +4,13 @@
 //! Four pieces, each the cheapest one that is still the real thing:
 //!
 //! * **Atmosphere.** Bevy's own implementation of [Hillaire 2020], the technique
-//!   Unreal's Sky Atmosphere is built on: four small look-up tables (transmittance,
-//!   multiple scattering, sky view, aerial perspective) that are rebuilt every frame
-//!   from the sun's direction. Rayleigh and Mie scattering come out of it, and with
-//!   them the blue noon, the red sunset, the blue hour after it and the haze that
-//!   lies over a valley ten kilometres away. It costs a few hundred microseconds
-//!   whatever the time of day, which is why it is the production answer rather than
-//!   a ray march.
+//!   Unreal's Sky Atmosphere is built on: small look-up tables (transmittance,
+//!   multiple scattering) that are rebuilt every frame from the sun's direction.
+//!   Rayleigh and Mie scattering come out of it, and with them the blue noon, the
+//!   red sunset, the blue hour after it and the haze that lies over a valley ten
+//!   kilometres away. The view itself is ray marched against those tables
+//!   ([`AtmosphereMode::Raymarched`]) rather than read out of a sky-view table,
+//!   because the table path cannot carry the weather's haze — see `update`.
 //! * **Sun.** One directional light, aimed from the date, the clock and the place
 //!   ([`world_coords::sun`]). Bevy draws its disk into the atmosphere itself
 //!   ([`SunDisk`]) and applies the atmospheric extinction to it, so the sun reddens
@@ -43,7 +43,7 @@ use bevy::camera::Camera3d;
 use bevy::light::atmosphere::{Falloff, PhaseFunction, ScatteringMedium, ScatteringTerm};
 use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight, SunDisk, light_consts::lux};
 use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::pbr::AtmosphereSettings;
+use bevy::pbr::{AtmosphereMode, AtmosphereSettings};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
@@ -357,6 +357,15 @@ fn update(
         // six visibilities is where a target is down to 10^-10 of its contrast, so
         // nothing is left visible past the end of the table.
         settings.aerial_view_lut_max_distance = (visibility * 6.0).clamp(2_000.0, 32_000.0);
+        // The look-up path builds the extinction of a piece of air as one
+        // transmittance sample divided by another
+        // (`sample_transmittance_lut_segment`). Under the weather's haze both of
+        // them underflow along a grazing ray, and 0/0 comes back out as a stepped
+        // rainbow ring around the observer — plainly a rainbow in a fog, a
+        // hairline at the horizon in a clear sky. The ray march integrates the
+        // same air in one pass and never divides, and it costs no more than the
+        // tables here: the sky is a handful of samples per pixel either way.
+        settings.rendering_method = AtmosphereMode::Raymarched;
     }
 
     let jd = sky.julian_date();

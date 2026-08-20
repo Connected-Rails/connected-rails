@@ -83,6 +83,13 @@ pub const NIGHT_SUFFIX: &str = "_NIGHT";
 #[derive(Component)]
 pub struct NightNode;
 
+/// An entity put up once at startup that outlives every run — the cloud dome, the mist
+/// volume and the offscreen pass that feeds them. The simulator tears its world down
+/// when the player leaves a run for the title screen (`main::tear_down_run`); this is
+/// what says "not me".
+#[derive(Component)]
+pub struct Persistent;
+
 /// Below this much daylight the night nodes are on — the sun at the horizon,
 /// the same dusk the headlights come up in.
 const NIGHT_BELOW: f32 = 0.5;
@@ -263,7 +270,9 @@ pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
     season: Season,
+    ground: GroundQuality,
 ) -> Handle<TerrainMaterial> {
+    let [grass, rock, gravel] = ground_textures(season, ground);
     materials.add(TerrainMaterial {
         base: StandardMaterial {
             perceptual_roughness: 0.95,
@@ -271,26 +280,82 @@ pub fn terrain_material(
         },
         extension: TerrainSplat {
             weather: weather::WeatherParams::default(),
-            grass: images.add(ground_texture(
-                season.green([0.20, 0.32, 0.11]),
-                season.green([0.41, 0.45, 0.18]),
-                64,
-                1,
-            )),
-            rock: images.add(ground_texture(
-                season.snowed([0.35, 0.33, 0.31], 0.45),
-                season.snowed([0.55, 0.53, 0.50], 0.45),
-                48,
-                2,
-            )),
-            gravel: images.add(ground_texture(
-                season.snowed([0.39, 0.35, 0.29], 0.7),
-                season.snowed([0.57, 0.54, 0.49], 0.7),
-                12,
-                3,
-            )),
+            grass: images.add(grass),
+            rock: images.add(rock),
+            gravel: images.add(gravel),
         },
     })
+}
+
+/// How big the generated ground textures are and how far the sampler follows them into
+/// the distance — a graphics setting of the simulator's, `(256, 4)` where nothing says
+/// otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroundQuality {
+    /// Edge length \[texels\].
+    pub size: u32,
+    /// Anisotropic samples, 1 … 16.
+    pub anisotropy: u16,
+}
+
+impl Default for GroundQuality {
+    fn default() -> Self {
+        Self {
+            size: GROUND_TEXTURE_SIZE,
+            anisotropy: 4,
+        }
+    }
+}
+
+/// Grass, rock and gravel, in that order.
+fn ground_textures(season: Season, ground: GroundQuality) -> [Image; 3] {
+    [
+        ground_texture(
+            season.green([0.20, 0.32, 0.11]),
+            season.green([0.41, 0.45, 0.18]),
+            64,
+            1,
+            ground,
+        ),
+        ground_texture(
+            season.snowed([0.35, 0.33, 0.31], 0.45),
+            season.snowed([0.55, 0.53, 0.50], 0.45),
+            48,
+            2,
+            ground,
+        ),
+        ground_texture(
+            season.snowed([0.39, 0.35, 0.29], 0.7),
+            season.snowed([0.57, 0.54, 0.49], 0.7),
+            12,
+            3,
+            ground,
+        ),
+    ]
+}
+
+/// Generates the ground textures again and writes them into the handles the material
+/// already holds, so the setting reaches terrain that is standing on screen rather than
+/// only terrain built after it. `season` is the one the run was built with — the ground
+/// keeps the month it started in, quality or no quality.
+pub fn retexture_ground(
+    images: &mut Assets<Image>,
+    materials: &Assets<TerrainMaterial>,
+    season: Season,
+    ground: GroundQuality,
+) {
+    for (_, material) in materials.iter() {
+        let splat = &material.extension;
+        let made = ground_textures(season, ground);
+        for (handle, image) in [&splat.grass, &splat.rock, &splat.gravel]
+            .into_iter()
+            .zip(made)
+        {
+            // The only way this fails is a handle whose asset has gone, and a material
+            // that lost its texture is not something this can put right.
+            let _ = images.insert(handle.id(), image);
+        }
+    }
 }
 
 /// Mesh of one terrain tile: the builder's grid, its splat weights as vertex
@@ -1187,14 +1252,22 @@ pub fn bind_lamps(
     }
 }
 
-/// Edge length of the generated ground textures [texels]; one repeat covers
-/// 32 m of terrain (the UV scale above).
+/// Edge length of the generated ground textures [texels] at `Quality::Medium`; one
+/// repeat covers 32 m of terrain (the UV scale above).
 const GROUND_TEXTURE_SIZE: u32 = 256;
 
 /// One tileable ground texture: two octaves of value noise mix `base` towards
-/// `accent`, `cell` sets the patch size in texels.
-fn ground_texture(base: [f32; 3], accent: [f32; 3], cell: u32, seed: u64) -> Image {
-    let size = GROUND_TEXTURE_SIZE;
+/// `accent`, `cell` sets the patch size in texels of the default size, so a patch stays
+/// the same size on the ground when the texture is generated bigger or smaller.
+fn ground_texture(
+    base: [f32; 3],
+    accent: [f32; 3],
+    cell: u32,
+    seed: u64,
+    ground: GroundQuality,
+) -> Image {
+    let size = ground.size.max(16);
+    let cell = (cell * size / GROUND_TEXTURE_SIZE).max(1);
     let mut data = Vec::with_capacity((size * size * 4) as usize);
     for y in 0..size {
         for x in 0..size {
@@ -1228,7 +1301,7 @@ fn ground_texture(base: [f32; 3], accent: [f32; 3], cell: u32, seed: u64) -> Ima
         mag_filter: ImageFilterMode::Linear,
         min_filter: ImageFilterMode::Linear,
         mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: 4,
+        anisotropy_clamp: ground.anisotropy,
         ..default()
     });
     image

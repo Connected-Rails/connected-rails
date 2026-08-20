@@ -226,6 +226,15 @@ impl Audio {
             .main_track()
             .set_volume(decibels(master), Tween::default());
     }
+
+    /// Stops everything the run had playing. Dropping a track handle takes the track and
+    /// the loops on it with it — the same tear-down `setup_audio` does before it builds
+    /// the next run's, only this time nothing is built afterwards.
+    pub fn silence(&mut self) {
+        self.loops.clear();
+        self.emitters.clear();
+        self.previous.clear();
+    }
 }
 
 /// Opens the output device and inserts the mixer.

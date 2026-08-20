@@ -156,6 +156,7 @@ fn spawn(
     // in front of the world camera that samples what it wrote.
     let layer = RenderLayers::layer(CLOUD_LAYER);
     commands.spawn((
+        crate::Persistent,
         Camera2d,
         Camera {
             order: -1,
@@ -168,12 +169,14 @@ fn spawn(
         layer.clone(),
     ));
     commands.spawn((
+        crate::Persistent,
         Mesh2d(meshes.add(Rectangle::new(PANORAMA.x as f32, PANORAMA.y as f32))),
         MeshMaterial2d(material),
         layer,
     ));
 
     commands.spawn((
+        crate::Persistent,
         Dome,
         Mesh3d(meshes.add(dome_mesh())),
         MeshMaterial3d(domes.add(DomeMaterial {

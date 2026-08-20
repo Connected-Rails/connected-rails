@@ -22,6 +22,7 @@ mod walk;
 mod world;
 
 use ai_driver::AiDriver;
+use bevy::ecs::resource::IsResource;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
@@ -264,7 +265,12 @@ fn main() {
         GameState::Menu
     })
     .add_systems(Startup, log_mods)
-    .add_systems(OnEnter(GameState::Menu), menu::spawn_menu)
+    // The world the last run built goes first — otherwise the next `setup` would put a
+    // second one on top of it.
+    .add_systems(
+        OnEnter(GameState::Menu),
+        (tear_down_run, menu::spawn_menu).chain(),
+    )
     // The same menu, as an overlay over the standing world.
     .add_systems(OnEnter(GameState::Paused), menu::spawn_pause)
     .add_systems(
@@ -279,7 +285,13 @@ fn main() {
     // creates when its commands are applied — the chain inserts that sync point.
     .add_systems(
         OnEnter(GameState::Driving),
-        (setup, audio::setup_audio, displays::setup_displays).chain(),
+        (
+            remember_before_run,
+            setup,
+            audio::setup_audio,
+            displays::setup_displays,
+        )
+            .chain(),
     )
     .add_systems(
         Update,
@@ -398,6 +410,73 @@ fn exit_after_frames(
     if *count >= limit.0 + 10 {
         exit.write(AppExit::Success);
     }
+}
+
+/// Everything that was alive before the run was built: the window, the picking pointers,
+/// the menu, the cloud dome. What is not in here is the run.
+#[derive(Resource)]
+struct BeforeRun(std::collections::HashSet<Entity>);
+
+/// What a run may have built, and nothing a despawn has any business touching:
+///
+/// * a **resource** is an entity of its own in Bevy 0.19, and despawning one would
+///   *remove* the resource — the run's are replaced by the next `setup`, and the rest
+///   are not the run's to take;
+/// * an **observer** belongs to no world at all — Bevy drops the ones whose watched
+///   entity has gone and keeps the rest, which is exactly right here;
+/// * [`world_render::Persistent`] is what a plugin puts up once at startup, and a run it
+///   was never part of must not be able to take it down.
+type RunRoots<'w, 's> = Query<
+    'w,
+    's,
+    Entity,
+    (
+        Without<ChildOf>,
+        Without<world_render::Persistent>,
+        Without<IsResource>,
+        Without<Observer>,
+    ),
+>;
+
+/// Takes that snapshot — chained in front of `setup`, so it sees the world without one.
+fn remember_before_run(mut commands: Commands, entities: Query<Entity>) {
+    commands.insert_resource(BeforeRun(entities.iter().collect()));
+}
+
+/// Drops the built world when the player leaves a run for the title screen, so the next
+/// `setup` builds into an empty world rather than beside the old one.
+///
+/// Roots only — `despawn` takes the children with it — and only the ones [`RunRoots`]
+/// lets through. An entity id carries a generation, so an id the run reused for something
+/// of its own is a *different* [`Entity`] than the one remembered and is dropped as it
+/// should be.
+fn tear_down_run(
+    mut commands: Commands,
+    before: Option<Res<BeforeRun>>,
+    roots: RunRoots,
+    mixer: Option<ResMut<audio::Audio>>,
+    mut walker: ResMut<walk::Walker>,
+    mut camera: ResMut<ui::CameraState>,
+) {
+    // No run has been built yet — this is the title screen the program starts on.
+    let Some(before) = before else {
+        return;
+    };
+    for entity in &roots {
+        if !before.0.contains(&entity) {
+            commands.entity(entity).despawn();
+        }
+    }
+    // A mixer track outlives the entity it followed: dropping the tracks is what stops
+    // the loops of a run the player has just left.
+    if let Some(mut mixer) = mixer {
+        mixer.silence();
+    }
+    // Both of these point into the world that has just gone: the walker at a vehicle or
+    // at a place on the earth, the camera at a wayside spot beside it.
+    *walker = default();
+    *camera = default();
+    commands.remove_resource::<BeforeRun>();
 }
 
 /// Esc during a run raises the pause overlay, which also holds the settings. Leaving it
@@ -655,7 +734,12 @@ fn setup(
     );
     let streamer = streaming::TerrainStreamer::new(
         terrain_builder,
-        render::terrain_material(&mut images, &mut terrain_materials, season),
+        render::terrain_material(
+            &mut images,
+            &mut terrain_materials,
+            season,
+            settings::ground_quality(&graphics),
+        ),
         tree_catalog,
         f64::from(graphics.view_distance),
     );
@@ -696,7 +780,10 @@ fn setup(
                 models::spawn(&mut commands, &assets, entity, &view, &file);
                 entity
             } else {
-                let mesh = meshes.add(Cuboid::new(3.0, 3.8, v.spec.length as f32));
+                let mesh = meshes.add(
+                    Mesh::from(Cuboid::new(3.0, 3.8, v.spec.length as f32))
+                        .translated_by(Vec3::Y * 2.2),
+                );
                 commands
                     .spawn((
                         Mesh3d(mesh),
@@ -733,9 +820,9 @@ fn setup(
                             outer_angle: 0.32,
                             ..default()
                         },
-                        // The vehicle origin sits 2.2 m above the rail; the lamp
-                        // below it at the end, aimed a touch onto the track.
-                        Transform::from_xyz(0.0, -0.6, end)
+                        // Buffer height above the rail, at the end of the vehicle,
+                        // aimed a touch onto the track.
+                        Transform::from_xyz(0.0, 1.6, end)
                             .looking_to(Vec3::new(0.0, -0.06, dir).normalize(), Vec3::Y),
                     ));
                     for x in [-1.0, 1.0] {
@@ -743,7 +830,7 @@ fn setup(
                             TailLamp { train, reverse },
                             Mesh3d(tail_mesh.clone()),
                             MeshMaterial3d(tail_material.clone()),
-                            Transform::from_xyz(x, -0.6, end),
+                            Transform::from_xyz(x, 1.6, end),
                             Visibility::Hidden,
                         ));
                     }
@@ -760,7 +847,7 @@ fn setup(
                             range: 4.0,
                             ..default()
                         },
-                        Transform::from_xyz(0.0, 0.4, -(v.spec.length as f32) / 2.0 + 1.8),
+                        Transform::from_xyz(0.0, 2.6, -(v.spec.length as f32) / 2.0 + 1.8),
                     ));
                 });
             }
@@ -810,6 +897,9 @@ fn setup(
     if graphics.bloom {
         commands.entity(camera).insert(Bloom::NATURAL);
     }
+    // `apply_scene` only fires on a changed setting, and starting a run does not change
+    // one — so the camera is dressed here as well as there.
+    settings::apply_anti_aliasing(&mut commands.entity(camera), &graphics);
 
     // Rain and snow: a particle column of crossed quads that follows the camera
     // and scrolls downwards (`update_precipitation`). Both fields exist from the
@@ -1054,6 +1144,11 @@ fn rebase_origin(
 }
 
 /// Mirror vehicle poses from the simulation into transforms.
+///
+/// The view sits on the rail head, which is where a vehicle model's own origin is:
+/// the BR 101's wheels touch y = 0 and its cab eye is 2.55 m above it. Everything
+/// hung on a vehicle — lamps, the eye point (`ui::follow`), the walker's frame
+/// (`walk::frame`) — measures from there.
 fn sync_vehicles(
     sim: Res<SimResource>,
     origin: Res<Origin>,
@@ -1067,8 +1162,7 @@ fn sync_vehicles(
             continue;
         };
         let pose = vehicle.pos.pose(&sim.0.net);
-        let up = origin.0.dir_to_render(pose.up);
-        transform.translation = origin.0.to_render(pose.pos) + up * 2.2;
+        transform.translation = origin.0.to_render(pose.pos);
         transform.rotation = origin.0.look_rotation(pose.tangent, pose.up);
     }
 }
@@ -1351,6 +1445,61 @@ fn update_precipitation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Leaving a run for the title screen has to take the world with it and nothing else
+    /// — the window, the picking pointers and the cloud dome are all older than the run
+    /// and all still needed by the next one.
+    #[test]
+    fn going_back_to_the_menu_drops_the_run_and_only_the_run() {
+        let mut world = World::new();
+        world.init_resource::<walk::Walker>();
+        world.init_resource::<ui::CameraState>();
+        let mut snapshot = Schedule::default();
+        snapshot.add_systems(remember_before_run);
+        let mut leave = Schedule::default();
+        leave.add_systems(tear_down_run);
+
+        // Before the run: something the program put up at startup, with a child of its
+        // own, and the cloud dome.
+        let older = world.spawn_empty().id();
+        world.spawn(ChildOf(older));
+        let dome = world.spawn(world_render::Persistent).id();
+        snapshot.run(&mut world);
+
+        // The run: a root with a child, and one more persistent entity made after the
+        // snapshot — the marker is what saves it, not the moment it was made.
+        let train = world.spawn_empty().id();
+        world.spawn(ChildOf(train));
+        let late_dome = world.spawn(world_render::Persistent).id();
+        // A resource inserted by the run is an entity like any other in Bevy 0.19, and
+        // despawning it would take the resource with it.
+        world.insert_resource(ViewDistance(4_000.0));
+
+        leave.run(&mut world);
+        assert!(
+            world.get_resource::<ViewDistance>().is_some(),
+            "lost a resource"
+        );
+        assert!(world.get_entity(older).is_ok(), "dropped the older entity");
+        assert!(world.get_entity(dome).is_ok(), "dropped the cloud dome");
+        assert!(
+            world.get_entity(late_dome).is_ok(),
+            "dropped a persistent one"
+        );
+        assert!(
+            world.get_entity(train).is_err(),
+            "the run is still standing"
+        );
+        let left = world.iter_entities().count();
+
+        // A second visit to the title screen, with no run behind it, does nothing.
+        leave.run(&mut world);
+        assert_eq!(
+            world.iter_entities().count(),
+            left,
+            "a second visit took more"
+        );
+    }
 
     #[test]
     fn fall_offset_wraps_within_one_period() {

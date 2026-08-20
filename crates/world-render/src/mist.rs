@@ -28,11 +28,17 @@ pub(crate) fn plugin(app: &mut App) {
 pub struct Quality {
     /// Draw the ground mist as a volume, with light shafts through it.
     pub volumetric: bool,
+    /// Steps of the raymarch through it — the whole cost of the effect, and what
+    /// decides whether a light shaft is a shaft or a staircase.
+    pub steps: u32,
 }
 
 impl Default for Quality {
     fn default() -> Self {
-        Self { volumetric: true }
+        Self {
+            volumetric: true,
+            steps: 32,
+        }
     }
 }
 
@@ -46,6 +52,7 @@ const EXTENT: f32 = 900.0;
 
 fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.spawn((
+        crate::Persistent,
         Mist,
         FogVolume {
             // The shape of the mist: the same noise the clouds are made of, at a
@@ -68,19 +75,21 @@ fn update(
     sky: Res<Sky>,
     quality: Res<Quality>,
     mut commands: Commands,
-    camera: Query<(Entity, &GlobalTransform, Has<VolumetricFog>), With<Camera3d>>,
+    camera: Query<(Entity, &GlobalTransform, Option<&VolumetricFog>), With<Camera3d>>,
     sun: Query<(Entity, Has<VolumetricLight>), With<Sun>>,
     mut mist: Query<(&mut FogVolume, &mut Transform, &mut Visibility), With<Mist>>,
 ) {
     let depth = sky.weather.fog_depth;
     let wanted = quality.volumetric && depth > 0.0;
-    for (camera, transform, has_fog) in &camera {
-        match (wanted, has_fog) {
-            (true, false) => {
+    for (camera, transform, fog) in &camera {
+        // The step count is a setting, so a camera that is already marching has to be
+        // written to as well — but only when it actually differs, or every frame would
+        // mark the component changed.
+        let stale = fog.map(|fog| fog.step_count) != Some(quality.steps);
+        match (wanted, fog.is_some()) {
+            (true, _) if stale => {
                 commands.entity(camera).insert(VolumetricFog {
-                    // Half the default: the layer is thin and the steps are
-                    // spent inside it, not on the kilometres of clear air above.
-                    step_count: 32,
+                    step_count: quality.steps,
                     ..default()
                 });
             }

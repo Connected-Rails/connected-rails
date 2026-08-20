@@ -604,7 +604,7 @@ fn star_mesh() -> Mesh {
         indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
     };
 
-    for record in STAR_CATALOGUE.chunks_exact(RECORD) {
+    for record in STAR_CATALOGUE.as_chunks::<RECORD>().0 {
         let value = |i: usize| f32::from_le_bytes(record[i * 4..i * 4 + 4].try_into().unwrap());
         let (ra, dec, magnitude, colour_index) = (value(0), value(1), value(2), value(3));
         let (sin_dec, cos_dec) = dec.sin_cos();

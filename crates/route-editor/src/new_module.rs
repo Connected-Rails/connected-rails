@@ -29,6 +29,9 @@ const START_ZOOM: u8 = 12;
 const HIT_ZOOM: u8 = 14;
 /// Size of the map inside the dialog [px].
 const MAP: egui::Vec2 = egui::vec2(520.0, 300.0);
+/// Years a module can be set in: from the first German railway to a little
+/// beyond today, which is as far as a plan for a line reaches.
+const YEARS: std::ops::RangeInclusive<u32> = 1835..=2100;
 /// Edge length of a tile as drawn [px]; the tiles themselves are 256².
 const TILE: f32 = 256.0;
 
@@ -46,6 +49,10 @@ pub struct NewModule {
     zoom: u8,
     /// Edge length of the envelope the module starts with [km].
     size_km: f64,
+    /// The year the module portrays.
+    year: u32,
+    /// Invented rather than a rebuild of a real place.
+    fictional: bool,
     query: String,
     hits: Vec<geocode::Place>,
     /// The running search, if there is one.
@@ -93,11 +100,24 @@ impl NewModule {
         self.lon = lon;
         self.zoom = START_ZOOM;
         self.size_km = content::route::DEFAULT_ENVELOPE_HALF_SIZE * 2.0 / 1000.0;
+        self.year = Self::this_year();
+        self.fictional = false;
         self.query.clear();
         self.hits.clear();
         self.search = None;
         self.searching = false;
         self.error.clear();
+    }
+
+    /// What the year field opens on. Whole years out of the wall clock — a
+    /// leap day of drift does not matter for a number the user overwrites
+    /// anyway, and it saves a date library.
+    fn this_year() -> u32 {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        (1970 + secs / 31_556_952).clamp(*YEARS.start() as u64, *YEARS.end() as u64) as u32
     }
 
     fn anchor(&self) -> GeoPoint {
@@ -142,69 +162,105 @@ pub fn draw(
 
     let mut create = false;
     let mut cancel = false;
-    egui::Modal::new(egui::Id::new("new-module")).show(&ctx, |ui| {
-        ui.set_width(MAP.x);
-        ui.label(editor_ui::heading(t!("new-module-title")));
-        ui.add_space(space::S);
+    // A window rather than a modal: a modal is nailed to the middle of the
+    // screen, and this one covers the very map the anchor is being picked
+    // against. The title bar is the handle it is moved by.
+    egui::Window::new(t!("new-module-title"))
+        .collapsible(false)
+        .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.viewport_rect().center())
+        .show(&ctx, |ui| {
+            ui.set_width(MAP.x);
 
-        egui::Grid::new("new-module-form")
-            .num_columns(2)
-            .spacing([space::M, space::XS + 2.0])
-            .min_col_width(space::LABEL_COL)
-            .show(ui, |ui| {
-                editor_ui::form_label(ui, t!("new-module-name"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut dialog.name)
-                        .desired_width(space::FIELD * 2.0)
-                        .hint_text(t!("new-module-name-placeholder")),
-                );
-                ui.end_row();
+            egui::Grid::new("new-module-form")
+                .num_columns(2)
+                .spacing([space::M, space::XS + 2.0])
+                .min_col_width(space::LABEL_COL)
+                .show(ui, |ui| {
+                    editor_ui::form_label(ui, t!("new-module-name"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.name)
+                            .desired_width(space::FIELD * 2.0)
+                            .hint_text(t!("new-module-name-placeholder")),
+                    );
+                    ui.end_row();
 
-                editor_ui::form_label(ui, t!("new-module-lat"));
-                editor_ui::field(ui, &mut dialog.lat, 0.0001, -85.0..=85.0, "°");
-                ui.end_row();
+                    editor_ui::form_label(ui, t!("new-module-lat"));
+                    editor_ui::field(ui, &mut dialog.lat, 0.0001, -85.0..=85.0, "°");
+                    ui.end_row();
 
-                editor_ui::form_label(ui, t!("new-module-lon"));
-                editor_ui::field(ui, &mut dialog.lon, 0.0001, -180.0..=180.0, "°");
-                ui.end_row();
+                    editor_ui::form_label(ui, t!("new-module-lon"));
+                    editor_ui::field(ui, &mut dialog.lon, 0.0001, -180.0..=180.0, "°");
+                    ui.end_row();
 
-                editor_ui::form_label(ui, t!("new-module-size"))
-                    .on_hover_text(t!("new-module-size-hint"));
-                editor_ui::field(ui, &mut dialog.size_km, 0.1, 0.2..=60.0, "km");
-                ui.end_row();
+                    editor_ui::form_label(ui, t!("new-module-size"))
+                        .on_hover_text(t!("new-module-size-hint"));
+                    editor_ui::field(ui, &mut dialog.size_km, 0.1, 0.2..=60.0, "km");
+                    ui.end_row();
+
+                    editor_ui::form_label(ui, t!("new-module-year"))
+                        .on_hover_text(t!("new-module-year-hint"));
+                    // Not `editor_ui::field`: at a step of one it groups the
+                    // digits, and a year is not written "2 026". The layout is
+                    // that of the other fields, so the column keeps one edge.
+                    let layout = ui.layout().with_main_align(egui::Align::Min);
+                    ui.scope_builder(egui::UiBuilder::new().layout(layout), |ui| {
+                        ui.spacing_mut().interact_size.x = space::FIELD;
+                        ui.add(
+                            egui::DragValue::new(&mut dialog.year)
+                                .speed(1.0)
+                                .range(YEARS),
+                        );
+                    });
+                    ui.end_row();
+
+                    editor_ui::form_label(ui, t!("new-module-kind"));
+                    egui::ComboBox::from_id_salt("new-module-kind")
+                        .width(space::FIELD)
+                        .selected_text(kind_label(dialog.fictional))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut dialog.fictional,
+                                false,
+                                t!("new-module-kind-real"),
+                            );
+                            ui.selectable_value(
+                                &mut dialog.fictional,
+                                true,
+                                t!("new-module-kind-fictional"),
+                            );
+                        });
+                    ui.end_row();
+                });
+
+            ui.add_space(space::M);
+            search_row(ui, &mut dialog);
+            map(ui, &mut dialog);
+
+            ui.add_space(space::S);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let ready = !dialog.name.trim().is_empty();
+                    let button = egui::Button::new(t!("action-create-module"));
+                    if ui
+                        .add_enabled(ready, button)
+                        .on_disabled_hover_text(t!("new-module-needs-name"))
+                        .clicked()
+                    {
+                        create = true;
+                    }
+                    if ui.button(t!("action-cancel")).clicked() {
+                        cancel = true;
+                    }
+                });
             });
-
-        ui.add_space(space::M);
-        search_row(ui, &mut dialog);
-        map(ui, &mut dialog);
-
-        ui.add_space(space::S);
-        ui.label(
-            egui::RichText::new(t!("new-module-envelope-note"))
-                .small()
-                .color(colors::TEXT_SECONDARY),
-        );
-        ui.add_space(space::S);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let ready = !dialog.name.trim().is_empty();
-                let button = egui::Button::new(t!("action-create-module"));
-                if ui
-                    .add_enabled(ready, button)
-                    .on_disabled_hover_text(t!("new-module-needs-name"))
-                    .clicked()
-                {
-                    create = true;
-                }
-                if ui.button(t!("action-cancel")).clicked() {
-                    cancel = true;
-                }
-            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape))
+                && ui.memory(|m| m.focused().is_none())
+            {
+                cancel = true;
+            }
         });
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && ui.memory(|m| m.focused().is_none()) {
-            cancel = true;
-        }
-    });
 
     if create {
         let anchor = dialog.anchor();
@@ -215,6 +271,8 @@ pub fn draw(
             dialog.name.trim().to_string(),
             anchor,
             dialog.size_km * 500.0,
+            dialog.year,
+            dialog.fictional,
         );
         // The new module is empty, so there is no track to centre on — put the
         // view on the anchor the user just picked.
@@ -232,6 +290,14 @@ pub fn draw(
         dialog.map = None;
     }
     Ok(())
+}
+
+/// What the module is: a rebuild of a real place, or invented.
+fn kind_label(fictional: bool) -> String {
+    match fictional {
+        true => t!("new-module-kind-fictional"),
+        false => t!("new-module-kind-real"),
+    }
 }
 
 /// Takes the answer of a running search, if it has arrived.

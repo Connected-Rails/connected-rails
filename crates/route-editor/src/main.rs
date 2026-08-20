@@ -378,7 +378,7 @@ fn main() {
             gizmo::draw,
             scale_markers,
             // Nested only because a schedule tuple stops at twenty entries.
-            (feed_sky, update_title),
+            (feed_sky, update_title, ui::poll_file_dialog),
             confirm_close,
         )
             .chain(),

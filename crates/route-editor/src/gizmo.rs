@@ -188,7 +188,7 @@ pub fn input(
         .single()
         .ok()
         .and_then(|w| w.cursor_position())
-        .filter(|c| state.viewport.contains(*c));
+        .filter(|c| state.over_viewport(*c));
     let Some((cursor, (camera, transform))) = cursor.zip(cameras.single().ok()) else {
         gizmo.hovered = None;
         return;

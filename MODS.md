@@ -1538,6 +1538,18 @@ envelope: [
 ],
 ```
 
+A module may also say what it portrays:
+
+```ron
+year: Some(1985),
+fictional: false,
+```
+
+`year` is the state of the line a driver is meant to find, `fictional` marks a module that is
+invented rather than a rebuild of a real place. Nothing in the simulation reads either yet —
+they are what a module says about itself. Both are optional; a module that does not care
+simply leaves them out.
+
 The `anchor` is the module's place — the point the editor opens on, and the point the
 envelope is built around when the module is created. The **envelope** is that boundary
 itself, the *Hüllkurve* Zusi builds modules around: a closed polygon, in file order, that

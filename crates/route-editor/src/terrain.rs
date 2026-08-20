@@ -239,7 +239,7 @@ pub fn probe_cursor(
         .single()
         .ok()
         .and_then(|w| w.cursor_position())
-        .filter(|p| state.viewport.contains(*p));
+        .filter(|p| state.over_viewport(*p));
     let Some((cursor, (camera, transform))) = cursor.zip(camera.single().ok()) else {
         view.cursor_height = None;
         return;

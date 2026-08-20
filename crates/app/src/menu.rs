@@ -11,7 +11,8 @@
 //! list sits left, and beside it a pane reads the highlighted entry out of the loaded
 //! content. Esc walks the steps back and leaves at the title screen.
 //!
-//! Keyboard (↑/↓, ←/→, Enter, Esc) and mouse (hover selects, click confirms) drive the
+//! Keyboard (↑/↓, ←/→, Enter, Esc) and mouse (wheel scrolls, hover selects, click
+//! confirms) drive the
 //! same selection index, so neither input is a special case. The world is built only on
 //! leaving the menu, so a mod toggled here takes effect on start — no restart. Any run
 //! flag on the command line (`--line`, `--frames`, …) skips the menu entirely, which keeps
@@ -38,6 +39,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::ui::widget::NodeImageMode;
 use bevy::ui::{BackgroundGradient, ColorStop, LinearGradient, ScrollPosition};
@@ -193,6 +195,9 @@ pub struct MenuState {
     scrim: Option<Entity>,
     /// Fingerprint of what is on screen; everything is rebuilt when it changes.
     drawn: Option<u64>,
+    /// The row the list was last scrolled to. Without it the list would be dragged back
+    /// to the selection every frame and the wheel could not move it at all.
+    scrolled_to: usize,
 }
 
 /// Which page `--menu <page>` opens on. A screenshot cannot press keys, so without this
@@ -313,7 +318,11 @@ enum Control {
 }
 
 /// The settings page: headings and what stands under them.
-const SETTINGS: [(&str, &[Setting]); 3] = [
+const SETTINGS: [(&str, &[Setting]); 4] = [
+    // First, and a section of its own: it is the one row that opens a page rather than
+    // dialling a value, and at the foot of the last group it sat below the fold on a list
+    // that has to be scrolled — a whole page nobody would find.
+    ("set-input", &[Setting::Controls]),
     (
         "set-graphics",
         &[
@@ -334,12 +343,7 @@ const SETTINGS: [(&str, &[Setting]); 3] = [
     ("set-audio", &[Setting::Volume]),
     (
         "set-gameplay",
-        &[
-            Setting::Language,
-            Setting::Hud,
-            Setting::LookSpeed,
-            Setting::Controls,
-        ],
+        &[Setting::Language, Setting::Hud, Setting::LookSpeed],
     ),
 ];
 
@@ -1048,9 +1052,12 @@ pub fn menu(
             if dir != 0
                 && let Some(setting) = entry.and_then(|e| e.setting)
             {
-                // The controls row holds no value — Enter walks into the page it names.
+                // The controls row holds no value, so ← / → have nothing to dial on it —
+                // only Enter walks into the page it names.
                 if setting == Setting::Controls {
-                    go(&mut menu, Page::Controls);
+                    if confirmed {
+                        go(&mut menu, Page::Controls);
+                    }
                 } else {
                     change(setting, dir, &mut graphics, &mut audio, &mut gameplay);
                 }
@@ -1174,7 +1181,9 @@ pub fn menu(
         }
     }
 
-    scroll_into_view(&mut lists, list, menu.selected, &items);
+    let (selected, mut scrolled_to) = (menu.selected, menu.scrolled_to);
+    scroll_into_view(&mut lists, list, selected, &mut scrolled_to, &items);
+    menu.scrolled_to = scrolled_to;
 }
 
 /// Swaps the two screens and re-weights the wash over what lies behind them.
@@ -1199,6 +1208,9 @@ fn show_screen(commands: &mut Commands, menu: &MenuState, page: Page) {
 fn go(menu: &mut MenuState, page: Page) {
     menu.page = page;
     menu.selected = 0;
+    // A page opens at the top even when the row number does not change — nothing has been
+    // scrolled to on a list that did not exist a frame ago.
+    menu.scrolled_to = usize::MAX;
     menu.hovered = None;
     menu.variant = 0;
     // Leaving the page while a row waits for its key: the wait goes with it, or the next
@@ -1277,14 +1289,54 @@ fn fingerprint(
     hasher.finish()
 }
 
+/// The wheel over a list. Bevy's UI keeps a scroll offset on the node and moves it for
+/// nobody: [`scroll_into_view`] is the keyboard's half of the job, and this is the mouse's.
+///
+/// A system of its own rather than a few lines inside [`menu`], which is already at the
+/// sixteen parameters a Bevy system may have.
+pub fn scroll_menu(
+    mut wheel: MessageReader<MouseWheel>,
+    menu: Res<MenuState>,
+    mut lists: Query<(&ComputedNode, &mut ScrollPosition)>,
+) {
+    // A line is worth a row, so one notch of the wheel steps the list by one — the same
+    // distance ↓ moves the cursor, which is what makes the two feel like one list.
+    let by: f32 = wheel
+        .read()
+        .map(|event| match event.unit {
+            MouseScrollUnit::Line => event.y * ROW_HEIGHT,
+            MouseScrollUnit::Pixel => event.y,
+        })
+        .sum();
+    let Some(list) = menu.list.filter(|_| by != 0.0) else {
+        return;
+    };
+    let Ok((node, mut scroll)) = lists.get_mut(list) else {
+        return;
+    };
+    // Taffy measures in physical pixels and the offset is in logical ones.
+    let scale = node.inverse_scale_factor;
+    let limit = ((node.content_size.y - node.size.y) * scale).max(0.0);
+    // Up the wheel, up the content: the offset counts down from the top.
+    scroll.0.y = (scroll.0.y - by).clamp(0.0, limit);
+}
+
 /// Keeps the selected row inside the list's viewport. Rows and headings differ in height,
 /// so where the n-th one sits is the running sum of the ones above it.
+///
+/// Only when the selection has actually moved. Holding the list to the cursor every frame
+/// would be an invariant rather than a courtesy, and it would drag the wheel straight back
+/// wherever it scrolled to.
 fn scroll_into_view(
     lists: &mut Query<(&ComputedNode, &mut ScrollPosition)>,
     list: Entity,
     selected: usize,
+    scrolled_to: &mut usize,
     items: &[Entry],
 ) {
+    if selected == *scrolled_to {
+        return;
+    }
     let Ok((node, mut scroll)) = lists.get_mut(list) else {
         return;
     };
@@ -1309,6 +1361,7 @@ fn scroll_into_view(
     if (scroll.0.y - wanted).abs() > 0.5 {
         scroll.0.y = wanted;
     }
+    *scrolled_to = selected;
 }
 
 // ---------------------------------------------------------------------------------
@@ -3034,16 +3087,23 @@ mod tests {
         assert_eq!(
             app.world().resource::<MenuState>().selected,
             1,
-            "row 0 is the graphics heading"
+            "row 0 is the input heading"
         );
 
+        // The first row opens a page rather than holding a value, so ← / → do nothing to
+        // it and Enter is what walks in.
+        key(&mut app, KeyCode::ArrowRight);
+        assert_eq!(page(&app), Page::Settings, "a dial must not open a page");
+
+        // Down onto the view distance: one step, because the graphics heading in between
+        // is drawn but never lands on the cursor.
+        key(&mut app, KeyCode::ArrowDown);
         let before = app.world().resource::<Graphics>().view_distance;
         key(&mut app, KeyCode::ArrowRight);
         let after = app.world().resource::<Graphics>().view_distance;
         assert_eq!(after, before + settings::VIEW_DISTANCE.2);
 
-        // ↑ from the first value wraps past the last row to the last value, never onto a
-        // heading.
+        // ↑ walks back over the graphics heading onto a value, never onto the heading.
         key(&mut app, KeyCode::ArrowUp);
         let selected = app.world().resource::<MenuState>().selected;
         let items = entries(

@@ -1266,6 +1266,7 @@ menu-fact-kmh = { $value } km/h
 # Eine Seite des Hauptmenüs, als TOML im Einstellungsverzeichnis des Betriebssystems
 # abgelegt. Ein -hint-Schlüssel ist die Beschreibung unter dem Namen der Einstellung.
 
+set-input = Eingabe
 set-graphics = Grafik
 set-audio = Ton
 set-gameplay = Spiel

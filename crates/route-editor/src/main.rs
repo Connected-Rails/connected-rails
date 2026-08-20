@@ -527,7 +527,7 @@ fn setup(
     // filled from the line on the first frame. The editor builds in summer
     // (`Season::default`); which season a run shows is the scenario's date.
     commands.insert_resource(terrain::TerrainView::new(
-        world_render::terrain_material(&mut images, &mut terrain_materials, default()),
+        world_render::terrain_material(&mut images, &mut terrain_materials, default(), default()),
         world_render::tree_catalog(
             &[],
             &Default::default(),

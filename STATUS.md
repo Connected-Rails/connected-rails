@@ -545,14 +545,32 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   streamer's load radius and the view distance while tiles are in the air and adds or
   removes `Bloom` on the live camera, `apply_window` carries fullscreen and vertical sync
   onto the window, and language, volume, HUD and look sensitivity are re-read where they
-  are used. Nothing waits for a restart; a setting that needs one is an excuse. **Esc
+  are used. Anti-aliasing is two rows of its own — the technique (off, FXAA, SMAA, MSAA)
+  and how hard it works (2×/4×/8× for MSAA, the preset for the other two) — swapped on the
+  live camera as three different components, MSAA off wherever a post pass does the job.
+  Shadows, mist and ground textures carry a quality of their own on the same Low/Medium/
+  High scale: the sun's shadow map at 1024/2048/4096 texels, the raymarch through the mist
+  at 16/32/64 steps, and the generated ground textures at 128²/256²/512² with 1×/4×/16×
+  anisotropy — the last of them written back into the handles the terrain material already
+  holds, so it reaches the tiles standing on screen and not only the ones built after it.
+  The window is a three-way choice (windowed, borderless, exclusive fullscreen; the
+  exclusive one names the primary monitor, because a window that does not exist yet is on
+  none and Bevy panics rather than guessing), and a frame cap holds the program to a rate
+  of its own — a slot-based sleep in `Last` that keeps its rhythm while it is met and
+  starts afresh when it is missed, with the slider's top step meaning no cap at all.
+  Nothing waits for a restart; a setting that needs one is an excuse. **Esc
   during a run raises the same menu as an overlay** (`GameState::Paused`, `spawn_pause`):
   no camera of its own — the cab's draws the UI — no wallpaper, a thinner scrim so the
-  world stays recognisable, and Resume / Settings / Quit. Every driving system is gated on
-  `Driving`, so the pause freezes simulation, clock and camera by itself. The overlay's
-  settings page is the front end's minus the language and the reset. Going back to the
-  title screen is **not** offered there: the world `setup` builds carries no despawn
-  marker, so tearing it down again is its own piece of work.
+  world stays recognisable, and Resume / Settings / Back to the main menu / Quit. Every
+  driving system is gated on `Driving`, so the pause freezes simulation, clock and camera
+  by itself. The overlay's settings page is the front end's minus the language and the
+  reset. **Going back to the title screen tears the built world down** (`tear_down_run`):
+  the run carries no despawn marker, so what is dropped is decided by a snapshot of the
+  entities that existed *before* `setup` — everything newer goes, except resources (which
+  are entities of their own in Bevy 0.19), observers, and what a plugin put up once at
+  startup and marked `world_render::Persistent` (the cloud dome, the mist volume). The
+  mixer's tracks are dropped with it, so the loops of the run stop, and walker and camera
+  state — both of which point into the world that has just gone — go back to default.
   Any run flag on the command line (`--line`, `--frames`, …) skips the menu, so CLI and CI
   invocations stay non-interactive, and a flag beats the menu's choice where both are set;
   `--menu` puts the menu back in front, which is the only way to photograph it.

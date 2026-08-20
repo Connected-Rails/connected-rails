@@ -92,9 +92,9 @@ const VERBS: [(&str, Option<Page>); 4] = [
 ];
 
 /// The verbs of the pause overlay. Shorter on purpose: mods cannot be toggled into a
-/// world that is already built, and going back to the title screen would have to tear that
-/// world down again.
-const PAUSE_VERBS: [&str; 3] = ["menu-resume", "menu-settings", "menu-quit"];
+/// world that is already built. Leaving for the title screen tears the built world down
+/// (`main::tear_down_run`), which is why it is its own verb and not simply Esc.
+const PAUSE_VERBS: [&str; 4] = ["menu-resume", "menu-settings", "menu-title", "menu-quit"];
 
 /// The settings the overlay leaves out of its groups. The language belongs to the front
 /// end — switching it in the middle of a run is not a driving decision. (Reset is left out
@@ -267,11 +267,17 @@ impl Entry {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Setting {
     ViewDistance,
+    TextureQuality,
     Shadows,
+    ShadowQuality,
     Bloom,
     Mist,
-    Fullscreen,
+    MistQuality,
+    AntiAliasing,
+    AaQuality,
+    Window,
     VSync,
+    MaxFps,
     Volume,
     Language,
     Hud,
@@ -298,11 +304,17 @@ const SETTINGS: [(&str, &[Setting]); 3] = [
         "set-graphics",
         &[
             Setting::ViewDistance,
+            Setting::TextureQuality,
             Setting::Shadows,
+            Setting::ShadowQuality,
             Setting::Bloom,
             Setting::Mist,
-            Setting::Fullscreen,
+            Setting::MistQuality,
+            Setting::AntiAliasing,
+            Setting::AaQuality,
+            Setting::Window,
             Setting::VSync,
+            Setting::MaxFps,
         ],
     ),
     ("set-audio", &[Setting::Volume]),
@@ -317,10 +329,16 @@ impl Setting {
     fn key(self) -> &'static str {
         match self {
             Setting::ViewDistance => "set-view-distance",
+            Setting::TextureQuality => "set-texture-quality",
             Setting::Shadows => "set-shadows",
+            Setting::ShadowQuality => "set-shadow-quality",
             Setting::Bloom => "set-bloom",
             Setting::Mist => "set-mist",
-            Setting::Fullscreen => "set-fullscreen",
+            Setting::MistQuality => "set-mist-quality",
+            Setting::AntiAliasing => "set-aa",
+            Setting::AaQuality => "set-aa-quality",
+            Setting::Window => "set-window",
+            Setting::MaxFps => "set-max-fps",
             Setting::VSync => "set-vsync",
             Setting::Volume => "set-volume",
             Setting::Language => "set-language",
@@ -331,18 +349,24 @@ impl Setting {
     }
 
     fn control(self, graphics: &Graphics, audio: &Audio, gameplay: &Gameplay) -> Control {
-        use settings::{LOOK_SPEED, VIEW_DISTANCE, VOLUME};
+        use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
         match self {
             Setting::ViewDistance => {
                 Control::Slider(fraction(graphics.view_distance, VIEW_DISTANCE))
             }
             Setting::Volume => Control::Slider(fraction(audio.master, VOLUME)),
+            Setting::MaxFps => Control::Slider(fraction(graphics.max_fps, MAX_FPS)),
             Setting::LookSpeed => Control::Slider(fraction(gameplay.look_speed, LOOK_SPEED)),
             Setting::Shadows => Control::Toggle(graphics.shadows),
             Setting::Bloom => Control::Toggle(graphics.bloom),
             Setting::Mist => Control::Toggle(graphics.mist),
-            Setting::Fullscreen => Control::Toggle(graphics.fullscreen),
             Setting::VSync => Control::Toggle(graphics.vsync),
+            Setting::AntiAliasing
+            | Setting::AaQuality
+            | Setting::ShadowQuality
+            | Setting::MistQuality
+            | Setting::TextureQuality
+            | Setting::Window => Control::Choice,
             // Three steps, so it is dialled like the language rather than switched.
             Setting::Hud => Control::Choice,
             Setting::Language => Control::Choice,
@@ -352,6 +376,7 @@ impl Setting {
 
     /// What the row shows beside its control. A toggle says it with the pill alone.
     fn value(self, graphics: &Graphics, audio: &Audio, gameplay: &Gameplay) -> String {
+        use settings::MAX_FPS;
         match self {
             Setting::ViewDistance => {
                 t!(
@@ -369,8 +394,37 @@ impl Setting {
             ),
             Setting::Language => language_name(&gameplay.language),
             Setting::Hud => t!(gameplay.hud.key()),
+            Setting::AntiAliasing => t!(graphics.anti_aliasing.key()),
+            // MSAA counts its samples, off has nothing to be dialled at all, and the
+            // other two are simply Low … High (`AntiAliasing::level_key`).
+            Setting::AaQuality => t!(graphics.anti_aliasing.level_key(graphics.aa_quality)),
+            Setting::ShadowQuality => t!(dimmed(graphics.shadows, graphics.shadow_quality)),
+            Setting::MistQuality => t!(dimmed(graphics.mist, graphics.mist_quality)),
+            Setting::TextureQuality => t!(graphics.texture_quality.key()),
+            Setting::Window => t!(graphics.window.key()),
+            // The top step of the slider is not a rate but the absence of one.
+            Setting::MaxFps => {
+                if graphics.max_fps >= MAX_FPS.1 {
+                    t!("set-fps-unlimited")
+                } else {
+                    t!(
+                        "set-fps",
+                        value = i18n::decimal(f64::from(graphics.max_fps), 0)
+                    )
+                }
+            }
             _ => String::new(),
         }
+    }
+}
+
+/// The name of a quality step, or a dash where the thing it belongs to is switched off:
+/// a step that changes nothing should not read like one that does.
+fn dimmed(on: bool, quality: settings::Quality) -> &'static str {
+    if on {
+        quality.key()
+    } else {
+        "set-quality-none"
     }
 }
 
@@ -388,7 +442,7 @@ fn change(
     audio: &mut Audio,
     gameplay: &mut Gameplay,
 ) {
-    use settings::{LOOK_SPEED, VIEW_DISTANCE, VOLUME};
+    use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
     match setting {
         Setting::ViewDistance => {
             graphics.view_distance = step(graphics.view_distance, dir, VIEW_DISTANCE);
@@ -396,8 +450,14 @@ fn change(
         Setting::Shadows => graphics.shadows = !graphics.shadows,
         Setting::Bloom => graphics.bloom = !graphics.bloom,
         Setting::Mist => graphics.mist = !graphics.mist,
-        Setting::Fullscreen => graphics.fullscreen = !graphics.fullscreen,
+        Setting::AntiAliasing => graphics.anti_aliasing = graphics.anti_aliasing.cycle(dir),
+        Setting::AaQuality => graphics.aa_quality = graphics.aa_quality.cycle(dir),
+        Setting::ShadowQuality => graphics.shadow_quality = graphics.shadow_quality.cycle(dir),
+        Setting::MistQuality => graphics.mist_quality = graphics.mist_quality.cycle(dir),
+        Setting::TextureQuality => graphics.texture_quality = graphics.texture_quality.cycle(dir),
+        Setting::Window => graphics.window = graphics.window.cycle(dir),
         Setting::VSync => graphics.vsync = !graphics.vsync,
+        Setting::MaxFps => graphics.max_fps = step(graphics.max_fps, dir, MAX_FPS),
         Setting::Volume => audio.master = step(audio.master, dir, VOLUME),
         Setting::Language => {
             gameplay.language = next_language(&gameplay.language, dir);
@@ -886,10 +946,11 @@ pub fn menu(
                     exit.write(AppExit::Success);
                 }
             },
-            // The pause overlay: resume, settings, or leave.
+            // The pause overlay: resume, settings, back to the title screen, or leave.
             Page::Pause => match menu.selected {
                 0 => next.set(GameState::Driving),
                 1 => go(&mut menu, Page::Settings),
+                2 => next.set(GameState::Menu),
                 _ => {
                     exit.write(AppExit::Success);
                 }
@@ -1573,7 +1634,9 @@ fn build_control(
                 BackgroundColor(if on { ACCENT } else { TEXT_DIM }),
                 ChildOf(track),
             ));
-            build_value(commands, fonts, zone, &entry.value, on, 66.0);
+            // The same column a choice's value sits in — a slider whose top step is a
+            // word ("unlimited") needs the room, and the two kinds of row then line up.
+            build_value(commands, fonts, zone, &entry.value, on, 96.0);
         }
         Control::Choice => {
             commands.spawn((
@@ -2524,6 +2587,16 @@ mod tests {
         assert_eq!(page(&app), Page::Settings);
         key(&mut app, KeyCode::Escape);
         assert_eq!(page(&app), Page::Pause);
+
+        // Row 2 leaves the run for the title screen — the one verb here that Esc does
+        // *not* also do, which is why it has to be its own row.
+        key(&mut app, KeyCode::ArrowDown);
+        key(&mut app, KeyCode::ArrowDown);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Menu
+        );
     }
 
     /// What "abgespeckt" means: the overlay's settings page leaves the language and the

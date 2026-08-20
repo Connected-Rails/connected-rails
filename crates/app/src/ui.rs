@@ -336,11 +336,9 @@ pub fn camera_control(
             let eye = match seat.spec.model.as_ref().and_then(|m| m.cab.as_ref()) {
                 Some(cab) => {
                     let pose = seat.pos.pose(&sim.0.net);
-                    let anchor =
-                        origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * 2.2;
-                    // Vehicle views sit 2.2 m above the rail head (`sync_vehicles`);
-                    // the eye is model space below that anchor.
-                    anchor
+                    // Vehicle views sit on the rail head (`sync_vehicles`), which is
+                    // the origin of the model the eye point is measured in.
+                    origin.0.to_render(pose.pos)
                         + origin.0.look_rotation(pose.tangent, pose.up)
                             * local.unwrap_or_else(|| Vec3::from(cab.eye))
                 }

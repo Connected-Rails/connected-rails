@@ -100,18 +100,26 @@ the next run. View distance moves the streamer's load radius while tiles are in 
 bloom is added to and taken off the live camera, and the rest is re-read where it is used.
 
 `Esc` during a run raises the **pause overlay** — the world stands still under it — with
-**Resume**, **Settings** and **Quit**. Its settings page is the same one, minus the language
-(not a driving decision) and the reset (too blunt to have under the cursor while a train is
-standing on a gradient); everything on it takes effect while you watch. `Esc` on the overlay
-resumes.
+**Resume**, **Settings**, **Back to the main menu** and **Quit**. Its settings page is the
+same one, minus the language (not a driving decision) and the reset (too blunt to have under
+the cursor while a train is standing on a gradient); everything on it takes effect while you
+watch. `Esc` on the overlay resumes; going back to the main menu ends the run and takes the
+built world down with it, so the next one starts from an empty world.
 
 | Section | Setting | Effect |
 |---|---|---|
 | `[graphics]` | `view_distance` | How far terrain is built and drawn [m], 1000 … 12000. The biggest single cost. |
 | | `shadows` | Shadow maps of the sun. |
 | | `bloom` | Glow around lamps and signals after dark. |
-| | `fullscreen` | Borderless, on the monitor the window is on. |
+| | `shadow_quality` | Edge length of the sun's shadow map: `Low` 1024, `Medium` 2048, `High` 4096 texels. |
+| | `mist` | Ground mist as a volume, with the sun's shafts through it. |
+| | `mist_quality` | Steps of the raymarch through it: `Low` 16, `Medium` 32, `High` 64. |
+| | `texture_quality` | Size and filtering of the generated ground textures: `Low` 128², `Medium` 256², `High` 512². |
+| | `anti_aliasing` | How the edges are smoothed: `Off`, `Fxaa`, `Smaa` or `Msaa`. |
+| | `aa_quality` | How hard that works: `Low`, `Medium` or `High` — 2×/4×/8× for MSAA, the preset for the other two. |
+| | `window` | `Windowed`, `Borderless` over the whole monitor, or exclusive `Fullscreen`. |
 | | `vsync` | Caps the frame rate at the monitor's. |
+| | `max_fps` | Frames a second the simulator holds itself to, 30 … 240; the top step (250) is no cap at all. |
 | `[audio]` | `master` | Linear master volume, 0 … 1. |
 | `[gameplay]` | `language` | `en`, `de`, or empty for the system's. |
 | | `hud` | How much of the display is drawn: `Full`, `Reduced` or `Off` (`F7` walks the three). |
@@ -370,7 +378,7 @@ any other (`[gameplay] hud` — `Full`, `Reduced`, `Off`), so it survives the ru
 | `6` / `7` / `8` | AFB on/off / dial down / dial up (in 10 km/h steps) |
 | `9` / `0` | Headlights / cab light |
 | `,` / `.` | Instrument backlighting dimmer down / up |
-| `Esc` | Pause: resume, settings, quit — the world stands still under the overlay |
+| `Esc` | Pause: resume, settings, back to the main menu, quit — the world stands still under the overlay |
 | `F1`–`F4` | Camera: driver's seat / external / lineside / first person |
 | `F5` / `F6` | Keyboard sheet / diagnostics overlay |
 | `F7` | Display: full → reduced → off, and round again |

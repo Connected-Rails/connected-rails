@@ -22,6 +22,7 @@ pub mod steam;
 pub mod synth;
 pub mod timetable;
 pub mod train;
+pub mod weather;
 
 /// Gravitational acceleration [m/s²].
 pub const G: f64 = 9.806_65;
@@ -77,9 +78,10 @@ pub struct Sim {
     /// Scoring of the player train's run (plan 11).
     #[serde(default)]
     pub score: score::ScoreKeeper,
-    /// Weather — set by scenario actions, rendered by the app (plan ch. 14).
+    /// Weather and what it has left on the ground (plan 14.1) — moved by scenario
+    /// actions, read by the renderer, the sound and the rail condition.
     #[serde(default)]
-    pub weather: train::Weather,
+    pub weather: weather::Timeline,
     accumulator: f64,
 }
 
@@ -101,7 +103,7 @@ impl Sim {
             rng: rng::Rng::new(seed),
             scenario: scenario::ScenarioRuntime::default(),
             score: score::ScoreKeeper::default(),
-            weather: train::Weather::default(),
+            weather: weather::Timeline::default(),
             accumulator: 0.0,
         }
     }
@@ -109,6 +111,7 @@ impl Sim {
     /// Load a scenario; the player train is scored as well.
     pub fn set_scenario(&mut self, scenario: scenario::Scenario, timetable: timetable::Timetable) {
         self.start = scenario.start;
+        self.weather.place(scenario.weather.weather(), 0.0);
         self.score = score::ScoreKeeper::new(scenario.player_train, timetable);
         self.scenario = scenario::ScenarioRuntime::new(scenario);
     }
@@ -137,6 +140,14 @@ impl Sim {
 
     /// One fixed simulation step.
     pub fn step(&mut self, dt: f64) {
+        // The weather first: it moves the sky on and decides what the wheels find
+        // on the rail this step (plan 14.1).
+        self.weather.step(self.time, dt);
+        let rail = self.weather.rail();
+        for train in &mut self.trains {
+            train.rail = rail;
+        }
+
         for i in 0..self.trains.len() {
             self.step_train(i, dt);
         }

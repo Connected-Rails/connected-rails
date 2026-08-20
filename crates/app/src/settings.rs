@@ -50,6 +50,9 @@ pub struct Graphics {
     pub bloom: bool,
     /// Shadow maps of the sun. Off is a large win on weak hardware.
     pub shadows: bool,
+    /// Ground mist as a volume, with the sun's shafts through it — half a
+    /// millisecond a frame in foggy weather, and nothing at all in clear.
+    pub mist: bool,
 }
 
 impl Default for Graphics {
@@ -60,6 +63,7 @@ impl Default for Graphics {
             vsync: true,
             bloom: true,
             shadows: true,
+            mist: true,
         }
     }
 }
@@ -249,8 +253,13 @@ fn apply_scene(
     mut commands: Commands,
     view: Option<ResMut<ViewDistance>>,
     streamer: Option<ResMut<TerrainStreamer>>,
+    quality: Option<ResMut<world_render::mist::Quality>>,
     cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
 ) {
+    // Like the two above: none of this exists while the menu is up.
+    if let Some(mut quality) = quality {
+        quality.volumetric = graphics.mist;
+    }
     if let Some(mut view) = view {
         view.0 = graphics.view_distance;
     }

@@ -6,7 +6,8 @@
 
 use crate::Sim;
 use crate::interlock::{RouteId, SignalId};
-use crate::train::{RailCondition, Weather};
+use crate::train::RailCondition;
+use crate::weather::Preset;
 use serde::{Deserialize, Serialize};
 use track_model::{EdgeId, NodeId, SwitchPosition};
 
@@ -55,10 +56,12 @@ pub enum Action {
     },
     RequestRoute(RouteId),
     ReleaseRoute(RouteId),
-    /// Change of weather — sky, visibility and precipitation in the renderer, plus
-    /// the rail condition the weather implies on every train.
-    SetWeather(Weather),
-    /// Rail condition alone (leaves, frost) — the sky stays as it is.
+    /// Change of weather — the sky moves to this over
+    /// [`weather::TRANSITION`](crate::weather::TRANSITION), and the rail follows what
+    /// falls out of it.
+    SetWeather(Preset),
+    /// Rail condition alone (leaves, sanded rail) — the sky stays as it is, and the
+    /// setting holds until the next change of weather.
     SetRail(RailCondition),
     /// Award or deduct points.
     Score {
@@ -146,6 +149,10 @@ pub struct Scenario {
     /// Wall-clock date and time the run begins at.
     #[serde(default)]
     pub start: StartTime,
+    /// The weather the run starts in — placed, not moved to, so a scenario that
+    /// begins in the rain begins on a wet rail (plan 14.1).
+    #[serde(default)]
+    pub weather: Preset,
     /// The train the player drives.
     #[serde(default)]
     pub player_train: usize,
@@ -378,16 +385,11 @@ fn apply(action: &Action, sim: &mut Sim) {
                 sim.interlock = interlock;
             }
         }
-        Action::SetWeather(weather) => {
-            sim.weather = *weather;
-            for train in &mut sim.trains {
-                train.rail = weather.rail();
-            }
+        Action::SetWeather(preset) => {
+            sim.weather.set(preset.weather(), time);
         }
         Action::SetRail(condition) => {
-            for train in &mut sim.trains {
-                train.rail = *condition;
-            }
+            sim.weather.rail_override = Some(*condition);
         }
         Action::Score { points, reason } => {
             sim.scenario.bonus += points;

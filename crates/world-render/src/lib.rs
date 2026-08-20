@@ -29,7 +29,12 @@ use std::collections::BTreeMap;
 use track_model::{Facing, TrackEdge, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
+pub mod clouds;
+pub mod mist;
+pub mod precipitation;
 pub mod sky;
+pub mod weather;
+pub mod windscreen;
 
 /// Registers the splat shader and its material. Both programs add it after
 /// `DefaultPlugins` — the embedded registry only exists once the asset plugin
@@ -41,7 +46,14 @@ impl Plugin for WorldRenderPlugin {
         embedded_asset!(app, "terrain_splat.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .init_resource::<Daylight>()
-            .add_plugins(sky::plugin)
+            .add_plugins((
+                sky::plugin,
+                clouds::plugin,
+                mist::plugin,
+                precipitation::plugin,
+                weather::plugin,
+                windscreen::plugin,
+            ))
             .add_systems(Update, switch_night_nodes);
     }
 }
@@ -148,6 +160,10 @@ pub struct TerrainSplat {
     #[texture(104)]
     #[sampler(105)]
     gravel: Handle<Image>,
+    /// What the weather is doing to the ground — the same uniform the objects
+    /// carry, written by `weather::update` (plan 14.1).
+    #[uniform(106)]
+    weather: weather::WeatherParams,
 }
 
 impl MaterialExtension for TerrainSplat {
@@ -254,6 +270,7 @@ pub fn terrain_material(
             ..default()
         },
         extension: TerrainSplat {
+            weather: weather::WeatherParams::default(),
             grass: images.add(ground_texture(
                 season.green([0.20, 0.32, 0.11]),
                 season.green([0.41, 0.45, 0.18]),

@@ -523,13 +523,14 @@ cargo run -p app -- --loco example:br101_afb --camera outside
 ### Interactive 3D cab
 
 The `cab:` block inside `model:` makes the cab operable with the mouse (plan ch. 12).
-It has two parts: the driver's **eye point** in model space (X right, Y above the rail
-head, −Z ahead — where the cab camera sits) and the **controls**, each binding a glTF
-node to a simulation input:
+It has three parts: the driver's **eye point** in model space (X right, Y above the rail
+head, −Z ahead — where the cab camera sits), the **windscreens** the rain runs down, and
+the **controls**, each binding a glTF node to a simulation input:
 
 ```ron
 cab: Some((
     eye: (-0.55, 2.55, -6.5),
+    windscreen: ["windscreen_front", "windscreen_rear"],
     controls: [
         (node: "cab_throttle", input: Throttle,
          motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 60.0)),
@@ -538,6 +539,30 @@ cab: Some((
     ],
 ))
 ```
+
+`windscreen` names the panes the weather works on (plan 14.1): rain gathers on them as a
+film and as drops, the drops run down the glass at a stand and up it above about 15 km/h,
+and the `Wipers` control clears a strip wherever its blade has just been. Three things a
+pane wants:
+
+- **A node of its own.** The runtime replaces the node's material, so a pane that is one
+  primitive of the body mesh would take the rest of the body with it.
+- **UVs across and up it**: `u` from the driver's left edge of the pane to his right, `v`
+  from its bottom to its top. `u` is the frame the wiper sweeps in — a pane whose UVs run
+  the other way has its wiper clearing the wrong side.
+- **A material to look through.** The pane keeps whatever the model gave it and only has
+  water added, so a nearly clear, blended, double-sided material is what a windscreen
+  wants; `tools/gen_br101.py` writes one called `windscreen`.
+
+`wiper` describes the blade on the *first* named pane, in the pane's own frame, and the
+same numbers that pose the 3D blade (its `parts` entry): `pivot` in pane UV, `length` in
+metres, `rest_degrees`/`sweep_degrees` from the pane's up axis towards +u. From mode and
+clock the glass shader reconstructs the whole sweep analytically, so the cleared arc, the
+bulge of pushed water at the blade's edge, and the drawn blade can never drift apart —
+and the arc fills back in as fast as the rain can wet it.
+
+Naming no pane is fine — then nothing is drawn on the glass, and the rest of the weather
+is unaffected. A pane without `wiper` collects water that nothing clears.
 
 `input` is one of a closed list (the vehicle editor offers them in a dropdown):
 `Throttle`, `Reverser`, `BrakeValve`, `DirectBrake`, `AfbTarget`, `Sifa`,
@@ -715,8 +740,12 @@ has three parts:
   rolling entry uses it for the track: `factors: [(quantity: Roughness, points: [(0.5,
   0.75), (2.0, 1.4)])]` — the `Roughness` quantity is the `roughness` of the track type
   under the vehicle (see Track types), so jointed superstructure is audibly louder than
-  welded rail. `Rain` is the same pattern for the weather: 1.0 while it rains, 0
-  otherwise — the hook for a rain-on-the-roof loop, as a condition or a volume curve.
+  welded rail. `Rain` is the same pattern for the weather — it is how hard it falls
+  rather than whether it does, so a drizzle is not a downpour with the volume turned
+  down — and it is the hook for a rain-on-the-roof loop, as a condition or a volume
+  curve. `Thunder` goes with it: 1.0 the moment the clap arrives (`distance / 343 m/s`
+  after the flash) and rolling off after it, longer the further away the strike stood,
+  which is what a triggered thunder entry hangs on.
 
 ```ron
 sounds: [

@@ -2,7 +2,7 @@
 
 use sim_core::scenario::{Action, Event, Scenario, Trigger};
 use sim_core::timetable::{ScheduledStop, Timetable, TimetableKind};
-use sim_core::train::Weather;
+use sim_core::weather::Preset;
 use track_model::EdgeId;
 
 /// Timetable of the scenario "Regionalbahn nach Musterstadt".
@@ -30,6 +30,7 @@ pub fn to_musterstadt() -> Scenario {
     Scenario {
         name: "Regionalbahn nach Musterstadt".into(),
         start: Default::default(),
+        weather: Preset::Cloudy,
         description: "RE 4711 von Musterbach nach Musterstadt, 7 km. \
              Das Blocksignal bei km 2,0 zeigt zunächst Halt — der Vorausfahrende räumt gleich."
             .into(),
@@ -64,7 +65,7 @@ pub fn to_musterstadt() -> Scenario {
                     delay: 30.0,
                 },
                 actions: vec![
-                    Action::SetWeather(Weather::Rain),
+                    Action::SetWeather(Preset::Rain),
                     Action::Message("Regen setzt ein — Bremswege werden länger.".into()),
                 ],
                 once: true,

@@ -34,7 +34,7 @@ use content::vehicles::passenger_coach;
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
-use sim_core::train::{Train, Vehicle, VehicleSpec, Weather};
+use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::TrackPosition;
 use world_coords::RenderOrigin;
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
@@ -90,6 +90,8 @@ pub(crate) struct Precipitation {
     snow: bool,
     /// Fall speed [m/s].
     speed: f32,
+    /// The layer of a few big out-of-focus drops right in front of the lens.
+    near: bool,
 }
 
 /// Height of one repetition of the precipitation mesh [m]. The mesh repeats its
@@ -97,9 +99,9 @@ pub(crate) struct Precipitation {
 /// covered by at least ±one period.
 const PRECIP_PERIOD: f32 = 24.0;
 
-/// Sight distance that stands in for "clear" [m] — far beyond the camera's far
-/// plane, so the fog is invisible without a weather that pulls it in.
-const CLEAR_VISIBILITY: f32 = 100_000.0;
+/// Beyond this the near-field fog is off: the atmosphere's aerial perspective is
+/// the haze of a clear day, and a second one on top of it would be a grey veil.
+const CLEAR_VISIBILITY: f32 = 8_000.0;
 
 /// Which train is driven by the player.
 #[derive(Resource)]
@@ -190,6 +192,8 @@ fn main() {
         "--connect",
         "--time",
         "--date",
+        "--weather",
+        "--wipers",
     ];
     // `--menu` overrules them again — the only way to put the menu itself in front of
     // `--screenshot`, which would otherwise photograph the world behind it. It takes an
@@ -313,6 +317,7 @@ fn main() {
             models::animate_backlight,
             models::animate_controls,
             models::animate_digits,
+            models::update_windscreens,
             displays::bind_display_nodes,
             cab::update_highlight,
             world_render::mount_parts,
@@ -434,6 +439,7 @@ fn setup(
     mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
     mut star_materials: ResMut<Assets<sky::StarMaterial>>,
     mut moon_materials: ResMut<Assets<sky::MoonMaterial>>,
+    mut precip_materials: ResMut<Assets<world_render::precipitation::PrecipitationMaterial>>,
     assets: Res<AssetServer>,
     mut mods: ResMut<Mods>,
     mut manager: ResMut<mods_ui::ModManager>,
@@ -484,6 +490,31 @@ fn setup(
             sim.start.year = year as i32;
             sim.start.month = month;
             sim.start.day = day;
+        }
+    }
+    // `--wipers 2` starts with the wipers running: they are a cab control, and a
+    // screenshot has no hands.
+    if let Some(mode) = arg("--wipers").and_then(|m| m.parse::<u8>().ok()) {
+        for cab in &mut sim.controls {
+            cab.wipers = mode.min(3);
+        }
+    }
+    // `--weather snow` starts one of `sim_core::weather`'s presets. In a normal
+    // run the front *moves in* over `weather::TRANSITION` — rain builds from a
+    // first drizzle, the pane wets slowly, the rail goes greasy before wet. Only
+    // a screenshot gets it placed at once, ground and all: it cannot wait five
+    // minutes, and it wants the end state, not the approach.
+    if let Some(name) = arg("--weather") {
+        let wanted = name.to_ascii_lowercase();
+        match sim_core::weather::Preset::ALL
+            .into_iter()
+            .find(|p| format!("{p:?}").to_ascii_lowercase() == wanted)
+        {
+            Some(preset) if arg("--screenshot").is_some() => {
+                sim.weather.place(preset.weather(), 0.0)
+            }
+            Some(preset) => sim.weather.set(preset.weather(), 0.0),
+            None => warn!("unknown weather: {name}"),
         }
     }
     // Both sides of a multiplayer run have to have built the same world; the fingerprint
@@ -760,16 +791,17 @@ fn setup(
                 ..default()
             },
             sky::camera_settings(),
-            Projection::Perspective(PerspectiveProjection {
-                far: 20_000.0,
-                ..default()
-            }),
-            // Weather visibility (M6): `update_daylight` pulls the falloff in and
-            // keeps the fog colour on the sky colour.
+            // Near-field extinction (`feed_sky`): the atmosphere's own haze term
+            // carries the colour and the distance, but a planetary medium's LUTs
+            // do not resolve 300 m of fog. This is what closes it.
             DistanceFog {
                 falloff: FogFalloff::from_visibility(CLEAR_VISIBILITY),
                 ..default()
             },
+            Projection::Perspective(PerspectiveProjection {
+                far: 20_000.0,
+                ..default()
+            }),
             Transform::default(),
             MeshPickingCamera,
             ui::CabCamera,
@@ -782,21 +814,24 @@ fn setup(
     // Rain and snow: a particle column of crossed quads that follows the camera
     // and scrolls downwards (`update_precipitation`). Both fields exist from the
     // start; the scenario's weather decides which one is visible.
-    let precip_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.75, 0.78, 0.82, 0.5),
-        alpha_mode: AlphaMode::Blend,
-        cull_mode: None,
-        double_sided: true,
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    let rain = meshes.add(precipitation_mesh(2000, 0.025, 0.4, 11));
-    let snow = meshes.add(precipitation_mesh(1500, 0.06, 0.06, 12));
-    for (mesh, snow, speed) in [(rain, false, 9.0), (snow, true, 1.4)] {
+    // Four fields: rain and snow, each with a far one that fills the view and a
+    // near one of a few big out-of-focus drops. The near layer is what makes rain
+    // read as rain rather than as a grey curtain.
+    for (count, w, h, spread, seed, snow, near, speed) in [
+        // A raindrop is millimetres wide; what the eye sees is its smear, thin
+        // and faint. Many of them, not fat ones — the fat ones are the near
+        // layer's job, and even those are centimetres, not fists.
+        (22000, 0.009, 0.42, 20.0, 11, false, false, 9.0),
+        (170, 0.045, 0.90, 3.5, 13, false, true, 9.0),
+        (8000, 0.03, 0.03, 18.0, 12, true, false, 1.4),
+        (110, 0.09, 0.09, 3.0, 14, true, true, 1.4),
+    ] {
         commands.spawn((
-            Precipitation { snow, speed },
-            Mesh3d(mesh),
-            MeshMaterial3d(precip_material.clone()),
+            Precipitation { snow, speed, near },
+            Mesh3d(meshes.add(precipitation_mesh(count, w, h, spread, seed))),
+            MeshMaterial3d(
+                precip_materials.add(world_render::precipitation::PrecipitationMaterial::default()),
+            ),
             Transform::default(),
             Visibility::Hidden,
         ));
@@ -1055,7 +1090,6 @@ fn feed_sky(
 ) {
     let (latitude, longitude, _) = world_coords::geo::from_ecef(origin.0.position());
     let start = sim.0.start;
-    let weather = sim.0.weather;
     *sky = sky::Sky {
         year: start.year,
         month: start.month,
@@ -1064,27 +1098,42 @@ fn feed_sky(
         utc_offset: start.utc_offset,
         latitude,
         longitude,
-        overcast: match weather {
-            Weather::Clear => 0.0,
-            Weather::Rain => 0.8,
-            Weather::Snow => 0.6,
-            Weather::Fog => 0.7,
-        },
+        weather: sim.0.weather.now,
+        wetness: sim.0.weather.wetness,
+        snow: sim.0.weather.snow,
+        cloud_shadow: sim.0.weather.now.cover,
+        // A strike lights the sky for a third of a second (plan 14.1). The
+        // thunder that follows it is the sound table's business (`audio.rs`).
+        flash: sim
+            .0
+            .weather
+            .lightning(sim.0.time)
+            .map_or(0.0, |strike| strike.brightness(sim.0.time)),
     };
+
+    // Fog and heavy snow: the scattering medium reddens and brightens them
+    // correctly at every hour, but its look-up tables are cut for a planet, not
+    // for the first three hundred metres. Below `CLEAR_VISIBILITY` an analytic
+    // falloff closes the near field the way Koschmieder says it should; above it
+    // the atmosphere has the whole job.
+    // ponytail: two models for one haze, matched by eye at the seam. The honest
+    // fix is a fog volume around the camera, and that is what `mist` is for once
+    // it can carry the whole sight rather than only the layer.
+    let visibility = sim.0.weather.now.visibility;
+    for mut fog in &mut fog {
+        fog.falloff = FogFalloff::from_visibility(visibility.min(CLEAR_VISIBILITY));
+        // The colour of the air itself: what the sky is at the horizon.
+        let lit = 0.15 + 0.85 * daylight.0;
+        fog.color = Color::srgb(0.66 * lit, 0.69 * lit, 0.74 * lit);
+    }
 
     let night = 1.0 - daylight.0;
     for mut ambient in &mut ambient {
         // The sky's own image-based light carries the day; this is the floor
-        // underneath it, so a night without a moon is dark and not blind.
-        ambient.brightness = 8.0 + 24.0 * night;
-    }
-    for mut fog in &mut fog {
-        // Only bad weather draws it: `CLEAR_VISIBILITY` sits beyond the far plane,
-        // and the haze of a clear day is the atmosphere's aerial perspective.
-        let visibility = weather.visibility().map_or(CLEAR_VISIBILITY, |v| v as f32);
-        fog.falloff = FogFalloff::from_visibility(visibility);
-        let grey = lerp3((0.05, 0.06, 0.08), (0.62, 0.65, 0.70), daylight.0);
-        fog.color = Color::srgb(grey.0, grey.1, grey.2);
+        // underneath it, so a night without a moon is dark and not blind. A
+        // lightning flash comes on top of it, and at night it is the only light
+        // there is.
+        ambient.brightness = 8.0 + 24.0 * night + 4_000.0 * sky.flash;
     }
 }
 
@@ -1124,44 +1173,54 @@ fn update_headlights(
     }
 }
 
-fn lerp3(a: (f32, f32, f32), b: (f32, f32, f32), t: f32) -> (f32, f32, f32) {
-    (
-        a.0 + (b.0 - a.0) * t,
-        a.1 + (b.1 - a.1) * t,
-        a.2 + (b.2 - a.2) * t,
-    )
-}
-
 /// Particle field for rain or snow: `count` crossed quad pairs of `w` × `h` metres
-/// in a 36 × 36 m column, repeated three times in y with period [`PRECIP_PERIOD`]
-/// so the fall offset can wrap seamlessly (`update_precipitation`).
-fn precipitation_mesh(count: usize, w: f32, h: f32, seed: u64) -> Mesh {
+/// in a disc of radius `spread` around the camera, repeated three times in y
+/// with period
+/// [`PRECIP_PERIOD`] so the fall offset can wrap seamlessly
+/// (`update_precipitation`). Each particle carries the random number the shader
+/// thins the field by.
+fn precipitation_mesh(count: usize, w: f32, h: f32, spread: f32, seed: u64) -> Mesh {
     let mut rng = sim_core::rng::Rng::new(seed);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
     let mut indices = Vec::new();
     for _ in 0..count {
-        let x = rng.range(-18.0, 18.0) as f32;
-        let z = rng.range(-18.0, 18.0) as f32;
+        // A full disc — no hole. The old hole was a tube along the fall axis, and
+        // the moment the wind slanted the column that empty tube pointed straight
+        // down the view: the gap in the rain at speed. The nearest arm's length
+        // is faded in the shader instead, where "near" can be a sphere.
+        let angle = rng.range(0.0, std::f64::consts::TAU) as f32;
+        let radius = spread * (rng.range(0.0, 1.0) as f32).sqrt();
+        let x = radius * angle.cos();
+        let z = radius * angle.sin();
         let y = rng.range(0.0, f64::from(PRECIP_PERIOD)) as f32;
+        // Three numbers of the drop's own: whether it falls at this intensity
+        // (the shader discards above it, so one mesh serves drizzle and
+        // downpour), how brightly it catches the light, and how long it draws —
+        // a field of identical streaks reads as a pattern, not as rain.
+        let alive = rng.range(0.0, 1.0) as f32;
+        let glint = rng.range(0.0, 1.0) as f32;
+        let length = rng.range(0.0, 1.0) as f32;
         for k in 0..3 {
             let y = y + k as f32 * PRECIP_PERIOD;
-            // Two quads crossed at right angles, so the particle is visible
-            // from every side without billboarding.
-            for (dx, dz, normal) in [
-                (w / 2.0, 0.0, [0.0, 0.0, 1.0]),
-                (0.0, w / 2.0, [1.0, 0.0, 0.0]),
-            ] {
-                let base = positions.len() as u32;
-                positions.extend([
-                    [x - dx, y, z - dz],
-                    [x + dx, y, z + dz],
-                    [x + dx, y + h, z + dz],
-                    [x - dx, y + h, z - dz],
-                ]);
-                normals.extend([normal; 4]);
-                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
-            }
+            // One quad per particle, turned by its own angle round the column's
+            // axis — the drops are scattered over every heading anyway, so a
+            // second crossed quad would only draw the same streak twice.
+            let (sx, sz) = (angle.sin(), angle.cos());
+            let (dx, dz) = (sx * w / 2.0, sz * w / 2.0);
+            let base = positions.len() as u32;
+            positions.extend([
+                [x - dx, y, z - dz],
+                [x + dx, y, z + dz],
+                [x + dx, y + h, z + dz],
+                [x - dx, y + h, z - dz],
+            ]);
+            normals.extend([[sz, 0.0, -sx]; 4]);
+            uvs.extend([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+            colors.extend([[alive, glint, length, 1.0]; 4]);
+            indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
@@ -1169,6 +1228,10 @@ fn precipitation_mesh(count: usize, w: f32, h: f32, seed: u64) -> Mesh {
         .expect("positions fit");
     mesh.try_insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .expect("normals fit");
+    mesh.try_insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .expect("uvs fit");
+    mesh.try_insert_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+        .expect("colors fit");
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -1182,10 +1245,10 @@ fn fall_offset(time: f64, speed: f32) -> f32 {
 /// the column no further (~68°) — laid flat, it would stop covering the camera.
 const MAX_SLANT: f32 = 2.5;
 
-/// Tilts the fall axis into the relative wind: streaks lean against the
-/// direction of travel by `atan(v / fall speed)`, capped at [`MAX_SLANT`].
-fn fall_rotation(vel: Vec3, fall_speed: f32) -> Quat {
-    let wind = (-vel).clamp_length_max(fall_speed * MAX_SLANT);
+/// Tilts the fall axis into the wind the drops meet — the weather's own plus the
+/// train's rush of air — by `atan(wind / fall speed)`, capped at [`MAX_SLANT`].
+fn fall_rotation(wind: Vec3, fall_speed: f32) -> Quat {
+    let wind = wind.clamp_length_max(fall_speed * MAX_SLANT);
     Quat::from_rotation_arc(Vec3::NEG_Y, (wind + Vec3::NEG_Y * fall_speed).normalize())
 }
 
@@ -1193,36 +1256,93 @@ fn fall_rotation(vel: Vec3, fall_speed: f32) -> Quat {
 /// slanted by the relative wind, and shows the field the current weather asks
 /// for. The wind is the player train's speed — the outside cameras ride along,
 /// so the same slant is right for them.
+#[allow(clippy::too_many_arguments)]
 fn update_precipitation(
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
     origin: Res<Origin>,
+    daylight: Res<Daylight>,
+    view: Res<ui::CameraState>,
     camera: Query<&Transform, With<ui::CabCamera>>,
-    mut fields: Query<(&Precipitation, &mut Transform, &mut Visibility), Without<ui::CabCamera>>,
+    sun: Query<&Transform, (With<sky::Sun>, Without<Precipitation>)>,
+    mut materials: ResMut<Assets<world_render::precipitation::PrecipitationMaterial>>,
+    mut fields: Query<
+        (
+            &Precipitation,
+            &MeshMaterial3d<world_render::precipitation::PrecipitationMaterial>,
+            &mut Transform,
+            &mut Visibility,
+        ),
+        Without<ui::CabCamera>,
+    >,
 ) {
     let Ok(cam) = camera.single() else {
         return;
     };
     let vehicle = &sim.0.trains[player.0].vehicles[0];
     let vel = origin.0.dir_to_render(vehicle.pos.pose(&sim.0.net).tangent) * vehicle.v as f32;
-    for (field, mut tf, mut visibility) in &mut fields {
-        let wanted = match sim.0.weather {
-            Weather::Rain => !field.snow,
-            Weather::Snow => field.snow,
-            Weather::Clear | Weather::Fog => false,
-        };
-        *visibility = if wanted {
+    let weather = sim.0.weather.now;
+    // Nothing falls on a train in a tunnel: the track type already says where one
+    // is, because the sound (`audio.rs`) needed the same answer.
+    let sheltered = sim
+        .0
+        .net
+        .track_type_at(vehicle.pos.edge, vehicle.pos.s)
+        .reverb
+        .clamp(0.0, 1.0) as f32;
+    // The wind the drops actually meet: the weather's own — swaying in strength
+    // and direction with the gusts, because a curtain of rain never stands at one
+    // frozen angle — plus the train's own rush of air the other way.
+    let t = sim.0.time;
+    let gusting = 1.0 + weather.gust * (0.45 * (t * 0.9).sin() + 0.25 * (t * 2.3).sin()) as f32;
+    let veer = weather.gust * 0.35 * ((t * 0.31).sin() as f32);
+    let (sin, cos) = (weather.bearing + veer).sin_cos();
+    let wind = Vec3::new(-sin, 0.0, cos) * (weather.wind * gusting) - vel;
+    // Towards the sun: the drops forward-scatter its light, so the curtain glows
+    // looking into it and nearly vanishes looking away.
+    let sun_dir = sun
+        .iter()
+        .next()
+        .map_or(Vec3::Y, |t| -t.forward().as_vec3());
+    // Seen from inside, the near layer stands in the cab rather than in front of
+    // it: its drops are closer than the windscreen. The far field keeps its hole
+    // around the camera and stays where it belongs, outside the glass.
+    let inside = view.mode.inside();
+    for (field, material, mut tf, mut visibility) in &mut fields {
+        let mut params =
+            world_render::precipitation::params(weather, daylight.0, field.snow, field.near);
+        params.state.x *= 1.0 - sheltered;
+        if inside && field.near {
+            params.state.x = 0.0;
+        }
+        // Terminal velocity does not grow — what grows is the smear across the
+        // eye. The apparent speed is fall plus wind, and the mesh is stretched
+        // along its fall axis by that ratio: the scroll speeds up with it, the
+        // streaks lengthen with it, and the same light over a longer line is a
+        // dimmer line.
+        let capped = wind.clamp_length_max(field.speed * MAX_SLANT);
+        let stretch = (capped + Vec3::NEG_Y * field.speed).length() / field.speed;
+        params.state.z /= stretch.sqrt();
+        // Where the shader starts fading the nearest drops out: an arm's length,
+        // or from the seat far enough that nothing draws inside the cab.
+        params.light.w = if inside { 2.6 } else { 1.6 };
+        params.sun = sun_dir.extend(daylight.0);
+        if let Some(mut material) = materials.get_mut(&material.0) {
+            material.params = params;
+        }
+        *visibility = if params.state.x > 0.0 {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
-        let rot = fall_rotation(vel, field.speed);
+        let rot = fall_rotation(wind, field.speed);
         tf.rotation = rot;
+        tf.scale = Vec3::new(1.0, stretch, 1.0);
         tf.translation = cam.translation
             + rot
                 * Vec3::new(
                     0.0,
-                    -PRECIP_PERIOD - fall_offset(sim.0.time, field.speed),
+                    (-PRECIP_PERIOD - fall_offset(sim.0.time, field.speed)) * stretch,
                     0.0,
                 );
     }
@@ -1241,15 +1361,16 @@ mod tests {
     }
 
     #[test]
-    fn fall_rotation_leans_against_travel_and_caps() {
-        // At rest the streaks stay vertical.
+    fn fall_rotation_leans_into_the_wind_and_caps() {
+        // In still air the streaks stay vertical.
         let dir = fall_rotation(Vec3::ZERO, 9.0) * Vec3::NEG_Y;
         assert!(dir.angle_between(Vec3::NEG_Y) < 1e-4);
-        // 20 m/s forward (−z): streaks lean backwards by atan(20/9).
-        let dir = fall_rotation(Vec3::new(0.0, 0.0, -20.0), 9.0) * Vec3::NEG_Y;
+        // 20 m/s of air moving towards +z (a train running towards −z sees this):
+        // the streaks lean that way by atan(20/9).
+        let dir = fall_rotation(Vec3::new(0.0, 0.0, 20.0), 9.0) * Vec3::NEG_Y;
         assert!((dir.z / -dir.y - 20.0 / 9.0).abs() < 1e-3, "slant {dir}");
         // Far above the cap the slant ratio stays at MAX_SLANT.
-        let dir = fall_rotation(Vec3::new(0.0, 0.0, -100.0), 9.0) * Vec3::NEG_Y;
+        let dir = fall_rotation(Vec3::new(0.0, 0.0, 100.0), 9.0) * Vec3::NEG_Y;
         assert!(
             (dir.z / -dir.y - MAX_SLANT).abs() < 1e-3,
             "capped slant {dir}"

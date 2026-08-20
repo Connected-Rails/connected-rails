@@ -407,6 +407,11 @@ fn feed_sky(line: Res<Line>, focus: Res<Focus>, mut sky: ResMut<sky::Sky>) {
     };
     sky.latitude = lat.to_radians();
     sky.longitude = lon.to_radians();
+    // The editor has no simulation to accumulate them, so the weather's own
+    // implication is what the ground shows: rain means wet, snow means covered.
+    sky.wetness = f32::from(sky.weather.precip.is_liquid());
+    sky.snow = f32::from(sky.weather.precip == sim_core::weather::Precip::Snow);
+    sky.cloud_shadow = sky.weather.cover;
 }
 
 #[allow(clippy::too_many_arguments)]

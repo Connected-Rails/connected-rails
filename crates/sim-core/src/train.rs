@@ -84,39 +84,6 @@ impl RailCondition {
     }
 }
 
-/// Weather (plan ch. 14) — one state for the whole world, set by scenario actions
-/// ([`crate::scenario::Action::SetWeather`]). The renderer reads sky, visibility and
-/// precipitation from it; the physics reads the rail condition it implies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Weather {
-    #[default]
-    Clear,
-    Rain,
-    Snow,
-    Fog,
-}
-
-impl Weather {
-    /// Meteorological visibility [m]; `None` = clear sight.
-    pub fn visibility(self) -> Option<f64> {
-        match self {
-            Weather::Clear => None,
-            Weather::Rain => Some(4_000.0),
-            Weather::Snow => Some(1_500.0),
-            Weather::Fog => Some(300.0),
-        }
-    }
-
-    /// The rail condition this weather leaves on the track.
-    pub fn rail(self) -> RailCondition {
-        match self {
-            Weather::Clear => RailCondition::Dry,
-            Weather::Rain | Weather::Fog => RailCondition::Wet,
-            Weather::Snow => RailCondition::Slippery,
-        }
-    }
-}
-
 /// Density of air [kg/m³] at 15 °C and 1013 hPa — for the cw·A air resistance.
 pub const AIR_DENSITY: f64 = 1.225;
 

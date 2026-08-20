@@ -158,6 +158,11 @@ MATERIALS = [
     ("pant", dict(baseColorFactor=[0.12, 0.12, 0.13, 1.0], metallicFactor=0.6, roughnessFactor=0.5)),
     ("light", dict(baseColorFactor=[0.9, 0.88, 0.8, 1.0], metallicFactor=0.0, roughnessFactor=0.3)),
     ("backlight", dict(baseColorFactor=[0.05, 0.03, 0.01, 1.0], metallicFactor=0.0, roughnessFactor=1.0)),
+    # The windscreen is its own material *and* its own node, because the runtime
+    # replaces it with the rain-on-glass shader (`cab: (windscreen: [...])` in the
+    # vehicle file). Nearly clear and double sided, so a mod without that runtime
+    # — or a build with the effect off — simply looks through it.
+    ("windscreen", dict(baseColorFactor=[0.02, 0.025, 0.03, 0.10], metallicFactor=0.0, roughnessFactor=0.05)),
 ]
 MAT = {name: i for i, (name, _) in enumerate(MATERIALS)}
 # Instrument backlighting: the one emissive material of the model, so the panel
@@ -166,6 +171,8 @@ MAT = {name: i for i, (name, _) in enumerate(MATERIALS)}
 # factor of 1 turns the panel into a lamp that lights the whole cab, where the
 # prototype only makes its own dials readable.
 EMISSIVE = {"backlight": [0.28, 0.17, 0.06]}
+# Materials that are blended rather than opaque, and drawn from both sides.
+TRANSPARENT = {"windscreen"}
 
 
 def build_body_loft(prim):
@@ -196,10 +203,8 @@ def build_lod0():
     roof.box((-0.4, Y_ROOF + 0.02, 2.6), (0.4, Y_ROOF + 0.22, 3.6))
 
     for z_sign in (1.0, -1.0):
-        # Windscreen band on the raked front face.
-        ws = [front_plane_point(x, y, z_sign)
-              for x, y in ((-0.92, 2.15), (0.92, 2.15), (0.92, 3.25), (-0.92, 3.25))]
-        glass.oriented_quad(*ws, outward=(0, RAKE, z_sign))
+        # The windscreen itself is `build_windscreen` — its own node, so the
+        # runtime can put the rain-on-glass shader on it.
         # Head lights: two low, one high above the windscreen.
         for lx, ly, s in ((-0.72, 1.55, 0.17), (0.72, 1.55, 0.17), (0.0, 3.5, 0.13)):
             pts = [front_plane_point(lx + dx, ly + dy, z_sign)
@@ -348,6 +353,32 @@ def oblique_box(prim, origin, axes, extents):
     ]
     for corners, outward in faces:
         prim.oriented_quad(*corners, outward=outward)
+
+
+WINDSCREEN = ((-0.92, 2.15), (0.92, 3.25))   # x and y bounds on the front face
+
+
+def build_windscreen(z_sign):
+    """The pane of one cab front, 5 mm proud of the body's front face so the two
+    never fight over the same depth.
+
+    UVs are what the rain shader works in: u runs across the pane from the
+    driver's left to the right, v from its bottom edge to the top — so the wiper,
+    which the vehicle file rotates about the pane's normal, sweeps in u.
+    """
+    p = Prim(textured=True)
+    (x0, y0), (x1, y1) = WINDSCREEN
+    n = normalize((0.0, RAKE, z_sign))
+    def pt(x, y):
+        b = front_plane_point(x, y, z_sign)
+        return (b[0] + 0.005 * n[0], b[1] + 0.005 * n[1], b[2] + 0.005 * n[2])
+    # Seen from outside the cab, +x is to the driver's right on the -Z front and
+    # to his left on the +Z one; u follows the driver, not the model.
+    left, right = (x0, x1) if z_sign < 0 else (x1, x0)
+    a, b, c, d = pt(left, y0), pt(right, y0), pt(right, y1), pt(left, y1)
+    p.tri(a, b, c, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)])
+    p.tri(a, c, d, [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
+    return {"windscreen": p}
 
 
 def build_wiper():
@@ -524,6 +555,8 @@ def build_gltf():
     lamp_cap = add_mesh("lamp_cap", build_lamp_cap())
     panel_light = add_mesh("instrument_light", build_instrument_light())
     wiper = add_mesh("wiper", build_wiper())
+    screen_front = add_mesh("windscreen_front", build_windscreen(-1.0))
+    screen_rear = add_mesh("windscreen_rear", build_windscreen(1.0))
     dist_bar = add_mesh("distance_bar", build_gauge_bar())
     screen_large = add_mesh("screen_large", build_screen(0.40, 0.25))
     screen_small = add_mesh("screen_small", build_screen(0.25, 0.18))
@@ -579,6 +612,10 @@ def build_gltf():
          "translation": [-0.45, 2.2, -(Z_NOSE - RAKE * (2.2 - Y_FLOOR))]},
         {"name": "cab_wipers", "mesh": switch,
          "translation": [0.25, 2.15, -7.3], "rotation": lean_x(-25)},
+        # The two windscreens. Named in the vehicle file's `cab: (windscreen: ...)`,
+        # which is what puts the rain on them.
+        {"name": "windscreen_front", "mesh": screen_front},
+        {"name": "windscreen_rear", "mesh": screen_rear},
         # Bottom of the target-distance slot; the runtime translates the bar up.
         {"name": "gauge_distance_bar", "mesh": dist_bar,
          "translation": [0.0, 2.30, -7.5535]},
@@ -627,7 +664,8 @@ def build_gltf():
         "meshes": meshes,
         "materials": [
             dict(name=n, pbrMetallicRoughness=m,
-                 **({"emissiveFactor": EMISSIVE[n]} if n in EMISSIVE else {}))
+                 **({"emissiveFactor": EMISSIVE[n]} if n in EMISSIVE else {}),
+                 **({"alphaMode": "BLEND", "doubleSided": True} if n in TRANSPARENT else {}))
             for n, m in MATERIALS
         ],
         "accessors": accessors,

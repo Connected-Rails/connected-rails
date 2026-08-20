@@ -353,6 +353,19 @@
         // follows from its input — buttons hold, switches cycle, levers drag.
         cab: Some((
             eye: (-0.55, 2.55, -6.5),
+            // The two cab fronts: the rain runs down them and the wipers clear
+            // them (plan 14.1). Their UVs run across the pane in u, which is the
+            // frame the wiper sweeps in.
+            windscreen: ["windscreen_front", "windscreen_rear"],
+            // The same sweep the wiper_left part draws: pivot at x -0.45, y 2.2
+            // on the 1.84 x 1.10 m pane whose left edge is x -0.92, y 2.15.
+            wiper: Some((
+                pivot: (0.2554, 0.0455),
+                length: 0.60,
+                rest_degrees: 0.0,
+                sweep_degrees: 75.0,
+                pane: (1.84, 1.10),
+            )),
             controls: [
                 (node: "cab_throttle", input: Throttle,
                  motion: Rotate(axis: (1.0, 0.0, 0.0), degrees: 60.0)),

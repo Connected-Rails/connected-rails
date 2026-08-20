@@ -2775,8 +2775,14 @@ fn sky_section(ui: &mut egui::Ui, sky: &mut world_render::sky::Sky) {
         row(ui, "sky-zone", |ui| {
             editor_ui::field(ui, &mut sky.utc_offset, 0.02, -12.0..=14.0, "h");
         });
+        row(ui, "sky-weather", |ui| {
+            weather_combo(ui, &mut sky.weather);
+        });
         row(ui, "sky-overcast", |ui| {
-            editor_ui::field(ui, &mut sky.overcast, 0.01, 0.0..=1.0, "");
+            editor_ui::field(ui, &mut sky.weather.cover, 0.01, 0.0..=1.0, "");
+        });
+        row(ui, "sky-visibility", |ui| {
+            editor_ui::field(ui, &mut sky.weather.visibility, 20.0, 50.0..=40_000.0, "m");
         });
     });
 
@@ -3466,6 +3472,46 @@ fn facing_label(facing: Facing) -> String {
         Facing::Forward => t!("facing-forward"),
         Facing::Backward => t!("facing-backward"),
         Facing::Both => t!("facing-both"),
+    }
+}
+
+/// Weather picker. The presets are `sim_core::weather`'s own list, and choosing one
+/// writes the numbers behind it — cover, sight and what falls — into the sky. Edit
+/// any of them afterwards and the box says so.
+fn weather_combo(ui: &mut egui::Ui, weather: &mut sim_core::weather::Weather) {
+    use sim_core::weather::Preset;
+    let current = Preset::of(*weather);
+    egui::ComboBox::from_id_salt("sky-weather")
+        .width(space::FIELD)
+        .selected_text(current.map_or_else(|| t!("weather-custom"), weather_label))
+        .show_ui(ui, |ui| {
+            for preset in Preset::ALL {
+                if ui
+                    .selectable_label(current == Some(preset), weather_label(preset))
+                    .clicked()
+                {
+                    *weather = preset.weather();
+                }
+            }
+        });
+}
+
+fn weather_label(preset: sim_core::weather::Preset) -> String {
+    use sim_core::weather::Preset;
+    match preset {
+        Preset::Clear => t!("weather-clear"),
+        Preset::Cloudy => t!("weather-cloudy"),
+        Preset::Overcast => t!("weather-overcast"),
+        Preset::Fog => t!("weather-fog"),
+        Preset::Drizzle => t!("weather-drizzle"),
+        Preset::Rain => t!("weather-rain"),
+        Preset::Storm => t!("weather-storm"),
+        Preset::Thunderstorm => t!("weather-thunderstorm"),
+        Preset::Sleet => t!("weather-sleet"),
+        Preset::Snow => t!("weather-snow"),
+        Preset::Blizzard => t!("weather-blizzard"),
+        Preset::Hail => t!("weather-hail"),
+        Preset::Frost => t!("weather-frost"),
     }
 }
 

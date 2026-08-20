@@ -124,6 +124,7 @@ built world down with it, so the next one starts from an empty world.
 | `[gameplay]` | `language` | `en`, `de`, or empty for the system's. |
 | | `hud` | How much of the display is drawn: `Full`, `Reduced` or `Off` (`F7` walks the three). |
 | | `look_speed` | Factor on the mouse look speed, 0.2 … 3.0. |
+| `[controls]` | `binds` | The bindings, one line per rebound row — `throttle-up KeyW DPadUp` for a button, `lever-brake-valve RightTrigger2` for a lever, `-` for nothing. Only what differs from the default is written, so a new default reaches everyone who never touched that row. |
 
 `TRAINSIM_LANG` stays the outermost override: where it is set, the stored `language` is
 ignored, so scripted and CI runs are not steered by whatever was last picked in the menu.
@@ -354,6 +355,37 @@ any other (`[gameplay] hud` — `Full`, `Reduced`, `Off`), so it survives the ru
 `--hud <step>` sets it for a screenshot without writing the settings file.
 
 ## Key bindings
+
+Every one of them can be changed: **Settings → Key bindings** opens a page with one row per
+control, showing the key on the left of the value column and the controller input on the
+right. `Enter` on a row takes the next key or controller button pressed, `Backspace` takes
+the binding away, `Esc` leaves it as it was, and one key only ever works one control —
+binding it somewhere else takes it off whoever had it. The page is reachable from the pause
+overlay as well, so a binding can be changed with the train standing on the line, and the
+key sheet (`F5`) behind it is rewritten as soon as it is. The choice is kept in the settings
+file under `[controls]`.
+
+A controller is a first-class input: any connected pad answers to the same bindings. Out of
+the box the D-pad is the power controller, the triggers are the brakes, `A` is the horn, `B`
+the Sifa and `Y` the PZB acknowledge — the buttons are named by the letters Xbox pads print
+on them rather than by Bevy's compass points.
+
+**Levers on an axis.** The last group of the page is the three controls that have a
+*position* rather than a direction — power controller, driver's brake valve, direct brake.
+A key can only nudge one; a stick or a trigger holds it. `Enter` on such a row takes the
+next axis moved past half travel, and from then on that axis drives the lever absolutely:
+the stick or trigger *is* where the lever stands, and the keys for it are no longer read.
+The power controller runs the full −1 … 1, so a stick pushed down is the electric brake and
+a trigger gives the positive half; the brake valve maps 0 … 1 onto the full 1.5 bar of pipe
+drop. Lap, fill and emergency stay on their keys — an axis has no detent for them, and
+emergency latches until a key leaves it. Nothing is bound here out of the box: a bound lever
+writes its control every frame, which would otherwise hold the brake valve at Release for
+everyone who has a pad plugged in and never touches it.
+
+Looking around and walking are the one deliberate exception: the right stick looks and the
+left stick walks, always, and neither is bindable. Those are not levers of the desk.
+
+The table below is what everything ships with.
 
 | Key | Function |
 |---|---|

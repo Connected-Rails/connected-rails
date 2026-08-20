@@ -45,14 +45,16 @@ pub fn spawn_panel(commands: &mut Commands) {
     ));
 }
 
-/// F9 opens and closes, ↑/↓ select, Enter toggles.
+/// The bound key opens and closes, ↑/↓ select, Enter toggles. Only the opening is a
+/// binding — inside the panel the list is worked like every other list in the game.
 pub fn mod_manager(
+    input: crate::bindings::Input,
     keys: Res<ButtonInput<KeyCode>>,
     mut manager: ResMut<ModManager>,
     mut mods: ResMut<Mods>,
     mut panel: Query<(&mut Text, &mut Visibility), With<ModPanel>>,
 ) {
-    if keys.just_pressed(KeyCode::F9) {
+    if input.just_pressed(crate::bindings::Action::ModManager) {
         manager.open = !manager.open;
     }
     let Ok((mut text, mut visibility)) = panel.single_mut() else {
@@ -68,7 +70,7 @@ pub fn mod_manager(
     **text = render(&mods.0, &manager);
 }
 
-/// ↑/↓ select, Enter toggles — the F9 panel's keyboard handling.
+/// ↑/↓ select, Enter toggles — the panel's own keyboard handling.
 fn navigate(
     keys: &ButtonInput<KeyCode>,
     manager: &mut ModManager,
@@ -89,7 +91,7 @@ fn navigate(
     }
 }
 
-/// Writes `enabled` for one mod back to disk — shared by the F9 panel and the menu.
+/// Writes `enabled` for one mod back to disk — shared by the panel and the menu.
 pub(crate) fn toggle(
     runtime: &mut mod_runtime::ModRuntime,
     index: usize,

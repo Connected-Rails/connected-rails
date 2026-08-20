@@ -67,6 +67,7 @@ use sim_core::timetable::{DAY, ScheduledStop};
 use sim_core::train::{Train, Vehicle};
 use sim_core::{Sim, TrainRuntime};
 
+use crate::bindings::{self, Action, Binds};
 use crate::cab::CabMouse;
 use crate::glyphs::{self, Icon};
 use crate::settings::{Gameplay, HudMode};
@@ -362,76 +363,170 @@ pub struct Overlays {
 }
 
 // ---------------------------------------------------------------------------------
-// The key help (F5)
+// The key help
 // ---------------------------------------------------------------------------------
 
 /// The keyboard, by group. Full operability from the keyboard is the principle the input
 /// follows (`ui::player_input`), so this table is where the desk says what it can do. It
 /// is written out rather than derived because the order it reads in is a driver's order,
 /// not the order the code happens to poll the keys in.
-const HELP: [(&str, &[(&str, &str)]); 5] = [
+///
+/// The caps themselves are not written out: each line names the actions it stands for and
+/// the sheet asks `bindings.rs` what they answer to, so a rebound key is a rebound cap
+/// here as well. The controller buttons are left off — the controls page shows both, and
+/// two rows of caps per line would make this a table rather than a reminder.
+/// One line of the sheet: the actions whose caps it shows, and what it calls them.
+type HelpLine = (&'static [Action], &'static str);
+const HELP: [(&str, &[HelpLine]); 5] = [
     (
         "hud-help-driving",
         &[
-            ("W / S", "hud-key-throttle"),
-            ("X", "hud-key-throttle-off"),
-            ("R / T / F", "hud-key-reverser"),
-            ("^", "hud-key-range"),
-            ("6", "hud-key-afb"),
-            ("7 / 8", "hud-key-afb-target"),
+            (
+                &[Action::ThrottleUp, Action::ThrottleDown],
+                "hud-key-throttle",
+            ),
+            (&[Action::ThrottleOff], "hud-key-throttle-off"),
+            (
+                &[
+                    Action::ReverserForward,
+                    Action::ReverserNeutral,
+                    Action::ReverserBack,
+                ],
+                "hud-key-reverser",
+            ),
+            (&[Action::RoadGear], "hud-key-range"),
+            (&[Action::Afb], "hud-key-afb"),
+            (&[Action::AfbDown, Action::AfbUp], "hud-key-afb-target"),
         ],
     ),
     (
         "hud-help-brakes",
         &[
-            ("A / D", "hud-key-brake"),
-            ("Q", "hud-key-lap"),
-            ("Z", "hud-key-fill"),
-            ("E", "hud-key-emergency"),
-            ("C / V", "hud-key-direct"),
-            ("L", "hud-key-release"),
-            ("P", "hud-key-parking"),
-            ("O", "hud-key-ep"),
-            ("G", "hud-key-sand"),
+            (&[Action::BrakeRelease, Action::BrakeApply], "hud-key-brake"),
+            (&[Action::BrakeLap], "hud-key-lap"),
+            (&[Action::BrakeFill], "hud-key-fill"),
+            (&[Action::BrakeEmergency], "hud-key-emergency"),
+            (
+                &[Action::DirectBrakeApply, Action::DirectBrakeRelease],
+                "hud-key-direct",
+            ),
+            (&[Action::LocoBrakeRelease], "hud-key-release"),
+            (&[Action::ParkingBrake], "hud-key-parking"),
+            (&[Action::EpBrake], "hud-key-ep"),
+            (&[Action::Sanding], "hud-key-sand"),
         ],
     ),
     (
         "hud-help-safety",
         &[
-            ("Space", "hud-key-sifa"),
-            ("PgDn", "hud-key-acknowledge"),
-            ("End", "hud-key-free"),
-            ("Del", "hud-key-override"),
-            ("N / M / B", "hud-key-lzb"),
-            ("U", "hud-key-train-type"),
-            ("H", "hud-key-horn"),
+            (&[Action::Sifa], "hud-key-sifa"),
+            (&[Action::PzbAcknowledge], "hud-key-acknowledge"),
+            (&[Action::PzbFree], "hud-key-free"),
+            (&[Action::PzbOverride], "hud-key-override"),
+            (
+                &[Action::LzbTakeover, Action::LzbEnd, Action::LzbTest],
+                "hud-key-lzb",
+            ),
+            (&[Action::TrainType], "hud-key-train-type"),
+            (&[Action::Horn], "hud-key-horn"),
         ],
     ),
     (
         "hud-help-vehicle",
         &[
-            ("1 – 4", "hud-key-prepare"),
-            ("5", "hud-key-starter"),
-            ("9 / 0", "hud-key-lamps"),
-            (", / .", "hud-key-dimmer"),
-            ("Y", "hud-key-wipers"),
-            ("J / K / I", "hud-key-doors"),
+            (
+                &[
+                    Action::Battery,
+                    Action::Pantograph,
+                    Action::MainSwitch,
+                    Action::Compressor,
+                ],
+                "hud-key-prepare",
+            ),
+            (&[Action::EngineStart], "hud-key-starter"),
+            (&[Action::Headlights, Action::CabLight], "hud-key-lamps"),
+            (
+                &[Action::InstrumentLightDown, Action::InstrumentLightUp],
+                "hud-key-dimmer",
+            ),
+            (&[Action::Wipers], "hud-key-wipers"),
+            (
+                &[Action::DoorLeft, Action::DoorRight, Action::DoorClose],
+                "hud-key-doors",
+            ),
         ],
     ),
     (
         "hud-help-view",
         &[
-            ("F1 – F4", "hud-key-cameras"),
-            ("← → ↑ ↓", "hud-key-look"),
-            ("Num + −", "hud-key-zoom"),
-            ("WASD", "hud-key-walk"),
-            ("F5 / F6", "hud-key-overlays"),
-            ("F7", "hud-key-hud"),
-            ("F9", "hud-key-mods"),
-            ("Esc", "hud-key-pause"),
+            (
+                &[
+                    Action::ViewCab,
+                    Action::ViewOutside,
+                    Action::ViewWayside,
+                    Action::ViewWalk,
+                ],
+                "hud-key-cameras",
+            ),
+            (
+                &[
+                    Action::LookLeft,
+                    Action::LookRight,
+                    Action::LookUp,
+                    Action::LookDown,
+                ],
+                "hud-key-look",
+            ),
+            (&[Action::ZoomIn, Action::ZoomOut], "hud-key-zoom"),
+            (
+                &[
+                    Action::WalkForward,
+                    Action::WalkLeft,
+                    Action::WalkBack,
+                    Action::WalkRight,
+                ],
+                "hud-key-walk",
+            ),
+            (
+                &[Action::HelpOverlay, Action::Diagnostics],
+                "hud-key-overlays",
+            ),
+            (&[Action::HudMode], "hud-key-hud"),
+            (&[Action::ModManager], "hud-key-mods"),
+            (&[Action::Pause], "hud-key-pause"),
         ],
     ),
 ];
+
+/// The key caps of one line of the sheet, so a rebinding in the pause menu reaches the
+/// sheet standing behind it.
+#[derive(Component)]
+pub struct HelpCap(&'static [Action]);
+
+/// What the caps of one line say: the bound keys, slash-separated. An action nobody has a
+/// key for shows a dash rather than dropping out — the line would otherwise silently
+/// claim that three levers are two.
+fn caps(actions: &[Action], binds: &Binds) -> String {
+    actions
+        .iter()
+        .map(|action| match binds.get(*action).key {
+            Some(key) => bindings::key_label(key),
+            None => "—".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Rewrites the caps of the key sheet after a rebinding. The sheet is built once when the
+/// run starts, and the pause overlay that changes a binding sits on top of it.
+pub fn refresh_help_caps(binds: Res<Binds>, mut caps_of: Query<(&HelpCap, &mut Text)>) {
+    for (cap, mut text) in &mut caps_of {
+        let content = caps(cap.0, &binds);
+        if **text != content {
+            **text = content;
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------------
 // Building the tree
@@ -948,7 +1043,7 @@ fn lamp(
 // ---------------------------------------------------------------------------------
 
 /// Builds the whole display. Called once, when the run starts.
-pub fn spawn_hud(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings) {
+pub fn spawn_hud(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings, binds: &Binds) {
     let root = commands
         .spawn((
             Node {
@@ -972,7 +1067,7 @@ pub fn spawn_hud(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings) {
     // The diagnostics first: the key sheet is a scrim over the whole display, and a panel
     // spawned after it would sit on top of the scrim rather than under it.
     build_diagnostics(commands, fonts, root);
-    build_help(commands, fonts, drawings, root);
+    build_help(commands, fonts, drawings, root, binds);
 }
 
 /// The run, the messages and the systems — the band across the top.
@@ -2020,7 +2115,13 @@ fn build_ahead(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings, pare
 
 /// F5: the keyboard, in the groups a driver would look for it in, and under it what the
 /// ten annunciators mean — the one thing a pictogram cannot say for itself.
-fn build_help(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings, root: Entity) {
+fn build_help(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    drawings: &Drawings,
+    root: Entity,
+    binds: &Binds,
+) {
     let scrim = child(
         commands,
         root,
@@ -2059,14 +2160,14 @@ fn build_help(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings, root:
             commands,
             columns,
             Node {
-                width: Val::Px(214.0),
+                width: Val::Px(236.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(5.0),
                 ..default()
             },
         );
         heading(commands, fonts, column, group, None);
-        for (cap, action) in keys {
+        for (actions, action) in keys {
             let line = child(
                 commands,
                 column,
@@ -2094,7 +2195,10 @@ fn build_help(commands: &mut Commands, fonts: &Fonts, drawings: &Drawings, root:
             child(
                 commands,
                 key,
-                label(fonts, cap.to_string(), Face::Mono, 11.0, TEXT),
+                (
+                    label(fonts, caps(actions, binds), Face::Mono, 11.0, TEXT),
+                    HelpCap(actions),
+                ),
             );
             child(
                 commands,
@@ -2185,10 +2289,10 @@ fn build_diagnostics(commands: &mut Commands, fonts: &Fonts, root: Entity) {
 // Filling it in
 // ---------------------------------------------------------------------------------
 
-/// F5 and F6, and whether the display is on at all. Runs in every state: the pause
+/// The two overlay keys, and whether the display is on at all. Runs in every state: the pause
 /// overlay draws its own scrim, and a HUD showing through it would read as still live.
 pub fn hud_visibility(
-    keys: Res<ButtonInput<KeyCode>>,
+    input: bindings::Input,
     mut gameplay: ResMut<Gameplay>,
     over: Option<Res<HudOverride>>,
     game: Res<State<crate::GameState>>,
@@ -2196,15 +2300,15 @@ pub fn hud_visibility(
     mut root: Query<&mut Visibility, With<Hud>>,
 ) {
     let driving = *game.get() == crate::GameState::Driving;
-    if driving && keys.just_pressed(KeyCode::F5) {
+    if driving && input.just_pressed(Action::HelpOverlay) {
         overlays.help = !overlays.help;
     }
-    if driving && keys.just_pressed(KeyCode::F6) {
+    if driving && input.just_pressed(Action::Diagnostics) {
         overlays.diagnostics = !overlays.diagnostics;
     }
-    // F7 walks full → reduced → off → full. The resource is only written on the press:
+    // The HUD key walks full → reduced → off → full. The resource is only written on the press:
     // touching it every frame would have the settings file rewritten every frame.
-    if driving && keys.just_pressed(KeyCode::F7) {
+    if driving && input.just_pressed(Action::HudMode) {
         gameplay.hud = mode(&gameplay, over.as_deref()).cycle(1);
     }
     let mode = mode(&gameplay, over.as_deref());

@@ -1323,12 +1323,118 @@ set-hud-reduced = Reduziert
 set-hud-off = Aus
 set-look-speed = Umsehgeschwindigkeit
 set-look-speed-hint = Wie weit sich der Blick dreht, während die rechte Maustaste gehalten wird.
+set-controls = Tastenbelegung
+set-controls-hint = Welche Taste und welche Controller-Taste jeden Hebel des Führerstands bedienen.
 set-reset = Auf Standard zurücksetzen
 set-reset-hint = Setzt jede Einstellung dieser Seite auf den Auslieferungszustand.
 # Einheiten der Werte am rechten Rand einer Einstellungszeile.
 set-metres = { $value } m
 set-percent = { $value } %
 set-factor = { $value } ×
+
+## Tastenbelegung
+
+# Die Seite hinter der Zeile „Tastenbelegung“ der Einstellungen: eine Zeile je Aktion, die
+# Taste links in der Wertespalte und die Controller-Taste rechts. Die Namen sind die Hebel
+# selbst, damit sie sich hier wie in der Tastenhilfe (F5) lesen.
+
+ctl-title = Tastenbelegung
+ctl-caption = Enter übernimmt die nächste gedrückte Taste oder Controller-Taste — in einer Hebelzeile den nächsten bewegten Stick oder Trigger. Rücktaste löscht die Belegung.
+# Was eine Zeile anzeigt, während sie auf ihre neue Taste wartet.
+ctl-press = Taste drücken …
+# Diese Hälfte der Zeile ist nicht belegt.
+ctl-unbound = —
+ctl-hint-rebind = neu belegen
+ctl-hint-clear = löschen
+ctl-reset = Alle Belegungen zurücksetzen
+ctl-reset-hint = Setzt jede Taste und Controller-Taste auf den Auslieferungszustand.
+
+ctl-group-driving = Fahren
+ctl-group-brakes = Bremsen
+ctl-group-safety = Zugbeeinflussung
+ctl-group-vehicle = Fahrzeug
+ctl-group-view = Sicht und Einblendungen
+ctl-group-walk = Zu Fuß
+
+ctl-throttle-up = Fahrstufe auf
+ctl-throttle-down = Fahrstufe ab
+ctl-throttle-off = Fahrstufe auf null
+ctl-reverser-forward = Richtungswender vorwärts
+ctl-reverser-neutral = Richtungswender neutral
+ctl-reverser-back = Richtungswender rückwärts
+ctl-road-gear = Getriebestufe
+ctl-afb = AFB ein/aus
+ctl-afb-down = Sollgeschwindigkeit ab
+ctl-afb-up = Sollgeschwindigkeit auf
+
+ctl-brake-apply = Führerbremsventil bremsen
+ctl-brake-release = Führerbremsventil lösen
+ctl-brake-lap = Führerbremsventil abschließen
+ctl-brake-fill = Führerbremsventil füllen
+ctl-brake-emergency = Schnellbremsung
+ctl-direct-brake-apply = Zusatzbremse bremsen
+ctl-direct-brake-release = Zusatzbremse lösen
+ctl-loco-brake-release = Lokbremse lösen
+ctl-parking-brake = Feststellbremse
+ctl-ep-brake = Vorgesteuerte Bremse
+ctl-sanding = Sanden
+
+ctl-sifa = Sifa quittieren
+ctl-pzb-acknowledge = PZB Wachsam
+ctl-pzb-free = PZB Frei
+ctl-pzb-override = PZB Befehl
+ctl-lzb-takeover = LZB Übernahme
+ctl-lzb-end = LZB Ende
+ctl-lzb-test = LZB Störschalter
+ctl-train-type = Zugartschalter
+ctl-horn = Signalpfeife
+
+ctl-battery = Batterie
+ctl-pantograph = Stromabnehmer
+ctl-main-switch = Hauptschalter
+ctl-compressor = Luftpresser
+ctl-engine-start = Motoranlasser
+ctl-headlights = Spitzensignal
+ctl-cab-light = Führerraumbeleuchtung
+ctl-instrument-light-up = Instrumentenlicht heller
+ctl-instrument-light-down = Instrumentenlicht dunkler
+ctl-wipers = Scheibenwischer
+ctl-door-left = Türfreigabe links
+ctl-door-right = Türfreigabe rechts
+ctl-door-close = Türen schließen
+
+ctl-view-cab = Führerstandssicht
+ctl-view-outside = Außensicht
+ctl-view-wayside = Streckensicht
+ctl-view-walk = Aufstehen und gehen
+ctl-look-left = Blick nach links
+ctl-look-right = Blick nach rechts
+ctl-look-up = Blick nach oben
+ctl-look-down = Blick nach unten
+ctl-zoom-in = Kamera heran
+ctl-zoom-out = Kamera weg
+ctl-help-overlay = Tastenhilfe
+ctl-diagnostics = Diagnose
+ctl-hud-mode = HUD-Stufe
+ctl-mod-manager = Mod-Verwaltung
+ctl-pause = Pausenmenü
+
+ctl-walk-forward = Vorwärts gehen
+ctl-walk-back = Rückwärts gehen
+ctl-walk-left = Nach links gehen
+ctl-walk-right = Nach rechts gehen
+ctl-walk-run = Laufen
+ctl-walk-door = Durch die Tür
+
+# Die Hebel, die eine Stellung statt einer Richtung haben: nur ein Stick oder ein Trigger
+# kann eine halten, deshalb nehmen ihre Zeilen eine Achse und die Tastenspalte bleibt leer.
+ctl-group-levers = Hebel auf einer Achse
+ctl-lever-hint = Stick oder Trigger belegen, und der Hebel bleibt, wo er hingeschoben wird; die Tasten dafür werden dann nicht mehr gelesen.
+ctl-lever-throttle = Fahrschalter
+ctl-lever-brake-valve = Führerbremsventil
+ctl-lever-direct-brake = Zusatzbremse
+# Was eine Hebelzeile anzeigt, während sie auf ihre Achse wartet.
+ctl-move = Achse bewegen …
 
 ## Mod-Verwaltung
 

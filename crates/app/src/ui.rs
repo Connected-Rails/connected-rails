@@ -3,6 +3,7 @@
 //! Full operability via the keyboard (MaSzyna principle); the clickable
 //! 3D controls are added in M6.
 
+use crate::bindings::{Action, Input, Lever};
 use crate::mods_ui::ModManager;
 use crate::settings::Gameplay;
 use crate::{Origin, PlayerTrain, SimResource};
@@ -50,9 +51,10 @@ impl CameraMode {
     }
 }
 
-/// Key bindings → cab inputs.
+/// Bound keys and controller buttons → cab inputs. Which key does what is
+/// `bindings.rs`; this is only what each action moves.
 pub fn player_input(
-    keys: Res<ButtonInput<KeyCode>>,
+    input: Input,
     mut sim: ResMut<SimResource>,
     player: Res<PlayerTrain>,
     time: Res<Time>,
@@ -77,38 +79,38 @@ pub fn player_input(
     };
     let cab = &mut sim.0.controls[index];
 
-    // Power controller (W/S), including electric brake in the negative range.
-    if keys.pressed(KeyCode::KeyW) {
+    // Power controller, including electric brake in the negative range.
+    if input.pressed(Action::ThrottleUp) {
         cab.throttle = (cab.throttle + dt * 0.5).min(1.0);
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if input.pressed(Action::ThrottleDown) {
         cab.throttle = (cab.throttle - dt * 0.5).max(-1.0);
     }
-    if keys.just_pressed(KeyCode::KeyX) {
+    if input.just_pressed(Action::ThrottleOff) {
         cab.throttle = 0.0;
     }
 
     // Reverser.
-    if keys.just_pressed(KeyCode::KeyR) {
+    if input.just_pressed(Action::ReverserForward) {
         cab.reverser = 1;
     }
-    if keys.just_pressed(KeyCode::KeyF) {
+    if input.just_pressed(Action::ReverserBack) {
         cab.reverser = -1;
     }
-    if keys.just_pressed(KeyCode::KeyT) {
+    if input.just_pressed(Action::ReverserNeutral) {
         cab.reverser = 0;
     }
 
-    // Driver's brake valve (A = release, D = brake, E = emergency brake, Q = lap).
+    // Driver's brake valve: release, apply, lap, fill, emergency.
     let drop = match cab.brake_valve {
         DriverBrakeValve::Service(d) => d,
         DriverBrakeValve::Emergency => 1.5,
         _ => 0.0,
     };
-    if keys.pressed(KeyCode::KeyD) {
+    if input.pressed(Action::BrakeApply) {
         cab.brake_valve = DriverBrakeValve::Service((drop + dt * 0.4).min(1.5));
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if input.pressed(Action::BrakeRelease) {
         let next = drop - dt * 0.4;
         cab.brake_valve = if next <= 0.0 {
             DriverBrakeValve::Release
@@ -116,84 +118,109 @@ pub fn player_input(
             DriverBrakeValve::Service(next)
         };
     }
-    if keys.just_pressed(KeyCode::KeyQ) {
+    if input.just_pressed(Action::BrakeLap) {
         cab.brake_valve = DriverBrakeValve::Lap;
     }
-    if keys.just_pressed(KeyCode::KeyE) {
+    if input.just_pressed(Action::BrakeEmergency) {
         cab.brake_valve = DriverBrakeValve::Emergency;
     }
-    if keys.just_pressed(KeyCode::KeyZ) {
+    if input.just_pressed(Action::BrakeFill) {
         cab.brake_valve = DriverBrakeValve::Fill;
     }
 
-    // Direct brake (Y/C), sanding (G).
-    if keys.pressed(KeyCode::KeyC) {
+    // A lever put on a stick or a trigger holds its position absolutely: what the axis
+    // says is where the lever is. That is the whole point of binding one — a rate key can
+    // nudge a notch, only an axis can hold it — so the axis is applied after the keys and
+    // wins over them.
+    //
+    // The brake valve keeps its detents: lap, fill and emergency are positions the axis
+    // has no travel for. Emergency latches until a key leaves it; the other two the axis
+    // takes back on the next frame, which is right — a hand on the lever is the lap.
+    if let Some(notch) = input.lever(Lever::Throttle) {
+        cab.throttle = f64::from(notch).clamp(-1.0, 1.0);
+    }
+    if let Some(notch) = input.lever(Lever::BrakeValve)
+        && !matches!(cab.brake_valve, DriverBrakeValve::Emergency)
+    {
+        let drop = f64::from(notch).clamp(0.0, 1.0) * 1.5;
+        cab.brake_valve = if drop <= 0.0 {
+            DriverBrakeValve::Release
+        } else {
+            DriverBrakeValve::Service(drop)
+        };
+    }
+    if let Some(notch) = input.lever(Lever::DirectBrake) {
+        cab.direct_brake = f64::from(notch).clamp(0.0, 1.0);
+    }
+
+    // Direct brake and sanding.
+    if input.pressed(Action::DirectBrakeApply) {
         cab.direct_brake = (cab.direct_brake + dt).min(1.0);
     }
-    if keys.pressed(KeyCode::KeyV) {
+    if input.pressed(Action::DirectBrakeRelease) {
         cab.direct_brake = (cab.direct_brake - dt).max(0.0);
     }
-    cab.sanding = keys.pressed(KeyCode::KeyG);
-    // Release button of the loco brake (L), parking brake (P), pre-controlled brake (O).
-    cab.brake_release = keys.pressed(KeyCode::KeyL);
-    if keys.just_pressed(KeyCode::KeyP) {
+    cab.sanding = input.pressed(Action::Sanding);
+    // Release button of the loco brake, the parking brake, the pre-controlled brake.
+    cab.brake_release = input.pressed(Action::LocoBrakeRelease);
+    if input.just_pressed(Action::ParkingBrake) {
         cab.parking_brake = !cab.parking_brake;
     }
-    if keys.just_pressed(KeyCode::KeyO) {
+    if input.just_pressed(Action::EpBrake) {
         cab.ep_brake = !cab.ep_brake;
     }
     // Starter button of the diesel engine.
-    cab.engine_start = keys.pressed(KeyCode::Digit5);
+    cab.engine_start = input.pressed(Action::EngineStart);
 
-    // Doors: release left (J) / right (K), close (I).
-    cab.door_release_left = keys.pressed(KeyCode::KeyJ);
-    cab.door_release_right = keys.pressed(KeyCode::KeyK);
-    cab.door_close = keys.pressed(KeyCode::KeyI);
+    // Doors: release left, release right, close.
+    cab.door_release_left = input.pressed(Action::DoorLeft);
+    cab.door_release_right = input.pressed(Action::DoorRight);
+    cab.door_close = input.pressed(Action::DoorClose);
 
     // Sifa and train protection.
-    cab.sifa = keys.pressed(KeyCode::Space);
-    cab.pzb_acknowledge = keys.pressed(KeyCode::PageDown);
-    cab.pzb_exempt = keys.pressed(KeyCode::End);
-    cab.pzb_override = keys.pressed(KeyCode::Delete);
-    cab.lzb_takeover = keys.pressed(KeyCode::KeyN);
-    cab.lzb_end = keys.pressed(KeyCode::KeyM);
-    cab.lzb_test = keys.pressed(KeyCode::KeyB);
-    cab.horn = keys.pressed(KeyCode::KeyH);
+    cab.sifa = input.pressed(Action::Sifa);
+    cab.pzb_acknowledge = input.pressed(Action::PzbAcknowledge);
+    cab.pzb_exempt = input.pressed(Action::PzbFree);
+    cab.pzb_override = input.pressed(Action::PzbOverride);
+    cab.lzb_takeover = input.pressed(Action::LzbTakeover);
+    cab.lzb_end = input.pressed(Action::LzbEnd);
+    cab.lzb_test = input.pressed(Action::LzbTest);
+    cab.horn = input.pressed(Action::Horn);
 
-    // Wipers: Y steps through off – interval – slow – fast, wrapping around.
-    if keys.just_pressed(KeyCode::KeyY) {
+    // Wipers: one press steps through off – interval – slow – fast, wrapping around.
+    if input.just_pressed(Action::Wipers) {
         cab.wipers = (cab.wipers + 1) % 4;
     }
 
-    // Lights: 9 headlights (Spitzensignal), 0 cab light, ,/. the instrument
-    // backlighting dimmer — held down like the direct brake, since it is a knob.
-    if keys.just_pressed(KeyCode::Digit9) {
+    // Lights: headlights (Spitzensignal), cab light, and the instrument backlighting
+    // dimmer — held down like the direct brake, since it is a knob.
+    if input.just_pressed(Action::Headlights) {
         cab.headlights = !cab.headlights;
     }
-    if keys.just_pressed(KeyCode::Digit0) {
+    if input.just_pressed(Action::CabLight) {
         cab.cab_light = !cab.cab_light;
     }
-    if keys.pressed(KeyCode::Period) {
+    if input.pressed(Action::InstrumentLightUp) {
         cab.instrument_light = (cab.instrument_light + dt).min(1.0);
     }
-    if keys.pressed(KeyCode::Comma) {
+    if input.pressed(Action::InstrumentLightDown) {
         cab.instrument_light = (cab.instrument_light - dt).max(0.0);
     }
 
-    // AFB: 6 on/off, 7/8 dial the target speed in 10 km/h steps.
-    if keys.just_pressed(KeyCode::Digit6) {
+    // AFB: on/off, and the target speed dialled in 10 km/h steps.
+    if input.just_pressed(Action::Afb) {
         cab.afb = !cab.afb;
     }
-    if keys.just_pressed(KeyCode::Digit7) {
+    if input.just_pressed(Action::AfbDown) {
         cab.afb_target = (cab.afb_target - 10.0).max(0.0);
     }
-    if keys.just_pressed(KeyCode::Digit8) {
+    if input.just_pressed(Action::AfbUp) {
         cab.afb_target = (cab.afb_target + 10.0).min(afb_max);
     }
 
     // Range selector of a two-range gearbox: shunting gear ↔ road gear. The switch can be
     // turned at any time; the drive only lets the change take at a stand.
-    if keys.just_pressed(KeyCode::Backquote) {
+    if input.just_pressed(Action::RoadGear) {
         cab.road_gear = !cab.road_gear;
     }
 
@@ -203,7 +230,7 @@ pub fn player_input(
         if !v.spec.powered() {
             continue;
         }
-        if keys.just_pressed(KeyCode::Digit1) {
+        if input.just_pressed(Action::Battery) {
             v.traction.battery = !v.traction.battery;
             // Switching the battery on sets the train protection up: it runs its function
             // test and holds the brake until the driver acknowledges it (plan 9.3/9.4).
@@ -211,19 +238,19 @@ pub fn player_input(
                 v.safety.power_on();
             }
         }
-        if keys.just_pressed(KeyCode::Digit2) {
+        if input.just_pressed(Action::Pantograph) {
             v.traction.pantograph_command = !v.traction.pantograph_command;
         }
-        if keys.just_pressed(KeyCode::Digit3) {
+        if input.just_pressed(Action::MainSwitch) {
             v.traction.main_switch_command = !v.traction.main_switch_command;
         }
-        if keys.just_pressed(KeyCode::Digit4) {
+        if input.just_pressed(Action::Compressor) {
             v.traction.compressor = !v.traction.compressor;
         }
     }
 
-    // Train type switch (Zugartschalter): U cycles O → M → U, standstill only.
-    if keys.just_pressed(KeyCode::KeyU) {
+    // Train type switch (Zugartschalter): cycles O → M → U, standstill only.
+    if input.just_pressed(Action::TrainType) {
         use sim_core::safety::de::TrainType;
         let speed = train.speed();
         if let Some(current) = train.vehicles.iter().find_map(|v| v.safety.train_type()) {
@@ -239,11 +266,12 @@ pub fn player_input(
     }
 }
 
-/// Camera control: F1–F4 switch the perspective, arrow keys pan.
+/// Camera control: four actions switch the perspective, four more pan, and a
+/// controller's right stick looks around on its own.
 // A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn camera_control(
-    keys: Res<ButtonInput<KeyCode>>,
+    input: Input,
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
@@ -257,40 +285,40 @@ pub fn camera_control(
     mut camera: Query<&mut Transform, With<CabCamera>>,
 ) {
     let dt = time.delta_secs();
-    if keys.just_pressed(KeyCode::F1) {
+    if input.just_pressed(Action::ViewCab) {
         state.mode = CameraMode::Cab;
     }
-    if keys.just_pressed(KeyCode::F2) {
+    if input.just_pressed(Action::ViewOutside) {
         state.mode = CameraMode::Outside;
         if state.distance <= 0.0 {
             state.distance = 40.0;
         }
     }
-    if keys.just_pressed(KeyCode::F3) {
+    if input.just_pressed(Action::ViewWayside) {
         state.mode = CameraMode::Wayside;
         state.wayside = None;
     }
-    if keys.just_pressed(KeyCode::F4) {
+    if input.just_pressed(Action::ViewWalk) {
         state.mode = CameraMode::Walk;
     }
     // With the mod manager open the arrow keys belong to its list, not to the camera.
     let turn = if manager.open { 0.0 } else { 1.2 * dt };
-    if keys.pressed(KeyCode::ArrowLeft) {
+    if input.pressed(Action::LookLeft) {
         state.yaw += turn;
     }
-    if keys.pressed(KeyCode::ArrowRight) {
+    if input.pressed(Action::LookRight) {
         state.yaw -= turn;
     }
-    if keys.pressed(KeyCode::ArrowUp) {
+    if input.pressed(Action::LookUp) {
         state.pitch = (state.pitch + turn).min(1.2);
     }
-    if keys.pressed(KeyCode::ArrowDown) {
+    if input.pressed(Action::LookDown) {
         state.pitch = (state.pitch - turn).max(-1.2);
     }
-    if keys.pressed(KeyCode::NumpadAdd) {
+    if input.pressed(Action::ZoomIn) {
         state.distance = (state.distance - 30.0 * dt).max(10.0);
     }
-    if keys.pressed(KeyCode::NumpadSubtract) {
+    if input.pressed(Action::ZoomOut) {
         state.distance = (state.distance + 30.0 * dt).min(400.0);
     }
     // Right-drag looks around; the left button stays free for the cab controls. While
@@ -300,6 +328,14 @@ pub fn camera_control(
         let speed = 0.003 * gameplay.look_speed;
         state.yaw -= motion.delta.x * speed;
         state.pitch = (state.pitch - motion.delta.y * speed).clamp(-1.2, 1.2);
+    }
+    // The right stick looks around without a binding and without a button being held:
+    // an axis is not a lever, and the mouse asks no permission either.
+    let stick = input.look();
+    if stick != Vec2::ZERO {
+        let speed = 2.5 * gameplay.look_speed * dt;
+        state.yaw -= stick.x * speed;
+        state.pitch = (state.pitch + stick.y * speed).clamp(-1.2, 1.2);
     }
 
     let Ok(mut transform) = camera.single_mut() else {

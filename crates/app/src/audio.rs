@@ -104,6 +104,14 @@ const FADE: Tween = Tween {
     easing: kira::Easing::Linear,
 };
 
+/// How the voice a retriggered one-shot replaces is faded out — short enough to stay a
+/// retrigger, long enough not to be a click.
+const STEAL: Tween = Tween {
+    start_time: kira::StartTime::Immediate,
+    duration: Duration::from_millis(15),
+    easing: kira::Easing::Linear,
+};
+
 /// A running loop and where in the table it came from.
 struct Loop {
     train: usize,
@@ -136,6 +144,9 @@ pub struct Audio {
     loops: Vec<Loop>,
     /// The state of the previous frame: triggers need an edge, air a difference.
     previous: HashMap<(usize, usize), SoundState>,
+    /// The last one-shot per source. A key pressed twice in a row replaces its own click
+    /// instead of stacking a second voice on it — ten presses were ten times the level.
+    shots: HashMap<(usize, usize, String), StaticSoundHandle>,
 }
 
 impl Audio {
@@ -202,6 +213,7 @@ impl Audio {
             default: sound::default_table(),
             loops: Vec::new(),
             previous: HashMap::new(),
+            shots: HashMap::new(),
         })
     }
 
@@ -234,6 +246,7 @@ impl Audio {
         self.loops.clear();
         self.emitters.clear();
         self.previous.clear();
+        self.shots.clear();
     }
 }
 
@@ -272,6 +285,7 @@ pub fn setup_audio(
     audio.loops.clear();
     audio.emitters.clear();
     audio.previous.clear();
+    audio.shots.clear();
 
     // Which files the loaded vehicles actually ask for — a mod's table may name any of them.
     let mut wanted: Vec<String> = Vec::new();
@@ -544,8 +558,15 @@ pub fn update_audio(
                 (true, Some(emitter)) => emitter.track.play(source),
                 _ => audio.cab.play(source),
             };
-            if let Err(error) = played {
-                warn!("sound: cannot play {file}: {error}");
+            match played {
+                // The previous voice of the same source goes out over a few milliseconds —
+                // stopping it outright would put a click of its own into the sample.
+                Ok(handle) => {
+                    if let Some(mut old) = audio.shots.insert((t, v, file), handle) {
+                        old.stop(STEAL);
+                    }
+                }
+                Err(error) => warn!("sound: cannot play {file}: {error}"),
             }
         }
     }

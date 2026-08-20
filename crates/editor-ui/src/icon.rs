@@ -14,10 +14,6 @@ use crate::colors;
 /// Symbols of the viewport bar.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
-    /// Looking straight down — a plan grid.
-    TopDown,
-    /// Free 3D view — an isometric cube.
-    Perspective,
     /// Move handles — a four-way arrow.
     Move,
     /// Rotate handle — an arc with an arrow head.
@@ -110,33 +106,6 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let line = |points: Vec<Pos2>| Shape::line(points, stroke);
 
     let shapes: Vec<Shape> = match icon {
-        // A plan grid: the frame plus its two centre lines.
-        Icon::TopDown => vec![
-            Shape::closed_line(
-                vec![
-                    at(0.05, 0.05),
-                    at(0.95, 0.05),
-                    at(0.95, 0.95),
-                    at(0.05, 0.95),
-                ],
-                stroke,
-            ),
-            line(vec![at(0.5, 0.05), at(0.5, 0.95)]),
-            line(vec![at(0.05, 0.5), at(0.95, 0.5)]),
-        ],
-        // An isometric cube: the hexagon outline and the three visible edges
-        // meeting in its middle.
-        Icon::Perspective => {
-            let hexagon: Vec<Pos2> = (0..6)
-                .map(|i| polar(0.48, 90.0 - 60.0 * i as f32))
-                .collect();
-            vec![
-                Shape::closed_line(hexagon, stroke),
-                line(vec![at(0.5, 0.5), polar(0.48, 90.0)]),
-                line(vec![at(0.5, 0.5), polar(0.48, -30.0)]),
-                line(vec![at(0.5, 0.5), polar(0.48, 210.0)]),
-            ]
-        }
         // A four-way arrow, one head per direction.
         Icon::Move => {
             let head = |tip: Pos2, dx: f32, dy: f32| {

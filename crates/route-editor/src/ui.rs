@@ -94,7 +94,6 @@ pub fn draw(
         &mut state,
         &mut overlay,
         &mut request,
-        &mut focus,
         &mut exit,
     );
     status_bar(&mut root, &line, &mut state, &overlay, &focus, &terrain);
@@ -125,17 +124,18 @@ pub fn draw(
     let free = root.available_rect_before_wrap();
     state.viewport = Rect::new(free.min.x, free.min.y, free.max.x, free.max.y);
     state.typing = ctx.memory(|m| m.focused().is_some());
-    viewport_hint(&ctx, &root, &state, &focus);
+    viewport_hint(&ctx, &root, &state);
     Ok(())
 }
 
-/// Says how to move the map, in the viewport, until the user has done it.
+/// Says how to move the camera, in the viewport, until the user has done it.
 ///
-/// The map is the largest thing on screen and the only region with no visible
-/// control at all; middle-drag and wheel zoom are map conventions, not
-/// something a modder arriving from a text editor knows. Once the map has
-/// moved or a tool has been used, the hint has done its job and goes.
-fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState, focus: &Focus) {
+/// The viewport is the largest thing on screen and the only region with no
+/// visible control at all; right-drag to look and WASD to fly are 3D-editor
+/// conventions, not something a modder arriving from a text editor knows. Once
+/// the camera has moved or a tool has been used, the hint has done its job and
+/// goes.
+fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState) {
     let free = root.available_rect_before_wrap();
     if state.map_used || free.width() < 240.0 {
         return;
@@ -147,11 +147,6 @@ fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState, focu
             .layer_id(egui::LayerId::background())
             .max_rect(free.shrink(space::M)),
     );
-    // Each view is moved differently, so each says its own way.
-    let key = match focus.mode {
-        crate::view::ViewMode::TopDown => "help-map",
-        crate::view::ViewMode::Perspective => "help-fly",
-    };
     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
         // On a card, not on a text highlight: the hint sits over the aerial
         // imagery, where secondary grey vanishes against a sunlit field, and
@@ -159,7 +154,7 @@ fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState, focu
         // reads as a selection rather than as a note.
         editor_ui::card_frame().show(ui, |ui| {
             ui.label(
-                egui::RichText::new(t!(key))
+                egui::RichText::new(t!("help-fly"))
                     .small()
                     .color(colors::TEXT_SECONDARY),
             );
@@ -167,8 +162,8 @@ fn viewport_hint(ctx: &egui::Context, root: &egui::Ui, state: &EditorState, focu
     });
 }
 
-/// The viewport's own toolbar: view angle, gizmo mode, what the ground shows,
-/// and the camera speed. These belong to *looking* rather than to the document,
+/// The viewport's own toolbar: gizmo mode, what the ground shows, and the
+/// camera speed. These belong to *looking* rather than to the document,
 /// so they sit on the viewport instead of in the form panel — and docking the
 /// bar into the free space rather than floating it over the map means
 /// `state.viewport` shrinks by itself, so a click on it can never also reach
@@ -181,7 +176,6 @@ fn viewport_bar(
     request: &mut Request,
 ) {
     use crate::gizmo::GizmoMode;
-    use crate::view::ViewMode;
     use editor_ui::{Icon, bar_divider, bar_value, icon_button, icon_label};
 
     egui::Panel::top("viewport-bar")
@@ -189,18 +183,6 @@ fn viewport_bar(
         .show(root, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = space::XS;
-                // Which way the camera looks.
-                for (icon, mode, key) in [
-                    (Icon::TopDown, ViewMode::TopDown, "view-top-down"),
-                    (Icon::Perspective, ViewMode::Perspective, "view-perspective"),
-                ] {
-                    if icon_button(ui, icon, focus.mode == mode, t!(key)).clicked()
-                        && focus.mode != mode
-                    {
-                        crate::view::toggle_mode(focus);
-                    }
-                }
-                bar_divider(ui);
                 // What the selection's handles do.
                 for (icon, mode, key) in [
                     (Icon::Move, GizmoMode::Translate, "gizmo-move"),
@@ -220,15 +202,11 @@ fn viewport_bar(
                     config.enabled = !shown;
                     request.config = Some((config, false));
                 }
-                // The speed dial only means something while there is something
-                // to fly.
-                if focus.mode == ViewMode::Perspective {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        bar_value(ui, &mut focus.fly_speed, 0.05, 0.05..=20.0, "×")
-                            .on_hover_text(t!("camera-speed"));
-                        icon_label(ui, Icon::Speed);
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    bar_value(ui, &mut focus.fly_speed, 0.05, 0.05..=20.0, "×")
+                        .on_hover_text(t!("camera-speed"));
+                    icon_label(ui, Icon::Speed);
+                });
             });
         });
 }
@@ -742,7 +720,6 @@ fn menu_bar(
     state: &mut EditorState,
     overlay: &mut Overlay,
     request: &mut Request,
-    focus: &mut Focus,
     exit: &mut MessageWriter<AppExit>,
 ) {
     egui::Panel::top("menu")
@@ -851,22 +828,9 @@ fn menu_bar(
                     }
                 });
                 ui.menu_button(t!("menu-view"), |ui| {
-                    // The map is a view angle, not a different editor: the
-                    // same document, seen from straight above or flown through.
-                    let mut perspective = focus.mode == crate::view::ViewMode::Perspective;
-                    if ui
-                        .checkbox(&mut perspective, t!("action-perspective-view"))
-                        .changed()
-                    {
-                        crate::view::toggle_mode(focus);
-                        ui.close();
-                    }
-
-                    ui.separator();
                     language_menu(ui);
                 });
                 ui.menu_button(t!("menu-help"), |ui| {
-                    ui.label(t!("help-pan"));
                     ui.label(t!("help-fly"));
                     ui.label(t!("help-gizmo"));
                     ui.label(t!("help-opacity"));

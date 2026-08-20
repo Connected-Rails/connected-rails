@@ -1,5 +1,6 @@
-//! Connected Rails route editor — top-down view of a line with aerial imagery overlay,
-//! track drawing and device placement (plan ch. 15, editor v1).
+//! Connected Rails route editor — free 3D view of a line with aerial imagery
+//! draped over the ground, track drawing and device placement (plan ch. 15,
+//! editor v1).
 //!
 //! ```text
 //! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N]
@@ -48,21 +49,18 @@ pub fn focus_degrees(position: EcefPos) -> (f64, f64) {
 #[derive(Resource)]
 pub struct Origin(pub RenderOrigin);
 
-/// What the viewport looks at: a pivot, a distance and a direction. The
-/// top-down map and the 3D view are the same orbit at different angles — see
+/// What the viewport looks at: a pivot, a distance and a direction — see
 /// [`view`].
 #[derive(Resource)]
 pub struct Focus {
     pub position: EcefPos,
-    /// Distance from the camera to the view point [m] — the map's height above
-    /// it, because there the camera stands straight overhead.
+    /// Distance from the camera to the view point [m].
     pub height: f64,
-    pub mode: view::ViewMode,
     /// Compass heading of the camera [rad], 0 = north, clockwise.
     pub yaw: f64,
-    /// How far the camera looks down [rad]; the map is straight down.
+    /// How far the camera looks down [rad].
     pub pitch: f64,
-    /// Multiplier on the 3D view's fly speed — Unreal's camera speed dial.
+    /// Multiplier on the fly speed — Unreal's camera speed dial.
     pub fly_speed: f64,
 }
 
@@ -502,9 +500,8 @@ fn setup(
     commands.insert_resource(Focus {
         position: focus_position,
         height: 900.0,
-        mode: default(),
         yaw: 0.0,
-        pitch: std::f64::consts::FRAC_PI_2,
+        pitch: view::DEFAULT_PITCH,
         fly_speed: 1.0,
     });
     commands.insert_resource(Origin(origin));

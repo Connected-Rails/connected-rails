@@ -135,18 +135,13 @@ pub fn update(
         overlay.status = i18n::t!("status-terrain-flat");
     }
 
-    // How far terrain is built around the view point. The corridor is 1.2 km
-    // wide anyway, so a low view sees all of it; the cap keeps an overview
-    // flight from asking for a whole line.
+    // How far terrain is built around the view point. A shallow view looks to
+    // the horizon however near its pivot is, so the radius is fixed rather
+    // than tied to the camera distance — that would end the ground at the
+    // camera's feet. The corridor is 1.2 km wide anyway.
     let options = view.options;
     let center = terrain::to_utm(focus.position, &options);
-    let radius = match focus.mode {
-        crate::view::ViewMode::TopDown => (focus.height * 0.8).clamp(700.0, 3_000.0),
-        // A shallow 3D view looks to the horizon however near its pivot is —
-        // tying the radius to that distance would end the ground at the
-        // camera's feet.
-        crate::view::ViewMode::Perspective => 3_000.0,
-    };
+    let radius = 3_000.0;
     let wanted = wanted_keys(center, radius, &options);
 
     // Discard what has left the view.

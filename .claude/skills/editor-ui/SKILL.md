@@ -87,7 +87,7 @@ the existing `Stroke` width so a row of them has one weight.
 - `icon_button(ui, icon, active, tooltip)` — 26×22, pressed-in (`ACCENT_BG` +
   `ACCENT_TEXT`) while active, so a pair reads as a choice rather than as two
   commands. The tooltip is the only text an icon has: name the function *and*
-  its key (`view-top-down = Draufsicht (F4)`).
+  its key (`view-imagery = Luftbild auf dem Gelände`).
 - `icon_label(ui, icon)` — the icon alone in `TEXT_SECONDARY`, as the label of
   the control beside it. Never an `icon_button` that ignores its click.
 - `bar_divider(ui)` — hairline between groups. `ui.separator()` in a

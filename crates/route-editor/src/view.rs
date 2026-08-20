@@ -1,15 +1,13 @@
-//! Viewport camera: the top-down map and a free 3D view, switched with F4.
+//! Viewport camera: a free 3D view of the module.
 //!
-//! Both are the same orbit — a pivot ([`Focus::position`]), a distance
+//! The camera is an orbit — a pivot ([`Focus::position`]), a distance
 //! ([`Focus::height`]) and a look direction ([`Focus::yaw`]/[`Focus::pitch`]).
-//! Top-down is the special case that looks straight down with north up, so the
-//! map the editor has always been keeps its bindings exactly.
 //!
-//! The 3D view moves the way an Unreal viewport does, because that is the
-//! muscle memory a level builder arrives with: hold the right button to look
-//! and fly with WASD (Q/E down and up, Shift faster), Alt+left orbits the
-//! pivot, the middle button pans, the wheel dollies — or sets the fly speed
-//! while the right button is down. F frames the selection in both views.
+//! It moves the way an Unreal viewport does, because that is the muscle memory
+//! a level builder arrives with: hold the right button to look and fly with
+//! WASD (Q/E down and up, Shift faster), Alt+left orbits the pivot, the middle
+//! button pans, the wheel dollies — or sets the fly speed while the right
+//! button is down. F frames the selection.
 
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
@@ -20,32 +18,18 @@ use world_coords::{EcefPos, EnuFrame};
 use crate::tools::{self, EditorState};
 use crate::{Focus, Line, Origin};
 
-/// How the viewport looks at the world.
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub enum ViewMode {
-    /// Straight down, north up — the schematic map over the aerial imagery.
-    #[default]
-    TopDown,
-    /// Free 3D view, flown like an Unreal viewport.
-    Perspective,
-}
-
-/// Looking straight down: the top-down pitch, and the pole of the orbit.
-const STRAIGHT_DOWN: f64 = std::f64::consts::FRAC_PI_2;
-/// Pitch the 3D view opens at — steep enough to keep the overview, shallow
-/// enough that the ground has depth.
-const DEFAULT_PITCH: f64 = 0.9;
+/// Pitch the view opens at — steep enough to keep the overview, shallow enough
+/// that the ground has depth.
+pub const DEFAULT_PITCH: f64 = 0.9;
 /// The orbit never quite reaches the pole: a look direction parallel to `up`
 /// leaves `look_at` without a reference and the view snaps over.
-const PITCH_LIMIT: f64 = STRAIGHT_DOWN - 0.01;
+const PITCH_LIMIT: f64 = std::f64::consts::FRAC_PI_2 - 0.01;
 /// Radians of look and orbit per pixel of mouse travel.
 const LOOK_SPEED: f64 = 0.005;
 /// Half the vertical field of view — the default perspective projection.
 const HALF_FOV: f64 = std::f64::consts::FRAC_PI_8;
-/// Closest the 3D view comes to its pivot [m]; the map keeps its own floor,
-/// where a lower camera would only show four imagery tiles.
-const MIN_DISTANCE_3D: f64 = 3.0;
-const MIN_DISTANCE_MAP: f64 = 60.0;
+/// Closest the camera comes to its pivot [m].
+const MIN_DISTANCE: f64 = 3.0;
 const MAX_DISTANCE: f64 = 20_000.0;
 /// Distance `F` leaves between the camera and what it framed [m].
 const FRAME_DISTANCE: f64 = 80.0;
@@ -78,13 +62,6 @@ impl Focus {
         }
     }
 
-    fn min_distance(&self) -> f64 {
-        match self.mode {
-            ViewMode::TopDown => MIN_DISTANCE_MAP,
-            ViewMode::Perspective => MIN_DISTANCE_3D,
-        }
-    }
-
     /// Screen right and screen up of the current view in ECEF — what a pan
     /// drag moves along.
     fn screen_axes(&self) -> (DVec3, DVec3) {
@@ -93,22 +70,6 @@ impl Focus {
             .cross(EnuFrame::at(self.position).up)
             .normalize_or_zero();
         (right, right.cross(dir))
-    }
-}
-
-/// Switches the two views, keeping the point they look at.
-pub fn toggle_mode(focus: &mut Focus) {
-    match focus.mode {
-        ViewMode::TopDown => {
-            focus.mode = ViewMode::Perspective;
-            focus.pitch = DEFAULT_PITCH;
-        }
-        ViewMode::Perspective => {
-            focus.mode = ViewMode::TopDown;
-            focus.yaw = 0.0;
-            focus.pitch = STRAIGHT_DOWN;
-            focus.height = focus.height.max(MIN_DISTANCE_MAP);
-        }
     }
 }
 
@@ -135,30 +96,23 @@ pub fn camera_control(
     // Mouse input only inside the viewport rect the panels leave free — the
     // hand-built panel layout is invisible to egui's own hit test, so the
     // check is ours (see `EditorState::viewport`).
-    let over_map = window
+    let over_viewport = window
         .and_then(|w| w.cursor_position())
         .is_some_and(|p| state.over_viewport(p));
 
     if !state.typing {
-        if keys.just_pressed(KeyCode::F4) {
-            toggle_mode(&mut focus);
-            state.map_used = true;
-        }
         // F frames the selection, as it does in every 3D editor.
         if keys.just_pressed(KeyCode::KeyF)
             && let Some(p) = tools::selection_pos(&line, state.selection, &focus)
         {
             focus.position = p;
-            focus.height = focus.height.min(FRAME_DISTANCE).max(focus.min_distance());
+            focus.height = focus.height.clamp(MIN_DISTANCE, FRAME_DISTANCE);
             state.map_used = true;
         }
-        match focus.mode {
-            ViewMode::TopDown => keyboard_pan(&keys, dt, &mut state, &mut focus),
-            ViewMode::Perspective => fly(&keys, &buttons, dt, &mut state, &mut focus),
-        }
+        fly(&keys, &buttons, dt, &mut state, &mut focus);
     }
 
-    if over_map {
+    if over_viewport {
         mouse_look(&buttons, &keys, drag, scroll, &mut state, &mut focus);
     }
 
@@ -166,21 +120,10 @@ pub fn camera_control(
         return;
     };
     let center = origin.0.to_render(focus.position);
-    let frame = EnuFrame::at(focus.position);
-    let up = origin.0.dir_to_render(frame.up);
-    match focus.mode {
-        // Straight down is the one angle `look_at(_, up)` cannot express: the
-        // map takes north as its reference instead.
-        ViewMode::TopDown => {
-            transform.translation = center + up * focus.height as f32;
-            transform.look_at(center, origin.0.dir_to_render(frame.north));
-        }
-        ViewMode::Perspective => {
-            let dir = origin.0.dir_to_render(focus.look_dir());
-            transform.translation = center - dir * focus.height as f32;
-            transform.look_at(center, up);
-        }
-    }
+    let up = origin.0.dir_to_render(EnuFrame::at(focus.position).up);
+    let dir = origin.0.dir_to_render(focus.look_dir());
+    transform.translation = center - dir * focus.height as f32;
+    transform.look_at(center, up);
     // …and then off to the side, so the pivot ends up in the middle of what is
     // actually visible.
     if let Some(window) = window {
@@ -221,39 +164,8 @@ fn viewport_shift(
     (transform.up() * offset.y - transform.right() * offset.x) * per_pixel
 }
 
-/// WASD and the arrows pan the map, PgUp/PgDn change the height — the bindings
-/// the top-down editor has always had.
-fn keyboard_pan(keys: &ButtonInput<KeyCode>, dt: f64, state: &mut EditorState, focus: &mut Focus) {
-    let frame = EnuFrame::at(focus.position);
-    // Movement scales with the height: far up, panning is generous.
-    let speed = focus.height * 0.8 * dt;
-    let mut shift = DVec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-        shift += frame.north * speed;
-    }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-        shift -= frame.north * speed;
-    }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
-        shift -= frame.east * speed;
-    }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
-        shift += frame.east * speed;
-    }
-    if shift != DVec3::ZERO {
-        focus.position = EcefPos(focus.position.0 + shift);
-        state.map_used = true;
-    }
-    if keys.pressed(KeyCode::PageUp) || keys.pressed(KeyCode::NumpadSubtract) {
-        focus.height = (focus.height * (1.0 + dt)).min(MAX_DISTANCE);
-    }
-    if keys.pressed(KeyCode::PageDown) || keys.pressed(KeyCode::NumpadAdd) {
-        focus.height = (focus.height * (1.0 - dt)).max(MIN_DISTANCE_MAP);
-    }
-}
-
-/// WASDQE fly the 3D view while the right button is held — the letters belong
-/// to the gizmo the moment it is let go, exactly as in Unreal.
+/// WASDQE fly the view while the right button is held — the letters belong to
+/// the gizmo the moment it is let go, exactly as in Unreal.
 fn fly(
     keys: &ButtonInput<KeyCode>,
     buttons: &ButtonInput<MouseButton>,
@@ -304,15 +216,13 @@ fn mouse_look(
     focus: &mut Focus,
 ) {
     let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
-    let three_d = focus.mode == ViewMode::Perspective;
 
     if scroll != 0.0 {
         // Right button held, the wheel is Unreal's camera speed dial.
-        if three_d && buttons.pressed(MouseButton::Right) {
+        if buttons.pressed(MouseButton::Right) {
             focus.fly_speed = (focus.fly_speed * (1.0 + scroll * 0.2)).clamp(0.05, 20.0);
         } else {
-            focus.height =
-                (focus.height * (1.0 - scroll * 0.15)).clamp(focus.min_distance(), MAX_DISTANCE);
+            focus.height = (focus.height * (1.0 - scroll * 0.15)).clamp(MIN_DISTANCE, MAX_DISTANCE);
         }
         state.map_used = true;
     }
@@ -322,9 +232,7 @@ fn mouse_look(
     }
     // Looking turns the camera where it stands; orbiting swings it around the
     // pivot. Same two angles — only one of them moves the pivot after.
-    if three_d
-        && (buttons.pressed(MouseButton::Right) || (alt && buttons.pressed(MouseButton::Left)))
-    {
+    if buttons.pressed(MouseButton::Right) || (alt && buttons.pressed(MouseButton::Left)) {
         let camera = focus.camera_pos();
         let orbit = !buttons.pressed(MouseButton::Right);
         focus.yaw += drag.x as f64 * LOOK_SPEED;
@@ -353,35 +261,22 @@ mod tests {
     use super::*;
     use world_coords::geo;
 
-    fn focus_at(mode: ViewMode, yaw: f64, pitch: f64) -> Focus {
+    fn focus_at(yaw: f64, pitch: f64) -> Focus {
         Focus {
             position: geo::to_ecef_deg(52.0, 10.0, 146.0),
             height: 500.0,
-            mode,
             yaw,
             pitch,
             fly_speed: 1.0,
         }
     }
 
-    /// Top-down is the orbit looking straight down: the camera stands above
-    /// the pivot, whatever the yaw.
-    #[test]
-    fn straight_down_puts_the_camera_overhead() {
-        let focus = focus_at(ViewMode::TopDown, 1.2, STRAIGHT_DOWN);
-        let frame = EnuFrame::at(focus.position);
-        let offset = focus.camera_pos().0 - focus.position.0;
-        assert!((offset.dot(frame.up) - 500.0).abs() < 1e-3, "{offset}");
-        assert!(offset.dot(frame.north).abs() < 1e-3);
-        assert!(offset.dot(frame.east).abs() < 1e-3);
-    }
-
     /// Yaw is a compass heading: 0 looks north, a quarter turn looks east.
     #[test]
     fn yaw_is_a_compass_heading() {
-        let frame = EnuFrame::at(focus_at(ViewMode::Perspective, 0.0, 0.0).position);
-        let north = focus_at(ViewMode::Perspective, 0.0, 0.0).look_dir();
-        let east = focus_at(ViewMode::Perspective, STRAIGHT_DOWN, 0.0).look_dir();
+        let frame = EnuFrame::at(focus_at(0.0, 0.0).position);
+        let north = focus_at(0.0, 0.0).look_dir();
+        let east = focus_at(std::f64::consts::FRAC_PI_2, 0.0).look_dir();
         assert!((north.dot(frame.north) - 1.0).abs() < 1e-9, "{north}");
         assert!((east.dot(frame.east) - 1.0).abs() < 1e-9, "{east}");
     }
@@ -390,28 +285,15 @@ mod tests {
     /// difference between it and orbiting.
     #[test]
     fn looking_around_keeps_the_camera_put() {
-        let mut focus = focus_at(ViewMode::Perspective, 0.0, DEFAULT_PITCH);
+        let mut focus = focus_at(0.0, DEFAULT_PITCH);
         let before = focus.camera_pos();
         focus.yaw += 0.4;
         focus.pitch -= 0.2;
         focus.look_from(before);
         assert!(focus.camera_pos().0.distance(before.0) < 1e-6);
         // …and the pivot moved, because the camera did not.
-        let orbit = focus_at(ViewMode::Perspective, 0.4, DEFAULT_PITCH - 0.2);
+        let orbit = focus_at(0.4, DEFAULT_PITCH - 0.2);
         assert!(focus.position.0.distance(orbit.position.0) > 1.0);
-    }
-
-    /// Switching back to the map looks straight down again, at the same point.
-    #[test]
-    fn toggling_back_restores_the_map() {
-        let mut focus = focus_at(ViewMode::TopDown, 0.0, STRAIGHT_DOWN);
-        let pivot = focus.position;
-        toggle_mode(&mut focus);
-        assert_eq!(focus.mode, ViewMode::Perspective);
-        toggle_mode(&mut focus);
-        assert_eq!(focus.mode, ViewMode::TopDown);
-        assert_eq!(focus.pitch, STRAIGHT_DOWN);
-        assert_eq!(focus.position.0, pivot.0);
     }
 
     fn window(width: f32, height: f32) -> Window {
@@ -423,7 +305,7 @@ mod tests {
     #[test]
     fn the_camera_moves_away_from_the_panels() {
         let mut state = EditorState::default();
-        let mut focus = focus_at(ViewMode::TopDown, 0.0, STRAIGHT_DOWN);
+        let mut focus = focus_at(0.0, DEFAULT_PITCH);
         focus.height = 900.0;
         // Identity transform: right is +X, up is +Y.
         let transform = Transform::IDENTITY;

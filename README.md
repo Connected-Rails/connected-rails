@@ -291,7 +291,7 @@ or the whole corridor.
 | `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, track objects, floating-origin anchoring |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); multiplayer and the dedicated server on lightyear (ch. 20); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
-| `route-editor` | Route editor: top-down map over aerial imagery or a flown 3D view — track, equipment, objects, vegetation, terrain (ch. 15) |
+| `route-editor` | Route editor: flown 3D view over aerial imagery — track, equipment, objects, vegetation, terrain (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, block diagram (drive, brake, equipment), glTF import, LOD, moving parts (ch. 15) |
 | `signal-editor` | Signal editor: modular signal models — glTF parts on mount points, lamp bindings (ch. 15) |
 
@@ -593,16 +593,17 @@ cargo run -p route-editor                              # example line
 cargo run -p route-editor -- line.ron --imagery my_imagery.ron
 ```
 
-The line is edited from above, over the aerial imagery. The tool palette sits on the left, the
-selected element's fields on the right; the middle mouse button drags the map, the wheel zooms.
+The line is edited in a flown 3D view over the aerial imagery. The tool palette sits on the
+left, the selected element's fields on the right; the middle mouse button pans, the wheel
+zooms.
 Every edit goes through undo/redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z), the rule check flags what
 the compiler will reject, and saving guards against discarding unsaved work.
 
 The palette is grouped by what the work is about — the track itself, what is mounted along
 it, and the landscape it runs through — and every tool carries a drawn icon beside its name.
 A bar sits above the viewport with the controls that belong to looking rather than to the
-document: view angle, gizmo mode, aerial imagery on or off, and the camera speed of the 3D
-view. The terrain is always drawn; the imagery is a layer draped over its shape.
+document: gizmo mode, aerial imagery on or off, and the camera speed. The terrain is always
+drawn; the imagery is a layer draped over its shape.
 
 **Content drawer** (`Ctrl`+`Space`, or the button at the left of the status bar): a panel
 that comes up from the bottom edge with everything the installed mods brought — scenery
@@ -616,15 +617,13 @@ one once, off to the side on its own render layer, and reads the picture back of
 render target into an ordinary image — a target only holds its contents while an active
 camera points at it. One at a time, and only for what the drawer is actually drawing, so a
 catalogue nobody opens costs nothing. Track types show their colour instead, which is what
-a track type is on the map. `F4` opens the same document into a **3D view** and back. It is the same orbit at a different
-angle — the map is the case that looks straight down — and it is flown the way an Unreal
-viewport is: hold the right mouse button to look and fly with `WASD` (`Q`/`E` down and up,
-`Shift` faster, the wheel sets the camera speed), `Alt`+left orbits the view point, the middle
-button pans, `F` frames the selection. Selecting is a question about pixels in both views:
-whatever is under the cursor, near or far.
+a track type is. The **viewport** is flown the way an Unreal one is: hold the right mouse
+button to look and fly with `WASD` (`Q`/`E` down and up, `Shift` faster, the wheel sets the
+camera speed), `Alt`+left orbits the view point, the middle button pans, `F` frames the
+selection. Selecting is a question about pixels: whatever is under the cursor, near or far.
 
 The selection carries a **transform gizmo**, `W` for the arrows and `E` for the rotation ring
-(in the 3D view, where those letters are free). Its axes are the fields the item actually has,
+(the letters are free the moment the right mouse button is let go). Its axes are the fields the item actually has,
 not world X/Y/Z: dragging the red arrow slides a signal *along* the track (`s`), the green one
 across it (`lateral_offset`) and the blue one up (`height`) — so the saved file still reads
 like a placement. Trees, markers and terrain strokes are free of the track and get east/north
@@ -716,12 +715,11 @@ loads, evictions and usage.
 
 | Key | Function |
 |---|---|
-| `WASD` / arrows | Move the view point on the map, `Page Up/Down` height |
-| `F4` | Switch between the top-down map and the 3D view |
-| Right mouse + `WASD` `Q` `E` | Look and fly (3D view), `Shift` faster |
-| `Alt` + left mouse | Orbit the view point (3D view) |
+| Right mouse + `WASD` `Q` `E` | Look and fly, `Shift` faster |
+| Middle mouse / wheel | Pan the view point / zoom |
+| `Alt` + left mouse | Orbit the view point |
 | `F` | Frame the selection |
-| `W` / `E` | Move or rotate handles of the gizmo (3D view) |
+| `W` / `E` | Move or rotate handles of the gizmo |
 | `1`–`0` | Pick a tool (see the table above) |
 | `Ctrl`+`Space` | Content drawer: everything the installed mods bring |
 | `O` | Aerial imagery on/off — it drapes over the terrain, which is always drawn |

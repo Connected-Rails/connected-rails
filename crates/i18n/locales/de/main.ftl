@@ -647,23 +647,18 @@ overlay-next-provider = Nächster Anbieter (P)
 overlay-offline = Offline-Modus (L)
 overlay-clear-cache = Cache leeren (C)
 overlay-retry = Fehlversuche zurücksetzen (R)
-action-perspective-view = 3D-Ansicht (F4)
 
-# Viewport bar — icon buttons above the map, tooltips only.
+# Viewport bar — icon buttons above the viewport, tooltips only.
 view-imagery = Luftbild auf dem Gelände
-view-top-down = Draufsicht (F4)
-view-perspective = 3D-Ansicht (F4)
 gizmo-move = Verschiebegriffe (W)
 gizmo-rotate = Drehgriff (E)
-camera-speed = Kamerageschwindigkeit der 3D-Ansicht
+camera-speed = Kamerageschwindigkeit
 
-help-pan = WASD/Pfeile oder mittlere Maustaste schwenken · Mausrad oder Bild↑/Bild↓ Höhe
-help-fly = 3D-Ansicht (F4): rechte Maustaste halten zum Umsehen, WASD fliegt, Q/E runter/hoch, Umschalt schneller · Alt+links umkreist · F rückt die Auswahl ins Bild
+help-fly = Rechte Maustaste halten zum Umsehen, WASD fliegt, Q/E runter/hoch, Umschalt schneller · Alt+links umkreist · mittlere Maustaste schwenkt · Mausrad zoomt · F rückt die Auswahl ins Bild
 help-gizmo = W Verschiebegriffe, E Drehgriff · Pfeil ziehen verschiebt die Auswahl längs des Gleises, quer dazu oder nach oben
 help-opacity = [ ] Deckkraft · , . Zoomstufe · Z automatisch
 help-offset = Ziffernblock 4/6/8/2 Bildversatz, 5 zurücksetzen
 help-draw = Gleis zeichnen: Punkte klicken · Enter schließt ab · Esc bricht ab
-help-map = Mittlere Maustaste zieht, Mausrad zoomt · WASD schwenkt · links Werkzeug wählen und klicken
 
 status-ready = Bereit
 status-position = { $lat }°, { $lon }°   Höhe { $height } m

@@ -18,7 +18,6 @@ use glam::DVec3;
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
 use crate::tools::{self, EditorState, Selection};
-use crate::view::ViewMode;
 use crate::{Focus, Line, Origin};
 
 /// How near the cursor a handle has to be to grab it [logical pixels].
@@ -168,11 +167,9 @@ pub fn input(
     mut gizmo: ResMut<GizmoState>,
     mut line: ResMut<Line>,
 ) {
-    // W and E pick the mode, as in Unreal — but only in the 3D view, where the
-    // letters are free: on the map they still pan, and the map has no rotation
-    // to show anyway (the object panel edits `yaw_deg` there).
-    if !state.typing && focus.mode == ViewMode::Perspective && !buttons.pressed(MouseButton::Right)
-    {
+    // W and E pick the mode, as in Unreal — the letters are free the moment
+    // the right button is let go, where they stop flying the camera.
+    if !state.typing && !buttons.pressed(MouseButton::Right) {
         if keys.just_pressed(KeyCode::KeyW) {
             gizmo.mode = GizmoMode::Translate;
         }
@@ -550,7 +547,6 @@ mod tests {
         let focus = Focus {
             position: geo::to_ecef_deg(52.0, 10.0, 146.0),
             height: 500.0,
-            mode: ViewMode::Perspective,
             yaw: 0.0,
             pitch: 0.9,
             fly_speed: 1.0,
@@ -596,9 +592,8 @@ mod tests {
         let focus = Focus {
             position: geo::to_ecef_deg(52.0, 10.0, 146.0),
             height: 500.0,
-            mode: ViewMode::TopDown,
             yaw: 0.0,
-            pitch: std::f64::consts::FRAC_PI_2,
+            pitch: crate::view::DEFAULT_PITCH,
             fly_speed: 1.0,
         };
         let (mut lat, mut lon) = (52.0, 10.0);

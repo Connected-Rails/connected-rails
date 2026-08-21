@@ -18,4 +18,6 @@
     ],
     script: None,
     model: Some("example:form_hp"),
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["hv", "semaphore", "epoch-3"],
 )

@@ -34,4 +34,6 @@
     script: None,
     // Default 3D model; a signal placement may override it (`model` on the signal).
     model: Some("example:ks_mast"),
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["ks", "main-signal"],
 )

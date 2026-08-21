@@ -6,4 +6,6 @@
     roughness: 1.4,
     max_speed: 120.0,
     lzb: false,
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["branch-line", "jointed"],
 )

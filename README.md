@@ -477,7 +477,7 @@ an assembly of shared parts.
 |---|---|
 | `cargo run -p route-editor` | line: track, equipment, switches, marked track areas, objects, vegetation, terrain, aerial imagery overlay |
 | `cargo run -p vehicle-editor` | vehicle: base data, block diagram (drive, brake, equipment), glTF model, LOD, moving parts, 3D cab, displays, sounds |
-| `cargo run -p signal-editor` | signal model: glTF parts on mount points, lamp bindings, lamp test |
+| `cargo run -p signal-editor` | signal model: tags, glTF parts on mount points, lamp bindings, lamp test |
 
 All are desktop applications, not game screens: menu bar, docked panels, the operating
 system's own file dialogs. `--frames N` and `--screenshot file.png` work in all of them.
@@ -614,10 +614,19 @@ drawn; the imagery is a layer draped over its shape.
 
 **Content drawer** (`Ctrl`+`Space`, or the button at the left of the status bar): a panel
 that comes up from the bottom edge with everything the installed mods brought — scenery
-objects, signal types, signal models and track types, each with the mod it came from and a
-filter over the lot. It is the one place that answers whether the editor found a newly
-installed mod at all; the tool pickers only ever show one kind. Picking an object from it
-arms the object tool with that object.
+objects, signal types, signal models and track types, each with the mod it came from. It is
+the one place that answers whether the editor found a newly installed mod at all; the tool
+pickers only ever show one kind. Four filters narrow the list: a substring over name, key and tags, the mod an entry came
+from, the **tag** its author gave it (`epoch-4`, `catenary` — see
+[MODS.md](MODS.md#tags); the tag combo only appears where a category has any), and — for the
+signal types — the signal system. A filtered list states `n of m`, and a filter that matches
+nothing offers to reset itself. Picking arms the tool the
+entry belongs to: an object the object tool, a signal type or a signal model the
+place-device tool set to signals — the next click on a track then places a signal that
+already carries them. A signal type brings its own default model, so picking one drops a
+model override picked before it. Track types are a listing only; they do not react to a
+click. Picking closes the drawer, because what it armed is used on the map the drawer
+covers.
 
 Everything that has a model carries a **rendered preview** of it. The editor renders each
 one once, off to the side on its own render layer, and reads the picture back off the

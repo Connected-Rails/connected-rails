@@ -358,6 +358,9 @@ fn panel(root: &mut egui::Ui, editor: &mut Editor) {
             ui.label(editor_ui::heading(t!("heading-signal-model")));
             ui.add_space(space::S);
             egui::ScrollArea::vertical().show(ui, |ui| {
+                editor_ui::section(ui, "tags", t!("group-tags"), |ui| {
+                    tags_section(ui, editor);
+                });
                 editor_ui::section(ui, "parts", t!("group-signal-parts"), |ui| {
                     parts_section(ui, editor);
                 });
@@ -375,6 +378,16 @@ fn panel(root: &mut egui::Ui, editor: &mut Editor) {
                 });
             });
         });
+}
+
+/// What the mod's own catalogue entry is found by: the tags of this model, as
+/// the route editor's content drawer filters on them.
+fn tags_section(ui: &mut egui::Ui, editor: &mut Editor) {
+    ui.small(t!("tags-hint"));
+    ui.add_space(space::XS);
+    if editor_ui::tag_editor(ui, "signal-model", &mut editor.model.tags) {
+        editor.dirty = true;
+    }
 }
 
 fn parts_section(ui: &mut egui::Ui, editor: &mut Editor) {

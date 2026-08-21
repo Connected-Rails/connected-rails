@@ -701,6 +701,7 @@ tool-draw = Draw track
 tool-draw-hint = Clicks set points: the first starts the track, every further one appends a tangent arc · Enter or right-click finishes · Esc cancels (2)
 tool-device = Place device
 tool-device-hint = Click a track to put the chosen device kind on it (3)
+tool-device-pick = none — pick one in the content drawer
 tool-switch = Place switch
 tool-area = Mark area
 tool-area-hint = Paint a stroke along a track and give the stretch properties
@@ -1959,10 +1960,20 @@ graph-group-remove = Remove comment frame
 
 ## Content drawer
 
+tag-add = Add
+tag-add-placeholder = New tag
+tag-remove-hint = Removes the tag
+group-tags = Tags
+tags-hint = Free-form, for finding the entry again in the content drawer — lower case, words joined by hyphens. Enter adds one.
 drawer-title = Content
-drawer-filter-placeholder = Filter by name or mod
+drawer-filter-placeholder = Filter by name or key
 drawer-count-filtered = { $shown } of { $total }
-drawer-empty = Nothing here — no mod installed brings this kind, or the filter matches none of it.
+drawer-empty = Nothing here — no installed mod brings this kind.
+drawer-source-all = All mods
+drawer-system-all = All systems
+drawer-tag-all = All tags
+drawer-empty-filtered = Nothing matches the filter.
+drawer-reset-filters = Reset filters
 drawer-objects = Scenery objects
 drawer-signal-types = Signal types
 drawer-signal-models = Signal models

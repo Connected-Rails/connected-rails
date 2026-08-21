@@ -16,4 +16,6 @@
         (lamp: "fluegel2", node: "fluegel2",
          motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 135.0), seconds: 1.8),
     ],
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["semaphore", "mast", "epoch-3"],
 )

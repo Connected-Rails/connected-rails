@@ -4,6 +4,7 @@
 //!
 //! ```text
 //! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N] [--height M]
+//!                        [--drawer [objects|signal-types|signal-models|track-types]]
 //! ```
 //!
 //! Without a line file the example line is loaded. The overlay configuration is created
@@ -324,6 +325,15 @@ fn main() {
         .and_then(|h| h.parse::<f64>().ok())
         .unwrap_or(900.0);
 
+    // `--drawer` alone opens the catalogue on its first category; the name of
+    // one (`--drawer signal-types`) opens it there.
+    let drawer = args.iter().position(|a| a == "--drawer");
+    let drawer_category = drawer
+        .and_then(|i| args.get(i + 1))
+        .filter(|a| !a.starts_with("--"))
+        .and_then(|name| content_drawer::Category::parse(name))
+        .unwrap_or_default();
+
     let mut app = App::new();
     // Models of trees and scenery objects come from the mods: `mods://<mod>/…`.
     // Has to be registered before the asset plugin.
@@ -358,7 +368,17 @@ fn main() {
     .insert_resource(LinePath(line_path))
     .insert_resource(StartHeight(start_height))
     .init_resource::<Request>()
-    .init_resource::<EditorState>()
+    .insert_resource(EditorState {
+        // `--drawer [category]`: the drawer is a keyboard away
+        // (`Ctrl`+`Space`), and a screenshot run has no keyboard — the
+        // simulator's `--overlays` is the same flag for the same reason.
+        drawer: content_drawer::Drawer {
+            open: drawer.is_some(),
+            category: drawer_category,
+            ..default()
+        },
+        ..default()
+    })
     .init_resource::<Ghost>()
     .init_resource::<gizmo::GizmoState>()
     .init_resource::<thumbnails::Thumbnails>()

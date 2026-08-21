@@ -29,4 +29,6 @@
             lamps: ["sperre_auf"],
         ),
     ],
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["track-lock", "shunting"],
 )

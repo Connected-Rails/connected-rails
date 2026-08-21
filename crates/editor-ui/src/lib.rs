@@ -10,6 +10,8 @@ use bevy_egui::egui::{
     epaint::Shadow, vec2,
 };
 
+use i18n::t;
+
 mod curve;
 mod datetime;
 mod icon;
@@ -431,8 +433,83 @@ pub fn field<N: egui::emath::Numeric>(
     .inner
 }
 
+/// The one form a tag takes: trimmed, lower case, inner runs of whitespace as
+/// single hyphens. Mods are written by many hands, and `Epoch 4`, `epoch-4` and
+/// `Epoch4` as three separate tags in one catalogue defeat the whole filter.
+/// Returns `None` for anything that normalises to nothing.
+pub fn normalize_tag(text: &str) -> Option<String> {
+    let tag = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_lowercase();
+    (!tag.is_empty()).then_some(tag)
+}
+
+/// Editor for the free-form tags of a mod entry: the tags as chips that delete
+/// themselves on a click, and one field that adds what is typed into it.
+///
+/// `id` separates the pending text of two editors on the same panel. Returns
+/// whether the list changed, so the caller can mark the document unsaved
+/// without diffing it.
+pub fn tag_editor(ui: &mut egui::Ui, id: &str, tags: &mut Vec<String>) -> bool {
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        let mut remove = None;
+        for (index, tag) in tags.iter().enumerate() {
+            // The chip is one button, not a label plus a cross: at this size
+            // two hit targets side by side are a coin toss for the mouse.
+            if ui
+                .small_button(format!("{tag}{NBSP}×"))
+                .on_hover_text(t!("tag-remove-hint"))
+                .clicked()
+            {
+                remove = Some(index);
+            }
+        }
+        if let Some(index) = remove {
+            tags.remove(index);
+            changed = true;
+        }
+
+        // The pending text belongs to the widget, not to the document being
+        // edited — a half-typed tag is not part of the file.
+        let pending_id = egui::Id::new(("tag-editor", id));
+        let mut pending = ui.data_mut(|d| d.get_temp::<String>(pending_id).unwrap_or_default());
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut pending)
+                .hint_text(t!("tag-add-placeholder"))
+                .desired_width(space::FIELD),
+        );
+        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let add = ui.small_button(t!("tag-add")).clicked();
+        if entered || add {
+            if let Some(tag) = normalize_tag(&pending)
+                && !tags.contains(&tag)
+            {
+                tags.push(tag);
+                changed = true;
+            }
+            pending.clear();
+            // Enter adds one tag and leaves the caret where the next one is
+            // typed — a tag list is written in one go, not one field visit
+            // per entry.
+            field.request_focus();
+        }
+        ui.data_mut(|d| d.insert_temp(pending_id, pending));
+    });
+    changed
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tags_normalise_to_one_form() {
+        assert_eq!(super::normalize_tag("  Epoch 4 "), Some("epoch-4".into()));
+        assert_eq!(super::normalize_tag("Mast"), Some("mast".into()));
+        assert_eq!(super::normalize_tag("   "), None);
+    }
+
     #[test]
     fn digit_grouping_round_trips() {
         assert_eq!(super::group_digits(3_620_000.0), "3\u{A0}620\u{A0}000");

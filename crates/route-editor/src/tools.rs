@@ -16,10 +16,11 @@ use bevy::window::PrimaryWindow;
 use content::LineSource;
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
-    ObjectSource, TerrainEdit, TerrainEditSource, TreeSource,
+    ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
 use glam::{DVec2, DVec3};
 use i18n::t;
+use sim_core::interlock::{SignalKind, SignalSystem};
 use track_model::{DeviceKind, Facing, Segment, TrackNetwork, TrackPose};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
@@ -227,6 +228,12 @@ pub struct EditorState {
     pub jump_to: Option<&'static str>,
     /// Object (`"<mod>:<name>"`) the Place-object tool stamps.
     pub object: Option<String>,
+    /// Signal type (`"<mod>:<name>"`) a signal placed with the Place-device
+    /// tool gets; `None` = the device stays a bare signal without a type.
+    pub signal_type: Option<String>,
+    /// Signal model (`"<mod>:<name>"`) that overrides the type's default on a
+    /// signal placed from here.
+    pub signal_model: Option<String>,
     /// Tree object the tree and forest tools use; `None` = placeholder tree.
     pub tree_object: Option<String>,
     /// Corner points of the forest polygon being drawn.
@@ -1269,6 +1276,7 @@ pub fn tool_input(
     focus: Res<Focus>,
     ghost: Res<Ghost>,
     objects: Res<TrackObjects>,
+    signal_types: Res<crate::signals::SignalTypes>,
     gizmo: Res<crate::gizmo::GizmoState>,
     marks: Res<crate::terrain::Marks>,
     mut state: ResMut<EditorState>,
@@ -1503,14 +1511,39 @@ pub fn tool_input(
                 Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
                     let kind = state.device_kind();
                     line.source.devices.push(DeviceSource {
-                        kind,
+                        kind: kind.clone(),
                         edge: edge as u32,
                         s,
                         facing: Facing::default(),
                         lateral_offset: 0.0,
                         payload: String::new(),
                     });
-                    state.selection = Selection::Device(line.source.devices.len() - 1);
+                    let device = line.source.devices.len() - 1;
+                    // A signal picked in the content drawer arms type and model
+                    // here, and the placement carries them straight away — the
+                    // device alone would stand there dark and modelless until
+                    // someone typed the type into the panel by hand.
+                    if kind == DeviceKind::Signal
+                        && (state.signal_type.is_some() || state.signal_model.is_some())
+                    {
+                        let system = state
+                            .signal_type
+                            .as_deref()
+                            .and_then(|name| signal_types.map.get(name))
+                            .map_or(SignalSystem::Ks, |ty| ty.system);
+                        line.source.signals.push(SignalSource {
+                            kind: SignalKind::Main,
+                            system,
+                            device: device as u32,
+                            next: None,
+                            guarded: Vec::new(),
+                            requires_route: false,
+                            diverging_speed: None,
+                            signal_type: state.signal_type.clone(),
+                            model: state.signal_model.clone(),
+                        });
+                    }
+                    state.selection = Selection::Device(device);
                 }
                 _ => overlay.status = t!("status-no-track-hit"),
             };

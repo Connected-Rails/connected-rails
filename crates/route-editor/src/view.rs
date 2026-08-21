@@ -397,7 +397,10 @@ mod tests {
         assert!(offset.dot(frame.up).abs() < 1e-6, "{offset}");
         // 240 px at the plane's metres per pixel.
         let per_pixel = 2.0 * 900.0 * HALF_FOV.tan() / 720.0;
-        assert!((offset.length() - 240.0 * per_pixel).abs() < 1e-6, "{offset}");
+        assert!(
+            (offset.length() - 240.0 * per_pixel).abs() < 1e-6,
+            "{offset}"
+        );
 
         // A bar at the top pushes the free rect down; the camera goes up.
         let offset = focus.viewport_offset(Rect::new(0.0, 80.0, 1280.0, 720.0), window);

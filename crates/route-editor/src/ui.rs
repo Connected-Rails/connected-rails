@@ -134,6 +134,14 @@ pub fn draw(
         .pointer_interact_pos()
         .and_then(|p| ctx.layer_id_at(p))
         .is_some_and(|layer| layer.order != egui::Order::Background);
+    // A press on the map takes the keyboard back from whatever text field held
+    // it. The viewport is no egui widget, so egui never moves the focus away by
+    // itself: a click into the drawer's filter (or the module name) otherwise
+    // keeps every later WASD keystroke, and the camera stands still while the
+    // field fills up with "wwwasd".
+    if !state.pointer_over_ui && ctx.input(|i| i.pointer.any_pressed()) {
+        ctx.memory_mut(|m| m.stop_text_input());
+    }
     state.typing = ctx.memory(|m| m.focused().is_some());
     viewport_hint(&ctx, &root, &state);
     Ok(())
@@ -281,7 +289,7 @@ fn handle_shortcuts(
     request: &mut Request,
 ) {
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_DRAWER)) {
-        state.drawer.open = !state.drawer.open;
+        state.drawer.toggle();
     }
     // Redo first: Ctrl+Shift+Z must not be eaten by the plain Ctrl+Z.
     if ctx
@@ -1035,7 +1043,7 @@ fn status_bar(
                 )
                 .clicked()
                 {
-                    state.drawer.open = !state.drawer.open;
+                    state.drawer.toggle();
                 }
                 editor_ui::bar_divider(ui);
                 // Date and time of day: the light over the module is looked at
@@ -1232,6 +1240,17 @@ fn left_panel(
                                     kind_combo(ui, "place-kind", &mut kind);
                                     state.device_kind = Some(kind);
                                 });
+                                // What the content drawer armed. Read-only here:
+                                // the drawer is where a type is picked, this only
+                                // says which one the next click stamps.
+                                if state.device_kind() == DeviceKind::Signal {
+                                    row(ui, "sig-type", |ui| {
+                                        armed(ui, &mut state.signal_type);
+                                    });
+                                    row(ui, "sig-model", |ui| {
+                                        armed(ui, &mut state.signal_model);
+                                    });
+                                }
                             });
                         }
                         if state.tool == Tool::MarkArea {
@@ -3639,6 +3658,26 @@ fn kind_label(kind: &DeviceKind) -> String {
         DeviceKind::NeutralSection => t!("kind-neutral-section"),
         // A country-package kind keeps its name — it is an identifier, not prose.
         DeviceKind::Other(name) => name.clone(),
+    }
+}
+
+/// What the content drawer has armed: the key, or a hint at where to pick one.
+/// The button next to it drops the pick again.
+fn armed(ui: &mut egui::Ui, key: &mut Option<String>) {
+    match key {
+        Some(name) => {
+            ui.label(egui::RichText::new(name.clone()).color(colors::TEXT));
+            if ui.small_button(t!("action-reset")).clicked() {
+                *key = None;
+            }
+        }
+        None => {
+            ui.label(
+                egui::RichText::new(t!("tool-device-pick"))
+                    .small()
+                    .color(colors::TEXT_SECONDARY),
+            );
+        }
     }
 }
 

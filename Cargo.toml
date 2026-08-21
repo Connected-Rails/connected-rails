@@ -32,7 +32,7 @@ mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }
 bevy = "0.19"
 # Desktop UI of the editors: menu bar, docked panels (bevy_egui) and the operating
 # system's own file dialogs (rfd).
-bevy_egui = "0.41"
+bevy_egui = "0.42"
 # Multiplayer over dedicated servers (ch. 20): netcode over UDP, messages and channels.
 # Lightyear's own entity replication, prediction and interpolation stay off — a train runs
 # on a track, so the app replicates the track position and the driver's setpoints itself.

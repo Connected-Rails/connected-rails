@@ -60,7 +60,7 @@ pub enum Icon {
 
 /// Size of an icon button: the design system's widget height, a little wider
 /// than tall so a row of them keeps the rhythm of the text buttons beside it.
-const BUTTON: Vec2 = Vec2::new(26.0, 22.0);
+pub(crate) const BUTTON: Vec2 = Vec2::new(26.0, 22.0);
 /// Air between the button edge and the drawing.
 const PADDING: f32 = 5.0;
 const LINE: f32 = 1.5;

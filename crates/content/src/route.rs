@@ -125,8 +125,8 @@ pub struct ObjectSource {
     #[serde(default)]
     pub height: f64,
     /// Put the object's base on the terrain surface instead of the rail plane;
-    /// `height` then measures from the ground. Resolved by the app, which has
-    /// the elevation data — the editor map is unaffected.
+    /// `height` then measures from the ground. Resolved by the terrain tile
+    /// the object stands on, in the editor as in the run.
     #[serde(default)]
     pub snap_to_terrain: bool,
 }

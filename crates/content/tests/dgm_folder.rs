@@ -49,7 +49,7 @@ fn directory_is_indexed_recursively() {
 #[test]
 fn tiles_are_loaded_only_on_demand() {
     let dir = fixture("lazy");
-    let mut source = TerrainSource::from_dir(&dir, 32).expect("directory readable");
+    let source = TerrainSource::from_dir(&dir, 32).expect("directory readable");
 
     // Query in the south-west tile.
     assert_eq!(source.height_at_utm(600_500.0, 5_760_500.0), Some(100.0));
@@ -74,8 +74,8 @@ fn tiles_are_loaded_only_on_demand() {
 #[test]
 fn cache_stays_bounded() {
     let dir = fixture("cache");
-    let mut source = TerrainSource::from_dir(&dir, 32).expect("directory readable");
-    source.cache_limit = 2;
+    let source = TerrainSource::from_dir(&dir, 32).expect("directory readable");
+    source.set_cache_limit(2);
 
     // Round robin through all four tiles: the cache holds only two, so it reloads.
     let points = [
@@ -106,7 +106,7 @@ fn terrain_from_the_directory() {
     use world_coords::geo;
 
     let dir = fixture("terrain");
-    let mut sources = [TerrainSource::from_dir(&dir, 32).expect("directory readable")];
+    let sources = [TerrainSource::from_dir(&dir, 32).expect("directory readable")];
 
     // Lay a track right across the tile area.
     let (lat, lon) = geo::from_utm(600_200.0, 5_760_500.0, 32);
@@ -126,7 +126,7 @@ fn terrain_from_the_directory() {
         radius: 300.0,
         ..Default::default()
     };
-    let (tiles, stats) = build(&net, &mut sources, &options);
+    let (tiles, stats) = build(&net, &sources, &options);
 
     assert!(stats.tiles > 0);
     assert!(stats.triangles > 1000);

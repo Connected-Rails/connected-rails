@@ -99,7 +99,7 @@ impl std::fmt::Display for ImportError {
 /// Imports a line from Overpass JSON and an optional height grid.
 pub fn import_line(
     osm_json: &str,
-    heights: Option<&mut TerrainSource>,
+    heights: Option<&TerrainSource>,
     options: &ImportOptions,
 ) -> Result<(LineSource, ImportReport), ImportError> {
     let railway = osm::parse(osm_json).map_err(ImportError::Osm)?;
@@ -123,12 +123,10 @@ pub fn import_line(
 
     // Height and permitted speed per support point.
     let mut with_height = 0usize;
-    let mut heights = heights;
     let mut samples: Vec<SamplePoint> = Vec::with_capacity(resampled.len());
     for (pos, _s, segment) in &resampled {
         let source = &route[(*segment).min(route.len() - 1)];
         let height = heights
-            .as_mut()
             .and_then(|g| {
                 let (lat, lon) = frame_to_geodetic(&frame, *pos);
                 g.height_at(lat, lon)

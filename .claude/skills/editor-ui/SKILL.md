@@ -84,6 +84,21 @@ colours, so an active button's icon turns with its fill. New icons go into
 `crates/editor-ui/src/icon.rs` as unit-coordinate line segments; keep them to
 the existing `Stroke` width so a row of them has one weight.
 
+The exception is a symbol that has to be *recognised* rather than merely told
+apart — the sun on the status bar's day rail, the calendar leaf on its date
+button. Those are glyphs of the bundled **Phosphor** font (MIT, see
+`THIRD_PARTY_LICENSES.md`), typed through `editor_ui::icon_font(size)`:
+`RichText::new(egui_phosphor::regular::SUN).font(icon_font(14.0))`, or that
+`FontId` in a `Painter::text`. Do not design a symbol by hand where a licensed
+set has one.
+
+`icon_font` is a **family of its own**, and it must stay that way. Phosphor
+maps `a`–`z` as well as its symbols, so it can never sit in front of Inter in
+the `Proportional` chain; Inter in turn carries private-use glyphs that answer
+for the calendar and the carets before Phosphor ever would, so it can never sit
+behind it either. A symbol drawn in `Proportional` therefore comes out as a
+random shape, not as tofu — the failure is silent.
+
 - `icon_button(ui, icon, active, tooltip)` — 26×22, pressed-in (`ACCENT_BG` +
   `ACCENT_TEXT`) while active, so a pair reads as a choice rather than as two
   commands. The tooltip is the only text an icon has: name the function *and*
@@ -111,7 +126,7 @@ the existing `Stroke` width so a row of them has one weight.
 ## Typography
 
 Inter, bundled in `crates/editor-ui/fonts/` (OFL license file next to it).
-Two weights only:
+Two weights, plus the icon font (`icon_font`, see above) for symbols only:
 
 - **Inter Regular** — everything (Body/Button 13 px, Small 11 px).
 - **Inter SemiBold** — headings and titles only, via `editor_ui::semibold()`
@@ -265,7 +280,15 @@ The vehicle editor's left panel is the reference implementation
   selected chip is a button, "1" is narrower than "0"), and a horizontal
   gives each row its own x.
 - Status bar: message left; on the right the path in `TEXT_SECONDARY` and the
-  unsaved marker in `colors::WARN`. The message carries its severity with it
+  unsaved marker in `colors::WARN`, and at the far right the frame rate,
+  entity and tile counts (`status-perf`, `TEXT_SECONDARY`) — the readouts are
+  laid out first, right to left, and the message gets what is left, truncated;
+  the other way round a long message runs under the readouts. Between the
+  drawer button and the message,
+  the route editor's bar carries `day_controls` — date, clock and the day on
+  its rail — because what they change is the picture on the map, not the
+  document; their widths live in `datetime.rs`, so the caller passes fields,
+  not sizes. The message carries its severity with it
   (`Status::Info` / `Status::Error`) and a failure is drawn in `colors::ERROR`
   — a load that did not happen must not read exactly like one that did. The
   label is `.truncate()`d with the full text on hover, so a long path cannot

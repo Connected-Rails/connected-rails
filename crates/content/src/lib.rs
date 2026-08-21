@@ -16,6 +16,6 @@ pub use import::{ImportOptions, ImportReport, import_line};
 pub use route::{CompiledLine, LineSource, TreeSource};
 pub use scenarios::{re_4711, to_musterstadt};
 pub use terrain::{
-    TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, TerrainTile, TileKey, Tree,
-    Vegetation,
+    Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,
+    TerrainTile, TileKey, Tree, Vegetation,
 };

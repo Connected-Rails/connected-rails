@@ -1365,8 +1365,17 @@ them along like devices.
 A placement with `snap_to_terrain: true` stands on the **terrain surface** instead of the
 rail plane — `height` then measures from the ground. The strip beside the track is
 blended toward rail height, so a snapped object next to the ballast still meets it. The
-editor's selection panel has the checkbox; the app resolves the height, because only it
-has the elevation data.
+editor's selection panel has the checkbox, and both programs resolve the height the same
+way: an object is placed by the terrain tile it stands on, so it streams in and out with
+that tile and its feet meet the ground the tile actually has.
+
+**Levels of detail** work as for vehicles and signals: nodes named `<name>_LOD0`,
+`_LOD1`, … are shown by camera distance (the bands are 200, 700 and 1 500 m; the last
+level a model ships runs to the cull distance — 2.5 km for trees, 3 km for objects).
+A model without the suffix is one level, drawn up to that distance. This matters most
+for trees: every tree of a wood is drawn as an **instance** of its model's mesh parts —
+not as its own scene — so a thousand firs sharing one glTF are a handful of draw calls,
+and a low-poly `_LOD1` is what keeps a whole hillside cheap.
 
 **Lit windows at night.** A node whose name ends in **`_NIGHT`** is shown after dusk and
 hidden by day — lit windows in a house, a glowing sign, the light pool under a platform

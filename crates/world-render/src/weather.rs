@@ -124,6 +124,15 @@ fn dress(
 
     let params = WeatherParams::of(&sky);
     for (entity, handle) in todo {
+        // The entity may be gone by now: the editor's terrain streaming despawns
+        // a tile with the trees on it, and a rebuild throws away everything the
+        // document spawned. Waiting in `pending` for a material makes that a
+        // question of frames rather than of one — and a dressing queued for an
+        // entity that no longer exists takes the app down when the command
+        // buffer is applied, not where it was queued.
+        if commands.get_entity(entity).is_err() {
+            continue;
+        }
         let Some(material) = base.get(&handle) else {
             // The scene is spawned, the material is still loading — next frame.
             pending.push((entity, handle));
@@ -138,10 +147,12 @@ fn dress(
                 })
             })
             .clone();
+        // `try_`: the despawn may also come from a system that runs between
+        // this one and the sync point that applies its commands.
         commands
             .entity(entity)
-            .remove::<MeshMaterial3d<StandardMaterial>>()
-            .insert(MeshMaterial3d(dressed));
+            .try_remove::<MeshMaterial3d<StandardMaterial>>()
+            .try_insert(MeshMaterial3d(dressed));
     }
 }
 

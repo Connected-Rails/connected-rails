@@ -12,8 +12,9 @@
 //! and [`TerrainSource`] loads tiles only on demand and keeps only the most recently used
 //! ones.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 use world_coords::geo;
 
 /// A height tile: dense grid in UTM coordinates.
@@ -68,9 +69,17 @@ impl HeightTile {
 
     /// Reads an XYZ grid.
     pub fn parse_xyz(text: &str, zone: u8) -> Result<Self, DgmError> {
-        let mut points: Vec<(f64, f64, f32)> = Vec::new();
+        // A DGM1 sheet is a million lines; growing the vector by doubling
+        // copies it twenty times over. The line count is the upper bound.
+        let mut points: Vec<(f64, f64, f32)> = Vec::with_capacity(text.len() / 24);
+        let (mut min_x, mut max_x) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut min_y, mut max_y) = (f64::INFINITY, f64::NEG_INFINITY);
         for line in text.lines() {
             if let Some(p) = parse_xyz_line(line) {
+                min_x = min_x.min(p.0);
+                max_x = max_x.max(p.0);
+                min_y = min_y.min(p.1);
+                max_y = max_y.max(p.1);
                 points.push(p);
             }
         }
@@ -80,7 +89,7 @@ impl HeightTile {
 
         // Grid spacing from the smallest distance between two different eastings.
         let mut xs: Vec<f64> = points.iter().map(|p| p.0).collect();
-        xs.sort_by(f64::total_cmp);
+        xs.sort_unstable_by(f64::total_cmp);
         xs.dedup();
         let cell = xs
             .windows(2)
@@ -91,10 +100,6 @@ impl HeightTile {
             return Err(DgmError::IrregularGrid);
         }
 
-        let min_x = points.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
-        let max_x = points.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
-        let min_y = points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
-        let max_y = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
         let cols = ((max_x - min_x) / cell).round() as usize + 1;
         let rows = ((max_y - min_y) / cell).round() as usize + 1;
         if cols * rows > MAX_CELLS {
@@ -246,7 +251,7 @@ impl HeightTile {
     /// ships instead of the state's whole DGM1. Points without data become
     /// NODATA, so a square that only half touches the delivery still works.
     pub fn sample(
-        sources: &mut [TerrainSource],
+        sources: &[TerrainSource],
         zone: u8,
         origin: (f64, f64),
         size: f64,
@@ -261,7 +266,7 @@ impl HeightTile {
             for ix in 0..n {
                 let e = origin.0 + ix as f64 * cell;
                 let north = origin.1 + iy as f64 * cell;
-                let height = sources.iter_mut().find_map(|s| {
+                let height = sources.iter().find_map(|s| {
                     if s.zone == zone {
                         s.height_at_utm(e, north)
                     } else {
@@ -328,49 +333,66 @@ fn parse_xyz_line(line: &str) -> Option<(f64, f64, f32)> {
 #[derive(Debug, Clone)]
 struct TileEntry {
     path: PathBuf,
-    /// `(min_x, min_y, max_x, max_y)` [m].
+    /// `(min_x, min_y, max_x, max_y)` [m] — from the file name where it
+    /// carries the sheet corner, otherwise read out of the file.
     bounds: (f64, f64, f64, f64),
-    /// Extent only guessed from the file name (not read from the content).
-    guessed: bool,
 }
+
+/// Edge length of the cells the sheet index is kept in [m]. DGM sheets are
+/// whole kilometres, so a sheet lands in one cell and a point finds its sheet
+/// with one hash lookup instead of a scan over the delivery.
+const INDEX_CELL: f64 = 1_000.0;
 
 /// Height source from a directory full of DGM tiles.
 ///
 /// Tiles are loaded **lazily**: on creation only an index of the sheet boundaries is
 /// built (from the file name or the ASCII grid header); loading happens only when a
-/// query falls into a tile. At most [`TerrainSource::cache_limit`] tiles stay in memory
-/// (LRU).
+/// query falls into a tile. At most `cache_limit` tiles stay in memory (LRU).
+///
+/// Every method takes `&self`: the cache lives behind its own short lock, so
+/// several terrain tiles can be built from the same source at the same time.
+/// A sheet is read off disk **outside** that lock — a load takes seconds for
+/// a DGM1 sheet, and the other builders keep sampling what is already there.
 #[derive(Debug)]
 pub struct TerrainSource {
     pub zone: u8,
-    /// How many tiles may stay in memory at the same time.
-    pub cache_limit: usize,
     tiles: Vec<TileEntry>,
-    /// Most recently used tiles, the newest at the front.
-    cache: VecDeque<(usize, HeightTile)>,
+    /// Sheet indices by kilometre cell of their extent.
+    cells: HashMap<(i64, i64), Vec<usize>>,
+    state: Mutex<CacheState>,
+    /// One lock per sheet, held while it is read: a second builder that needs
+    /// the same sheet waits for the first instead of parsing it again.
+    loading: Vec<Mutex<()>>,
+}
+
+#[derive(Debug)]
+struct CacheState {
+    /// How many tiles may stay in memory at the same time.
+    limit: usize,
+    /// Most recently used tiles, the newest at the front. Shared, so a build
+    /// keeps sampling a sheet the cache has since let go of.
+    cache: VecDeque<(usize, Arc<HeightTile>)>,
     /// Tiles that could not be loaded — do not try again.
-    failed: Vec<usize>,
+    failed: Vec<bool>,
     loads: usize,
 }
 
 impl TerrainSource {
     /// Source from a single, already loaded tile (tests, small areas).
     pub fn from_tile(tile: HeightTile) -> Self {
+        let zone = tile.zone;
         let entry = TileEntry {
             path: PathBuf::new(),
             bounds: tile.bounds(),
-            guessed: false,
         };
-        let mut cache = VecDeque::new();
-        cache.push_front((0, tile));
-        Self {
-            zone: cache[0].1.zone,
-            cache_limit: 8,
-            tiles: vec![entry],
-            cache,
-            failed: Vec::new(),
-            loads: 0,
-        }
+        let mut source = Self::from_entries(vec![entry], zone);
+        source
+            .state
+            .get_mut()
+            .expect("fresh source")
+            .cache
+            .push_front((0, Arc::new(tile)));
+        source
     }
 
     /// Search a directory (recursively) for `*.xyz`, `*.asc` and `*.txt`.
@@ -383,22 +405,47 @@ impl TerrainSource {
         let entries = tiles
             .into_iter()
             .filter_map(|path| {
-                let (bounds, guessed) = tile_bounds(&path)?;
-                Some(TileEntry {
-                    path,
-                    bounds,
-                    guessed,
-                })
+                let bounds = tile_bounds(&path)?;
+                Some(TileEntry { path, bounds })
             })
             .collect();
-        Ok(Self {
+        Ok(Self::from_entries(entries, zone))
+    }
+
+    fn from_entries(tiles: Vec<TileEntry>, zone: u8) -> Self {
+        let mut cells: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        for (i, t) in tiles.iter().enumerate() {
+            for cell in cells_of(t.bounds) {
+                cells.entry(cell).or_default().push(i);
+            }
+        }
+        Self {
             zone,
-            cache_limit: 8,
-            tiles: entries,
-            cache: VecDeque::new(),
-            failed: Vec::new(),
-            loads: 0,
-        })
+            loading: (0..tiles.len()).map(|_| Mutex::new(())).collect(),
+            state: Mutex::new(CacheState {
+                limit: 8,
+                cache: VecDeque::new(),
+                failed: vec![false; tiles.len()],
+                loads: 0,
+            }),
+            tiles,
+            cells,
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, CacheState> {
+        // A panic while holding the lock leaves nothing half-written: the
+        // cache is only ever pushed to and popped from.
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How many sheets may stay in memory at the same time.
+    pub fn set_cache_limit(&self, limit: usize) {
+        let mut state = self.state();
+        state.limit = limit.max(1);
+        while state.cache.len() > state.limit {
+            state.cache.pop_back();
+        }
     }
 
     /// Number of known tiles.
@@ -408,7 +455,7 @@ impl TerrainSource {
 
     /// How often a tile was read from disk (a metric for the cache).
     pub fn load_count(&self) -> usize {
-        self.loads
+        self.state().loads
     }
 
     /// Total extent of all tiles `(min_x, min_y, max_x, max_y)`.
@@ -420,59 +467,107 @@ impl TerrainSource {
     }
 
     /// Height at a UTM point [m].
-    pub fn height_at_utm(&mut self, easting: f64, northing: f64) -> Option<f64> {
-        // Look in the cache first (the common case: consecutive queries fall into the
+    pub fn height_at_utm(&self, easting: f64, northing: f64) -> Option<f64> {
+        self.sheet_at(easting, northing)?
+            .height_at_utm(easting, northing)
+    }
+
+    /// The sheet covering a UTM point, loaded if need be — for a caller that
+    /// samples many points and wants to skip the lookup while they stay on
+    /// the same sheet (see [`HeightTile::contains`]).
+    pub fn sheet_at(&self, easting: f64, northing: f64) -> Option<Arc<HeightTile>> {
+        // The cache first (the common case: consecutive queries fall into the
         // same tile).
-        for i in 0..self.cache.len() {
-            if self.cache[i].1.contains(easting, northing) {
+        {
+            let mut state = self.state();
+            let hit = state
+                .cache
+                .iter()
+                .position(|(_, t)| t.contains(easting, northing));
+            if let Some(i) = hit {
                 if i > 0 {
-                    let entry = self.cache.remove(i).unwrap();
-                    self.cache.push_front(entry);
+                    let entry = state.cache.remove(i).expect("index from position");
+                    state.cache.push_front(entry);
                 }
-                return self.cache[0].1.height_at_utm(easting, northing);
+                return Some(state.cache[0].1.clone());
             }
         }
 
-        let index = self
-            .tiles
-            .iter()
-            .enumerate()
-            .find(|(i, t)| {
-                !self.failed.contains(i)
-                    && easting >= t.bounds.0
-                    && easting <= t.bounds.2
-                    && northing >= t.bounds.1
-                    && northing <= t.bounds.3
-            })
-            .map(|(i, _)| i)?;
-        let tile = self.load(index)?;
-        tile.height_at_utm(easting, northing)
+        let cell = index_cell(easting, northing);
+        let candidates = self.cells.get(&cell)?;
+        let index = {
+            let state = self.state();
+            candidates.iter().copied().find(|&i| {
+                let b = self.tiles[i].bounds;
+                !state.failed[i]
+                    && easting >= b.0
+                    && easting <= b.2
+                    && northing >= b.1
+                    && northing <= b.3
+            })?
+        };
+        self.load(index)
     }
 
     /// Height at geodetic coordinates (degrees).
-    pub fn height_at(&mut self, lat_deg: f64, lon_deg: f64) -> Option<f64> {
+    pub fn height_at(&self, lat_deg: f64, lon_deg: f64) -> Option<f64> {
         let (e, n) = geo::to_utm(lat_deg.to_radians(), lon_deg.to_radians(), self.zone);
         self.height_at_utm(e, n)
     }
 
-    fn load(&mut self, index: usize) -> Option<&HeightTile> {
-        let path = self.tiles[index].path.clone();
-        let text = std::fs::read_to_string(&path).ok();
+    fn load(&self, index: usize) -> Option<Arc<HeightTile>> {
+        let _reading = self.loading[index]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Whoever held that lock before us may have loaded the very sheet.
+        {
+            let state = self.state();
+            if let Some((_, tile)) = state.cache.iter().find(|(i, _)| *i == index) {
+                return Some(tile.clone());
+            }
+            if state.failed[index] {
+                return None;
+            }
+        }
+        let path = &self.tiles[index].path;
+        let text = std::fs::read_to_string(path).ok();
         let tile = text.and_then(|t| HeightTile::parse(&t, self.zone).ok());
+        let mut state = self.state();
         let Some(tile) = tile else {
-            self.failed.push(index);
+            state.failed[index] = true;
             return None;
         };
-        self.loads += 1;
-        // The real extent replaces the guessed one.
-        self.tiles[index].bounds = tile.bounds();
-        self.tiles[index].guessed = false;
-        self.cache.push_front((index, tile));
-        while self.cache.len() > self.cache_limit.max(1) {
-            self.cache.pop_back();
+        // ponytail: an extent guessed from the file name is not corrected by
+        // the real one — a state's sheet is the kilometre its name says.
+        let tile = Arc::new(tile);
+        state.loads += 1;
+        state.cache.push_front((index, tile.clone()));
+        while state.cache.len() > state.limit.max(1) {
+            state.cache.pop_back();
         }
-        Some(&self.cache[0].1)
+        Some(tile)
     }
+}
+
+/// Kilometre cell of a UTM point.
+fn index_cell(easting: f64, northing: f64) -> (i64, i64) {
+    (
+        (easting / INDEX_CELL).floor() as i64,
+        (northing / INDEX_CELL).floor() as i64,
+    )
+}
+
+/// Every kilometre cell an extent touches.
+fn cells_of((x0, y0, x1, y1): (f64, f64, f64, f64)) -> Vec<(i64, i64)> {
+    let (ax, ay) = index_cell(x0, y0);
+    let (bx, by) = index_cell(x1, y1);
+    let mut cells = Vec::with_capacity(((bx - ax + 1) * (by - ay + 1)).max(1) as usize);
+    for y in ay..=by {
+        for x in ax..=bx {
+            cells.push((x, y));
+        }
+    }
+    cells
 }
 
 /// Collect all candidate files (recursively).
@@ -501,14 +596,14 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
 /// The states name DGM1 tiles after their south-west corner in kilometres, e.g.
 /// `dgm1_32_389_5711_1_nw.xyz` or `32389_5711.xyz`. That fixes the extent without opening
 /// the file — with 1000 tiles this saves minutes.
-fn tile_bounds(path: &Path) -> Option<((f64, f64, f64, f64), bool)> {
+fn tile_bounds(path: &Path) -> Option<(f64, f64, f64, f64)> {
     if let Some(b) = bounds_from_name(path) {
-        return Some((b, true));
+        return Some(b);
     }
     // ASCII grid: the header is in the first lines.
     let text = std::fs::read_to_string(path).ok()?;
     let tile = HeightTile::parse(&text, 32).ok()?;
-    Some((tile.bounds(), false))
+    Some(tile.bounds())
 }
 
 /// Read the south-west corner from the file name (kilometre values).
@@ -589,9 +684,9 @@ mod tests {
     /// data stays NODATA instead of turning into zeros.
     #[test]
     fn a_sampled_cut_out_survives_the_ascii_round_trip() {
-        let mut source = TerrainSource::from_tile(HeightTile::parse_xyz(&grid_text(), 32).unwrap());
+        let source = TerrainSource::from_tile(HeightTile::parse_xyz(&grid_text(), 32).unwrap());
         let cut = HeightTile::sample(
-            std::slice::from_mut(&mut source),
+            std::slice::from_ref(&source),
             32,
             (600_000.0, 5_760_000.0),
             50.0,
@@ -614,7 +709,7 @@ mod tests {
         // A square outside the delivery holds no data at all — the import skips
         // such tiles instead of shipping a plate of zeros.
         let empty = HeightTile::sample(
-            std::slice::from_mut(&mut source),
+            std::slice::from_ref(&source),
             32,
             (700_000.0, 5_760_000.0),
             50.0,
@@ -669,7 +764,7 @@ mod tests {
 
     #[test]
     fn source_from_a_single_tile() {
-        let mut source = TerrainSource::from_tile(HeightTile::parse_xyz(&grid_text(), 32).unwrap());
+        let source = TerrainSource::from_tile(HeightTile::parse_xyz(&grid_text(), 32).unwrap());
         assert_eq!(source.tile_count(), 1);
         assert_eq!(source.height_at_utm(600_000.0, 5_760_000.0), Some(100.0));
         assert_eq!(source.height_at_utm(0.0, 0.0), None);

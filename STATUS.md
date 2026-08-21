@@ -264,10 +264,17 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   like a hand-set one. Trees are 3D objects from mods (`objects/*.ron`; empty
   name = generated placeholder tree). The app blends three generated ground
   textures by the weights in a `StandardMaterial` extension shader and spawns
-  the trees as children of the tile — shared assets per species, so they render
-  as instanced draws and stream with the tile. Track objects can opt into
-  `snap_to_terrain`: the base moves from the rail plane onto the terrain
-  surface (`TerrainBuilder::surface_height`). **One elevation source per UTM zone**: `--dgm`/`--epsg` may be
+  the trees **and the scenery objects** as children of the tile
+  (`content::terrain::Scenery`, `world_render::scatter`): a tree is one entity
+  per mesh part of its model, sharing the part's mesh and material handles —
+  read once out of the loaded `Gltf`, never a scene instance — so Bevy batches
+  a wood into instanced draws, `_LOD` nodes become `VisibilityRange` bands,
+  and a tile's wood appears in one go once its models have loaded. Track
+  objects can opt into `snap_to_terrain`: the base moves from the rail plane
+  onto the tile's own height grid. The `TerrainBuilder` is shared read-only
+  across the workers (`Arc`, no lock — the DGM sheets carry their own short
+  one, reads happen outside it), and an edited line is a new builder sharing
+  the sheets (`with_line`); the F6 panel reads frame time and entity count. **One elevation source per UTM zone**: `--dgm`/`--epsg` may be
   repeated, and a line across the 12° zone boundary takes each height from the first
   source that has one — the tile grid stays in the first zone, which is only a
   partitioning and continues past the boundary without a seam.
@@ -380,9 +387,14 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   their mount points. The shared `world-render` crate is that code, used by
   both programs, so a stroke, a wood, a signal box or a signal mast is judged
   where it is set instead of only in the run. Tiles are
-  built on the task pool around the view point (radius from the view height,
-  capped at 64 tiles); the standing builder takes an edit over without
-  re-indexing the DGM, and the old tile stays until its replacement arrives.
+  built on the task pool around the view point (3 km radius with a 25 %
+  unload hysteresis, capped at 64 tiles); an edit is **diffed** against the
+  last state (`main.rs::diff`) into what it reached — a stroke the ground of
+  the tiles under its disc, a moved tree or object only the trees and objects
+  of its tile, which are placed onto the standing ground again
+  (`TerrainBuilder::rescatter`) without a rebuild; only the track asks for
+  everything. The old tile stays until its replacement arrives, and the status
+  bar reads out frame rate, entities and tiles.
   Terrain and aerial imagery are the same ground layer, so only one of them is
   drawn: `T` (View ▸ Show terrain) switches, and a module that brings height
   data starts on its terrain. The status bar reads out the **ground height

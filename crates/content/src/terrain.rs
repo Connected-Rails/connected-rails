@@ -18,12 +18,47 @@
 //! length the app uses [`TerrainBuilder`] instead and builds single tiles by key while
 //! driving (plan 4.3).
 
-use crate::import::dgm::TerrainSource;
-use crate::route::{LineSource, TerrainEdit, TerrainEditSource, TreeSource};
-use glam::DVec2;
+use crate::import::dgm::{HeightTile, TerrainSource};
+use crate::route::{LineSource, ObjectSource, TerrainEdit, TerrainEditSource, TreeSource};
+use glam::{DQuat, DVec2, DVec3};
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::Arc;
 use track_model::TrackNetwork;
 use world_coords::{EcefPos, EnuFrame, geo};
+
+/// Hasher for the integer cell keys of the grids below. The standard one is
+/// SipHash, built to survive hostile input; a tile build asks the centreline
+/// grid nine times per vertex, and sixteen thousand vertices times nine
+/// SipHash rounds is a measurable slice of the build for no gain.
+#[derive(Default)]
+struct CellHasher(u64);
+
+impl Hasher for CellHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        // One round of splitmix over the running state: cheap, and the
+        // neighbouring cells a build visits do not collide.
+        let mut z = self.0 ^ value.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        self.0 = z ^ (z >> 31);
+    }
+
+    fn write_i64(&mut self, value: i64) {
+        self.write_u64(value as u64);
+    }
+}
+
+type CellMap<V> = HashMap<(i64, i64), V, BuildHasherDefault<CellHasher>>;
 
 /// Settings for the terrain generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -92,12 +127,35 @@ pub struct TerrainTile {
     pub splat: Vec<[f32; 4]>,
     /// Vegetation scattered on this tile — streamed instances (plan ch. 14).
     pub trees: Vec<Tree>,
+    /// Scenery objects standing on this tile, their feet on its ground where
+    /// they snap to it — streamed with the tile like the trees.
+    pub objects: Vec<SceneryInstance>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
     pub lod: u8,
     /// Bounding radius around the anchor [m] — for view distance and culling.
     pub radius: f32,
+    /// South-west corner [m UTM] and the height grid the mesh was built from,
+    /// row by row from the south — kept so the trees and objects of a tile can
+    /// be placed anew without building its ground again (the editor moves an
+    /// object; the hill under it has not changed).
+    pub min: DVec2,
+    pub heights: Vec<f32>,
+}
+
+/// One scenery object on a tile, in the tile's own frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SceneryInstance {
+    /// Base point in render axes, relative to the tile anchor.
+    pub pos: [f32; 3],
+    /// Orientation in render axes (`x, y, z, w`): the model's front along
+    /// the track plus the placement's yaw, its up the local vertical.
+    pub rotation: [f32; 4],
+    /// Index into [`Scenery::objects`].
+    pub object: u16,
+    /// Index of the placement in the line file — what the editor selects.
+    pub index: u32,
 }
 
 /// One tree instance on a tile — a hand-placed [`TreeSource`] or one grown out
@@ -117,6 +175,11 @@ pub struct Tree {
 impl TerrainTile {
     pub fn triangles(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    /// Grid points per side, less one.
+    fn n(&self, tile_size: f64) -> usize {
+        (tile_size / self.step).round().max(1.0) as usize
     }
 }
 
@@ -145,7 +208,7 @@ struct Centerline {
     /// Ellipsoidal height of the top of rail [m].
     heights: Vec<f64>,
     /// Accelerated neighbourhood index.
-    grid: HashMap<(i64, i64), Vec<usize>>,
+    grid: CellMap<Vec<usize>>,
     cell: f64,
 }
 
@@ -166,7 +229,7 @@ impl Centerline {
         }
 
         let cell = options.blend.max(50.0);
-        let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        let mut grid: CellMap<Vec<usize>> = CellMap::default();
         for (i, p) in points.iter().enumerate() {
             grid.entry(key(*p, cell)).or_default().push(i);
         }
@@ -262,6 +325,9 @@ struct PlacedTree {
 pub struct Vegetation {
     objects: Vec<String>,
     trees: Vec<PlacedTree>,
+    /// Tree indices by tile — a build looks at the trees of its tile, not at
+    /// the ten thousand of the whole wood. Filled by [`Self::bucket`].
+    by_tile: CellMap<Vec<u32>>,
 }
 
 impl Vegetation {
@@ -288,6 +354,7 @@ impl Vegetation {
         Self {
             objects,
             trees: placed,
+            by_tile: CellMap::default(),
         }
     }
 
@@ -295,6 +362,109 @@ impl Vegetation {
     pub fn objects(&self) -> &[String] {
         &self.objects
     }
+
+    /// Sorts the trees into the tile grid.
+    fn bucket(&mut self, tile_size: f64) {
+        self.by_tile = bucket(self.trees.iter().map(|t| t.pos), tile_size);
+    }
+}
+
+/// The scenery objects of a line, prepared for tile builds: where each one
+/// stands in UTM, the pose the track gives it, and the catalog of object
+/// names. An object that snaps to the terrain gets its height from the tile
+/// it lands on, so a build needs nothing but what it already has.
+#[derive(Debug, Clone, Default)]
+pub struct Scenery {
+    objects: Vec<String>,
+    placed: Vec<PlacedObject>,
+    by_tile: CellMap<Vec<u32>>,
+}
+
+/// One placement, resolved against the track: UTM position for the tile
+/// lookup, the rail-plane base and the two directions that orient the model.
+#[derive(Debug, Clone, Copy)]
+struct PlacedObject {
+    pos: DVec2,
+    /// Base point on the rail plane, lateral offset included.
+    base: EcefPos,
+    /// Local vertical at the base.
+    up: DVec3,
+    /// Where the model's front points, yaw applied.
+    dir: DVec3,
+    /// Above the rail plane — or above the ground, where `snap` is set.
+    height: f64,
+    snap: bool,
+    object: u16,
+    index: u32,
+}
+
+impl Scenery {
+    pub fn from_line(line: &LineSource, net: &TrackNetwork, zone: u8) -> Self {
+        Self::from_parts(&line.objects, net, zone)
+    }
+
+    pub fn from_parts(placements: &[ObjectSource], net: &TrackNetwork, zone: u8) -> Self {
+        let mut objects = Vec::new();
+        let placed = placements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, placement)| {
+                // Compile refused dangling indices; a guard keeps a stale
+                // file harmless.
+                let edge = net.edges().get(placement.edge as usize)?;
+                let pose = edge.eval(placement.s.clamp(0.0, edge.length()));
+                // Positive offset = right of increasing arc length.
+                let right = pose.tangent.cross(pose.up).normalize();
+                let base = EcefPos(pose.pos.0 + right * placement.lateral_offset);
+                // Yaw is clockwise seen from above; 0 = front along increasing s.
+                let dir =
+                    DQuat::from_axis_angle(pose.up, -placement.yaw_deg.to_radians()) * pose.tangent;
+                let (lat, lon, _) = geo::from_ecef(base);
+                let (e, n) = geo::to_utm(lat, lon, zone);
+                Some(PlacedObject {
+                    pos: DVec2::new(e, n),
+                    base,
+                    up: pose.up,
+                    dir,
+                    height: placement.height,
+                    snap: placement.snap_to_terrain,
+                    // An object always names something; an empty name is a
+                    // file defect the renderer shows as its placeholder.
+                    object: intern(&mut objects, &placement.object)
+                        .unwrap_or_else(|| intern(&mut objects, "").unwrap_or(0)),
+                    index: index as u32,
+                })
+            })
+            .collect();
+        Self {
+            objects,
+            placed,
+            by_tile: CellMap::default(),
+        }
+    }
+
+    /// The object names (`"<mod>:<name>"`) that [`SceneryInstance::object`]
+    /// indexes.
+    pub fn objects(&self) -> &[String] {
+        &self.objects
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.placed.is_empty()
+    }
+
+    fn bucket(&mut self, tile_size: f64) {
+        self.by_tile = bucket(self.placed.iter().map(|o| o.pos), tile_size);
+    }
+}
+
+/// Indices of `positions` by the tile they fall in.
+fn bucket(positions: impl Iterator<Item = DVec2>, tile_size: f64) -> CellMap<Vec<u32>> {
+    let mut by_tile: CellMap<Vec<u32>> = CellMap::default();
+    for (i, p) in positions.enumerate() {
+        by_tile.entry(key(p, tile_size)).or_default().push(i as u32);
+    }
+    by_tile
 }
 
 /// One prepared brush stroke: centre in UTM, radius, and what it does.
@@ -538,11 +708,18 @@ pub fn tile_distance(k: TileKey, p: DVec2, options: &TerrainOptions) -> f64 {
 /// carries a zone 32 and a zone 33 source, and every support point takes its height from
 /// the first source that has one. The tile grid stays in `options.zone` — it is only a
 /// partitioning and continues past the zone boundary without a seam.
+///
+/// Every method takes `&self`, so one builder serves as many workers as there
+/// are cores: the elevation sources carry their own cache lock, everything
+/// else is read. An edited line is a **new** builder ([`Self::with_line`])
+/// that shares the sources — a build that is still running on the old one
+/// finishes undisturbed, and nothing ever waits for a lock.
 pub struct TerrainBuilder {
     centerline: Centerline,
-    sources: Vec<TerrainSource>,
+    sources: Vec<Arc<TerrainSource>>,
     options: TerrainOptions,
     vegetation: Vegetation,
+    scenery: Scenery,
     edits: TerrainEdits,
 }
 
@@ -550,16 +727,26 @@ impl TerrainBuilder {
     pub fn new(net: &TrackNetwork, sources: Vec<TerrainSource>, options: TerrainOptions) -> Self {
         Self {
             centerline: Centerline::build(net, &options),
-            sources,
+            sources: sources.into_iter().map(Arc::new).collect(),
             options,
             vegetation: Vegetation::default(),
+            scenery: Scenery::default(),
             edits: TerrainEdits::default(),
         }
     }
 
     /// Trees and forests of the line — tiles built afterwards carry them.
-    pub fn with_vegetation(mut self, vegetation: Vegetation) -> Self {
+    pub fn with_vegetation(mut self, mut vegetation: Vegetation) -> Self {
+        vegetation.bucket(self.options.tile_size);
         self.vegetation = vegetation;
+        self
+    }
+
+    /// Scenery objects of the line — tiles built afterwards carry them, on
+    /// their ground where they snap to it.
+    pub fn with_scenery(mut self, mut scenery: Scenery) -> Self {
+        scenery.bucket(self.options.tile_size);
+        self.scenery = scenery;
         self
     }
 
@@ -570,19 +757,40 @@ impl TerrainBuilder {
         self
     }
 
-    /// Takes over an edited line — track geometry, vegetation and brush
-    /// strokes — while the elevation sources and their tile cache stay. The
-    /// route editor rebuilds after every edit; re-indexing the DGM each time
-    /// would read the delivery off disk again.
-    pub fn set_line(&mut self, net: &TrackNetwork, vegetation: Vegetation, edits: TerrainEdits) {
-        self.centerline = Centerline::build(net, &self.options);
-        self.vegetation = vegetation;
-        self.edits = edits;
+    /// The same elevation data under an edited line — track geometry,
+    /// vegetation, scenery and brush strokes anew, the sources and their
+    /// sheet cache shared with this builder. The route editor makes one
+    /// after every edit; re-indexing the DGM each time would read the
+    /// delivery off disk again, and replacing the builder in place would
+    /// make every worker wait for a lock.
+    pub fn with_line(
+        &self,
+        net: &TrackNetwork,
+        vegetation: Vegetation,
+        scenery: Scenery,
+        edits: TerrainEdits,
+    ) -> Self {
+        Self {
+            centerline: Centerline::build(net, &self.options),
+            sources: self.sources.clone(),
+            options: self.options,
+            vegetation: Vegetation::default(),
+            scenery: Scenery::default(),
+            edits,
+        }
+        .with_vegetation(vegetation)
+        .with_scenery(scenery)
     }
 
     /// The 3D object names of the vegetation ([`Tree::object`] indexes them).
     pub fn tree_objects(&self) -> &[String] {
         self.vegetation.objects()
+    }
+
+    /// The object names of the scenery ([`SceneryInstance::object`] indexes
+    /// them).
+    pub fn scenery_objects(&self) -> &[String] {
+        self.scenery.objects()
     }
 
     pub fn options(&self) -> &TerrainOptions {
@@ -592,11 +800,13 @@ impl TerrainBuilder {
     /// Ellipsoidal height of the terrain surface at `pos` — the DGM blended
     /// towards the rail near the track, exactly as the tile meshes are built.
     /// For objects that snap to the terrain.
-    pub fn surface_height(&mut self, pos: EcefPos) -> f64 {
+    pub fn surface_height(&self, pos: EcefPos) -> f64 {
         let (lat, lon, _) = geo::from_ecef(pos);
         let (e, n) = geo::to_utm(lat, lon, self.options.zone);
         let p = DVec2::new(e, n);
-        let ground = sample_height(&mut self.sources, p, lat, lon, self.options.zone)
+        let mut sampler = Sampler::new(self.sources.iter().map(Arc::as_ref), self.options.zone);
+        let ground = sampler
+            .height(p, lat, lon)
             .map(|h| h + self.options.geoid_offset)
             .unwrap_or(self.options.fallback_height + self.options.geoid_offset);
         let ground = self.edits.apply(p, ground);
@@ -604,15 +814,39 @@ impl TerrainBuilder {
     }
 
     /// Builds a single tile; `None` if it lies outside the line corridor.
-    pub fn build_key(&mut self, k: TileKey, stats: &mut TerrainStats) -> Option<TerrainTile> {
+    pub fn build_key(&self, k: TileKey, stats: &mut TerrainStats) -> Option<TerrainTile> {
+        let mut sampler = Sampler::new(self.sources.iter().map(Arc::as_ref), self.options.zone);
         build_key(
             k,
             &self.centerline,
-            &mut self.sources,
+            &mut sampler,
             &self.options,
             &self.vegetation,
+            &self.scenery,
             &self.edits,
             stats,
+        )
+    }
+
+    /// The trees and objects of a tile, placed on its ground anew — for a
+    /// tile whose ground has not changed under an edited line. Takes the
+    /// tile's own height grid, so it costs the scatter and nothing else.
+    pub fn rescatter(&self, tile: &TerrainTile) -> (Vec<Tree>, Vec<SceneryInstance>) {
+        let frame = EnuFrame::at(tile.anchor);
+        let n = tile.n(self.options.tile_size);
+        let k = key(
+            tile.min + DVec2::splat(self.options.tile_size / 2.0),
+            self.options.tile_size,
+        );
+        let grid = HeightGrid {
+            min: tile.min,
+            heights: &tile.heights,
+            step: tile.step,
+            n,
+        };
+        (
+            scatter_trees(k, &grid, &frame, &self.options, &self.vegetation),
+            scatter_objects(k, &grid, &frame, &self.scenery),
         )
     }
 
@@ -624,6 +858,56 @@ impl TerrainBuilder {
     /// How often a DGM tile was read from disk.
     pub fn load_count(&self) -> usize {
         self.sources.iter().map(|s| s.load_count()).sum()
+    }
+}
+
+/// Height lookup for one build. A grid runs across a sheet in long rows, so
+/// the sheet the last point fell on answers the next one nearly always — the
+/// sampler keeps it per source and goes back through the source's lock only
+/// when a point leaves it.
+struct Sampler<'a> {
+    sources: Vec<&'a TerrainSource>,
+    hot: Vec<Option<Arc<HeightTile>>>,
+    grid_zone: u8,
+}
+
+impl<'a> Sampler<'a> {
+    fn new(sources: impl IntoIterator<Item = &'a TerrainSource>, grid_zone: u8) -> Self {
+        let sources: Vec<&TerrainSource> = sources.into_iter().collect();
+        Self {
+            hot: vec![None; sources.len()],
+            sources,
+            grid_zone,
+        }
+    }
+
+    /// Height at a grid-zone UTM point from the first source that has one. A
+    /// source in the grid zone is asked in UTM directly; one in another zone
+    /// through the geodetic detour (`lat`/`lon` are the same point, already
+    /// converted).
+    fn height(&mut self, p: DVec2, lat: f64, lon: f64) -> Option<f64> {
+        for (i, source) in self.sources.iter().enumerate() {
+            let (e, n) = if source.zone == self.grid_zone {
+                (p.x, p.y)
+            } else {
+                geo::to_utm(lat, lon, source.zone)
+            };
+            if let Some(sheet) = &self.hot[i]
+                && sheet.contains(e, n)
+                && let Some(h) = sheet.height_at_utm(e, n)
+            {
+                return Some(h);
+            }
+            let Some(sheet) = source.sheet_at(e, n) else {
+                continue;
+            };
+            let h = sheet.height_at_utm(e, n);
+            self.hot[i] = Some(sheet);
+            if h.is_some() {
+                return h;
+            }
+        }
+        None
     }
 }
 
@@ -646,12 +930,14 @@ fn corridor_keys(centerline: &Centerline, options: &TerrainOptions) -> Vec<TileK
 }
 
 /// Builds the tile `k`; `None` if it does not touch the corridor.
+#[allow(clippy::too_many_arguments)]
 fn build_key(
     k: TileKey,
     centerline: &Centerline,
-    sources: &mut [TerrainSource],
+    sampler: &mut Sampler,
     options: &TerrainOptions,
     vegetation: &Vegetation,
+    scenery: &Scenery,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -664,7 +950,7 @@ fn build_key(
     // Only the strokes that reach this tile — the rest never see a grid point.
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
-        min, step, lod, centerline, sources, options, vegetation, &edits, stats,
+        k, step, lod, centerline, sampler, options, vegetation, scenery, &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -680,7 +966,7 @@ fn build_key(
 /// across a UTM zone boundary, one per zone.
 pub fn build(
     net: &TrackNetwork,
-    sources: &mut [TerrainSource],
+    sources: &[TerrainSource],
     options: &TerrainOptions,
 ) -> (Vec<TerrainTile>, TerrainStats) {
     let centerline = Centerline::build(net, options);
@@ -690,16 +976,17 @@ pub fn build(
 
     let mut tiles = Vec::new();
     let mut stats = TerrainStats::default();
-    let vegetation = Vegetation::default();
+    let mut sampler = Sampler::new(sources.iter(), options.zone);
 
     for k in corridor_keys(&centerline, options) {
         // Tiles that do not touch the corridor are dropped entirely.
         if let Some(tile) = build_key(
             k,
             &centerline,
-            sources,
+            &mut sampler,
             options,
-            &vegetation,
+            &Vegetation::default(),
+            &Scenery::default(),
             &TerrainEdits::default(),
             &mut stats,
         ) {
@@ -725,25 +1012,6 @@ fn level_of_detail(distance: f64, options: &TerrainOptions) -> (f64, u8) {
     }
 }
 
-/// Height at a grid-zone UTM point from the first source that has one. A source in the
-/// grid zone is asked in UTM directly; one in another zone through the geodetic detour
-/// (`lat`/`lon` are the same point, already converted).
-fn sample_height(
-    sources: &mut [TerrainSource],
-    p: DVec2,
-    lat: f64,
-    lon: f64,
-    grid_zone: u8,
-) -> Option<f64> {
-    sources.iter_mut().find_map(|s| {
-        if s.zone == grid_zone {
-            s.height_at_utm(p.x, p.y)
-        } else {
-            s.height_at(lat.to_degrees(), lon.to_degrees())
-        }
-    })
-}
-
 /// Blends the DGM height towards the rail near the track (cutting/embankment).
 fn blend_height(near: Option<(f64, f64)>, ground: f64, options: &TerrainOptions) -> f64 {
     // The formation carries the ballast bed, so it lies `rail_offset` below the
@@ -758,19 +1026,46 @@ fn blend_height(near: Option<(f64, f64)>, ground: f64, options: &TerrainOptions)
     }
 }
 
+/// The height grid of a tile: what the mesh, the trees and the objects all
+/// stand on. Row by row from the south, `(n + 1)²` values.
+struct HeightGrid<'a> {
+    min: DVec2,
+    heights: &'a [f32],
+    step: f64,
+    n: usize,
+}
+
+impl HeightGrid<'_> {
+    /// Height at the UTM point `p` (bilinear).
+    fn at(&self, p: DVec2) -> f64 {
+        let row = self.n + 1;
+        let gx = ((p.x - self.min.x) / self.step).clamp(0.0, self.n as f64 - 1e-9);
+        let gy = ((p.y - self.min.y) / self.step).clamp(0.0, self.n as f64 - 1e-9);
+        let (ix, iy) = (gx as usize, gy as usize);
+        let (fx, fy) = (gx - ix as f64, gy - iy as f64);
+        let h = |ix: usize, iy: usize| self.heights[iy * row + ix] as f64;
+        h(ix, iy) * (1.0 - fx) * (1.0 - fy)
+            + h(ix + 1, iy) * fx * (1.0 - fy)
+            + h(ix, iy + 1) * (1.0 - fx) * fy
+            + h(ix + 1, iy + 1) * fx * fy
+    }
+}
+
 /// Builds a single tile.
 #[allow(clippy::too_many_arguments)]
 fn build_tile(
-    min: DVec2,
+    k: TileKey,
     step: f64,
     lod: u8,
     centerline: &Centerline,
-    sources: &mut [TerrainSource],
+    sampler: &mut Sampler,
     options: &TerrainOptions,
     vegetation: &Vegetation,
+    scenery: &Scenery,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
+    let min = tile_min(k, options.tile_size);
     let n = (options.tile_size / step).round().max(1.0) as usize;
     let center = min + DVec2::splat(options.tile_size / 2.0);
 
@@ -779,15 +1074,19 @@ fn build_tile(
     let anchor = geo::to_ecef(clat, clon, 0.0);
     let frame = EnuFrame::at(anchor);
 
-    let mut positions = Vec::with_capacity((n + 1) * (n + 1));
-    let mut heights = Vec::with_capacity((n + 1) * (n + 1));
-    let mut track_dist = Vec::with_capacity((n + 1) * (n + 1));
+    // Grid plus skirt, so the skirt never reallocates the grid.
+    let grid_len = (n + 1) * (n + 1);
+    let skirt_len = 4 * n;
+    let mut positions = Vec::with_capacity(grid_len + skirt_len);
+    let mut heights = Vec::with_capacity(grid_len);
+    let mut track_dist = Vec::with_capacity(grid_len);
 
     for iy in 0..=n {
         for ix in 0..=n {
             let p = min + DVec2::new(ix as f64 * step, iy as f64 * step);
             let (lat, lon) = geo::from_utm(p.x, p.y, options.zone);
-            let ground = sample_height(sources, p, lat, lon, options.zone)
+            let ground = sampler
+                .height(p, lat, lon)
                 .map(|h| h + options.geoid_offset)
                 .unwrap_or_else(|| {
                     stats.missing += 1;
@@ -810,14 +1109,24 @@ fn build_tile(
     }
 
     let mut splat = splat_weights(&heights, &track_dist, step, n, options);
-    let trees = scatter_trees(min, &heights, step, n, &frame, options, vegetation);
+    // The grid is kept with the tile in f32: a metre of terrain does not
+    // carry more, and the tile is what the trees are placed on later.
+    let heights: Vec<f32> = heights.iter().map(|h| *h as f32).collect();
+    let grid = HeightGrid {
+        min,
+        heights: &heights,
+        step,
+        n,
+    };
+    let trees = scatter_trees(k, &grid, &frame, options, vegetation);
+    let objects = scatter_objects(k, &grid, &frame, scenery);
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
     // normal comes out of the ground — the other way round the whole surface
     // is a backface and gets culled away (pinned by a test).
     let row = n + 1;
-    let mut indices = Vec::with_capacity(n * n * 6);
+    let mut indices = Vec::with_capacity(n * n * 6 + skirt_len * 6);
     for iy in 0..n {
         for ix in 0..n {
             let a = (iy * row + ix) as u32;
@@ -830,17 +1139,7 @@ fn build_tile(
 
     // Skirt: the border is extended downwards so that no cracks become visible at
     // LOD boundaries.
-    add_skirt(
-        &mut positions,
-        &mut indices,
-        &mut splat,
-        &heights,
-        min,
-        step,
-        n,
-        &frame,
-        options,
-    );
+    add_skirt(&mut positions, &mut indices, &mut splat, n, options);
 
     let radius = (options.tile_size * 0.75) as f32;
     TerrainTile {
@@ -849,9 +1148,12 @@ fn build_tile(
         indices,
         splat,
         trees,
+        objects,
         step,
         lod,
         radius,
+        min,
+        heights,
     }
 }
 
@@ -891,64 +1193,86 @@ fn splat_weights(
     splat
 }
 
-/// Height of the tile's height grid at the UTM point `p` (bilinear).
-fn ground_at(p: DVec2, min: DVec2, heights: &[f64], step: f64, n: usize) -> f64 {
-    let row = n + 1;
-    let gx = ((p.x - min.x) / step).clamp(0.0, n as f64 - 1e-9);
-    let gy = ((p.y - min.y) / step).clamp(0.0, n as f64 - 1e-9);
-    let (ix, iy) = (gx as usize, gy as usize);
-    let (fx, fy) = (gx - ix as f64, gy - iy as f64);
-    heights[iy * row + ix] * (1.0 - fx) * (1.0 - fy)
-        + heights[iy * row + ix + 1] * fx * (1.0 - fy)
-        + heights[(iy + 1) * row + ix] * (1.0 - fx) * fy
-        + heights[(iy + 1) * row + ix + 1] * fx * fy
-}
-
 /// Places the line's trees on the tile, their feet on the height grid. Every
 /// tree stands where the file says — the forest fill already ran in the editor
 /// (see [`fill_polygon`]), so there is nothing to filter here.
 fn scatter_trees(
-    min: DVec2,
-    heights: &[f64],
-    step: f64,
-    n: usize,
+    k: TileKey,
+    grid: &HeightGrid,
     frame: &EnuFrame,
     options: &TerrainOptions,
     vegetation: &Vegetation,
 ) -> Vec<Tree> {
-    let tile_max = min + DVec2::splat(options.tile_size);
-    let mut trees = Vec::new();
-    for tree in &vegetation.trees {
-        let inside = tree.pos.x >= min.x
-            && tree.pos.x < tile_max.x
-            && tree.pos.y >= min.y
-            && tree.pos.y < tile_max.y;
-        if !inside {
-            continue;
-        }
-        let h = ground_at(tree.pos, min, heights, step, n);
-        let (lat, lon) = geo::from_utm(tree.pos.x, tree.pos.y, options.zone);
-        trees.push(Tree {
-            pos: to_render(frame.to_local(geo::to_ecef(lat, lon, h))),
-            scale: tree.scale,
-            rot: tree.rot,
-            object: tree.object,
-        });
-    }
-    trees
+    let Some(indices) = vegetation.by_tile.get(&k) else {
+        return Vec::new();
+    };
+    indices
+        .iter()
+        .map(|&i| {
+            let tree = &vegetation.trees[i as usize];
+            let h = grid.at(tree.pos);
+            let (lat, lon) = geo::from_utm(tree.pos.x, tree.pos.y, options.zone);
+            Tree {
+                pos: to_render(frame.to_local(geo::to_ecef(lat, lon, h))),
+                scale: tree.scale,
+                rot: tree.rot,
+                object: tree.object,
+            }
+        })
+        .collect()
 }
 
-/// Attaches a vertical skirt to the tile border.
-#[allow(clippy::too_many_arguments)]
+/// Places the line's scenery objects on the tile: on the rail plane, or on
+/// the height grid where the placement snaps to the terrain.
+fn scatter_objects(
+    k: TileKey,
+    grid: &HeightGrid,
+    frame: &EnuFrame,
+    scenery: &Scenery,
+) -> Vec<SceneryInstance> {
+    let Some(indices) = scenery.by_tile.get(&k) else {
+        return Vec::new();
+    };
+    indices
+        .iter()
+        .map(|&i| {
+            let object = &scenery.placed[i as usize];
+            let anchor = if object.snap {
+                let ground = grid.at(object.pos);
+                let (lat, lon, _) = geo::from_ecef(object.base);
+                geo::to_ecef(lat, lon, ground + object.height)
+            } else {
+                EcefPos(object.base.0 + object.up * object.height)
+            };
+            // The model's frame in the tile's render axes: forward along the
+            // track, up the local vertical. Bevy's convention: -Z = forward.
+            let f = to_render_dir(frame.dir_to_local(object.dir)).normalize_or_zero();
+            let u = to_render_dir(frame.dir_to_local(object.up)).normalize_or_zero();
+            let right = f.cross(u).normalize_or_zero();
+            let rotation = if right.length_squared() < 0.5 {
+                glam::Quat::IDENTITY
+            } else {
+                glam::Quat::from_mat3(&glam::Mat3::from_cols(right, right.cross(f), -f))
+            };
+            SceneryInstance {
+                pos: to_render(frame.to_local(anchor)),
+                rotation: rotation.to_array(),
+                object: object.object,
+                index: object.index,
+            }
+        })
+        .collect()
+}
+
+/// Attaches a vertical skirt to the tile border: every border vertex once
+/// more, `skirt` metres down. Straight down in the tile's frame — over a
+/// tile the true vertical turns by a few thousandths of a degree, which on
+/// eight metres of skirt is less than a millimetre.
 fn add_skirt(
     positions: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
     splat: &mut Vec<[f32; 4]>,
-    heights: &[f64],
-    min: DVec2,
-    step: f64,
     n: usize,
-    frame: &EnuFrame,
     options: &TerrainOptions,
 ) {
     let row = n + 1;
@@ -960,13 +1284,11 @@ fn add_skirt(
         .collect();
 
     let first_skirt = positions.len() as u32;
+    let drop = options.skirt as f32;
     for &index in &border {
-        let ix = index % row;
-        let iy = index / row;
-        let p = min + DVec2::new(ix as f64 * step, iy as f64 * step);
-        let (lat, lon) = geo::from_utm(p.x, p.y, options.zone);
-        let world = geo::to_ecef(lat, lon, heights[index] - options.skirt);
-        positions.push(to_render(frame.to_local(world)));
+        let mut p = positions[index];
+        p[1] -= drop;
+        positions.push(p);
         // The skirt continues the border vertex's ground cover downwards.
         splat.push(splat[index]);
     }
@@ -982,8 +1304,13 @@ fn add_skirt(
 }
 
 /// ENU (x = east, y = north, z = up) → render axes.
-fn to_render(p: glam::DVec3) -> [f32; 3] {
+fn to_render(p: DVec3) -> [f32; 3] {
     [p.x as f32, p.z as f32, -p.y as f32]
+}
+
+/// ENU direction → render axes, as a vector.
+fn to_render_dir(d: DVec3) -> glam::Vec3 {
+    glam::Vec3::new(d.x as f32, d.z as f32, -d.y as f32)
 }
 
 #[cfg(test)]
@@ -1033,7 +1360,7 @@ mod tests {
     #[test]
     fn terrain_is_generated_only_in_the_corridor() {
         let net = test_net();
-        let (tiles, stats) = build(&net, &mut [test_source()], &options());
+        let (tiles, stats) = build(&net, &[test_source()], &options());
 
         assert!(stats.tiles > 0);
         assert_eq!(tiles.len(), stats.tiles);
@@ -1053,7 +1380,7 @@ mod tests {
     #[test]
     fn lod_gets_coarser_with_distance() {
         let net = test_net();
-        let (tiles, _) = build(&net, &mut [test_source()], &options());
+        let (tiles, _) = build(&net, &[test_source()], &options());
 
         let fine = tiles.iter().filter(|t| t.lod == 0).count();
         let coarse = tiles.iter().filter(|t| t.lod > 0).count();
@@ -1069,7 +1396,7 @@ mod tests {
     #[test]
     fn triangle_count_stays_manageable() {
         let net = test_net();
-        let (_, stats) = build(&net, &mut [test_source()], &options());
+        let (_, stats) = build(&net, &[test_source()], &options());
 
         // For comparison: the same corridor at full DGM1 resolution.
         let area = 1000.0 * 2.0 * options().radius; // m²
@@ -1090,7 +1417,7 @@ mod tests {
 
         // The real lever is the grading: with each LOD level the triangle count of an
         // equally sized tile is quartered.
-        let (tiles, _) = build(&net, &mut [test_source()], &options());
+        let (tiles, _) = build(&net, &[test_source()], &options());
         let per_lod = |lod: u8| tiles.iter().find(|t| t.lod == lod).map(|t| t.triangles());
         if let (Some(fine), Some(coarse)) = (per_lod(0), per_lod(1)) {
             let ratio = fine as f64 / coarse as f64;
@@ -1103,7 +1430,7 @@ mod tests {
         let net = test_net();
         let options = options();
         let centerline = Centerline::build(&net, &options);
-        let (tiles, _) = build(&net, &mut [test_source()], &options);
+        let (tiles, _) = build(&net, &[test_source()], &options);
 
         // The test data must differ, otherwise the test checks nothing.
         let p = centerline.points[10];
@@ -1116,7 +1443,7 @@ mod tests {
 
         // Convert every terrain point back and compare it with the expected value:
         // rail height at the track, DGM height far away.
-        let mut source = test_source();
+        let source = test_source();
         let mut checked_rail = 0;
         let mut checked_far = 0;
         for tile in &tiles {
@@ -1157,9 +1484,9 @@ mod tests {
     fn streamed_tiles_match_the_batch_build() {
         let net = test_net();
         let options = options();
-        let (batch, batch_stats) = build(&net, &mut [test_source()], &options);
+        let (batch, batch_stats) = build(&net, &[test_source()], &options);
 
-        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options);
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options);
         let mut stats = TerrainStats::default();
         let keys = builder.corridor_keys();
         let streamed: Vec<TerrainTile> = keys
@@ -1179,7 +1506,7 @@ mod tests {
     fn the_load_radius_only_covers_nearby_tiles() {
         let net = test_net();
         let options = options();
-        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options);
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options);
         let edge = &net.edges()[0];
         let start = to_utm(edge.eval(0.0).pos, &options);
         let end = to_utm(edge.eval(edge.length()).pos, &options);
@@ -1226,20 +1553,19 @@ mod tests {
             options.zone,
         );
         let plain = TerrainBuilder::new(&net, vec![test_source()], options);
-        let mut shaped = TerrainBuilder::new(&net, vec![test_source()], options).with_edits(edits);
-        let mut plain = plain;
+        let shaped = TerrainBuilder::new(&net, vec![test_source()], options).with_edits(edits);
 
         // At the centre the ground is 20 m higher, at the edge of the stroke
         // untouched, and 400 m away nothing has happened.
-        let at = |b: &mut TerrainBuilder, north: f64| {
+        let at = |b: &TerrainBuilder, north: f64| {
             b.surface_height(geo::to_ecef_deg(lat + north / 111_320.0, lon, 0.0))
         };
         assert!(
-            (at(&mut shaped, 200.0) - at(&mut plain, 200.0) - 20.0).abs() < 0.01,
+            (at(&shaped, 200.0) - at(&plain, 200.0) - 20.0).abs() < 0.01,
             "centre rose by {:.2} m",
-            at(&mut shaped, 200.0) - at(&mut plain, 200.0)
+            at(&shaped, 200.0) - at(&plain, 200.0)
         );
-        assert!((at(&mut shaped, 400.0) - at(&mut plain, 400.0)).abs() < 1e-6);
+        assert!((at(&shaped, 400.0) - at(&plain, 400.0)).abs() < 1e-6);
         // On the track itself the height stays the formation's — the blend runs last.
         let on_track = shaped.surface_height(start);
         let formation = rail - options.rail_offset;
@@ -1249,24 +1575,25 @@ mod tests {
         );
     }
 
-    /// The route editor re-reads the edited line into the standing builder
-    /// after every stroke — the elevation sources stay where they are.
+    /// The route editor derives a builder for the edited line after every
+    /// stroke — the elevation sources and their sheet cache are shared.
     #[test]
-    fn set_line_takes_over_a_new_stroke() {
+    fn with_line_takes_over_a_new_stroke_and_shares_the_sheets() {
         let net = test_net();
         let options = options();
         let (lat, lon, _) = geo::from_ecef(net.edges()[0].eval(0.0).pos);
         let (lat, lon) = (lat.to_degrees(), lon.to_degrees());
         let hill_lat = lat + 200.0 / 111_320.0;
-        let at = |b: &mut TerrainBuilder, north: f64| {
+        let at = |b: &TerrainBuilder, north: f64| {
             b.surface_height(geo::to_ecef_deg(lat + north / 111_320.0, lon, 0.0))
         };
 
-        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options);
-        let before = at(&mut builder, 200.0);
-        builder.set_line(
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options);
+        let before = at(&builder, 200.0);
+        let edited = builder.with_line(
             &net,
             Vegetation::default(),
+            Scenery::default(),
             TerrainEdits::from_parts(
                 &[TerrainEditSource {
                     lat: hill_lat,
@@ -1278,16 +1605,92 @@ mod tests {
             ),
         );
         assert!(
-            (at(&mut builder, 200.0) - before - 20.0).abs() < 0.01,
+            (at(&edited, 200.0) - before - 20.0).abs() < 0.01,
             "stroke not taken over: {before:.2} → {:.2}",
-            at(&mut builder, 200.0)
+            at(&edited, 200.0)
         );
+        // The old builder is untouched — a build still running on it is not
+        // pulled out from under.
+        assert!((at(&builder, 200.0) - before).abs() < 1e-9);
+        assert!(Arc::ptr_eq(&builder.sources[0], &edited.sources[0]));
+    }
+
+    /// An object that snaps to the terrain stands on the tile's ground, one
+    /// on the rail plane keeps its height over the rail — and both come with
+    /// the tile, facing along the track.
+    #[test]
+    fn objects_are_placed_with_their_tile() {
+        let net = test_net();
+        let options = options();
+        let edge = &net.edges()[0];
+        let placements = vec![
+            ObjectSource {
+                object: "example:mast".into(),
+                edge: 0,
+                s: 300.0,
+                lateral_offset: 3.0,
+                yaw_deg: 0.0,
+                height: 1.0,
+                snap_to_terrain: false,
+            },
+            ObjectSource {
+                object: "example:hut".into(),
+                edge: 0,
+                s: 300.0,
+                lateral_offset: 200.0,
+                yaw_deg: 90.0,
+                height: 0.5,
+                snap_to_terrain: true,
+            },
+        ];
+        let scenery = Scenery::from_parts(&placements, &net, options.zone);
+        assert_eq!(scenery.objects(), ["example:mast", "example:hut"]);
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options).with_scenery(scenery);
+
+        let mut stats = TerrainStats::default();
+        let tiles: Vec<TerrainTile> = builder
+            .corridor_keys()
+            .into_iter()
+            .filter_map(|k| builder.build_key(k, &mut stats))
+            .collect();
+        let placed: Vec<(&TerrainTile, &SceneryInstance)> = tiles
+            .iter()
+            .flat_map(|t| t.objects.iter().map(move |o| (t, o)))
+            .collect();
+        assert_eq!(placed.len(), 2, "every object stands on exactly one tile");
+
+        let world = |tile: &TerrainTile, o: &SceneryInstance| {
+            let frame = EnuFrame::at(tile.anchor);
+            let p = o.pos;
+            frame.to_ecef(DVec3::new(p[0] as f64, -p[2] as f64, p[1] as f64))
+        };
+        let (tile, mast) = placed.iter().find(|(_, o)| o.index == 0).unwrap();
+        let rail = edge.eval(300.0).pos;
+        let (_, _, rail_h) = geo::from_ecef(rail);
+        let (_, _, mast_h) = geo::from_ecef(world(tile, mast));
+        assert!(
+            (mast_h - rail_h - 1.0).abs() < 0.05,
+            "mast at {mast_h:.2} over rail {rail_h:.2}"
+        );
+
+        let (tile, hut) = placed.iter().find(|(_, o)| o.index == 1).unwrap();
+        let foot = world(tile, hut);
+        let ground = builder.surface_height(foot);
+        let (_, _, hut_h) = geo::from_ecef(foot);
+        assert!(
+            (hut_h - ground - 0.5).abs() < 0.6,
+            "hut at {hut_h:.2} over ground {ground:.2}"
+        );
+
+        // Rescattering onto the built tile gives the same placement.
+        let (_, again) = builder.rescatter(tile);
+        assert_eq!(again, tile.objects);
     }
 
     #[test]
     fn without_a_dgm_the_terrain_is_flat() {
         let net = test_net();
-        let (tiles, stats) = build(&net, &mut [], &options());
+        let (tiles, stats) = build(&net, &[], &options());
         assert!(!tiles.is_empty());
         assert!(stats.missing > 0, "missing heights are counted");
         assert_eq!(stats.tile_loads, 0);
@@ -1330,10 +1733,10 @@ mod tests {
         let east = || grid(33, -50.0, 3000.0, 200.0);
 
         // With the zone 32 source alone the eastern half has no data…
-        let (_, west_only) = build(&net, &mut [west()], &options());
+        let (_, west_only) = build(&net, &[west()], &options());
         assert!(west_only.missing > 0, "east of 12° must be uncovered");
         // …with one source per zone every support point has a height.
-        let (_, both) = build(&net, &mut [west(), east()], &options());
+        let (_, both) = build(&net, &[west(), east()], &options());
         assert_eq!(both.missing, 0, "both zones together cover the corridor");
     }
 
@@ -1354,7 +1757,7 @@ mod tests {
             }
         }
         let cliff = TerrainSource::from_tile(HeightTile::parse_xyz(&text, 32).unwrap());
-        let (tiles, _) = build(&net, &mut [cliff], &options);
+        let (tiles, _) = build(&net, &[cliff], &options);
 
         let mut gravel_near = 0;
         let mut rock_far = 0;
@@ -1419,7 +1822,7 @@ mod tests {
         let vegetation = Vegetation::from_parts(&trees, options.zone);
         assert_eq!(vegetation.objects(), ["example:oak", "example:fir"]);
 
-        let mut builder = TerrainBuilder::new(&net, vec![test_source()], options)
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options)
             .with_vegetation(vegetation.clone());
         let mut stats = TerrainStats::default();
         let tiles: Vec<TerrainTile> = builder
@@ -1440,8 +1843,15 @@ mod tests {
         assert_eq!(oaks.len(), 1);
         assert_eq!(oaks[0].scale, 1.2);
 
+        // Rescattering onto the built tiles gives the same trees — the
+        // editor does that for a tile whose ground has not changed.
+        for tile in &tiles {
+            let (again, _) = builder.rescatter(tile);
+            assert_eq!(again, tile.trees);
+        }
+
         // Without vegetation no tile carries a tree.
-        let (bare, _) = build(&net, &mut [test_source()], &options);
+        let (bare, _) = build(&net, &[test_source()], &options);
         assert!(bare.iter().all(|t| t.trees.is_empty()));
     }
 
@@ -1511,7 +1921,7 @@ mod tests {
     /// the run as much as in the editor.
     #[test]
     fn the_surface_faces_upwards() {
-        let (tiles, _) = build(&test_net(), &mut [test_source()], &options());
+        let (tiles, _) = build(&test_net(), &[test_source()], &options());
         let tile = &tiles[0];
         let n = (options().tile_size / tile.step).round() as usize;
         // The skirt hangs off the border and faces sideways on purpose.
@@ -1530,7 +1940,7 @@ mod tests {
     #[test]
     fn tiles_have_skirts() {
         let net = test_net();
-        let (tiles, _) = build(&net, &mut [test_source()], &options());
+        let (tiles, _) = build(&net, &[test_source()], &options());
         let tile = &tiles[0];
         let n = (tile.step.recip() * 512.0).round() as usize;
         let grid_vertices = (n + 1) * (n + 1);

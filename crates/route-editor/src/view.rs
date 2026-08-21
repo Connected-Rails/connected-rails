@@ -85,6 +85,7 @@ pub fn camera_control(
     time: Res<Time>,
     origin: Res<Origin>,
     line: Res<Line>,
+    marks: Res<crate::terrain::Marks>,
     mut state: ResMut<EditorState>,
     mut focus: ResMut<Focus>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
@@ -103,7 +104,7 @@ pub fn camera_control(
     if !state.typing {
         // F frames the selection, as it does in every 3D editor.
         if keys.just_pressed(KeyCode::KeyF)
-            && let Some(p) = tools::selection_pos(&line, state.selection, &focus)
+            && let Some(p) = tools::selection_pos(&line, state.selection, &focus, &marks)
         {
             focus.position = p;
             focus.height = focus.height.clamp(MIN_DISTANCE, FRAME_DISTANCE);

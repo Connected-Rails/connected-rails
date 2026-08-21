@@ -6,4 +6,7 @@ license.workspace = true
 
 [dependencies]
 bevy_egui = { workspace = true }
+# Phosphor icon font (MIT): the sun on the day rail and the calendar leaf.
+# Drawn icons stay in `icon.rs`; see THIRD_PARTY_LICENSES.md.
+egui-phosphor = "0.13"
 i18n = { workspace = true }

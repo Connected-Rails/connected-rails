@@ -27,12 +27,13 @@ const COLOR_IDLE: Color = Color::srgba(0.89, 0.71, 0.30, 0.35);
 
 /// The height the envelope is drawn at [m ellipsoidal].
 ///
-/// Fixed to the module's anchor, *not* to the focus plane that trees, markers
-/// and terrain strokes use. Those are points: a plane that follows the camera
-/// moves them by a fraction of a pixel. The envelope spans kilometres, and a
-/// plane that rises with the camera swings its far corners across the ground in
-/// the 3D view — the boundary appears to slide. A module without an anchor has
-/// nothing to tie to and keeps the old behaviour.
+/// Fixed to the module's anchor, and so to one height for the whole polygon:
+/// the boundary is a closed line that has to keep its shape, and a corner that
+/// took its height from the terrain under it would drag the line into every
+/// hollow it crosses. The point marks — trees, reference markers, terrain
+/// strokes — do the opposite and stand on the ground each of them is on
+/// (`terrain::Marks`). A module without an anchor has nothing to tie to and
+/// falls back to the height of the view point.
 pub fn height(line: &Line, focus: &Focus) -> f64 {
     match line.source.anchor {
         Some(anchor) => geo::ellipsoidal_height(anchor.height, line.source.geoid_offset),
@@ -197,6 +198,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
@@ -223,6 +225,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };

@@ -20,21 +20,25 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
-use bevy::world_serialization::WorldAsset;
-use content::{LineSource, TerrainBuilder, TerrainTile};
-use glam::{DQuat, DVec3};
+use content::{SceneryInstance, TerrainTile, Tree};
+use glam::DVec3;
 use sim_core::interlock::{Aspect, DistantAspect, MainAspect, SignalKind, SignalModel};
 use sim_core::train::lod_level;
-use std::collections::BTreeMap;
 use track_model::{Facing, TrackEdge, TrackNetwork, TrackObject};
-use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
+use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 pub mod clouds;
 pub mod mist;
 pub mod precipitation;
+pub mod scatter;
 pub mod sky;
 pub mod weather;
 pub mod windscreen;
+
+pub use scatter::{
+    OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, WorldCatalog,
+    materialise_trees,
+};
 
 /// Registers the splat shader and its material. Both programs add it after
 /// `DefaultPlugins` — the embedded registry only exists once the asset plugin
@@ -46,6 +50,7 @@ impl Plugin for WorldRenderPlugin {
         embedded_asset!(app, "terrain_splat.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .init_resource::<Daylight>()
+            .init_resource::<TreeModels>()
             .add_plugins((
                 sky::plugin,
                 clouds::plugin,
@@ -54,7 +59,7 @@ impl Plugin for WorldRenderPlugin {
                 weather::plugin,
                 windscreen::plugin,
             ))
-            .add_systems(Update, switch_night_nodes);
+            .add_systems(Update, (switch_night_nodes, materialise_trees));
     }
 }
 
@@ -117,7 +122,7 @@ pub fn switch_night_nodes(
     // be switched at all (the same reason as for the lamp nodes).
     for (entity, name) in &fresh {
         if name.as_str().ends_with(NIGHT_SUFFIX) {
-            commands.entity(entity).insert((NightNode, shown(lit)));
+            commands.entity(entity).try_insert((NightNode, shown(lit)));
         }
     }
     if *was_lit != Some(lit) {
@@ -145,9 +150,37 @@ pub fn mod_asset_source() -> AssetSourceBuilder {
 
 /// An object whose geometry lies in the ENU frame of a fixed world point
 /// (track, scenery, terrain). On an origin rebase only the transform is set anew.
+///
+/// The frame is kept with the anchor: it is a pure function of it, and a
+/// rebase that had to derive it again for every anchored entity — two Newton
+/// iterations and a dozen trigonometric calls each — was the hitch the run
+/// showed every four kilometres.
 #[derive(Component)]
 pub struct WorldAnchored {
     pub anchor: EcefPos,
+    frame: EnuFrame,
+}
+
+impl WorldAnchored {
+    pub fn at(anchor: EcefPos) -> Self {
+        Self {
+            anchor,
+            frame: EnuFrame::at(anchor),
+        }
+    }
+
+    /// From a frame the caller already has — a tile built its mesh in it.
+    pub fn in_frame(frame: EnuFrame) -> Self {
+        Self {
+            anchor: EcefPos(frame.origin),
+            frame,
+        }
+    }
+
+    /// Translation and rotation under the given render origin.
+    pub fn transform(&self, origin: &RenderOrigin) -> (Vec3, Quat) {
+        origin.frame_transform(&self.frame)
+    }
 }
 
 /// Terrain material: the standard PBR path plus texture splatting (plan ch. 14).
@@ -378,58 +411,11 @@ pub fn terrain_mesh(tile: &content::TerrainTile) -> Mesh {
     mesh
 }
 
-/// Render assets of the line's vegetation: per catalog entry the glTF scene of
-/// the mod object it names, the generated placeholder trees for everything
-/// else. Every tree of one entry shares mesh and material handles, so Bevy
-/// batches them into instanced draws (plan ch. 14 "streamed instances").
-#[derive(Clone)]
-pub struct TreeCatalog {
-    /// Indexed by [`content::Tree::object`]; `None` where the name resolved to
-    /// no installed mod object.
-    scenes: Vec<Option<Handle<WorldAsset>>>,
-    /// Placeholder conifer and broadleaf, coloured by vertex so one white
-    /// material serves both.
-    placeholder: [Handle<Mesh>; 2],
-    placeholder_material: Handle<StandardMaterial>,
-}
-
-/// Resolves the vegetation catalog: each object name against the installed
-/// mods' `objects/*.ron`, unknown names logged once and shown as placeholders.
-pub fn tree_catalog(
-    names: &[String],
-    registry: &BTreeMap<String, TrackObject>,
-    assets: &AssetServer,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    season: Season,
-) -> TreeCatalog {
-    let scenes = names
-        .iter()
-        .map(|name| match registry.get(name) {
-            Some(object) => Some(
-                assets
-                    .load(GltfAssetLabel::Scene(0).from_asset(asset_path(season.model_of(object))))
-                    .clone(),
-            ),
-            None => {
-                warn!("vegetation: unknown object {name:?} — placeholder shown");
-                None
-            }
-        })
-        .collect();
-    let (placeholder, placeholder_material) = placeholder_trees(meshes, materials, season);
-    TreeCatalog {
-        scenes,
-        placeholder,
-        placeholder_material,
-    }
-}
-
 /// Low-poly placeholder trees, coloured by vertex so one white material serves
 /// both kinds — and by the season, so a winter run drives through snowy woods.
 // ponytail: the broadleaf keeps its crown all year; bare winter branches are a
 // second mesh, not a colour.
-fn placeholder_trees(
+pub(crate) fn placeholder_trees(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     season: Season,
@@ -487,144 +473,53 @@ fn colored(mut mesh: Mesh, color: [f32; 4]) -> Mesh {
 }
 
 /// Spawns a single terrain tile from [`content::terrain`] (streaming, plan 4.3)
-/// with its trees as children — they stream in and out with the tile. The
-/// caller adds what it needs on top (the simulator its view distance, the
-/// editor its own marker).
+/// with its trees and scenery objects as children — they stream in and out
+/// with the tile. The caller adds what it needs on top (the simulator its view
+/// distance, the editor its own marker).
 pub fn spawn_terrain_tile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     material: &Handle<TerrainMaterial>,
-    trees: &TreeCatalog,
+    catalog: &WorldCatalog,
     tile: &TerrainTile,
     origin: &RenderOrigin,
 ) -> Entity {
     let mesh = terrain_mesh(tile);
-    let frame = EnuFrame::at(tile.anchor);
-    let (translation, rotation) = origin.frame_transform(&frame);
-    commands
-        .spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(material.clone()),
-            Transform::from_translation(translation).with_rotation(rotation),
-            WorldAnchored {
-                anchor: tile.anchor,
-            },
-        ))
-        .with_children(|parent| {
-            for tree in &tile.trees {
-                let transform = Transform::from_translation(Vec3::from(tree.pos))
-                    .with_rotation(Quat::from_rotation_y(tree.rot))
-                    .with_scale(Vec3::splat(tree.scale));
-                let scene = tree
-                    .object
-                    .and_then(|i| trees.scenes.get(i as usize))
-                    .and_then(|s| s.clone());
-                match scene {
-                    Some(scene) => {
-                        parent.spawn((WorldAssetRoot(scene), transform));
-                    }
-                    None => {
-                        // Placeholder: conifer or broadleaf, picked by position
-                        // hash so a wood mixes without carrying a species.
-                        let kind = (tree.pos[0].to_bits() ^ tree.pos[2].to_bits()) as usize & 1;
-                        parent.spawn((
-                            Mesh3d(trees.placeholder[kind].clone()),
-                            MeshMaterial3d(trees.placeholder_material.clone()),
-                            transform,
-                        ));
-                    }
-                }
-            }
-        })
-        .id()
+    let anchored = WorldAnchored::at(tile.anchor);
+    let (translation, rotation) = anchored.transform(origin);
+    let mut entity = commands.spawn((
+        Mesh3d(meshes.add(mesh)),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation(translation).with_rotation(rotation),
+        anchored,
+    ));
+    scatter::spawn_scatter(&mut entity, tile.trees.clone(), &tile.objects, catalog);
+    entity.id()
 }
 
-/// Spawns every scenery object of the line, each in the model `season` picks
-/// for it. An unknown object kind gets a placeholder block — visible in the
-/// world instead of silently absent. `terrain` answers the ground height for
-/// objects that snap to the terrain. The same objects in the editor and in the
-/// run — that is the point.
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_objects(
+/// Places the trees and objects of a standing tile anew — the editor moved
+/// one, and the ground under them is the same. `old` is what the tile
+/// carried so far (its [`Scattered`] children); the new set is spawned the
+/// way [`spawn_terrain_tile`] did it.
+pub fn respawn_scatter(
     commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    assets: &AssetServer,
-    line: &LineSource,
-    net: &TrackNetwork,
-    origin: &RenderOrigin,
-    registry: &BTreeMap<String, TrackObject>,
-    mut terrain: Option<&mut TerrainBuilder>,
-    season: Season,
+    tile: Entity,
+    old: impl IntoIterator<Item = Entity>,
+    trees: Vec<Tree>,
+    objects: &[SceneryInstance],
+    catalog: &WorldCatalog,
 ) {
-    let placeholder_mesh = meshes.add(Cuboid::new(0.8, 2.0, 0.8));
-    let placeholder_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 0.30, 0.65),
-        ..default()
-    });
-
-    for (i, placement) in line.objects.iter().enumerate() {
-        // Compile refused dangling indices; a guard keeps a stale file harmless.
-        let Some(edge) = net.edges().get(placement.edge as usize) else {
-            continue;
-        };
-        let pose = edge.eval(placement.s.clamp(0.0, edge.length()));
-        // Positive offset = right of increasing arc length.
-        let right = pose.tangent.cross(pose.up).normalize();
-        let base = EcefPos(pose.pos.0 + right * placement.lateral_offset);
-        // `snap_to_terrain` needs the ground; without a terrain builder — the
-        // editor's first frame — the placement keeps the rail plane.
-        let ground = terrain
-            .as_mut()
-            .filter(|_| placement.snap_to_terrain)
-            .map(|t| t.surface_height(base));
-        let anchor = if let Some(ground) = ground {
-            let (lat, lon, _) = geo::from_ecef(base);
-            geo::to_ecef(lat, lon, ground + placement.height)
-        } else {
-            EcefPos(base.0 + pose.up * placement.height)
-        };
-        // Yaw is clockwise seen from above; 0 = front along increasing s.
-        let dir = DQuat::from_axis_angle(pose.up, -placement.yaw_deg.to_radians()) * pose.tangent;
-
-        let local = RenderOrigin::new(anchor);
-        let rotation = local.look_rotation(dir, local.frame().up);
-        let (translation, frame_rotation) = origin.frame_transform(local.frame());
-        let root = commands
-            .spawn((
-                Transform::from_translation(translation).with_rotation(frame_rotation),
-                Visibility::default(),
-                WorldAnchored { anchor },
-            ))
-            .id();
-        let view = commands
-            .spawn((
-                Transform::from_rotation(rotation),
-                Visibility::default(),
-                ChildOf(root),
-            ))
-            .id();
-
-        match registry.get(&placement.object) {
-            Some(object) => {
-                let scene = assets
-                    .load(GltfAssetLabel::Scene(0).from_asset(asset_path(season.model_of(object))));
-                commands.spawn((WorldAssetRoot(scene), Transform::default(), ChildOf(view)));
-            }
-            None => {
-                warn!(
-                    "object {i}: unknown object {:?} — placeholder shown",
-                    placement.object
-                );
-                commands.spawn((
-                    Mesh3d(placeholder_mesh.clone()),
-                    MeshMaterial3d(placeholder_material.clone()),
-                    Transform::from_xyz(0.0, 1.0, 0.0),
-                    ChildOf(view),
-                ));
-            }
-        }
+    let Ok(mut entity) = commands.get_entity(tile) else {
+        return;
+    };
+    entity.remove::<PendingTrees>();
+    for child in old {
+        commands.entity(child).try_despawn();
     }
+    let Ok(mut entity) = commands.get_entity(tile) else {
+        return;
+    };
+    scatter::spawn_scatter(&mut entity, trees, objects, catalog);
 }
 
 /// Track gauge [m].
@@ -700,7 +595,7 @@ pub fn spawn_track(
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(material),
                 Transform::from_translation(translation).with_rotation(rotation),
-                WorldAnchored { anchor },
+                WorldAnchored::in_frame(frame),
             ));
         }
     }
@@ -1002,7 +897,7 @@ pub fn spawn_signals(
             .spawn((
                 Transform::from_translation(translation).with_rotation(frame_rotation),
                 Visibility::default(),
-                WorldAnchored { anchor },
+                WorldAnchored::in_frame(*local.frame()),
             ))
             .id();
         let view = commands
@@ -1111,7 +1006,7 @@ pub fn mount_parts(
                 "signal {}: part {} mounts on missing part {}",
                 part.signal, part.part, mount.parent
             );
-            commands.entity(entity).remove::<Unmounted>();
+            commands.entity(entity).try_remove::<Unmounted>();
             continue;
         };
         // Walk the parent's subtree; the scene is only there a few frames after spawn.
@@ -1151,7 +1046,7 @@ pub fn mount_parts(
                     "signal {}: mount node {:?} not found in part {}",
                     part.signal, mount.node, mount.parent
                 );
-                commands.entity(entity).remove::<Unmounted>();
+                commands.entity(entity).try_remove::<Unmounted>();
             }
             None => {}
         }
@@ -1183,7 +1078,7 @@ pub fn bind_lamps(
             .filter(|(_, m)| m.part as usize == part.part)
             .collect();
         if lamps.is_empty() && motions.is_empty() && model.lods.is_empty() {
-            commands.entity(root).insert(LampsBound);
+            commands.entity(root).try_insert(LampsBound);
             continue;
         }
         let mut stack = vec![root];
@@ -1206,7 +1101,7 @@ pub fn bind_lamps(
             if !model.lods.is_empty()
                 && let Some(level) = lod_level(name.as_str())
             {
-                commands.entity(entity).insert((
+                commands.entity(entity).try_insert((
                     SignalLodNode {
                         signal: part.signal,
                         level,
@@ -1215,7 +1110,7 @@ pub fn bind_lamps(
                 ));
             }
             if let Some((index, _)) = motions.iter().find(|(_, m)| m.node == name.as_str()) {
-                commands.entity(entity).insert((
+                commands.entity(entity).try_insert((
                     MotionNode {
                         signal: part.signal,
                         motion: *index,
@@ -1229,7 +1124,7 @@ pub fn bind_lamps(
             if let Some(binding) = lamps.iter().find(|l| l.node == name.as_str()) {
                 // Dark until the first update — and a glTF node does not have to
                 // carry `Visibility`, without one it could not be switched.
-                commands.entity(entity).insert((
+                commands.entity(entity).try_insert((
                     SignalLamp {
                         signal: part.signal,
                         lamp: binding.lamp.clone(),
@@ -1240,7 +1135,7 @@ pub fn bind_lamps(
             }
         }
         if found {
-            commands.entity(root).insert(LampsBound);
+            commands.entity(root).try_insert(LampsBound);
             info!(
                 "signal {}: part {}: {lamps_bound} of {} lamp nodes, {motions_bound} of {} motion nodes bound",
                 part.signal,

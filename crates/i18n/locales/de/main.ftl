@@ -661,6 +661,8 @@ help-offset = Ziffernblock 4/6/8/2 Bildversatz, 5 zurücksetzen
 help-draw = Gleis zeichnen: Punkte klicken · Enter schließt ab · Esc bricht ab
 
 status-ready = Bereit
+status-perf = { $fps } fps · { $entities } Entitäten · { $tiles } Kacheln (+{ $pending })
+status-perf-hint = Bilder pro Sekunde, Entitäten in der Szene, Geländekacheln in der Szene und im Bau. Beim Fliegen im Blick behalten: die Kachelzahl soll sich einpendeln, die Bildrate nicht einbrechen.
 status-position = { $lat }°, { $lon }°   Höhe { $height } m
 status-ground-height = Boden { $height } m
 status-terrain-flat = Noch keine Höhendaten — der Boden ist flach; unter Höhendaten ein DGM importieren
@@ -1009,6 +1011,30 @@ sky-sun-at = Sonne { $elevation }° über dem Horizont, { $azimuth }° aus Nord
 sky-moon-at = Mond { $elevation }° über dem Horizont, { $phase } % beleuchtet
 sky-place = Aus dem Modulanker: { $lat }°, { $lon }°
 
+# --- Calendar --------------------------------------------------------------
+# The date button of the status bar and the month it opens. Weeks run Monday
+# to Sunday; cal-weekday-1 is therefore Monday, cal-weekday-7 Sunday.
+cal-date = { $day }.{ $month }.{ $year }
+cal-weekday-1 = Mo
+cal-weekday-2 = Di
+cal-weekday-3 = Mi
+cal-weekday-4 = Do
+cal-weekday-5 = Fr
+cal-weekday-6 = Sa
+cal-weekday-7 = So
+cal-month-1 = Januar
+cal-month-2 = Februar
+cal-month-3 = März
+cal-month-4 = April
+cal-month-5 = Mai
+cal-month-6 = Juni
+cal-month-7 = Juli
+cal-month-8 = August
+cal-month-9 = September
+cal-month-10 = Oktober
+cal-month-11 = November
+cal-month-12 = Dezember
+
 heading-checks = Prüfung
 check-ok = Keine Befunde.
 check-device-off-edge = Gerät { $device } liegt außerhalb seines Gleises
@@ -1185,6 +1211,7 @@ hud-key-pause = Pause
 
 # Die Diagnose, F6. Maschinenausgabe — sie darf so dicht sein, wie sie will.
 hud-diagnostics = Diagnose
+hud-diag-frame = Bild     { $fps } fps, { $millis } ms, { $entities } Entitäten
 hud-diag-terrain = Gelände  { $tiles } Kacheln (+{ $pending }), { $triangles } Dreiecke, { $megabytes } MB, Sicht { $view } m
 hud-diag-air = Luft     R { $auxiliary } bar   Zusatz { $direct } bar   { $air } Nl verbraucht
 hud-diag-axles = Achsen   { $slipping }/{ $axles } schleudern, schlimmste { $worst } m/s

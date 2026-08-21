@@ -343,8 +343,8 @@ figures on the face stay put while the line's limit changes.
 Nothing that does not apply is drawn: the AFB row exists on a vehicle fitted with one, the
 LZB lamps where an LZB is, the look-ahead when something is actually coming. `F5` opens the
 keyboard as a sheet — with a legend of what the ten annunciators mean — and `F6` the
-diagnostics: terrain, air detail, axles, temperatures, signals and the network, which is
-where everything a driver has no use for lives.
+diagnostics: frame time and entity count, terrain, air detail, axles, temperatures, signals
+and the network, which is where everything a driver has no use for lives.
 
 **`F7` walks three steps** — full, reduced, off — and rounds back. The reduced step keeps
 what the train is *driven* by (the desk and the protection lamps) and everything that
@@ -445,10 +445,14 @@ skirts at the tile edges against cracks between levels, and a cutting/embankment
 pulls the terrain near the track up to rail level.
 
 The ground is textured by **splatting**: per-vertex weights from slope and track distance blend
-grass, rock and gravel. Trees are line content — every tree its own entry, spawned as a child
-of its terrain tile, so vegetation streams and batches with the ground it stands on. Terrain,
-splatting, vegetation and track objects live in `world-render` and therefore look the same in
-the simulator and in the route editor.
+grass, rock and gravel. Trees and scenery objects are line content — every one its own entry,
+placed by the terrain tile it stands on and spawned as a child of it, so they stream with the
+ground. A tree is not a scene instance but one entity per mesh part of its model, sharing the
+part's mesh and material, so Bevy batches a wood into instanced draws; `_LOD` nodes become
+distance bands and every tree is culled past 2.5 km. Tiles are built several at a time — the
+builder is shared read-only, the DGM sheets keep their own short lock. Terrain, splatting,
+vegetation and track objects live in `world-render` and therefore look the same in the
+simulator and in the route editor.
 
 The app shows the terrain automatically (flat without DGM):
 
@@ -484,6 +488,9 @@ whole day past in one drag — which is how you find out that the platform lies 
 shadow of its own canopy all morning. Latitude and longitude are not edited there: they
 are the module's anchor, the same pair a run reads, so both programs put the sun over the
 same hillside. Underneath, the panel reads out where the sun and the moon actually stand.
+The date and that slider sit in the **status bar** as well — a calendar behind the date and
+the sun itself as the handle of the day rail — because the light is judged on the map, not
+in a panel.
 
 ## Language
 

@@ -558,7 +558,8 @@ mod tests {
             height: 500.0,
             yaw: 0.0,
             pitch: 0.9,
-            fly_speed: 1.0,
+            speed_step: crate::view::DEFAULT_SPEED_STEP,
+            speed_scalar: 1.0,
         };
         let device = line.source.devices.first().expect("example has devices");
         let (edge, before) = (device.edge, device.s);
@@ -603,7 +604,8 @@ mod tests {
             height: 500.0,
             yaw: 0.0,
             pitch: crate::view::DEFAULT_PITCH,
-            fly_speed: 1.0,
+            speed_step: crate::view::DEFAULT_SPEED_STEP,
+            speed_scalar: 1.0,
         };
         let (mut lat, mut lon) = (52.0, 10.0);
         let before = geo::to_ecef_deg(lat, lon, 146.0);

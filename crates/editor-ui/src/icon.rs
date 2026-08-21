@@ -6,7 +6,8 @@
 //! so an active button's icon turns with its fill.
 
 use bevy_egui::egui::{
-    self, Color32, CornerRadius, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2,
+    self, Color32, CornerRadius, Painter, Pos2, Rect, Response, RichText, Sense, Shape, Stroke, Ui,
+    Vec2,
 };
 
 use crate::colors;
@@ -596,21 +597,17 @@ pub fn bar_divider(ui: &mut Ui) {
     );
 }
 
-/// A compact numeric control for a bar — the form's [`crate::field`] is a
-/// fixed 150 px wide, which is a column width, not a toolbar width.
-pub fn bar_value(
-    ui: &mut Ui,
-    value: &mut f64,
-    speed: f64,
-    range: std::ops::RangeInclusive<f64>,
-    suffix: &str,
-) -> Response {
+/// A bar-height button carrying a value and a caret, to be handed to
+/// `egui::Popup::menu`.
+///
+/// The caret is the whole point: a bare number on a toolbar reads as a
+/// display, and nobody clicks a display. The caret comes out of the icon font,
+/// whose fallback is Inter — so the value beside it stays in the body face.
+pub fn bar_menu(ui: &mut Ui, value: impl Into<String>, tooltip: impl Into<String>) -> Response {
+    let caret = RichText::new(egui_phosphor::regular::CARET_DOWN).font(crate::icon_font(11.0));
     ui.add_sized(
         Vec2::new(58.0, BUTTON.y),
-        egui::DragValue::new(value)
-            .speed(speed)
-            .range(range)
-            .max_decimals(1)
-            .suffix(suffix),
+        egui::Button::new((value.into(), caret)),
     )
+    .on_hover_text(tooltip.into())
 }

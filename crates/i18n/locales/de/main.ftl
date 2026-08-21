@@ -653,8 +653,11 @@ view-imagery = Luftbild auf dem Gelände
 gizmo-move = Verschiebegriffe (W)
 gizmo-rotate = Drehgriff (E)
 camera-speed = Kamerageschwindigkeit
+camera-speed-hint = Kamerageschwindigkeit — { $speed } m/s. Rechte Maustaste und Mausrad drehen dasselbe Rad.
+camera-speed-scalar = Geschwindigkeitsfaktor
+camera-speed-value = { $speed } m/s
 
-help-fly = Rechte Maustaste halten zum Umsehen, WASD fliegt, Q/E runter/hoch, Umschalt schneller · Alt+links umkreist · mittlere Maustaste schwenkt · Mausrad zoomt · F rückt die Auswahl ins Bild
+help-fly = Rechte Maustaste halten zum Umsehen, WASD fliegt, Q/E runter/hoch, Umschalt langsamer · rechte Maustaste + Mausrad stellt die Kamerageschwindigkeit · Alt+links umkreist · mittlere Maustaste schwenkt · Mausrad zoomt · F rückt die Auswahl ins Bild
 help-gizmo = W Verschiebegriffe, E Drehgriff · Pfeil ziehen verschiebt die Auswahl längs des Gleises, quer dazu oder nach oben
 help-opacity = [ ] Deckkraft · , . Zoomstufe · Z automatisch
 help-offset = Ziffernblock 4/6/8/2 Bildversatz, 5 zurücksetzen

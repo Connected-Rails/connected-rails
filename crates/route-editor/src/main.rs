@@ -60,8 +60,12 @@ pub struct Focus {
     pub yaw: f64,
     /// How far the camera looks down [rad].
     pub pitch: f64,
-    /// Multiplier on the fly speed — Unreal's camera speed dial.
-    pub fly_speed: f64,
+    /// Unreal's camera speed dial: a step from 1 to 8, each one doubling the
+    /// flight speed (see [`Focus::fly_speed`]).
+    pub speed_step: i32,
+    /// Unreal's camera speed scalar — the fine multiplier on top of the dial,
+    /// for when eight steps do not reach.
+    pub speed_scalar: f64,
 }
 
 /// The document: the line in source form, its compilation, and the save state.
@@ -526,7 +530,8 @@ fn setup(
         height: start_height.0,
         yaw: 0.0,
         pitch: view::DEFAULT_PITCH,
-        fly_speed: 1.0,
+        speed_step: view::DEFAULT_SPEED_STEP,
+        speed_scalar: 1.0,
     });
     commands.insert_resource(Origin(origin));
     let mods_dir = std::path::Path::new("mods");

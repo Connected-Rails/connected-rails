@@ -625,9 +625,18 @@ render target into an ordinary image — a target only holds its contents while 
 camera points at it. One at a time, and only for what the drawer is actually drawing, so a
 catalogue nobody opens costs nothing. Track types show their colour instead, which is what
 a track type is. The **viewport** is flown the way an Unreal one is: hold the right mouse
-button to look and fly with `WASD` (`Q`/`E` down and up, `Shift` faster, the wheel sets the
-camera speed), `Alt`+left orbits the view point, the middle button pans, `F` frames the
+button to look and fly with `WASD` (`Q`/`E` down and up, `Shift` slower, the wheel turns the
+camera speed dial), `Alt`+left orbits the view point, the middle button pans, `F` frames the
 selection. Selecting is a question about pixels: whatever is under the cursor, near or far.
+
+The **camera speed dial** is Unreal's, down to the numbers: eight steps, each one doubling the
+flight speed, and a free multiplier of 1 to 128 on top of them for the distances eight steps do
+not cover. It sits on the viewport bar as the step with a caret, and the same value is under the
+wheel while the right mouse button is held — one notch, one step, so the speed is set with the
+hand that is already flying. `Shift` is the precision modifier and *halves* the speed, as it does
+in Unreal: the dial is what makes the camera fast, Shift is for the last metres up to a signal. The speed is metres per second and nothing else: it is deliberately
+*not* scaled by how far the view point is away, because a speed that changes underfoot as the
+builder zooms is a speed they do not control, and controlling it is what the dial is for.
 
 The selection carries a **transform gizmo**, `W` for the arrows and `E` for the rotation ring
 (the letters are free the moment the right mouse button is let go). Its axes are the fields the item actually has,

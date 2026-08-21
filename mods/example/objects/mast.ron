@@ -12,4 +12,6 @@
     lateral_offset: -3.5,
     yaw_deg: 0.0,
     height: 0.0,
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["mast", "catenary", "epoch-4"],
 )

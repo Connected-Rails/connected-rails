@@ -30,4 +30,6 @@
         (level: 0, distance: 200.0),
         (level: 1, distance: 2500.0),
     ],
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["ks", "mast", "zs3"],
 )

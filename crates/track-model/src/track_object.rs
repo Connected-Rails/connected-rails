@@ -34,6 +34,13 @@ pub struct TrackObject {
     pub autumn_model: Option<String>,
     #[serde(default)]
     pub winter_model: Option<String>,
+    /// Free-form tags the mod author gives the entry, for finding it again in
+    /// a catalogue of thousands: `["mast", "catenary", "epoch-4"]`. Lower-case
+    /// kebab by convention — the editors normalise what is typed, and the
+    /// content drawer lower-cases when it groups, so a hand-written `Mast`
+    /// still lands on the same tag.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl TrackObject {
@@ -60,6 +67,7 @@ mod tests {
             height: 0.0,
             autumn_model: None,
             winter_model: Some("example/assets/mast_winter.gltf".into()),
+            tags: vec!["mast".into(), "epoch-4".into()],
         };
         assert_eq!(TrackObject::from_ron(&full.to_ron()).unwrap(), full);
 

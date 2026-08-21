@@ -11,4 +11,6 @@
     reverb: 1.0,
     max_speed: 250.0,
     lzb: false,
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["tunnel"],
 )

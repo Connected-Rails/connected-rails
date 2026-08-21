@@ -30,6 +30,7 @@ bricht es mit „cannot open shared object file" ab.
 | `--screenshot <datei.png>` | Aufnahme des Fensters, danach Ende. Verzeichnis wird angelegt. |
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
 | `--height M` | Nur Moduleditor: Starthöhe des Blickpunkts über der Strecke in Metern (Vorgabe 900). 60 zeigt Bäume und Objekte, 900 das Modul. |
+| `--drawer [kategorie]` | Nur Moduleditor: Inhalte-Schublade offen aufnehmen — sonst nur per `Ctrl`+`Space` erreichbar. Kategorie optional: `objects` (Vorgabe), `signal-types`, `signal-models`, `track-types`. |
 
 `--frames` ist der einzige Hebel auf den Zeitpunkt: mehr Frames = mehr Simulationszeit vor dem
 Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für geladenes Overlay,
@@ -72,6 +73,7 @@ Bildmaterial-Konfiguration als `imagery.ron`.
   man über `cargo test`, nicht über Bilder. Im Menü ersetzt `--menu <seite>` die fehlende Tastatur;
   die Auswahl steht dabei immer auf der ersten Zeile.
 - Dialoge der Editoren, die erst ein Menübefehl öffnet (etwa „Neues Modul"), sind so nicht
-  erreichbar — dafür bleibt nur der laufende Editor und ein Blick von Hand.
+  erreichbar — dafür bleibt nur der laufende Editor und ein Blick von Hand. Die
+  Inhalte-Schublade ist die Ausnahme: `--drawer` ersetzt dort die fehlende Tastatur.
 - Braucht eine GPU und eine Desktop-Sitzung. In headless-CI schlägt es fehl — dort bleibt `--frames` als
   reiner Rendering-Smoke-Test.

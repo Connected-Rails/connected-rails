@@ -61,6 +61,27 @@ and interlocking.
 that raises an error is switched off after the first error and the run continues. A signal type
 without a matching rule shows stop.
 
+### Tags
+
+Scenery objects, signal types, signal models and track types each take a `tags` list — free
+words the mod author picks, which the route editor's **content drawer** filters on:
+
+```ron
+tags: ["mast", "catenary", "epoch-4"],
+```
+
+The field is optional and defaults to empty; a mod without tags loses nothing but the filter.
+Tags are **lower case, words joined by hyphens** — the signal editor normalises what is typed
+(`Epoch 4` becomes `epoch-4`), and the drawer normalises again when it reads a hand-written
+file, so `Mast` and `mast` are one tag and not two. There is no fixed vocabulary and no
+registry: what a line builder searches for is what the mods around them happen to agree on.
+Useful conventions are the epoch (`epoch-3`), the region or company, the kind of thing
+(`main-signal`, `catenary`, `platform`) and the state of the model (`lod0`, `wip`).
+
+A tag names the *entry*, not the placement: a mast tagged `epoch-4` stays that mast wherever a
+line puts it. Nothing in the simulator reads tags — they exist for finding things in the
+editor, and adding one can never change how a run behaves.
+
 ## Vehicles
 
 `vehicles/*.ron` is a `VehicleSpec` — plain data. See `mods/example/vehicles/br101_afb.ron`:
@@ -968,6 +989,7 @@ look like. `mods/example/signals/ks_main.ron`:
         (when: (), show: (main: Some(Proceed), distant: Some(ExpectProceed)), lamps: ["green"]),
     ],
     script: None,
+    tags: ["ks", "main-signal"],  // optional, for the content drawer's filter (see Tags)
 )
 ```
 
@@ -995,6 +1017,7 @@ and under a bridge there. `signal_models/*.ron`:
         (lamp: "red", part: 1, node: "lamp_red"),
         (lamp: "zs3_4", part: 2, node: "zs3_4"),
     ],
+    tags: ["ks", "mast", "zs3"],  // optional, for the content drawer's filter (see Tags)
 )
 ```
 
@@ -1195,6 +1218,7 @@ built like, not where it runs:
     reverb: 0.0,                 // how much the surroundings ring: 0 = open line, 1 = tunnel
     max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
     lzb: false,                  // true: a line conductor belongs on this track (rule check)
+    tags: ["main-line", "welded"],  // optional, for the content drawer's filter (see Tags)
 )
 ```
 
@@ -1321,6 +1345,7 @@ meant, so the editor's object tool drops it correctly with one click:
     lateral_offset: -3.5,  // m, positive = right of increasing arc length
     yaw_deg: 0.0,          // about up, clockwise from above; 0 = front along the track
     height: 0.0,           // m above the railhead
+    tags: ["mast", "catenary", "epoch-4"],  // optional, for the content drawer (see Tags)
 )
 ```
 

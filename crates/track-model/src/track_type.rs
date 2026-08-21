@@ -42,6 +42,13 @@ pub struct TrackType {
     /// flags a line that uses the type but places no conductor device.
     #[serde(default)]
     pub lzb: bool,
+    /// Free-form tags the mod author gives the entry, for finding it again in
+    /// a catalogue of thousands: `["mast", "catenary", "epoch-4"]`. Lower-case
+    /// kebab by convention — the editors normalise what is typed, and the
+    /// content drawer lower-cases when it groups, so a hand-written `Mast`
+    /// still lands on the same tag.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_color() -> (f32, f32, f32) {
@@ -69,6 +76,7 @@ impl Default for TrackType {
             reverb: 0.0,
             max_speed: default_max_speed(),
             lzb: false,
+            tags: Vec::new(),
         }
     }
 }
@@ -106,6 +114,7 @@ mod tests {
             reverb: 0.8,
             max_speed: 250.0,
             lzb: true,
+            tags: vec!["hauptbahn".into()],
         };
         let back = TrackType::from_ron(&full.to_ron()).expect("parses");
         assert_eq!(back, full);

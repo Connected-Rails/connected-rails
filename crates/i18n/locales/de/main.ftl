@@ -702,6 +702,7 @@ tool-draw = Gleis zeichnen
 tool-draw-hint = Klicks setzen Punkte: der erste beginnt das Gleis, jeder weitere hängt einen tangentialen Bogen an · Enter oder Rechtsklick schließt ab · Esc bricht ab (2)
 tool-device = Gerät platzieren
 tool-device-hint = Klick auf ein Gleis setzt die gewählte Geräteart dorthin (3)
+tool-device-pick = keins — in der Inhaltsschublade auswählen
 tool-switch = Weiche setzen
 tool-area = Bereich markieren
 tool-area-hint = Einen Strich am Gleis entlang ziehen und dem Abschnitt Eigenschaften geben
@@ -1960,10 +1961,20 @@ graph-group-remove = Kommentarrahmen entfernen
 
 ## Inhalte-Schublade
 
+tag-add = Hinzufügen
+tag-add-placeholder = Neuer Tag
+tag-remove-hint = Entfernt den Tag
+group-tags = Tags
+tags-hint = Frei wählbar, zum Wiederfinden in der Inhalte-Schublade — klein geschrieben, Wörter mit Bindestrich. Enter fügt einen hinzu.
 drawer-title = Inhalte
-drawer-filter-placeholder = Nach Name oder Mod filtern
+drawer-filter-placeholder = Nach Name oder Schlüssel filtern
 drawer-count-filtered = { $shown } von { $total }
-drawer-empty = Nichts vorhanden — kein installierter Mod bringt diese Art, oder der Filter trifft nichts davon.
+drawer-empty = Nichts vorhanden — kein installierter Mod bringt diese Art.
+drawer-source-all = Alle Mods
+drawer-system-all = Alle Systeme
+drawer-tag-all = Alle Tags
+drawer-empty-filtered = Der Filter trifft nichts.
+drawer-reset-filters = Filter zurücksetzen
 drawer-objects = Szenerieobjekte
 drawer-signal-types = Signaltypen
 drawer-signal-models = Signalmodelle

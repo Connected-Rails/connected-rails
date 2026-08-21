@@ -23,4 +23,6 @@
     script: Some("example:zs1"),
     // Same assembly as ks_main — the parts are shared files, the model just lists them.
     model: Some("example:ks_mast"),
+    // Tags: free, lower case — the route editor's content drawer filters on them.
+    tags: ["ks", "main-signal", "zs1"],
 )

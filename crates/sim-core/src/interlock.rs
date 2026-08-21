@@ -218,6 +218,13 @@ pub struct SignalType {
     /// override it per signal (`SignalSource::model`).
     #[serde(default)]
     pub model: Option<String>,
+    /// Free-form tags the mod author gives the entry, for finding it again in
+    /// a catalogue of thousands: `["mast", "catenary", "epoch-4"]`. Lower-case
+    /// kebab by convention — the editors normalise what is typed, and the
+    /// content drawer lower-cases when it groups, so a hand-written `Mast`
+    /// still lands on the same tag.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn default_system() -> SignalSystem {
@@ -247,6 +254,13 @@ pub struct SignalModel {
     /// they disappear. Empty = the whole assembly at every distance.
     #[serde(default)]
     pub lods: Vec<crate::train::Lod>,
+    /// Free-form tags the mod author gives the entry, for finding it again in
+    /// a catalogue of thousands: `["mast", "catenary", "epoch-4"]`. Lower-case
+    /// kebab by convention — the editors normalise what is typed, and the
+    /// content drawer lower-cases when it groups, so a hand-written `Mast`
+    /// still lands on the same tag.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// One glTF file of a signal assembly.
@@ -994,6 +1008,7 @@ mod tests {
             ],
             script: None,
             model: None,
+            tags: Vec::new(),
         });
         let mut sig = Signal::new(SignalId(0), SignalKind::Main, DeviceId(0));
         sig.guarded = vec![sec];
@@ -1047,6 +1062,7 @@ mod tests {
             }],
             script: None,
             model: None,
+            tags: Vec::new(),
         });
         let ty_announce = il.add_type(SignalType {
             system: SignalSystem::Ks,
@@ -1075,6 +1091,7 @@ mod tests {
             ],
             script: None,
             model: None,
+            tags: Vec::new(),
         });
         // The announcing signal is stored *before* its follower, so storage order
         // would evaluate it first — the signalling order must not.

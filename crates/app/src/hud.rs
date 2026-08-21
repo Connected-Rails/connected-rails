@@ -53,6 +53,9 @@
 //! reservoir and the pale one the brake pipe, because that is what the needles mean in a
 //! cab. Colour that carries a meaning the driver already knows is not decoration.
 
+use bevy::diagnostic::{
+    DiagnosticPath, DiagnosticsStore, EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin,
+};
 use bevy::ecs::system::SystemParam;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
@@ -2372,12 +2375,14 @@ pub fn update_hud(
     drawings: Res<Drawings>,
     // Only present in a multiplayer run (`net.rs`); single player never sees the line.
     session: Option<Res<crate::net::Session>>,
+    diagnostics: Res<DiagnosticsStore>,
     mut nodes: Nodes,
 ) {
     let mode = mode(&gameplay, over.as_deref());
     if !mode.drawn() {
         return;
     }
+    let perf = Perf::read(&diagnostics);
     let frame = Frame::read(
         &sim.0,
         player.0,
@@ -2389,6 +2394,7 @@ pub fn update_hud(
         &streamer,
         &view,
         session.as_deref(),
+        &perf,
     );
 
     for (readout, mut content, mut color) in nodes.readouts.iter_mut() {
@@ -2492,6 +2498,31 @@ struct Frame<'a> {
     mode: HudMode,
 }
 
+/// What Bevy's own diagnostics say about the last frames — the numbers that
+/// tell whether a streaming change helped, averaged so they can be read.
+#[derive(Default)]
+pub struct Perf {
+    pub fps: f64,
+    pub frame_ms: f64,
+    pub entities: usize,
+}
+
+impl Perf {
+    pub fn read(store: &DiagnosticsStore) -> Self {
+        let smoothed = |path: &DiagnosticPath| {
+            store
+                .get(path)
+                .and_then(|d| d.smoothed())
+                .unwrap_or_default()
+        };
+        Self {
+            fps: smoothed(&FrameTimeDiagnosticsPlugin::FPS),
+            frame_ms: smoothed(&FrameTimeDiagnosticsPlugin::FRAME_TIME),
+            entities: smoothed(&EntityCountDiagnosticsPlugin::ENTITY_COUNT) as usize,
+        }
+    }
+}
+
 impl<'a> Frame<'a> {
     // A frame is the whole HUD's input; it reads what the HUD shows, not one thing.
     #[allow(clippy::too_many_arguments)]
@@ -2506,6 +2537,7 @@ impl<'a> Frame<'a> {
         streamer: &TerrainStreamer,
         view: &ViewDistance,
         session: Option<&crate::net::Session>,
+        perf: &Perf,
     ) -> Self {
         let train = &sim.trains[player];
         let loco = &train.vehicles[0];
@@ -2561,7 +2593,7 @@ impl<'a> Frame<'a> {
         };
         // Only worked out while the panel is open — it walks every signal of the line.
         if overlays.diagnostics {
-            frame.diagnostics = Some(frame.diagnose(terrain, streamer, view, session));
+            frame.diagnostics = Some(frame.diagnose(terrain, streamer, view, session, perf));
         }
         frame
     }
@@ -3185,6 +3217,7 @@ impl<'a> Frame<'a> {
         streamer: &TerrainStreamer,
         view: &ViewDistance,
         session: Option<&crate::net::Session>,
+        perf: &Perf,
     ) -> String {
         let drive = self.loco.traction.drives[0];
         let aspects: Vec<String> = self
@@ -3204,6 +3237,12 @@ impl<'a> Frame<'a> {
             })
             .collect();
         let mut lines = vec![
+            t!(
+                "hud-diag-frame",
+                fps = format!("{:.0}", perf.fps),
+                millis = decimal(perf.frame_ms, 1),
+                entities = perf.entities,
+            ),
             t!(
                 "hud-diag-terrain",
                 tiles = terrain.0.tiles,

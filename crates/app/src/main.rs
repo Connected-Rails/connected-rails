@@ -31,7 +31,9 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
-use content::terrain::{TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation};
+use content::terrain::{
+    Scenery, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation,
+};
 use content::vehicles::passenger_coach;
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
@@ -231,6 +233,12 @@ fn main() {
     // Terrain splatting (plan ch. 14): shader and material, shared with the
     // route editor, which draws the same ground.
     .add_plugins(world_render::WorldRenderPlugin)
+    // Frame time and entity count for the F6 panel — the two numbers that say
+    // whether the streaming keeps up.
+    .add_plugins((
+        bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+        bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
+    ))
     // The mixer (`audio.rs`) — opened here rather than in `Startup`, because the initial
     // state transition into `Driving` runs before any startup schedule.
     .add_plugins(audio::plugin)
@@ -665,8 +673,15 @@ fn setup(
         fallback_height: 100.0,
         ..default()
     };
-    let mut terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
+    // Trees and scenery objects come with the tiles: each stands on the ground
+    // of the tile it lands on, and streams in and out with it.
+    let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
         .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone))
+        .with_scenery(Scenery::from_line(
+            &line_source,
+            &sim.net,
+            terrain_options.zone,
+        ))
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(
@@ -676,19 +691,6 @@ fn setup(
         &assets,
         &sim.net,
         &origin,
-    );
-    // Scenery objects: the line's furniture, placed relative to the track.
-    world_render::spawn_objects(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &assets,
-        &line_source,
-        &sim.net,
-        &origin,
-        &mods.mods.objects,
-        Some(&mut terrain_builder),
-        season,
     );
 
     // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
@@ -731,9 +733,11 @@ fn setup(
     commands.insert_resource(aspect_materials);
     commands.insert_resource(world_render::SignalModels(signal_models));
 
-    // Vegetation: the line's tree objects resolved against the installed mods.
-    let tree_catalog = render::tree_catalog(
+    // Vegetation and scenery: the line's object names resolved against the
+    // installed mods.
+    let catalog = world_render::WorldCatalog::new(
         terrain_builder.tree_objects(),
+        terrain_builder.scenery_objects(),
         &mods.mods.objects,
         &assets,
         &mut meshes,
@@ -748,7 +752,7 @@ fn setup(
             season,
             settings::ground_quality(&graphics),
         ),
-        tree_catalog,
+        catalog,
         f64::from(graphics.view_distance),
     );
 

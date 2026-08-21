@@ -39,7 +39,7 @@ fn main() -> ExitCode {
     };
 
     // --dgm takes a single file or a whole directory full of tiles.
-    let mut grid = match flag("--dgm") {
+    let grid = match flag("--dgm") {
         Some(path) => {
             let p = std::path::Path::new(&path);
             let source = if p.is_dir() {
@@ -87,7 +87,7 @@ fn main() -> ExitCode {
         options.start_way = Some(v);
     }
 
-    let (line, report) = match import_line(&osm_json, grid.as_mut(), &options) {
+    let (line, report) = match import_line(&osm_json, grid.as_ref(), &options) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("Import failed: {e}");

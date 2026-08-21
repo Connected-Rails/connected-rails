@@ -1,11 +1,15 @@
 //! Editing tools of the route editor (plan ch. 15, editor v1: tracks + devices).
 //!
-//! Picking happens on the map plane — the horizontal plane through the focus
-//! point — because the editor looks straight down at it. Track drawing is an
-//! arc-to-point tool: every click appends the one circular arc (or straight)
-//! that leaves the alignment tangentially and hits the clicked point, so the
-//! drawn track is G1-continuous by construction.
+//! A click is projected onto the map plane — the horizontal plane through the
+//! focus point — which is where a tool places what it places. What is already
+//! placed is drawn where it stands: a tree, a reference marker and a terrain
+//! stroke carry latitude and longitude only, and the ground gives them their
+//! height (`terrain::Marks`). Track drawing is an arc-to-point tool: every
+//! click appends the one circular arc (or straight) that leaves the alignment
+//! tangentially and hits the clicked point, so the drawn track is
+//! G1-continuous by construction.
 
+use crate::terrain::Marks;
 use crate::{Focus, Ghost, Line, Origin, TrackObjects};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -747,7 +751,12 @@ impl ScreenPick<'_> {
 }
 
 /// Where the selection sits — what the gizmo stands on and `F` frames.
-pub fn selection_pos(line: &Line, selection: Selection, focus: &Focus) -> Option<EcefPos> {
+pub fn selection_pos(
+    line: &Line,
+    selection: Selection,
+    focus: &Focus,
+    marks: &Marks,
+) -> Option<EcefPos> {
     match selection {
         Selection::Edge(i) => {
             let edge = line.net.edges().get(i)?;
@@ -755,9 +764,9 @@ pub fn selection_pos(line: &Line, selection: Selection, focus: &Focus) -> Option
         }
         Selection::Device(i) => device_pos(&line.net, line.source.devices.get(i)?),
         Selection::Object(i) => object_pos(&line.net, line.source.objects.get(i)?),
-        Selection::Tree(i) => Some(tree_pos(line.source.trees.get(i)?, focus)),
-        Selection::Marker(i) => Some(marker_pos(line.source.markers.get(i)?, focus)),
-        Selection::TerrainEdit(i) => Some(terrain_pos(line.source.terrain.get(i)?, focus)),
+        Selection::Tree(i) => Some(marks.tree(i, line.source.trees.get(i)?)),
+        Selection::Marker(i) => Some(marks.marker(i, line.source.markers.get(i)?)),
+        Selection::TerrainEdit(i) => Some(marks.stroke(i, line.source.terrain.get(i)?)),
         // The middle of the first stretch it covers — where `F` frames it, and where the
         // map jumps to from the list.
         Selection::EnvelopePoint(i) => Some(crate::envelope::point_pos(
@@ -1035,9 +1044,9 @@ pub fn delete_marked(line: &mut Line, state: &mut EditorState) {
 }
 
 /// Marks every tree and object within `radius` of `p` — the brush sweep.
-fn mark_within(state: &mut EditorState, line: &Line, focus: &Focus, p: EcefPos, radius: f64) {
+fn mark_within(state: &mut EditorState, line: &Line, marks: &Marks, p: EcefPos, radius: f64) {
     for (i, tree) in line.source.trees.iter().enumerate() {
-        if tree_pos(tree, focus).distance(p) <= radius && !state.marked.contains(&Mark::Tree(i)) {
+        if marks.tree(i, tree).distance(p) <= radius && !state.marked.contains(&Mark::Tree(i)) {
             state.marked.push(Mark::Tree(i));
         }
     }
@@ -1120,25 +1129,6 @@ pub fn clear_of_track(net: &TrackNetwork, lat: f64, lon: f64) -> bool {
     }
 }
 
-/// Map position of a tree: its geo position lifted onto the focus plane — the
-/// terrain height only exists in the app, and the editor looks straight down.
-pub fn tree_pos(tree: &TreeSource, focus: &Focus) -> EcefPos {
-    let (_, _, height) = geo::from_ecef(focus.position);
-    geo::to_ecef_deg(tree.lat, tree.lon, height)
-}
-
-/// The same for a reference marker.
-pub fn marker_pos(marker: &MarkerSource, focus: &Focus) -> EcefPos {
-    let (_, _, height) = geo::from_ecef(focus.position);
-    geo::to_ecef_deg(marker.lat, marker.lon, height)
-}
-
-/// The same for a terrain brush stroke.
-pub fn terrain_pos(edit: &TerrainEditSource, focus: &Focus) -> EcefPos {
-    let (_, _, height) = geo::from_ecef(focus.position);
-    geo::to_ecef_deg(edit.lat, edit.lon, height)
-}
-
 /// The terrain tiles of this line's corridor — what a full height import
 /// covers, and the grid the tile picker works on.
 pub fn corridor_tiles(line: &Line, options: content::TerrainOptions) -> Vec<content::TileKey> {
@@ -1150,14 +1140,16 @@ pub fn tile_of(p: EcefPos, options: content::TerrainOptions) -> content::TileKey
     content::terrain::tile_at(content::terrain::to_utm(p, &options), &options)
 }
 
-/// The four corners of a tile on the focus plane — for drawing the grid.
+/// The four corners of a tile at `height` — for drawing the grid.
+///
+/// One height for the whole grid, as for the module boundary: a rectangle over
+/// half a kilometre of ground would take a corner into every hollow it spans.
 fn tile_corners(
     k: content::TileKey,
     options: content::TerrainOptions,
-    focus: &Focus,
+    height: f64,
 ) -> [EcefPos; 5] {
     let min = content::terrain::tile_min(k, options.tile_size);
-    let (_, _, height) = geo::from_ecef(focus.position);
     let corner = |dx: f64, dy: f64| {
         let (lat, lon) = geo::from_utm(min.x + dx, min.y + dy, options.zone);
         geo::to_ecef(lat, lon, height)
@@ -1278,6 +1270,7 @@ pub fn tool_input(
     ghost: Res<Ghost>,
     objects: Res<TrackObjects>,
     gizmo: Res<crate::gizmo::GizmoState>,
+    marks: Res<crate::terrain::Marks>,
     mut state: ResMut<EditorState>,
     mut line: ResMut<Line>,
     mut overlay: ResMut<crate::overlay::Overlay>,
@@ -1404,7 +1397,7 @@ pub fn tool_input(
         {
             state.map_used = true;
             let radius = state.brush_radius.unwrap_or(30.0);
-            mark_within(&mut state, &line, &focus, p, radius);
+            mark_within(&mut state, &line, &marks, p, radius);
         }
         return;
     }
@@ -1674,14 +1667,14 @@ pub fn tool_input(
                 .trees
                 .iter()
                 .enumerate()
-                .map(|(i, t)| (Selection::Tree(i), tree_pos(t, &focus)))
+                .map(|(i, t)| (Selection::Tree(i), marks.tree(i, t)))
                 .collect::<Vec<_>>();
             let terrain = line
                 .source
                 .terrain
                 .iter()
                 .enumerate()
-                .map(|(i, e)| (Selection::TerrainEdit(i), terrain_pos(e, &focus)))
+                .map(|(i, e)| (Selection::TerrainEdit(i), marks.stroke(i, e)))
                 .collect::<Vec<_>>();
             // Hidden layers are not pickable — out of sight, out of reach.
             let markers = line
@@ -1690,7 +1683,7 @@ pub fn tool_input(
                 .iter()
                 .enumerate()
                 .filter(|(_, m)| state.layer_visible(&m.layer))
-                .map(|(i, m)| (Selection::Marker(i), marker_pos(m, &focus)))
+                .map(|(i, m)| (Selection::Marker(i), marks.marker(i, m)))
                 .collect::<Vec<_>>();
             let nearest = device
                 .into_iter()
@@ -1711,6 +1704,14 @@ pub fn tool_input(
     }
 }
 
+/// How far above the ground a mark is drawn \[m\].
+///
+/// Not a hair's breadth: the aerial photo is draped over the terrain with a
+/// lift of its own (`height_offset` in `imagery.ron`, a metre by default,
+/// because the drape's grid is coarser than the terrain's), and a mark at the
+/// same height disappears into the picture. Raise this if that is raised.
+pub(crate) const MARK_LIFT: f32 = 2.5;
+
 /// Circle gizmo lying flat on the ground at `p`.
 pub(crate) fn ground_circle(
     gizmos: &mut Gizmos,
@@ -1722,7 +1723,7 @@ pub(crate) fn ground_circle(
     let up = origin.dir_to_render(EnuFrame::at(p).up);
     let rotation = Quat::from_rotation_arc(Vec3::Z, up);
     gizmos.circle(
-        Isometry3d::new(origin.to_render(p) + up, rotation),
+        Isometry3d::new(origin.to_render(p) + up * MARK_LIFT, rotation),
         radius,
         color,
     );
@@ -1931,11 +1932,18 @@ pub fn draw_gizmos(
     ghost: Res<Ghost>,
     origin: Res<Origin>,
     focus: Res<Focus>,
+    ground: crate::terrain::Ground,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut gizmos: Gizmos,
 ) {
     let accent = Color::srgb(0.36, 0.61, 0.96);
+    // The tile grid lies on the ground the cursor is over — the height the
+    // status bar reads out anyway. Without terrain it keeps the view point's.
+    let grid_height = ground
+        .view
+        .cursor_height
+        .unwrap_or_else(|| geo::from_ecef(focus.position).2);
 
     if let Some(highlight) = state.highlight {
         draw_highlight(&mut gizmos, &line, &origin.0, &focus, highlight);
@@ -2050,7 +2058,7 @@ pub fn draw_gizmos(
     // stroke actually reaches, so overlapping ones show where the ground is
     // worked twice. Raising warm, lowering cold, levelling neutral.
     for (i, edit) in line.source.terrain.iter().enumerate() {
-        let p = terrain_pos(edit, &focus);
+        let p = ground.marks.stroke(i, edit);
         let color = match edit.edit {
             content::route::TerrainEdit::Raise(by) if by >= 0.0 => Color::srgb(0.90, 0.55, 0.30),
             content::route::TerrainEdit::Raise(_) => Color::srgb(0.35, 0.60, 0.90),
@@ -2080,7 +2088,7 @@ pub fn draw_gizmos(
         if !state.layer_visible(&marker.layer) {
             continue;
         }
-        let p = marker_pos(marker, &focus);
+        let p = ground.marks.marker(i, marker);
         if state.selection == Selection::Marker(i) {
             ground_circle(
                 &mut gizmos,
@@ -2090,8 +2098,7 @@ pub fn draw_gizmos(
                 accent,
             );
         }
-        let up = origin.0.dir_to_render(EnuFrame::at(p).up);
-        let center = origin.0.to_render(p) + up;
+        let center = origin.0.to_render(p) + origin.0.dir_to_render(EnuFrame::at(p).up) * MARK_LIFT;
         let (x, z) = (Vec3::X * size, Vec3::Z * size);
         gizmos.linestrip(
             [center + z, center + x, center - z, center - x, center + z],
@@ -2108,7 +2115,7 @@ pub fn draw_gizmos(
     if focus.height < 2500.0 {
         let arm = (focus.height * 0.004).max(1.5) as f32;
         for (i, tree) in line.source.trees.iter().enumerate() {
-            let p = tree_pos(tree, &focus);
+            let p = ground.marks.tree(i, tree);
             if state.selection == Selection::Tree(i) {
                 let radius = (focus.height * 0.012).max(4.0) as f32;
                 ground_circle(&mut gizmos, &origin.0, p, radius, accent);
@@ -2119,8 +2126,8 @@ pub fn draw_gizmos(
             } else {
                 vegetation
             };
-            let up = origin.0.dir_to_render(EnuFrame::at(p).up);
-            let center = origin.0.to_render(p) + up;
+            let center =
+                origin.0.to_render(p) + origin.0.dir_to_render(EnuFrame::at(p).up) * MARK_LIFT;
             gizmos.line(center - Vec3::X * arm, center + Vec3::X * arm, color);
             gizmos.line(center - Vec3::Z * arm, center + Vec3::Z * arm, color);
         }
@@ -2186,9 +2193,9 @@ pub fn draw_gizmos(
             } else {
                 missing
             };
-            let corners = tile_corners(key, options, &focus).map(|p| {
+            let corners = tile_corners(key, options, grid_height).map(|p| {
                 let up = origin.0.dir_to_render(EnuFrame::at(p).up);
-                origin.0.to_render(p) + up
+                origin.0.to_render(p) + up * MARK_LIFT
             });
             gizmos.linestrip(corners, color);
         }
@@ -2270,6 +2277,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
@@ -2296,6 +2304,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
@@ -2357,6 +2366,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
@@ -2427,6 +2437,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
@@ -2460,6 +2471,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
@@ -2504,6 +2516,7 @@ mod brush_tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         }

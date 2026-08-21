@@ -660,6 +660,8 @@ help-offset = Numpad 4/6/8/2 image offset, 5 reset
 help-draw = Draw track: click points · Enter finishes · Esc cancels
 
 status-ready = Ready
+status-perf = { $fps } fps · { $entities } entities · { $tiles } tiles (+{ $pending })
+status-perf-hint = Frames per second, entities in the scene, terrain tiles in the scene and being built. What to watch while flying: the tile count should settle, the frame rate should not.
 status-position = { $lat }°, { $lon }°   height { $height } m
 status-ground-height = ground { $height } m
 status-terrain-flat = No height data yet — the ground is flat; import a DGM under Height data
@@ -1008,6 +1010,30 @@ sky-sun-at = Sun { $elevation }° above the horizon, { $azimuth }° from north
 sky-moon-at = Moon { $elevation }° above the horizon, { $phase } % lit
 sky-place = From the module's anchor: { $lat }°, { $lon }°
 
+# --- Calendar --------------------------------------------------------------
+# The date button of the status bar and the month it opens. Weeks run Monday
+# to Sunday; cal-weekday-1 is therefore Monday, cal-weekday-7 Sunday.
+cal-date = { $year }-{ $month }-{ $day }
+cal-weekday-1 = Mo
+cal-weekday-2 = Tu
+cal-weekday-3 = We
+cal-weekday-4 = Th
+cal-weekday-5 = Fr
+cal-weekday-6 = Sa
+cal-weekday-7 = Su
+cal-month-1 = January
+cal-month-2 = February
+cal-month-3 = March
+cal-month-4 = April
+cal-month-5 = May
+cal-month-6 = June
+cal-month-7 = July
+cal-month-8 = August
+cal-month-9 = September
+cal-month-10 = October
+cal-month-11 = November
+cal-month-12 = December
+
 heading-checks = Checks
 check-ok = No findings.
 check-device-off-edge = Device { $device } sits outside its track
@@ -1184,6 +1210,7 @@ hud-key-pause = Pause
 
 # The diagnostics, F6. Machine output — it may be as dense as it likes.
 hud-diagnostics = Diagnostics
+hud-diag-frame = Frame    { $fps } fps, { $millis } ms, { $entities } entities
 hud-diag-terrain = Terrain  { $tiles } tiles (+{ $pending }), { $triangles } tri, { $megabytes } MB, view { $view } m
 hud-diag-air = Air      AR { $auxiliary } bar   direct { $direct } bar   { $air } Nl used
 hud-diag-axles = Axles    { $slipping }/{ $axles } slipping, worst { $worst } m/s

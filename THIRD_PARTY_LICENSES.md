@@ -52,6 +52,43 @@ Attribution: *The HYG database, © David Nash / Astronomy Nexus, CC BY-SA 4.0.*
 The file is data, not code: it is read by `world_render::sky` and shipped inside
 the binary, and any redistribution of it stays under CC BY-SA 4.0.
 
+## Phosphor icons in the editor bars
+
+The sun on the status bar's day rail, the calendar leaf on its date button and
+the two carets in the calendar are glyphs of the
+[Phosphor](https://github.com/phosphor-icons/homepage) icon font by Helena
+Zhang and Tobias Fried, bundled through the `egui-phosphor` crate and used
+under the MIT licence. Everything else in the editors is drawn from line
+segments (`crates/editor-ui/src/icon.rs`); the font is for the symbols a
+22-pixel drawing cannot carry.
+
+```
+MIT License
+
+Copyright (c) 2023 Phosphor Icons
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+The `egui-phosphor` crate that bundles the font (© 2023 Romet Tagobert) is MIT
+OR Apache-2.0; the font file it ships is compiled into the editor binaries.
+
 ## Rust dependencies
 
 Crates pulled in by Cargo are not vendored here; their licences are those

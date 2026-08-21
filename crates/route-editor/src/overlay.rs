@@ -2,9 +2,8 @@
 //!
 //! A tile is a grid draped over the ground the terrain builder reports, so the
 //! photo follows the relief instead of cutting through it. The heights are
-//! sampled on a worker thread — the builder's lock is held by a tile build for
-//! tens of milliseconds, and a few hundred samples per tile is not work for the
-//! frame.
+//! sampled on a worker thread — a few hundred samples per tile is not work
+//! for the frame.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;
@@ -22,8 +21,8 @@ use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 /// embankment the terrain builder puts under the track, coarse enough that a
 /// tile stays a few hundred height lookups rather than a few thousand.
 const DRAPE_STEP: f64 = 8.0;
-/// Height grids sampled at the same time. They queue behind the same builder
-/// lock the terrain tiles use, so asking for more only starves those.
+/// Height grids sampled at the same time. They share the workers with the
+/// terrain tiles, so asking for more only starves those.
 const MAX_DRAPING: usize = 8;
 
 /// A tile placed in the imagery.
@@ -168,7 +167,7 @@ pub fn update(
     // Sample the grids on worker threads. The builder is only there once the
     // terrain has been set up; until then the tiles wait in the queue.
     let lift = overlay.config().height_offset;
-    if let Some(builder) = terrain.builder_arc() {
+    if let Some(builder) = terrain.builder() {
         let pool = AsyncComputeTaskPool::get();
         let free = MAX_DRAPING.saturating_sub(overlay.draping.len());
         let next: Vec<TileId> = overlay.waiting.keys().copied().take(free).collect();
@@ -177,10 +176,8 @@ pub fn update(
                 continue;
             };
             let builder = builder.clone();
-            let task = pool.spawn(async move {
-                let mut builder = builder.lock().expect("terrain builder");
-                height_grid(tile, drape_segments(tile), lift, &mut builder)
-            });
+            let task =
+                pool.spawn(async move { height_grid(tile, drape_segments(tile), lift, &builder) });
             overlay.draping.insert(tile, (decoded, task));
         }
     }
@@ -224,7 +221,7 @@ pub fn update(
 
 /// Ellipsoidal heights of a tile's drape grid, row by row from the north edge —
 /// the shape the terrain builder reports, lifted clear of it.
-fn height_grid(tile: TileId, segments: usize, lift: f64, builder: &mut TerrainBuilder) -> Vec<f64> {
+fn height_grid(tile: TileId, segments: usize, lift: f64, builder: &TerrainBuilder) -> Vec<f64> {
     let (west, south, east, north) = tile.bounds();
     let n = segments.max(1);
     let mut heights = Vec::with_capacity((n + 1) * (n + 1));

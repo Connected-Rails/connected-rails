@@ -115,7 +115,7 @@ fn import_produces_a_drivable_line() {
         ..Default::default()
     };
     let (line, report) =
-        import_line(&overpass_json(), Some(&mut height_grid()), &options).expect("import succeeds");
+        import_line(&overpass_json(), Some(&height_grid()), &options).expect("import succeeds");
 
     // ~3 km of alignment, split into edges of 2 km.
     assert!(
@@ -200,7 +200,7 @@ fn import_produces_a_drivable_line() {
 fn dgm_heights_end_up_in_the_gradient_profile() {
     let (line, report) = import_line(
         &overpass_json(),
-        Some(&mut height_grid()),
+        Some(&height_grid()),
         &ImportOptions::default(),
     )
     .expect("import succeeds");

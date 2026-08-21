@@ -11,8 +11,10 @@ use bevy_egui::egui::{
 };
 
 mod curve;
+mod datetime;
 mod icon;
 pub use curve::{CurveSpec, Series, curve_editor, multi_plot, sparkline, sparkline_fn};
+pub use datetime::day_controls;
 pub use icon::{
     Icon, Mark, bar_divider, bar_value, card_entry, icon_button, icon_label, tool_button,
 };
@@ -82,6 +84,24 @@ pub fn semibold() -> FontFamily {
     FontFamily::Name(SEMIBOLD.into())
 }
 
+/// Name of the icon family registered by [`apply`]: Phosphor, for the few
+/// symbols that cannot be drawn (`icon.rs`) — the sun on the day rail, the
+/// calendar leaf, the carets that page a month.
+const ICONS: &str = "icons";
+
+/// The icon family, and never a fallback of another one. Phosphor maps the
+/// lower-case letters as well as its symbols, so ordinary text must not be
+/// able to reach it; the other way round, Inter carries private-use glyphs of
+/// its own that would answer for a symbol before Phosphor ever did.
+fn icons() -> FontFamily {
+    FontFamily::Name(ICONS.into())
+}
+
+/// The icon font at `size`, for a `RichText::font` or a painted glyph.
+pub fn icon_font(size: f32) -> FontId {
+    FontId::new(size, icons())
+}
+
 /// Installs fonts and style on the context. Call once at startup; a second
 /// call is harmless but rebuilds the font atlas.
 pub fn apply(ctx: &egui::Context) {
@@ -98,10 +118,17 @@ pub fn apply(ctx: &egui::Context) {
         // Inter first; the egui defaults stay behind it as glyph fallback.
         proportional.insert(0, "Inter".to_owned());
     }
+    fonts.font_data.insert(
+        "phosphor".to_owned(),
+        egui_phosphor::Variant::Regular.font_data().into(),
+    );
     fonts.families.insert(
         semibold(),
         vec!["Inter-SemiBold".to_owned(), "NotoEmoji-Regular".to_owned()],
     );
+    fonts
+        .families
+        .insert(icons(), vec!["phosphor".to_owned(), "Inter".to_owned()]);
     ctx.set_fonts(fonts);
     // One dark style for everyone — the editors do not follow the OS theme.
     ctx.set_theme(egui::Theme::Dark);

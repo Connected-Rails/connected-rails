@@ -96,11 +96,13 @@ pub fn light_lamps(images: Res<LampImages>, mut lamps: Query<(&SignalLamp, &mut 
             .0
             .get(lamp.signal)
             .is_some_and(|image| image.iter().any(|l| l == &lamp.lamp));
-        *visibility = if lit {
+        // `set_if_neq`: writing the same value every frame marks every lamp
+        // changed every frame, and the renderer re-extracts what changed.
+        visibility.set_if_neq(if lit {
             Visibility::Inherited
         } else {
             Visibility::Hidden
-        };
+        });
     }
 }
 
@@ -108,10 +110,10 @@ pub fn light_lamps(images: Res<LampImages>, mut lamps: Query<(&SignalLamp, &mut 
 /// switched every signal off long ago — so it shows the finest level, always.
 pub fn show_finest_lod(mut nodes: Query<(&SignalLodNode, &mut Visibility)>) {
     for (node, mut visibility) in nodes.iter_mut() {
-        *visibility = if node.level == 0 {
+        visibility.set_if_neq(if node.level == 0 {
             Visibility::Inherited
         } else {
             Visibility::Hidden
-        };
+        });
     }
 }

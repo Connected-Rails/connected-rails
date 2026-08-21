@@ -86,8 +86,9 @@ fn handles(
     line: &Line,
     selection: Selection,
     focus: &Focus,
+    marks: &crate::terrain::Marks,
 ) -> Option<(EcefPos, Vec<(Axis, DVec3)>)> {
-    let at = tools::selection_pos(line, selection, focus)?;
+    let at = tools::selection_pos(line, selection, focus, marks)?;
     // On the track: the pose at the item's arc length gives the three axes.
     let on_track = |edge: u32, s: f64| {
         let edge = line.net.edges().get(edge as usize)?;
@@ -140,9 +141,10 @@ fn handles_for(
     line: &Line,
     selection: Selection,
     focus: &Focus,
+    marks: &crate::terrain::Marks,
     mode: GizmoMode,
 ) -> Option<Handles> {
-    let (at, all) = handles(line, selection, focus)?;
+    let (at, all) = handles(line, selection, focus, marks)?;
     let wanted: Vec<(Axis, DVec3)> = all
         .into_iter()
         .filter(|(axis, _)| (*axis == Axis::Yaw) == (mode == GizmoMode::Rotate))
@@ -163,6 +165,7 @@ pub fn input(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     origin: Res<Origin>,
     focus: Res<Focus>,
+    marks: Res<crate::terrain::Marks>,
     state: Res<EditorState>,
     mut gizmo: ResMut<GizmoState>,
     mut line: ResMut<Line>,
@@ -220,7 +223,9 @@ pub fn input(
         gizmo.hovered = None;
         return;
     }
-    let Some((at, wanted, length)) = handles_for(&line, state.selection, &focus, gizmo.mode) else {
+    let Some((at, wanted, length)) =
+        handles_for(&line, state.selection, &focus, &marks, gizmo.mode)
+    else {
         gizmo.hovered = None;
         return;
     };
@@ -482,9 +487,12 @@ pub fn draw(
     line: Res<Line>,
     origin: Res<Origin>,
     focus: Res<Focus>,
+    marks: Res<crate::terrain::Marks>,
     mut gizmos: Gizmos,
 ) {
-    let Some((at, wanted, length)) = handles_for(&line, state.selection, &focus, gizmo.mode) else {
+    let Some((at, wanted, length)) =
+        handles_for(&line, state.selection, &focus, &marks, gizmo.mode)
+    else {
         return;
     };
     let active = gizmo.drag.as_ref().map(|d| d.axis).or(gizmo.hovered);
@@ -541,6 +549,7 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };

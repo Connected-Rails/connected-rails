@@ -52,7 +52,7 @@ pub fn draw(
     mut history: ResMut<History>,
     mut state: ResMut<EditorState>,
     mut ghost: ResMut<Ghost>,
-    terrain: Res<crate::terrain::TerrainView>,
+    ground: crate::terrain::Ground,
     mut gizmo: ResMut<crate::gizmo::GizmoState>,
     mut sky: ResMut<world_render::sky::Sky>,
     mut catalogs: crate::Catalogs,
@@ -96,7 +96,9 @@ pub fn draw(
         &mut request,
         &mut exit,
     );
-    status_bar(&mut root, &line, &mut state, &overlay, &focus, &terrain);
+    status_bar(
+        &mut root, &line, &mut state, &overlay, &focus, &ground, &mut sky,
+    );
     // Over the status bar and under the side panel, so it spans the window the
     // way Unreal's does — the catalogue is not a property of the selection.
     crate::content_drawer::draw(&mut root, &mut state, &mut catalogs);
@@ -111,6 +113,7 @@ pub fn draw(
         &mut request,
         &mut focus,
         &mut sky,
+        &ground.marks,
         &mut active,
     );
 
@@ -505,6 +508,7 @@ fn opened(
                 line.path = Some(path.display().to_string());
                 line.dirty = false;
                 line.needs_rebuild = true;
+                line.terrain_change = crate::terrain::TerrainChange::all();
                 line.recenter = true;
                 history.reset(&line.source);
                 state.selection = Selection::None;
@@ -819,6 +823,7 @@ pub(crate) fn new_line(
     line.path = None;
     line.dirty = false;
     line.needs_rebuild = true;
+    line.terrain_change = crate::terrain::TerrainChange::all();
     // No recenter: the new track is drawn wherever the view already is.
     line.recenter = false;
     history.reset(&line.source);
@@ -955,20 +960,23 @@ fn menu_bar(
         });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn status_bar(
     root: &mut egui::Ui,
     line: &Line,
     state: &mut EditorState,
     overlay: &Overlay,
     focus: &Focus,
-    terrain: &crate::terrain::TerrainView,
+    ground: &crate::terrain::Ground,
+    sky: &mut world_render::sky::Sky,
 ) {
+    let terrain = &ground.view;
     egui::Panel::bottom("status")
         .frame(editor_ui::bar_frame())
         .show(root, |ui| {
             ui.horizontal(|ui| {
-                // Bottom left, where the drawer comes out — the one control on
-                // the bar, so the catalogue is reachable without a menu.
+                // Bottom left, where the drawer comes out, so the catalogue is
+                // reachable without a menu.
                 if editor_ui::icon_button(
                     ui,
                     editor_ui::Icon::Drawer,
@@ -978,6 +986,20 @@ fn status_bar(
                 .clicked()
                 {
                     state.drawer.open = !state.drawer.open;
+                }
+                editor_ui::bar_divider(ui);
+                // Date and time of day: the light over the module is looked at
+                // on the map, not in a form, so its two controls sit where the
+                // map is. Both write the same fields as the sky section.
+                let mut hours = sky.seconds / 3600.0;
+                if editor_ui::day_controls(
+                    ui,
+                    &mut sky.year,
+                    &mut sky.month,
+                    &mut sky.day,
+                    &mut hours,
+                ) {
+                    sky.seconds = hours * 3600.0;
                 }
                 editor_ui::bar_divider(ui);
                 // While a track is being drawn, the drawing is the status.
@@ -993,8 +1015,26 @@ fn status_bar(
                     None if overlay.status.is_empty() => t!("status-ready"),
                     None => overlay.status.clone(),
                 };
-                ui.add(egui::Label::new(status).truncate());
+                // The readouts on the right take their width first; the
+                // message gets what is left and is cut to it — laid out the
+                // other way round, a long message runs under the readouts.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Frame time, entities and tiles: the numbers that say
+                    // whether the streaming keeps up with the flight.
+                    let (tiles, pending) = terrain.tiles();
+                    let perf = ground.perf();
+                    ui.label(
+                        egui::RichText::new(t!(
+                            "status-perf",
+                            fps = format!("{:.0}", perf.0),
+                            entities = perf.1,
+                            tiles = tiles,
+                            pending = pending,
+                        ))
+                        .color(colors::TEXT_SECONDARY),
+                    )
+                    .on_hover_text(t!("status-perf-hint"));
+                    editor_ui::bar_divider(ui);
                     // The ground under the cursor — the height the run will
                     // have there, brush strokes and embankment included.
                     if let Some(height) = terrain.cursor_height {
@@ -1018,6 +1058,9 @@ fn status_bar(
                             .truncate(),
                         );
                     }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(status).truncate());
+                    });
                 });
             });
         });
@@ -1072,6 +1115,7 @@ fn left_panel(
     request: &mut Request,
     focus: &mut Focus,
     sky: &mut world_render::sky::Sky,
+    marks: &crate::terrain::Marks,
     active: &mut Option<&'static str>,
 ) {
     egui::Panel::left("info")
@@ -1337,7 +1381,7 @@ fn left_panel(
                         "selection",
                         "heading-selection",
                         |ui| {
-                            selection_panel(ui, line, state, types, objects, focus, overlay);
+                            selection_panel(ui, line, state, types, objects, focus, marks, overlay);
                         },
                     );
 
@@ -1357,7 +1401,7 @@ fn left_panel(
                     );
 
                     nav_section(ui, jump, &mut current, "markers", "heading-markers", |ui| {
-                        marker_section(ui, line, state, focus);
+                        marker_section(ui, line, state, focus, marks);
                     });
 
                     nav_section(ui, jump, &mut current, "heights", "heading-heights", |ui| {
@@ -1463,6 +1507,7 @@ fn species_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, value: &mu
         });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn selection_panel(
     ui: &mut egui::Ui,
     line: &mut Line,
@@ -1470,6 +1515,7 @@ fn selection_panel(
     types: &TrackTypes,
     objects: &TrackObjects,
     focus: &mut Focus,
+    marks: &crate::terrain::Marks,
     overlay: &mut Overlay,
 ) {
     match state.selection {
@@ -1645,7 +1691,7 @@ fn selection_panel(
             let Some(tree) = line.source.trees.get(i) else {
                 return;
             };
-            let position = tools::tree_pos(tree, focus);
+            let position = marks.tree(i, tree);
             ui.label(t!("sel-tree-summary", index = i));
             let tree = &mut line.source.trees[i];
             editor_ui::form_grid("sel-tree").show(ui, |ui| {
@@ -1673,7 +1719,7 @@ fn selection_panel(
             let Some(edit) = line.source.terrain.get(i) else {
                 return;
             };
-            let position = tools::terrain_pos(edit, focus);
+            let position = marks.stroke(i, edit);
             ui.label(t!("sel-terrain-summary", index = i));
             let edit = &mut line.source.terrain[i];
             editor_ui::form_grid("sel-terrain").show(ui, |ui| {
@@ -1707,7 +1753,7 @@ fn selection_panel(
             let Some(marker) = line.source.markers.get(i) else {
                 return;
             };
-            let position = tools::marker_pos(marker, focus);
+            let position = marks.marker(i, marker);
             ui.label(t!("sel-marker-summary", index = i));
             let marker = &mut line.source.markers[i];
             editor_ui::form_grid("sel-marker").show(ui, |ui| {
@@ -3287,7 +3333,13 @@ fn height_section(
 /// marker count, and a button that deletes the whole layer. Hiding is session
 /// state, deleting is an edit — the two live in the same row because that is
 /// where the question is asked ("do I still need this?").
-fn marker_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, focus: &mut Focus) {
+fn marker_section(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    focus: &mut Focus,
+    marks: &crate::terrain::Marks,
+) {
     let layers = tools::marker_layers(line);
     if layers.is_empty() {
         ui.small(t!("marker-none"));
@@ -3313,9 +3365,14 @@ fn marker_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, f
             );
             // First marker of the layer as the place to look at.
             if ui.button(t!("action-center")).clicked()
-                && let Some(marker) = line.source.markers.iter().find(|m| &m.layer == layer)
+                && let Some((i, marker)) = line
+                    .source
+                    .markers
+                    .iter()
+                    .enumerate()
+                    .find(|(_, m)| &m.layer == layer)
             {
-                focus.position = tools::marker_pos(marker, focus);
+                focus.position = marks.marker(i, marker);
             }
             if ui.button(t!("action-delete-layer")).clicked() {
                 delete = Some(layer.clone());

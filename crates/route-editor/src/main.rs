@@ -3,7 +3,7 @@
 //! editor v1).
 //!
 //! ```text
-//! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N]
+//! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N] [--height M]
 //! ```
 //!
 //! Without a line file the example line is loaded. The overlay configuration is created
@@ -73,6 +73,9 @@ pub struct Line {
     pub dirty: bool,
     /// Recompile the source and respawn track and markers next frame.
     pub needs_rebuild: bool,
+    /// What the last edit did to the ground and to what stands on it — the
+    /// terrain streaming takes it and rebuilds only the tiles it reached.
+    pub terrain_change: terrain::TerrainChange,
     /// Move the view to the line's middle on the next rebuild (after Open).
     pub recenter: bool,
     /// Findings of the rule check, refreshed with every rebuild.
@@ -244,6 +247,7 @@ impl History {
             self.changing = false;
             line.dirty = true;
             line.needs_rebuild = true;
+            line.terrain_change = terrain::TerrainChange::all();
         }
     }
 
@@ -254,6 +258,7 @@ impl History {
             self.changing = false;
             line.dirty = true;
             line.needs_rebuild = true;
+            line.terrain_change = terrain::TerrainChange::all();
         }
     }
 }
@@ -309,6 +314,11 @@ fn main() {
     let frame_limit = flag("--frames")
         .and_then(|n| n.parse::<u32>().ok())
         .or_else(|| shot.as_ref().map(|_| 60));
+    // `--height`: where the view starts above the line [m] — a screenshot of
+    // the trees wants 60 m, one of the module 900.
+    let start_height = flag("--height")
+        .and_then(|h| h.parse::<f64>().ok())
+        .unwrap_or(900.0);
 
     let mut app = App::new();
     // Models of trees and scenery objects come from the mods: `mods://<mod>/…`.
@@ -327,6 +337,11 @@ fn main() {
     .add_plugins(EguiPlugin::default())
     // Terrain, trees and objects are drawn with the simulator's own code.
     .add_plugins(world_render::WorldRenderPlugin)
+    // Frame time and entity count for the status bar.
+    .add_plugins((
+        bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+        bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
+    ))
     // The UI belongs on our own camera. Left to itself, `bevy_egui` creates a context on a
     // camera without a render graph — depending on which startup system runs first, and the
     // panels then stay invisible.
@@ -337,12 +352,14 @@ fn main() {
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.11)))
     .insert_resource(ConfigPath(config_path))
     .insert_resource(LinePath(line_path))
+    .insert_resource(StartHeight(start_height))
     .init_resource::<Request>()
     .init_resource::<EditorState>()
     .init_resource::<Ghost>()
     .init_resource::<gizmo::GizmoState>()
     .init_resource::<thumbnails::Thumbnails>()
     .init_resource::<new_module::NewModule>()
+    .init_resource::<terrain::Marks>()
     // A glTF spawns its own children, and a render layer does not reach them by
     // itself — the content drawer's preview scene would be drawn into the map.
     .add_plugins(bevy::app::HierarchyPropagatePlugin::<
@@ -366,7 +383,9 @@ fn main() {
             spawn_ghost,
             overlay_control,
             overlay::update,
-            terrain::probe_cursor,
+            // Both read the terrain the tiles are built from: the ground under
+            // the cursor for the readout, and the ground under every map mark.
+            (terrain::probe_cursor, terrain::probe_marks),
             world_render::mount_parts,
             world_render::bind_lamps,
             signals::light_lamps,
@@ -394,6 +413,10 @@ fn main() {
 #[derive(Resource)]
 struct LinePath(Option<String>);
 
+/// View height at start, from `--height`.
+#[derive(Resource)]
+struct StartHeight(f64);
+
 /// Puts the module's own place under the sky. The date and the clock come from
 /// the time panel; latitude and longitude hang off the module's anchor, exactly
 /// as they do in the simulator — the same module therefore gets the same sun in
@@ -417,6 +440,7 @@ fn setup(
     mut commands: Commands,
     config_path: Res<ConfigPath>,
     line_path: Res<LinePath>,
+    start_height: Res<StartHeight>,
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -499,7 +523,7 @@ fn setup(
     commands.insert_resource(Overlay::new(config, message.unwrap_or_default()));
     commands.insert_resource(Focus {
         position: focus_position,
-        height: 900.0,
+        height: start_height.0,
         yaw: 0.0,
         pitch: view::DEFAULT_PITCH,
         fly_speed: 1.0,
@@ -520,12 +544,13 @@ fn setup(
     });
     commands.init_resource::<signals::LampImages>();
     commands.init_resource::<world_render::SignalModels>();
-    // Terrain material and the (still empty) tree catalog — the catalog is
+    // Terrain material and the (still empty) model catalog — the catalog is
     // filled from the line on the first frame. The editor builds in summer
     // (`Season::default`); which season a run shows is the scenario's date.
     commands.insert_resource(terrain::TerrainView::new(
         world_render::terrain_material(&mut images, &mut terrain_materials, default(), default()),
-        world_render::tree_catalog(
+        world_render::WorldCatalog::new(
+            &[],
             &[],
             &Default::default(),
             &assets,
@@ -542,6 +567,7 @@ fn setup(
         path,
         dirty: false,
         needs_rebuild: true,
+        terrain_change: terrain::TerrainChange::all(),
         recenter: false,
         issues: Vec::new(),
     });
@@ -549,16 +575,18 @@ fn setup(
 
 /// One undo step per interaction: whoever mutated `Line::source` this frame —
 /// a tool click or a panel drag — is picked up here by comparison, so the
-/// mutation sites stay plain writes.
-fn track_changes(mut line: ResMut<Line>, mut history: ResMut<History>) {
-    record_change(&mut line, &mut history);
+/// mutation sites stay plain writes. The same comparison says what the edit
+/// reached, so the scene and the terrain rebuild only that.
+fn track_changes(mut line: ResMut<Line>, mut history: ResMut<History>, state: Res<EditorState>) {
+    record_change(&mut line, &mut history, state.terrain_options().zone);
 }
 
-fn record_change(line: &mut Line, history: &mut History) {
+fn record_change(line: &mut Line, history: &mut History, zone: u8) {
     if line.source == history.last {
         history.changing = false;
         return;
     }
+    let (scene, terrain) = diff(&history.last, &line.source, &line.net, zone);
     if !history.changing {
         if history.undo.len() == UNDO_DEPTH {
             history.undo.remove(0);
@@ -570,7 +598,85 @@ fn record_change(line: &mut Line, history: &mut History) {
     history.changing = true;
     history.last = line.source.clone();
     line.dirty = true;
-    line.needs_rebuild = true;
+    line.needs_rebuild |= scene;
+    line.terrain_change.merge(terrain);
+}
+
+/// What changed between two states of the source: whether the drawn scene
+/// (track, signals, areas, markers) has to be built anew, and where the
+/// terrain was touched. Names and metadata change neither.
+fn diff(
+    last: &LineSource,
+    now: &LineSource,
+    net: &TrackNetwork,
+    zone: u8,
+) -> (bool, terrain::TerrainChange) {
+    use terrain::{Region, TerrainChange};
+    let utm = |lat: f64, lon: f64| {
+        let (e, n) = geo::to_utm(lat.to_radians(), lon.to_radians(), zone);
+        glam::DVec2::new(e, n)
+    };
+    let mut change = TerrainChange::default();
+    // The track shapes the formation everywhere it runs, and every object
+    // stands relative to it.
+    let track = last.nodes != now.nodes
+        || last.edges != now.edges
+        || last.heights != now.heights
+        || last.geoid_offset != now.geoid_offset;
+    if track {
+        change = TerrainChange::all();
+    }
+    let scene = track
+        || last.devices != now.devices
+        || last.markers != now.markers
+        || last.sections != now.sections
+        || last.areas != now.areas
+        || last.signals != now.signals
+        || last.routes != now.routes
+        || last.boundaries != now.boundaries
+        || last.electrification != now.electrification
+        || last.anchor != now.anchor
+        || last.envelope != now.envelope;
+    if !track {
+        // A stroke reaches the ground under its disc, before and after.
+        for stroke in changed(&last.terrain, &now.terrain) {
+            change
+                .ground
+                .add_disc(utm(stroke.lat, stroke.lon), stroke.radius.max(1.0));
+        }
+        // A tree or an object only moves itself — the tile places its trees
+        // and objects anew on the ground it has.
+        for tree in changed(&last.trees, &now.trees) {
+            change.scatter.add_disc(utm(tree.lat, tree.lon), 1.0);
+        }
+        for object in changed(&last.objects, &now.objects) {
+            if let Some(pos) = tools::object_pos(net, object) {
+                let (lat, lon, _) = geo::from_ecef(pos);
+                change
+                    .scatter
+                    .add_disc(utm(lat.to_degrees(), lon.to_degrees()), 1.0);
+            }
+        }
+    }
+    if !matches!(change.ground, Region::None) && !matches!(change.ground, Region::All) {
+        // Ground that moves takes what stands on it along — the rebuilt tile
+        // places its trees anew, nothing to mark separately.
+    }
+    (scene, change)
+}
+
+/// The entries of two lists that differ: the ones that changed in place, and
+/// whatever one list has past the end of the other — both the old and the new
+/// state, since a moved tree left a place as well as arrived at one.
+fn changed<'a, T: PartialEq>(last: &'a [T], now: &'a [T]) -> impl Iterator<Item = &'a T> {
+    let shared = last.len().min(now.len());
+    last[..shared]
+        .iter()
+        .zip(&now[..shared])
+        .filter(|(a, b)| a != b)
+        .flat_map(|(a, b)| [a, b])
+        .chain(&last[shared..])
+        .chain(&now[shared..])
 }
 
 /// Recompiles the source and respawns track and markers after every edit.
@@ -589,7 +695,6 @@ fn rebuild(
     signal_files: Res<signals::SignalModelFiles>,
     mut lamp_images: ResMut<signals::LampImages>,
     mut signal_models: ResMut<world_render::SignalModels>,
-    mut terrain: ResMut<terrain::TerrainView>,
     assets: Res<AssetServer>,
     old: Query<Entity, DocumentAnchored>,
 ) {
@@ -597,9 +702,6 @@ fn rebuild(
         return;
     }
     line.needs_rebuild = false;
-    // Track, strokes and trees are what the terrain is built from; it takes the
-    // new state over on the next frame (this system runs after `terrain::update`).
-    terrain.dirty = true;
     match line.source.compile() {
         Ok(compiled) => line.net = compiled.net,
         Err(e) => {
@@ -661,21 +763,8 @@ fn rebuild(
         &origin.0,
         true,
     );
-    // Scenery objects as the run shows them: the mod's glTF at the placement's
-    // own pose, on the terrain surface where the placement says so.
-    let mut ground = terrain.builder_lock();
-    world_render::spawn_objects(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &assets,
-        &line.source,
-        &line.net,
-        &origin.0,
-        &objects.map,
-        ground.as_deref_mut(),
-        default(),
-    );
+    // Scenery objects come with the terrain tiles, on the ground of the tile
+    // each one stands on — the same way the run shows them.
 }
 
 /// Track ribbon mesh of one edge between `s0` and `s1` in its anchor frame,
@@ -758,9 +847,7 @@ fn spawn_areas(
                 Mesh3d(meshes.add(ribbon_mesh(edge, area.width, tools::AREA_LIFT, s0, s1))),
                 MeshMaterial3d(material.clone()),
                 Transform::from_translation(translation).with_rotation(rotation),
-                WorldAnchored {
-                    anchor: edge.anchor,
-                },
+                WorldAnchored::at(edge.anchor),
             ));
         }
     }
@@ -798,9 +885,7 @@ fn spawn_ghost(
             Mesh3d(meshes.add(ribbon_mesh(edge, 1.5, 0.25, 0.0, edge.length()))),
             MeshMaterial3d(material.clone()),
             Transform::from_translation(translation).with_rotation(rotation),
-            WorldAnchored {
-                anchor: edge.anchor,
-            },
+            WorldAnchored::at(edge.anchor),
             GhostTrack,
         ));
     }
@@ -838,7 +923,7 @@ fn spawn_markers(
                 ..default()
             })),
             Transform::from_translation(translation).with_rotation(rotation),
-            WorldAnchored { anchor: pos },
+            WorldAnchored::at(pos),
             DeviceMarker,
         ));
     }
@@ -1040,8 +1125,7 @@ fn rebase_origin(
         return;
     }
     for (item, mut transform) in anchored.iter_mut() {
-        let frame = EnuFrame::at(item.anchor);
-        let (translation, rotation) = origin.0.frame_transform(&frame);
+        let (translation, rotation) = item.transform(&origin.0);
         transform.translation = translation;
         transform.rotation = rotation;
     }
@@ -1150,19 +1234,69 @@ mod tests {
             path: None,
             dirty: false,
             needs_rebuild: false,
+            terrain_change: Default::default(),
             recenter: false,
             issues: Vec::new(),
         };
         let mut history = History::new(source.clone());
 
-        // An edit, picked up by the diff detector.
+        // An edit, picked up by the diff detector: a device is scene, not
+        // terrain.
         line.source.devices.pop();
-        record_change(&mut line, &mut history);
+        record_change(&mut line, &mut history, 32);
         assert!(line.dirty && history.undo.len() == 1);
+        assert!(line.needs_rebuild);
+        assert!(line.terrain_change.is_none());
 
         history.undo(&mut line);
         assert_eq!(line.source, source);
         history.redo(&mut line);
         assert_eq!(line.source.devices.len(), source.devices.len() - 1);
+    }
+
+    /// The diff names what an edit reached: a moved tree only its tile's
+    /// scatter, a stroke the ground under it, a track change everything.
+    #[test]
+    fn the_diff_tells_the_terrain_what_an_edit_reached() {
+        use terrain::Region;
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let zone = 32;
+
+        let mut moved = source.clone();
+        moved.trees.push(content::TreeSource {
+            object: String::new(),
+            lat: 52.0,
+            lon: 10.0,
+            yaw_deg: 0.0,
+            scale: 1.0,
+        });
+        let (scene, change) = diff(&source, &moved, &net, zone);
+        assert!(!scene, "a tree is not part of the drawn scene");
+        assert!(change.ground.is_none());
+        assert!(matches!(change.scatter, Region::Rects(ref r) if r.len() == 1));
+
+        let mut shaped = source.clone();
+        shaped.terrain.push(content::route::TerrainEditSource {
+            lat: 52.0,
+            lon: 10.0,
+            radius: 100.0,
+            edit: content::route::TerrainEdit::Raise(5.0),
+        });
+        let (scene, change) = diff(&source, &shaped, &net, zone);
+        assert!(!scene);
+        assert!(matches!(change.ground, Region::Rects(ref r) if r.len() == 1));
+        assert!(change.scatter.is_none());
+
+        let mut renamed = source.clone();
+        renamed.name.push('!');
+        let (scene, change) = diff(&source, &renamed, &net, zone);
+        assert!(!scene && change.is_none(), "a name changes nothing drawn");
+
+        let mut relaid = source.clone();
+        relaid.edges.pop();
+        let (scene, change) = diff(&source, &relaid, &net, zone);
+        assert!(scene);
+        assert_eq!(change, terrain::TerrainChange::all());
     }
 }

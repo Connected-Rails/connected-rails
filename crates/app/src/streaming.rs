@@ -6,11 +6,14 @@
 //! by this: track graph and timetable stay resident, AI trains keep running in areas
 //! that carry no graphics.
 //!
-//! The build itself runs on the `AsyncComputeTaskPool`, so a tile of a few thousand
-//! triangles never blocks a frame.
+//! A tile carries its ground, its trees and its scenery objects; all three
+//! stream together (`world_render::spawn_terrain_tile`). The build itself runs
+//! on the `AsyncComputeTaskPool` — several at a time, the builder is shared
+//! read-only and the elevation data keeps its own short lock — so a tile of a
+//! few thousand triangles never blocks a frame.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
@@ -20,8 +23,8 @@ use glam::DVec2;
 use crate::render;
 use crate::{Origin, SimResource, TerrainInfo, ui};
 
-/// How many tiles are built at the same time. Higher values do not help — the builder
-/// is serialised anyway (see below).
+/// How many tiles are built at the same time. One per worker thread is the
+/// most that can run; the rest only queue.
 const MAX_PENDING: usize = 8;
 
 /// A tile that is currently in the scene.
@@ -33,13 +36,10 @@ struct Loaded {
 
 #[derive(Resource)]
 pub struct TerrainStreamer {
-    // ponytail: a single builder behind a mutex — the DGM cache inside it is shared
-    // state, and tile builds therefore run one after another. One source per worker if
-    // a single tile at a time turns out to be too slow.
-    builder: Arc<Mutex<TerrainBuilder>>,
+    builder: Arc<TerrainBuilder>,
     options: TerrainOptions,
     material: Handle<render::TerrainMaterial>,
-    trees: render::TreeCatalog,
+    catalog: render::WorldCatalog,
     loaded: HashMap<TileKey, Loaded>,
     pending: HashMap<TileKey, Task<Option<(TerrainTile, TerrainStats)>>>,
     /// Keys outside the line corridor — asked for once, never again.
@@ -49,6 +49,12 @@ pub struct TerrainStreamer {
     /// Beyond this a tile is discarded again [m]. The gap to `load_radius` is the
     /// hysteresis: without it a tile at the boundary would load and unload every frame.
     pub unload_radius: f64,
+    /// The tiles the centres stood on when `wanted` was last worked out. A
+    /// centre that has not left its tile wants the same tiles as before, so
+    /// the ring around every train is not laid out again each frame.
+    center_tiles: Vec<TileKey>,
+    /// Tiles in the load radius, nearest first.
+    wanted: Vec<TileKey>,
     missing: usize,
     tile_loads: usize,
 }
@@ -57,20 +63,22 @@ impl TerrainStreamer {
     pub fn new(
         builder: TerrainBuilder,
         material: Handle<render::TerrainMaterial>,
-        trees: render::TreeCatalog,
+        catalog: render::WorldCatalog,
         load_radius: f64,
     ) -> Self {
         Self {
             options: *builder.options(),
-            builder: Arc::new(Mutex::new(builder)),
+            builder: Arc::new(builder),
             material,
-            trees,
+            catalog,
             loaded: HashMap::new(),
             pending: HashMap::new(),
             empty: HashSet::new(),
             load_radius,
             // Hysteresis; kept in step by `set_load_radius`.
             unload_radius: load_radius * 1.25,
+            center_tiles: Vec::new(),
+            wanted: Vec::new(),
             missing: 0,
             tile_loads: 0,
         }
@@ -83,6 +91,7 @@ impl TerrainStreamer {
     pub fn set_load_radius(&mut self, radius: f64) {
         self.load_radius = radius;
         self.unload_radius = radius * 1.25;
+        self.center_tiles.clear();
     }
 
     /// Tiles being built right now.
@@ -98,6 +107,33 @@ impl TerrainStreamer {
             missing: self.missing,
             tile_loads: self.tile_loads,
         }
+    }
+
+    /// Lays the ring of wanted tiles out anew if a centre has moved to
+    /// another tile since the last time.
+    fn refresh_wanted(&mut self, centers: &[DVec2]) {
+        let tiles: Vec<TileKey> = centers
+            .iter()
+            .map(|c| terrain::tile_at(*c, &self.options))
+            .collect();
+        if tiles == self.center_tiles {
+            return;
+        }
+        self.center_tiles = tiles;
+        let options = self.options;
+        let mut wanted: HashSet<TileKey> = HashSet::new();
+        for c in centers {
+            wanted.extend(terrain::keys_near(*c, self.load_radius, &options));
+        }
+        let nearest = |k: TileKey| {
+            centers
+                .iter()
+                .map(|c| terrain::tile_distance(k, *c, &options))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let mut ranked: Vec<(f64, TileKey)> = wanted.into_iter().map(|k| (nearest(k), k)).collect();
+        ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        self.wanted = ranked.into_iter().map(|(_, k)| k).collect();
     }
 }
 
@@ -144,34 +180,30 @@ pub fn stream_terrain(
         .collect();
     for k in far {
         if let Some(tile) = streamer.loaded.remove(&k) {
-            commands.entity(tile.entity).despawn();
+            commands.entity(tile.entity).try_despawn();
         }
     }
 
     // Request what is missing — nearest first, so the tile under the train wins.
+    streamer.refresh_wanted(&centers);
     let free = MAX_PENDING.saturating_sub(streamer.pending.len());
     if free > 0 {
-        let mut wanted: HashSet<TileKey> = HashSet::new();
-        for c in &centers {
-            wanted.extend(terrain::keys_near(*c, streamer.load_radius, &options));
-        }
-        let mut candidates: Vec<(f64, TileKey)> = wanted
-            .into_iter()
+        let candidates: Vec<TileKey> = streamer
+            .wanted
+            .iter()
+            .copied()
             .filter(|k| {
                 !streamer.loaded.contains_key(k)
                     && !streamer.pending.contains_key(k)
                     && !streamer.empty.contains(k)
             })
-            .map(|k| (nearest(k), k))
+            .take(free)
             .collect();
-        candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-
         let pool = AsyncComputeTaskPool::get();
-        for (_, k) in candidates.into_iter().take(free) {
+        for k in candidates {
             let builder = streamer.builder.clone();
             let task = pool.spawn(async move {
                 let mut stats = TerrainStats::default();
-                let mut builder = builder.lock().expect("terrain builder");
                 let tile = builder.build_key(k, &mut stats)?;
                 stats.tile_loads = builder.load_count();
                 Some((tile, stats))
@@ -197,7 +229,7 @@ pub fn stream_terrain(
             &mut commands,
             &mut meshes,
             &streamer.material,
-            &streamer.trees,
+            &streamer.catalog,
             &tile,
             &origin.0,
         );

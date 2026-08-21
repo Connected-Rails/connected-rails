@@ -119,9 +119,11 @@ random shape, not as tofu — the failure is silent.
   is truncated with an ellipsis and the caller puts the whole of it in the
   tooltip. Its `Mark` is a drawn icon, a colour (where the entry *is* one — a
   track type), or a `TextureId` (a rendered preview of a model).
-- `bar_value(ui, …)` — the compact numeric control of a bar. `field` is a
-  fixed 150 px, which is a column width, not a toolbar width; use `field` in
-  forms and `bar_value` only in bars.
+- `bar_menu(ui, value, tooltip)` — a bar-height button carrying a value and a
+  caret, to be handed to `egui::Popup::menu` (the camera speed dial). The
+  caret is not decoration: a bare number on a toolbar reads as a display, and
+  nobody clicks a display. `field` is a fixed 150 px, which is a column width,
+  not a toolbar width — use it in forms, not in bars.
 
 ## Typography
 

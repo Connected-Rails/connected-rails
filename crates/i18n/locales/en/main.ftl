@@ -652,8 +652,11 @@ view-imagery = Aerial imagery on the ground
 gizmo-move = Move handles (W)
 gizmo-rotate = Rotate handle (E)
 camera-speed = Camera speed
+camera-speed-hint = Camera speed — { $speed } m/s. Right mouse and the wheel turn the same dial.
+camera-speed-scalar = Speed multiplier
+camera-speed-value = { $speed } m/s
 
-help-fly = Hold right mouse to look, WASD to fly, Q/E down/up, Shift faster · Alt+left orbits · middle mouse pans · wheel zooms · F frames the selection
+help-fly = Hold right mouse to look, WASD to fly, Q/E down/up, Shift slower · right mouse + wheel sets the camera speed · Alt+left orbits · middle mouse pans · wheel zooms · F frames the selection
 help-gizmo = W move handles, E rotate handle · drag an arrow to move the selection along the track, across it or upwards
 help-opacity = [ ] opacity · , . zoom level · Z automatic
 help-offset = Numpad 4/6/8/2 image offset, 5 reset

@@ -187,7 +187,7 @@ fn viewport_bar(
     request: &mut Request,
 ) {
     use crate::gizmo::GizmoMode;
-    use editor_ui::{Icon, bar_divider, bar_value, icon_button, icon_label};
+    use editor_ui::{Icon, bar_divider, icon_button, icon_label};
 
     egui::Panel::top("viewport-bar")
         .frame(editor_ui::bar_frame())
@@ -214,9 +214,59 @@ fn viewport_bar(
                     request.config = Some((config, false));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    bar_value(ui, &mut focus.fly_speed, 0.05, 0.05..=20.0, "×")
-                        .on_hover_text(t!("camera-speed"));
+                    camera_speed(ui, focus);
                     icon_label(ui, Icon::Speed);
+                });
+            });
+        });
+}
+
+/// Unreal's camera speed dial: the step on the button, the eight steps and the
+/// fine multiplier in the menu behind it.
+///
+/// The dial is on the bar and not in the form panel because the mouse already
+/// carries it — right button plus wheel is the same value, and someone who
+/// found it there needs to see the number it landed on without leaving the
+/// viewport.
+fn camera_speed(ui: &mut egui::Ui, focus: &mut Focus) {
+    use crate::view::{DEFAULT_SPEED_STEP, MAX_SPEED_SCALAR, SPEED_STEPS};
+
+    let button = editor_ui::bar_menu(
+        ui,
+        focus.speed_step.to_string(),
+        t!(
+            "camera-speed-hint",
+            speed = format!("{:.0}", focus.fly_speed())
+        ),
+    );
+    egui::Popup::menu(&button)
+        .layout(egui::Layout::top_down(egui::Align::Min))
+        .show(|ui| {
+            ui.set_min_width(space::LABEL_COL + space::XL);
+            ui.label(egui::RichText::new(t!("camera-speed")).color(colors::TEXT_SECONDARY));
+            ui.add(egui::Slider::new(&mut focus.speed_step, 1..=SPEED_STEPS).integer());
+            ui.label(egui::RichText::new(t!("camera-speed-scalar")).color(colors::TEXT_SECONDARY));
+            // Logarithmic, because the useful part of 1…128 is its bottom end:
+            // a linear rail spends nine tenths of its travel above 12x.
+            ui.add(
+                egui::Slider::new(&mut focus.speed_scalar, 1.0..=MAX_SPEED_SCALAR)
+                    .logarithmic(true)
+                    .max_decimals(1),
+            );
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(t!(
+                        "camera-speed-value",
+                        speed = format!("{:.0}", focus.fly_speed())
+                    ))
+                    .color(colors::TEXT),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(t!("action-reset")).clicked() {
+                        focus.speed_step = DEFAULT_SPEED_STEP;
+                        focus.speed_scalar = 1.0;
+                    }
                 });
             });
         });

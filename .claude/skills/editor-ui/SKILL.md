@@ -107,11 +107,23 @@ random shape, not as tofu — the failure is silent.
   the control beside it. Never an `icon_button` that ignores its click.
 - `bar_divider(ui)` — hairline between groups. `ui.separator()` in a
   horizontal layout stretches to the full row height and reads as a panel edge.
-- `tool_button(ui, icon, label, active, tooltip)` — icon *and* name, fixed
-  156 px so a palette lays out as a grid. A dozen tools cannot be icons alone
-  (three of the route editor's are brushes, and no 22 px drawing tells forest
-  from marking from terrain), nor text chips alone, which is what wrapped into
-  a different shape on every panel width. Group them under `subheading`s.
+- `toolbox_button(ui, icon, active, tooltip)` — the icon alone at 36×32, for
+  the route editor's toolbox strip (`toolbox` in its `ui.rs`): a narrow
+  `Panel::left` docked before the form panel, categories in the upper box and
+  the active category's tools below, after Train Simulator Classic's World
+  Editor. Icons alone work *here* because the box shows one category at a
+  time and the form panel's Tool section repeats the active tool's name and
+  hint in full; the tooltip still names the tool and its number key. The
+  select tool leads every box (`SELECT_ENTRY`, digit `1`), and the active
+  category is held in `EditorState::category` rather than derived from the
+  tool — taking select must not switch the panel away. Larger
+  than `icon_button` because a tool is aimed at, a bar icon only passed on
+  the way to the map. **The form panel follows the toolbox**: beside the
+  fixed Tool and Selection sections it lays out only the active category's
+  own (`category_sections` in the route editor's `ui.rs`, keyed by the
+  category's i18n key and pinned by a test), and the jump bar reads the same
+  list — a section added to the panel has to name its category there, or it
+  is reachable from nowhere.
 - `card_entry(ui, mark, title, detail, selected, clickable)` — a catalogue
   entry at a **fixed** 208×60, laid out by hand rather than as a frame around
   labels. A card that sizes itself to its text gives every entry its own width

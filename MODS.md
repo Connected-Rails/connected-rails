@@ -1112,10 +1112,16 @@ one the OSM/DGM importer writes, so `cargo run -p content --bin import-line` pro
 can drop into a mod unchanged. `mods/example/lines/beispielstrecke.ron` is a short hand-written
 example.
 
-The **route editor** (`trainsim-route-editor`) edits a line over aerial imagery: draw tracks
-arc-to-point, place devices, place switches (a click splits the track, the branch is drawn like
-a track and the turnout is wired automatically — facing or trailing, chosen in the tool panel),
-and bend existing track by dragging the round support-point handles of a selected edge. The
+The **route editor** (`trainsim-route-editor`) edits a line over aerial imagery, with the
+track tools of Train Simulator Classic's World Editor: lay track by pressing and dragging the
+standing end (arc-to-point per click, a straight under `Ctrl`, snapping onto open ends,
+optionally as clothoid – arc – clothoid with the rulebook's cant), start
+a lay on a track's middle to make a turnout of it (drag along the track = facing, against it =
+trailing — split and wired automatically), split, join (a stake-out calculator after Zusi's:
+transitions – arc – compensating straight, or a double arc with an intermediate straight;
+speed, radius, transitions and cant configurable), offset a parallel, build a crossover
+between two parallel tracks, set gradient break points, and bend existing track by dragging
+the round support-point handles of a selected edge. The
 throw time of a turnout is edited on the tracks that meet at it. A *Checks* panel lists wiring
 that compiles but fails on the line — a distant signal without its 1000 Hz magnet, a device
 beyond its track, a boundary on a node that is no buffer.

@@ -17,6 +17,7 @@ mod gizmo;
 mod new_module;
 mod overlay;
 mod signals;
+mod stake;
 mod terrain;
 mod thumbnails;
 mod tools;
@@ -333,6 +334,12 @@ fn main() {
         .filter(|a| !a.starts_with("--"))
         .and_then(|name| content_drawer::Category::parse(name))
         .unwrap_or_default();
+    // `--tool draw` starts with that tool in hand — a screenshot run has no
+    // keyboard, and the Tool section only shows the active tool's options.
+    let tool = flag("--tool")
+        .and_then(|name| tools::Tool::parse(&name))
+        .unwrap_or_default();
+    let category = tools::category_of(tool);
 
     let mut app = App::new();
     // Models of trees and scenery objects come from the mods: `mods://<mod>/…`.
@@ -377,6 +384,8 @@ fn main() {
             category: drawer_category,
             ..default()
         },
+        tool,
+        category,
         ..default()
     })
     .init_resource::<Ghost>()

@@ -1047,6 +1047,13 @@ impl LineSource {
                 *edge = edge_map(*edge).expect("followers were re-anchored or removed");
             }
         }
+        // A joint that lost its other side is an open end now — a buffer, so
+        // the lay and join tools find it again and a boundary may sit on it.
+        for n in 0..self.nodes.len() {
+            if matches!(self.nodes[n], NodeSource::Joint) && self.node_ends(n as u32).len() < 2 {
+                self.nodes[n] = NodeSource::Buffer;
+            }
+        }
     }
 
     /// Removes signal table entry `index`. The device stays where it is — it
@@ -1137,8 +1144,47 @@ impl LineSource {
         }
     }
 
+    /// Welds node `drop` into node `keep`: every edge end on `drop` moves over,
+    /// `drop` leaves the node list and every node index above it moves down —
+    /// edges, boundaries, route switches and flank guards follow. `keep`
+    /// becomes a joint once it holds two ends; a switch on either node stays
+    /// what it is. Nothing changes geometrically: the editor only welds ends
+    /// that already lie on the same point.
+    pub fn merge_nodes(&mut self, keep: u32, drop: u32) {
+        if keep == drop || keep as usize >= self.nodes.len() || drop as usize >= self.nodes.len() {
+            return;
+        }
+        let map = |node: u32| -> u32 {
+            let node = if node == drop { keep } else { node };
+            if node > drop { node - 1 } else { node }
+        };
+        for e in &mut self.edges {
+            e.from = map(e.from);
+            e.to = map(e.to);
+        }
+        for b in &mut self.boundaries {
+            b.node = map(b.node);
+        }
+        for r in &mut self.routes {
+            for (node, _) in &mut r.switches {
+                *node = map(*node);
+            }
+            for guard in &mut r.flank {
+                if let FlankSource::Switch(node, _) = guard {
+                    *node = map(*node);
+                }
+            }
+        }
+        let kept = map(keep) as usize;
+        self.nodes.remove(drop as usize);
+        if matches!(self.nodes[kept], NodeSource::Buffer) && self.node_ends(kept as u32).len() >= 2
+        {
+            self.nodes[kept] = NodeSource::Joint;
+        }
+    }
+
     /// Ends of node `node`, in the `(edge, at end)` form the switch fields use.
-    fn node_ends(&self, node: u32) -> Vec<(u32, bool)> {
+    pub fn node_ends(&self, node: u32) -> Vec<(u32, bool)> {
         let mut ends = Vec::new();
         for (i, e) in self.edges.iter().enumerate() {
             if e.from == node {

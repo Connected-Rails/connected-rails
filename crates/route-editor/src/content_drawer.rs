@@ -8,8 +8,9 @@
 //!
 //! Categories left, entries right as cards. Picking arms the tool the entry
 //! belongs to: an object the object tool, a signal type or model the
-//! place-device tool set to signals. Track types are a read-only listing, and
-//! say so by not reacting to a click.
+//! place-device tool set to signals, a track type the lay tool — the World
+//! Editor's own order of work, where the track to lay is chosen in the
+//! browser first.
 
 use bevy_egui::egui;
 use editor_ui::{Icon, colors, space};
@@ -606,11 +607,7 @@ fn cards(ui: &mut egui::Ui, state: &mut EditorState, shown: &[Entry], total: usi
                 }
                 return;
             }
-            // Everything a tool can stamp is pickable; a track type stamps
-            // nothing, and a card that reacts to nothing must not look like a
-            // button.
             let category = state.drawer.category;
-            let pickable = category != Category::TrackTypes;
             // A grid, not a wrapping row: `horizontal_wrapped` gives every card
             // its own height and baseline, and three cards of different names
             // then sit on three different lines. The column count is whatever
@@ -628,7 +625,9 @@ fn cards(ui: &mut egui::Ui, state: &mut EditorState, shown: &[Entry], total: usi
                             Category::SignalModels => {
                                 state.signal_model.as_ref() == Some(&entry.key)
                             }
-                            Category::TrackTypes => false,
+                            Category::TrackTypes => {
+                                state.lay.track_type.as_ref() == Some(&entry.key)
+                            }
                         };
                         let response = editor_ui::card_entry(
                             ui,
@@ -636,7 +635,7 @@ fn cards(ui: &mut egui::Ui, state: &mut EditorState, shown: &[Entry], total: usi
                             &entry.title,
                             &entry.detail,
                             picked,
-                            pickable,
+                            true,
                         )
                         // Truncated on the card; the whole of it here, with the
                         // key a `.ron` would write.
@@ -656,11 +655,11 @@ fn cards(ui: &mut egui::Ui, state: &mut EditorState, shown: &[Entry], total: usi
                                 entry.tags.join(" · ")
                             )
                         });
-                        if pickable && response.clicked() {
+                        if response.clicked() {
                             match category {
                                 Category::Objects => {
                                     state.object = Some(entry.key.clone());
-                                    state.tool = Tool::PlaceObject;
+                                    crate::tools::select_tool(state, Tool::PlaceObject);
                                 }
                                 // A signal type brings its own default model, so
                                 // picking one drops a model override from an
@@ -669,16 +668,21 @@ fn cards(ui: &mut egui::Ui, state: &mut EditorState, shown: &[Entry], total: usi
                                     state.signal_type = Some(entry.key.clone());
                                     state.signal_model = None;
                                     state.device_kind = Some(DeviceKind::Signal);
-                                    state.tool = Tool::PlaceDevice;
+                                    crate::tools::select_tool(state, Tool::PlaceDevice);
                                 }
                                 Category::SignalModels => {
                                     state.signal_model = Some(entry.key.clone());
                                     state.device_kind = Some(DeviceKind::Signal);
-                                    state.tool = Tool::PlaceDevice;
+                                    crate::tools::select_tool(state, Tool::PlaceDevice);
                                 }
-                                Category::TrackTypes => {}
+                                // A track type is what the next piece is laid
+                                // as — picking one puts the lay tool in hand,
+                                // the browser-first order of the World Editor.
+                                Category::TrackTypes => {
+                                    state.lay.track_type = Some(entry.key.clone());
+                                    crate::tools::select_tool(state, Tool::DrawTrack);
+                                }
                             }
-                            state.drawing = None;
                             // The drawer covers the map it just armed a tool
                             // for — Unreal's dismisses itself the same way.
                             state.drawer.open = false;

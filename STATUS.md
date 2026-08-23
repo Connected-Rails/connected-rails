@@ -11,7 +11,7 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
 | **M0** | Workspace, `world-coords` (ECEF f64 + floating origin) | **done** — acceptance test "300 km without jitter/jump" green |
 | **M1** | `track-model`, procedural track rendering, streaming | **done** — graph, clothoids, `eval`, switches (incl. trailing moves), track meshes; terrain tiles stream in and out around camera and trains |
 | **M2** | Longitudinal dynamics + brake, electric loco + coaches, basic cab | **done** — coasting against Davis, emergency braking distance, starting on a gradient, coupler slack as tests; brake and drive down to control valve, motor and torque converter; basic sounds (rolling, traction, air, compressor, horn, buzzer) |
-| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v3 — arc-to-point track drawing, device placement and per-device fields, switch placement that splits the track and wires the turnout facing or trailing with its throw time in the panel, the signal/section/route tables of the interlocking as forms, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, drive/brake/equipment as a block diagram (see the 2026-08-17 entry), glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
+| **M3** | Sifa + PZB 90, signals, editor v1 | **done** — Sifa (time-time, time-distance, RZM) and every intermittent build from the Indusi I 54 to the PZB 90 V2.0 complete with standard-case tests; H/V + Ks signal logic present, and **signal models render the lamp images**: modular glTF assemblies on mount points (Zusi pattern), lamp nodes switched by the current lamp image, placeholder mast with an aspect light for signals without a model; the **route editor** edits the line over the aerial imagery (editor v3 — a TSC-style toolbox with the track tools: lay track standing-end/running-end with arc-to-point clicks, Ctrl-straights, snapping onto open ends and turnouts from a press on the track (facing/trailing by drag direction, split and wired with the throw time in the panel), split/join/offset/crossover/gradient tools, device placement and per-device fields, the signal/section/route tables of the interlocking as forms, support-point dragging, rule checking, module boundaries with a ghost neighbour, delete with index remapping, undo/redo, save/open with discard guards); the **vehicle editor** edits base data, drive/brake/equipment as a block diagram (see the 2026-08-17 entry), glTF model, LOD, moving parts, the 3D cab (eye point + interactive controls), the cab displays and the sound table; the **signal editor** assembles signal models (parts, mount points, lamp bindings, lamp test) |
 | **M4** | Interlocking, AI trains, timetable | **done** — routes with locking/release, automatic block, AI stops at signals and platforms |
 | **M5** | LZB 80 + AFB, MFA, tap-changer loco | **done** — LZB with guidance, braking curve, end and failure procedures, with and without PZB, full/partial block mode and CIR-ELKE; BR 110 present; **AFB** as vehicle equipment (`VehicleSpec::afb`): holds the dial speed with traction, dynamic brake and — where that does not suffice — the air brake, and under LZB guidance runs down the braking curve because the LZB's v-soll caps the dial; MFA values and lamps ship as indicators — HUD text, `gauge:`/`lamp:` instruments and render-to-texture displays in the 3D cab (see M6) |
 | **M6** | Interactive 3D cab, start-up procedure, audio, weather/night | **done** — interactive 3D cab: per-vehicle cab data (eye point + controls binding glTF nodes to a closed input registry incl. wipers, lights and display softkeys), mouse picking with drag/click/scroll gestures per control kind, hover glow, HUD readout, operating clicks via `Control(…)` sound quantities; instruments: gauges/lamps of the safety systems (`gauge:`/`lamp:` indicators, MFA pointers), `digit:` seven-segment counters, and **displays rendered to texture** (declarative widget lists in RON, a Lua `display(ctx)` hook with nested menus and clickable softkeys, or an HTML/CSS/JS page per screen — parsed, flex-laid-out and scripted in-engine by the `html-display` crate, no browser embedded); edited in the vehicle editor with viewport preview; start-up chain operable via keyboard and mouse; **weather** (plan 14.1): `sim_core::weather` holds it as physical quantities — cover and cloud base, precipitation kind and rate [mm/h], wind speed and bearing, sight, temperature and a thunder rate — moved between thirteen named presets over a five-minute transition by the `SetWeather` scenario action, with the surface water and the lying snow integrated in the fixed step and the rail condition falling out of them (the first rain on a dry rail is greasy before it is merely wet). Nothing of it is replicated: between two scenario actions the weather is a pure function of the scenario clock, lightning included, so every client stands in the same rain and sees the same flash. Rendered as **volumetric clouds** (`world_render::clouds`: a Nubis-style raymarch of Perlin-Worley shape noise with multiple-scattering octaves, written into a 768 × 384 equirectangular panorama by an offscreen camera and shown on a dome in the transparent phase — a fifth of a screen's pixels whatever the window is, because a camera on the ground never enters a cloud), **haze in the atmosphere itself** (a Koschmieder extinction as an extra `ScatteringMedium` term, so fog is blue at dusk and bright around the sun, plus an analytic near-field falloff below 8 km of sight, which the planetary look-up tables cannot resolve), **wet and snowed-on surfaces** (`weather.wgsl`, shared by the terrain and by an extension swapped over every mod material as it spawns: Lagarde's albedo darkening and roughness, procedural ripple normals where the drops land, snow by world normal with a ragged edge, and the dapple of the clouds on the ground), **rain and snow around the camera** (one draw call, thinned by the intensity in the shader, added rather than blended, leaning into the wind of the weather plus the train's own rush of air, and off in a tunnel because the track type says where one is), **lightning and thunder** (a strike read off the clock, lighting the cloud deck and the ground, with a `Thunder` sound quantity delayed by `distance / 343 m/s` and rolling longer the further it struck) **rain on the cab glass** (`world_render::windscreen`: the panes a vehicle names in its `cab:` block get their own material — a film that thickens with the weather, drops in a cell grid that crawl down the glass at a stand and are pushed up it by the airflow above about 15 km/h, and the strip the wiper leaves clear, sampled from the same sweep curve the blade is drawn with) and **ground mist** as a Bevy fog volume with the sun's shafts through it (a graphics setting of its own). `--weather <preset>` places one for a screenshot; `mods/example/scenarios/regenfahrt.ron` shows a run into rain and fog; terrain from the DGM; **day/night cycle with a physically based sky** (`world_render::sky`): Bevy's implementation of Hillaire's scalable sky-and-atmosphere technique (transmittance, multiple-scattering, sky-view and aerial-perspective LUTs — Rayleigh and Mie scattering, so the blue noon, the red sunset and the haze over a distant valley all fall out of one model), the sun's disk drawn into it by the atmosphere itself, a moon disk half a degree wide shaded from the real sun direction (phase, terminator and earthshine out of the almanac), and the 8 900 naked-eye stars of the HYG catalogue as point sprites in J2000 equatorial coordinates plus a procedural Milky Way — turned into the local sky by the observer's latitude and the sidereal time, and extincted by air mass near the horizon; the scenario's start clock (date + time) and the georeferenced location are the whole input; **seasons** (ch. 14 "seasons v2"): the same start date colours ground textures and placeholder vegetation — meadows turn through October, ground, gravel and foliage go under snow from November to March — and a mod may add optional `autumn_model`/`winter_model` variants to its track objects, falling back to the year-round model where it ships none; **night lighting**: signal lamps glow (HDR + bloom on the main camera, emissive lenses), headlight cones at both train ends follow the light switch, the direction of travel and the darkness, red tail lamps (Zg 101) mark the opposite end, **mods' `_NIGHT` nodes** (lit windows, glowing signs) switch at dusk in every model, cab light on its own switch (`CabControl::Headlights`/`CabLight`, keys 9/0) and **instrument backlighting on its own dimmer** (`CabControl::InstrumentLight`, keys `,`/`.`) — a part on the new `Motion::Emissive`, which scales the emissive colour of the mod's own material by the dimmer instead of switching the node, so the dials come up out of the dark continuously (content per vehicle; the example BR 101 carries a backlit panel); **terrain texturing and vegetation** (ch. 14): texture splatting — per-vertex weights from slope and track distance blend three generated ground textures (grass/rock/gravel) in a `StandardMaterial` extension — and vegetation as **line content**: every tree its own `LineSource::trees` entry (3D objects from mods' `objects/*.ron`, placeholder for the unnamed), spawned as children of their terrain tile so they stream with it and batch into instanced draws; woods are baked into single trees by the editor, so each one stays individually editable; no recorded samples (the sources are generated — content, not code) |
@@ -286,16 +286,53 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   All of it controllable through a RON file, reloadable at runtime.
 - **Editors (ch. 15):** three separate programs with a desktop UI (menu bar, docked panels,
   native file dialogs): `route-editor` edits a line over the aerial imagery overlay
-  (editor v3): a **track drawing tool** that appends one
-  tangent-continuous arc or straight per click (arc-to-point, G1 by construction), a
-  **device tool** that drops any `DeviceKind` onto the nearest track, and a selection
-  panel with the device's fields (kind, position, facing, lateral offset, RON payload).
-  A **switch tool** clicks a point on a track and draws the branch: on finish the edge
-  is split at the cut (`LineSource::split_edge` — devices, profiles, sections, switch
-  legs and followers all follow), the joint becomes the turnout node and the branch its
-  diverging leg, tangential by construction. The tool places **facing or trailing**
-  turnouts: trailing reverses the drawing heading and makes the far half of the split
+  (editor v3), its tools in a **toolbox strip** on the left edge after Train Simulator
+  Classic's World Editor — categories in the upper box (track, lineside equipment,
+  landscape, module), the active category's tools below, the number keys counting down
+  the box that is up, and the form panel's *Tool* section carrying the active tool's
+  options. The **lay tool** works standing-end/running-end: the press sets the start —
+  on an open end it continues that track, on a track's middle it starts a turnout
+  branch, on open ground it starts fresh — and the drag until release sets the heading
+  (for a branch it decides **facing or trailing**: along the track or against it).
+  Every further click appends one tangent-continuous arc or straight (arc-to-point,
+  G1 by construction), a **straight while Ctrl is held**, and the running end **snaps
+  onto open ends**, closing the gap with two tangent arcs (biarc) so the join is
+  tangential at both sides; the status bar reads out the piece's **length and radius**.
+  What the piece is laid as comes from the *Tool* section — track type (the content
+  drawer's track-type cards arm it too), speed, gradient, electrification, **parallel
+  tracks** at a spacing, an optional **snap onto the standard radius series** of
+  the alignment rulebook, and **easements with cant**: a curve then goes down as
+  clothoid – arc – clothoid with the rulebook's cant for the piece's speed
+  (`CantRules` — equilibrium minus deficiency, capped, ramp 1:10·v), the cant band
+  written as the same 10 m steps the importer writes (`ramp_cant`), signed by the
+  curve direction so the roll tips into the curve. Continuing from an open end
+  starts the entry transition from that end's own curvature. On finish a branch splits its base edge
+  (`LineSource::split_edge` — devices, profiles, sections, switch legs and followers
+  all follow) and wires the joint into the turnout, the branch its
+  diverging leg; trailing makes the far half of the split
   the root, so a train over the clicked track trails the points instead of facing them.
+  Beside the lay tool sit the tools that work on laid track: **split** (one click, two
+  tracks on a joint), **join** (weld two open ends on one spot into one node —
+  `LineSource::merge_nodes`, every node index remapped — or **stake the connection
+  out after Zusi's Absteckrechner** (`route-editor/src/stake.rs`): the simplest case
+  is transition – arc – transition plus one compensating straight at the start or
+  the end (with the radius on automatic a bisection grows it until exactly one
+  remains; a fixed radius keeps straights at both ends or refuses as too big), a
+  parallel offset or reversing heading becomes a double arc around an intermediate
+  straight of at least the configured length (seeded from the two-circle tangent
+  construction, polished with a 3×3 Newton so the transitions land the chain on the
+  far pose), and a curved end feeds its curvature into the boundary transition —
+  compound-curve ground — and can carry no straight of its own. Design speed,
+  radius, transition curves and their length, cant and the least intermediate
+  straight are the staking parameters in the Tool section; the refusals are worded
+  like the original's — not plausible, radius too big, double arc impossible), **offset** (the parallel at the set spacing, on the side of the
+  click, exact for straights and arcs), **crossover** (cuts the clicked track and the
+  parallel one and wires the S of two turnout-radius arcs between them, both switches
+  included, whichever way the second track runs), and **gradient** (a click puts a
+  break point on the track; the selection panel edits the `(s, ‰)` steps and reads out
+  the climb over the edge — the height the run integrates from the grade profile).
+  A **device tool** drops any `DeviceKind` onto the nearest track, and a selection
+  panel carries the device's fields (kind, position, facing, lateral offset, RON payload).
   The **throw time** is edited on the selected track, which names the node and says
   whether that track is its root, straight or diverging leg — the map has no node
   picking, and every leg of a switch is a track.
@@ -345,18 +382,18 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   on the agreed coordinates. **Track types are edited per section** in the selection
   panel — `(s, type)` rows with a color chip each, the map tints the ribbon per section
   in the same palette, and the type combo lists every installed mod's types. An
-  **object tool** (key 5) drops any installed mod's 3D object (`objects/*.ron`) onto the
+  **object tool** drops any installed mod's 3D object (`objects/*.ron`) onto the
   nearest track at the object's own default offset and rotation; the selection panel
   edits position, lateral offset, rotation and height per placed instance, and
   **Repeat in a row** stamps copies along the track (spacing, default 65 m; end
   position) — the Zusi editor function "insert one every x metres", each copy an
   ordinary instance that can be moved or deleted on its own. **Vegetation tools**:
-  a tree tool (key 6) plants single trees free of the track, a forest brush
-  (key 7) outlines a polygon and bakes it into single trees (species and density
+  a tree tool plants single trees free of the track, a forest brush
+  outlines a polygon and bakes it into single trees (species and density
   in the tool options), and **File ▸ Import forest** reads an Overpass extract's
   `landuse=forest`/`natural=wood` ways and bakes them the same way — an optional
   aid next to hand placement, and every baked tree stays individually editable
-  and deletable. A **marking brush** (key 8) sweeps over the map, marks trees
+  and deletable. A **marking brush** sweeps over the map, marks trees
   and objects in bulk and deletes them together in one undo step. Objects offer
   **snap to terrain** (base on the terrain surface instead of the rail plane).
   **Height data travels with the module** (`LineSource::heights`): the DGM panel
@@ -368,9 +405,12 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   Tiles the delivery has no data for are skipped. The app loads them behind any
   `--dgm` source, so a module runs self-contained while whoever holds the
   original delivery keeps its finer grid.
-  A **terrain brush** (key 0) shapes the ground itself: every click stamps a
-  round stroke into `LineSource::terrain` — `Raise(±m)` on top of the DGM, or
-  `Level(height)`, which takes its target from the nearest rail. Strokes are
+  The **terrain tools** shape the ground itself, one per gesture in the
+  toolbox's terrain category: raise and lower stamp round strokes into
+  `LineSource::terrain` (`Raise(±m)` on top of the DGM, the amount and radius
+  shared tool options), **flatten** levels to the ground height under the
+  click (`Level(height)` from the built tiles — the World Editor's plateau),
+  and **level to rail** takes its target from the nearest rail. Strokes are
   data, not a baked heightfield (pickable, re-dialled, deleted; the DGM stays
   untouched, so better elevation data can be re-imported without losing the
   shaping), they apply in file order, fade out with a smoothstep at their
@@ -409,7 +449,7 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   have switched the model off.
   **Reference markers** (`LineSource::markers`) are the drawing aids for a
   hand-built line: a labelled point in a freely named layer, set one per click
-  with the marker tool (key 9) or imported from an Overpass extract
+  with the marker tool or imported from an Overpass extract
   (**File ▸ Import reference markers**), which sorts the tags it knows into
   layers of their own (level crossings, platforms, stations, signals, switches,
   buffer stops, kilometre marks, bridges, tunnels, towers; a way becomes its
@@ -425,8 +465,9 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   The panel follows the editor design system (sticky header with the line name, jump
   bar, collapsible sections in editing order); the imagery template is edited in
   place (provider, opacity, zoom mode, offset, offline) instead of via letter keys
-  alone; the map pans with the middle mouse button and zooms with the wheel (tools on
-  1/2/3/4); device payloads come from one-click RON templates serialised from the
+  alone; the map pans with the middle mouse button and zooms with the wheel (the
+  number keys count down the toolbox's active category); device payloads come from
+  one-click RON templates serialised from the
   `sim-core` types;
   `vehicle-editor` edits the vehicle base data (LÜP, gauge,
   v max, mass, rotating mass, axle base sum, rolling and air resistance, tilt angle,
@@ -441,6 +482,35 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
   time against a reference body of the length over buffers.
+- **Track laying after the World Editor (2026-08-23, route editor):** the toolbox strip
+  and the track-tool set described under *Editors* above — standing-end/running-end
+  laying with Ctrl-straights, end snapping and drag-decided facing/trailing turnouts,
+  plus split, join (weld/biarc), offset, crossover and gradient tools, the lay options
+  panel for the next piece, and the content drawer arming the lay tool with a track
+  type. The switch tool went with it: a turnout is a lay that starts on a track.
+  **The rest of the editor followed the toolbox**: vegetation and terrain are
+  categories of their own (raise, lower, flatten, level-to-rail and the DGM tile
+  picker as separate tools with drawn icons, the stroke preview in the colour the
+  stroke will wear), and the form panel is contextual — the fixed Tool and
+  Selection sections plus only the active category's own (`ui.rs::
+  category_sections`, pinned by a test), so the eleven-section scroll became a
+  panel as short as the work in hand. A UX pass the same day: the **select tool
+  leads every box** (`1` everywhere, the category is held in the state so taking
+  it does not switch the panel away), the module category wears a jigsaw icon of
+  its own instead of doubling the envelope's, the "pick one in the drawer" notes
+  became **buttons that open the content drawer on the right category**, and a
+  **findings badge** on the status bar carries the rule check's count into every
+  category — the click opens the checks where they live.
+  **Easements and cant followed the same day**: the lay option turns a clicked curve
+  into clothoid – arc – clothoid with the rulebook cant of the piece's speed, fitted
+  so the chain still ends on the click (and, with the radius snap, on the standard
+  series). Fixing that surfaced a sign bug in the importer: cant was written unsigned,
+  so every right-hand curve rolled *outward* — `CantRules` now signs the cant by the
+  curve direction and takes ramp lengths from the magnitude, pinned by tests on both
+  the importer and the editor. **The stake-out calculator closed the set**: the join
+  tool now connects two open ends the way Zusi's Absteckrechner does (see the join
+  tool under *Editors*), with its parameters — design speed, radius or automatic,
+  transitions, cant, least intermediate straight — as the tool's options.
 - **Vehicle editor completed (2026-08-19):** the gaps against Zusi 3's vehicle editor are
   closed, and the data behind them is read by the simulator rather than sitting in the file.
   - **Metadata, variants and loads** (`VehicleSpec::meta`/`variants`/`loads`): class,
@@ -845,10 +915,35 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
 - **One terrain builder behind a mutex:** the DGM cache inside it is shared state, so tile
   builds run one after another even though they sit on the task pool. One source per
   worker if a single tile at a time turns out to be too slow.
-- **A turnout is placed from the track, never from the node** — the switch tool splits an
-  edge, and the throw time is edited on the tracks that meet at the joint. Node picking on
-  the map (and with it crossings, double slips and a switch drawn between two existing
-  tracks) is a selection kind of its own.
+- **A turnout is placed from the track, never from the node** — laying from a track's
+  middle splits the edge, and the throw time is edited on the tracks that meet at the
+  joint. Node picking on the map (and with it crossings and double slips) is a
+  selection kind of its own.
+- **The stake-out calculator turns at most ~200° per arc** and seeds the double
+  arc's automatic radius from the gap (a third of the distance, 300–5000 m) — a
+  reversing loop connection stays possible, a whip-around from a mis-click does
+  not, and a radius the seed cannot reach is entered as a fixed one. Two curved
+  ends have no single-arc answer (that would take a true compound curve of several
+  radii) and go to the double arc.
+- **Eased pieces come from a Newton fit, plain pieces from closed form**: the lay
+  tool's clothoid–arc–clothoid is fitted numerically onto the clicked point
+  (curvature and arc length, ramps from the cant rulebook), and falls back to the
+  bare arc where the click leaves no room for the ramps, under 50 m radius, or the
+  iteration finds nothing — the status readout says which one is under the cursor.
+  Joins (biarc), crossovers and turnout branches stay bare arcs on purpose: their
+  prototypes carry no transition curves either. An eased edge offers no draggable
+  support points (the arc-to-point refit would flatten its clothoids), which is why
+  the option is off by default.
+- **An offset clothoid is approximated**: the parallel of a transition curve is no
+  clothoid, so `offset_edge` maps its end curvatures and scales its length by the
+  midpoint — centimetres at track spacing, exact for the straights and arcs the
+  drawing tools produce.
+- **A crossover is a single connection** (two turnouts), not the double crossover the
+  World Editor builds from a second click — the second diagonal is the same tool used
+  once more the other way round.
+- **The join weld keeps the geometry as clicked**: ends within a metre share a node
+  from then on, but their coordinates stay their own — the weld is topological, the
+  metre is the builder's to close (the lay tool's end snapping already lands exactly).
 - **A signal's routes end at the next signal** (`routes_from`) — that is what a route is,
   but it means the editor offers no route *over* an intermediate signal, and no shunting
   route that ends at a point rather than at a signal. Both are entered by hand: entry and

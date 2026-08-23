@@ -21,6 +21,44 @@ use std::path::{Path, PathBuf};
 use track_model::{DeviceKind, Facing, SwitchPosition};
 use world_coords::EcefPos;
 
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+
+    /// Every category names only sections the panel can draw, never one
+    /// twice — the jump bar and the scroll area read the same list.
+    #[test]
+    fn category_sections_are_known_and_unique() {
+        let known = [
+            "areas",
+            "interlock",
+            "markers",
+            "heights",
+            "module",
+            "sky",
+            "checks",
+            "imagery",
+            "cache",
+        ];
+        let mut covered = std::collections::HashSet::new();
+        for (key, _, _) in tools::TOOL_GROUPS {
+            let sections = category_sections(key);
+            for (index, (id, _)) in sections.iter().enumerate() {
+                assert!(known.contains(id), "{key}: unknown section {id}");
+                assert!(
+                    !sections[index + 1..].iter().any(|(other, _)| other == id),
+                    "{key}: section {id} listed twice"
+                );
+                covered.insert(*id);
+            }
+        }
+        // Nothing the panel can draw is orphaned from every category.
+        for id in known {
+            assert!(covered.contains(id), "section {id} reachable from no category");
+        }
+    }
+}
+
 const SHORTCUT_NEW: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::N);
 const SHORTCUT_OPEN: egui::KeyboardShortcut =
@@ -102,6 +140,9 @@ pub fn draw(
     // Over the status bar and under the side panel, so it spans the window the
     // way Unreal's does — the catalogue is not a property of the selection.
     crate::content_drawer::draw(&mut root, &mut state, &mut catalogs);
+    // The toolbox docks first, so it takes the window's left edge and the
+    // form panel lines up beside it.
+    toolbox(&mut root, &mut state);
     left_panel(
         &mut root,
         &mut line,
@@ -1060,16 +1101,55 @@ fn status_bar(
                     sky.seconds = hours * 3600.0;
                 }
                 editor_ui::bar_divider(ui);
-                // While a track is being drawn, the drawing is the status.
+                // While a track is being drawn, the drawing is the status:
+                // what the standing end is doing, then the piece under the
+                // cursor — its length and radius, the way the World Editor
+                // reads them out.
                 let status = match &state.drawing {
-                    Some(drawing) => t!(
+                    Some(drawing) if drawing.aiming => {
                         if drawing.branch_of.is_some() {
-                            "draw-branch"
+                            t!(if drawing.trailing {
+                                "draw-aim-trailing"
+                            } else {
+                                "draw-aim-facing"
+                            })
                         } else {
-                            "draw-active"
-                        },
-                        segments = drawing.segments.len()
-                    ),
+                            t!("draw-aiming")
+                        }
+                    }
+                    Some(drawing) => {
+                        let progress = t!(
+                            if drawing.branch_of.is_some() {
+                                "draw-branch"
+                            } else {
+                                "draw-active"
+                            },
+                            segments = drawing.segments.len()
+                        );
+                        match state.readout {
+                            Some(r) => {
+                                let piece = match (r.straight, r.radius, r.cant) {
+                                    (true, _, _) | (_, None, _) => t!(
+                                        "draw-readout-straight",
+                                        length = format!("{:.0}", r.length)
+                                    ),
+                                    (false, Some(radius), Some(cant)) => t!(
+                                        "draw-readout-arc-canted",
+                                        length = format!("{:.0}", r.length),
+                                        radius = editor_ui::group_digits(radius.round()),
+                                        cant = format!("{cant:.0}")
+                                    ),
+                                    (false, Some(radius), None) => t!(
+                                        "draw-readout-arc",
+                                        length = format!("{:.0}", r.length),
+                                        radius = editor_ui::group_digits(radius.round())
+                                    ),
+                                };
+                                format!("{piece} · {progress}")
+                            }
+                            None => progress,
+                        }
+                    }
                     None if overlay.status.is_empty() => t!("status-ready"),
                     None => overlay.status.clone(),
                 };
@@ -1108,6 +1188,26 @@ fn status_bar(
                     if line.dirty {
                         ui.label(egui::RichText::new(t!("status-unsaved")).color(colors::WARN));
                     }
+                    // The rule check's findings, visible from every category —
+                    // the click opens them where they live.
+                    if !line.issues.is_empty() {
+                        let label = egui::RichText::new(t!(
+                            "status-issues",
+                            count = line.issues.len()
+                        ))
+                        .color(colors::WARN);
+                        if ui
+                            .add(egui::Button::new(label).small())
+                            .on_hover_text(t!("status-issues-hint"))
+                            .clicked()
+                        {
+                            state.category = tools::TOOL_GROUPS
+                                .iter()
+                                .position(|(key, _, _)| *key == "tool-group-module")
+                                .unwrap_or(0);
+                            state.jump_to = Some("checks");
+                        }
+                    }
                     if let Some(path) = &line.path {
                         ui.add(
                             egui::Label::new(
@@ -1124,21 +1224,44 @@ fn status_bar(
         });
 }
 
-/// The sections of the panel, in the order they are drawn: id and the i18n
-/// key of the title. The jump bar sits above the scroll area and has to name
-/// them before the first one has been laid out. Editing first, template
-/// configuration after, diagnostics last.
-const SECTIONS: [(&str, &str); 9] = [
+/// The two sections every category keeps: the active tool's options and
+/// whatever is selected. The jump bar sits above the scroll area and has to
+/// name the sections before the first one has been laid out.
+const FIXED_SECTIONS: [(&str, &str); 2] = [
     ("tools", "heading-tools"),
     ("selection", "heading-selection"),
-    ("areas", "heading-areas"),
-    ("interlock", "heading-interlock"),
-    ("module", "heading-module"),
-    ("sky", "heading-sky"),
-    ("checks", "heading-checks"),
-    ("imagery", "heading-imagery"),
-    ("cache", "heading-cache"),
 ];
+
+/// The panel sections of each toolbox category beyond the fixed two, keyed by
+/// the category's own i18n key so a reordered toolbox cannot silently move
+/// them. One category at a time keeps the panel as short as its work — the
+/// World Editor's flyouts show the same economy: the track category carries
+/// the marked stretches and the interlocking, equipment the interlocking and
+/// the marker layers, terrain the height data, and the module category
+/// everything the module is rather than what stands on it.
+fn category_sections(category: &str) -> &'static [(&'static str, &'static str)] {
+    match category {
+        "tool-group-track" => &[
+            ("areas", "heading-areas"),
+            ("interlock", "heading-interlock"),
+        ],
+        "tool-group-equipment" => &[
+            ("interlock", "heading-interlock"),
+            ("markers", "heading-markers"),
+        ],
+        "tool-group-terrain" => &[("heights", "heading-heights")],
+        "tool-group-module" => &[
+            ("module", "heading-module"),
+            ("sky", "heading-sky"),
+            ("checks", "heading-checks"),
+            ("imagery", "heading-imagery"),
+            ("cache", "heading-cache"),
+        ],
+        // Vegetation, and any category still to come: tools and selection
+        // say everything.
+        _ => &[],
+    }
+}
 
 /// A section the jump bar can scroll to; also reports itself in `current`
 /// while its header is at or above the top of the visible area — the sections
@@ -1207,8 +1330,10 @@ fn left_panel(
             // Both the selection and the interlocking panel point at things on
             // the map; whatever the mouse is over this frame wins.
             state.highlight = None;
+            let category = tools::TOOL_GROUPS[state.category.min(tools::TOOL_GROUPS.len() - 1)].0;
+            let sections = category_sections(category);
             ui.horizontal_wrapped(|ui| {
-                for (id, key) in SECTIONS {
+                for (id, key) in FIXED_SECTIONS.into_iter().chain(sections.iter().copied()) {
                     // The section being read wears the "widget pressed" fill
                     // and strong text; the accent stays for real selections.
                     let here = *active == Some(id);
@@ -1231,7 +1356,60 @@ fn left_panel(
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
                     nav_section(ui, jump, &mut current, "tools", "heading-tools", |ui| {
-                        tool_chips(ui, state);
+                        // The toolbox strip picks the tool; this section is its
+                        // properties — the World Editor's panel for the piece
+                        // about to be placed, never for one already lying.
+                        let (_, key, _) = tools::tool_entry(state.tool);
+                        // The tool's name outranks the hint under it — the
+                        // section title tier, like a card header.
+                        ui.label(editor_ui::section_title(t!(*key)));
+                        if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
+                            ui.small(
+                                egui::RichText::new(hint).color(colors::TEXT_SECONDARY),
+                            );
+                        }
+                        if state.tool == Tool::DrawTrack {
+                            ui.add_space(space::XS);
+                            lay_rows(ui, state, types);
+                        }
+                        if state.tool == Tool::Offset {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("offset-options").show(ui, |ui| {
+                                row(ui, "lay-spacing", |ui| {
+                                    editor_ui::field(
+                                        ui,
+                                        &mut state.lay.spacing,
+                                        0.5,
+                                        3.0..=20.0,
+                                        "m",
+                                    );
+                                });
+                            });
+                        }
+                        if state.tool == Tool::Crossover {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("crossover-options").show(ui, |ui| {
+                                row(ui, "lay-turnout-radius", |ui| {
+                                    editor_ui::field(
+                                        ui,
+                                        &mut state.lay.turnout_radius,
+                                        10.0,
+                                        50.0..=2500.0,
+                                        "m",
+                                    );
+                                });
+                            });
+                            if state.crossover_from.is_some() {
+                                ui.small(t!("crossover-first-set"));
+                            }
+                        }
+                        if state.tool == Tool::Join {
+                            ui.add_space(space::XS);
+                            stake_rows(ui, state);
+                            if state.join_from.is_some() {
+                                ui.small(t!("join-first-set"));
+                            }
+                        }
                         if state.tool == Tool::PlaceDevice {
                             ui.add_space(space::XS);
                             editor_ui::form_grid("place").show(ui, |ui| {
@@ -1240,16 +1418,26 @@ fn left_panel(
                                     kind_combo(ui, "place-kind", &mut kind);
                                     state.device_kind = Some(kind);
                                 });
-                                // What the content drawer armed. Read-only here:
-                                // the drawer is where a type is picked, this only
-                                // says which one the next click stamps.
+                                // What the content drawer armed — and the way
+                                // into the drawer where nothing is yet: the
+                                // browse button opens it on the right category.
                                 if state.device_kind() == DeviceKind::Signal {
+                                    let mut browse = None;
                                     row(ui, "sig-type", |ui| {
-                                        armed(ui, &mut state.signal_type);
+                                        if armed(ui, &mut state.signal_type) {
+                                            browse =
+                                                Some(crate::content_drawer::Category::SignalTypes);
+                                        }
                                     });
                                     row(ui, "sig-model", |ui| {
-                                        armed(ui, &mut state.signal_model);
+                                        if armed(ui, &mut state.signal_model) {
+                                            browse =
+                                                Some(crate::content_drawer::Category::SignalModels);
+                                        }
                                     });
+                                    if let Some(category) = browse {
+                                        open_drawer_on(state, category);
+                                    }
                                 }
                             });
                         }
@@ -1279,37 +1467,25 @@ fn left_panel(
                                 ));
                             }
                         }
-                        if state.tool == Tool::PlaceSwitch {
-                            ui.add_space(space::XS);
-                            editor_ui::form_grid("place-switch").show(ui, |ui| {
-                                row(ui, "switch-orientation", |ui| {
-                                    for (trailing, key) in
-                                        [(false, "switch-facing"), (true, "switch-trailing")]
-                                    {
-                                        if ui
-                                            .selectable_label(
-                                                state.switch_trailing == trailing,
-                                                t!(key),
-                                            )
-                                            .on_hover_text(t!(&format!("{key}-hint")))
-                                            .clicked()
-                                        {
-                                            state.switch_trailing = trailing;
-                                        }
-                                    }
-                                });
-                            });
-                        }
                         if state.tool == Tool::PlaceObject {
                             ui.add_space(space::XS);
                             if objects.map.is_empty() {
                                 ui.small(t!("status-no-objects"));
                             } else {
+                                let mut browse = false;
                                 editor_ui::form_grid("place-object").show(ui, |ui| {
                                     row(ui, "obj-kind", |ui| {
                                         object_combo(ui, "place-object-kind", objects, state);
+                                        browse =
+                                            ui.small_button(t!("action-browse-drawer")).clicked();
                                     });
                                 });
+                                if browse {
+                                    open_drawer_on(
+                                        state,
+                                        crate::content_drawer::Category::Objects,
+                                    );
+                                }
                             }
                         }
                         if matches!(state.tool, Tool::PlaceTree | Tool::PlaceForest) {
@@ -1390,9 +1566,15 @@ fn left_panel(
                                 });
                             });
                         }
-                        if state.tool == Tool::TerrainBrush {
+                        if matches!(
+                            state.tool,
+                            Tool::TerrainRaise
+                                | Tool::TerrainLower
+                                | Tool::TerrainLevel
+                                | Tool::TerrainRail
+                        ) {
                             ui.add_space(space::XS);
-                            editor_ui::form_grid("terrain-brush").show(ui, |ui| {
+                            editor_ui::form_grid("terrain-tool").show(ui, |ui| {
                                 row(ui, "terrain-radius", |ui| {
                                     let mut radius = state.terrain_radius.unwrap_or(60.0);
                                     if editor_ui::field(ui, &mut radius, 5.0, 5.0..=2_000.0, "m")
@@ -1401,30 +1583,14 @@ fn left_panel(
                                         state.terrain_radius = Some(radius);
                                     }
                                 });
-                                row(ui, "terrain-mode", |ui| {
-                                    for (level, key) in
-                                        [(false, "terrain-raise"), (true, "terrain-level")]
-                                    {
-                                        if ui
-                                            .selectable_label(state.terrain_level == level, t!(key))
-                                            .on_hover_text(t!(&format!("{key}-hint")))
-                                            .clicked()
-                                        {
-                                            state.terrain_level = level;
-                                        }
-                                    }
-                                });
-                                if !state.terrain_level {
+                                // Raising and lowering share the amount; the
+                                // tool in hand is the sign.
+                                if matches!(state.tool, Tool::TerrainRaise | Tool::TerrainLower) {
                                     row(ui, "terrain-amount", |ui| {
-                                        let mut amount = state.terrain_amount.unwrap_or(2.0);
-                                        if editor_ui::field(
-                                            ui,
-                                            &mut amount,
-                                            0.5,
-                                            -100.0..=100.0,
-                                            "m",
-                                        )
-                                        .changed()
+                                        let mut amount =
+                                            state.terrain_amount.unwrap_or(2.0).abs();
+                                        if editor_ui::field(ui, &mut amount, 0.5, 0.5..=100.0, "m")
+                                            .changed()
                                         {
                                             state.terrain_amount = Some(amount);
                                         }
@@ -1454,51 +1620,75 @@ fn left_panel(
                         },
                     );
 
-                    nav_section(ui, jump, &mut current, "areas", "heading-areas", |ui| {
-                        crate::areas::area_list(ui, line, state, focus);
-                    });
-
-                    nav_section(
-                        ui,
-                        jump,
-                        &mut current,
-                        "interlock",
-                        "heading-interlock",
-                        |ui| {
-                            interlock_section(ui, line, state, overlay);
-                        },
-                    );
-
-                    nav_section(ui, jump, &mut current, "markers", "heading-markers", |ui| {
-                        marker_section(ui, line, state, focus, marks);
-                    });
-
-                    nav_section(ui, jump, &mut current, "heights", "heading-heights", |ui| {
-                        height_section(ui, line, state, overlay);
-                    });
-
-                    nav_section(ui, jump, &mut current, "module", "heading-module", |ui| {
-                        module_section(ui, line, state, ghost, focus);
-                    });
-
-                    nav_section(ui, jump, &mut current, "sky", "heading-sky", |ui| {
-                        sky_section(ui, sky);
-                    });
-
-                    nav_section(ui, jump, &mut current, "checks", "heading-checks", |ui| {
-                        checks_section(ui, line, state, focus);
-                    });
-
-                    nav_section(ui, jump, &mut current, "imagery", "heading-imagery", |ui| {
-                        imagery_section(ui, overlay, request);
-                    });
-
-                    nav_section(ui, jump, &mut current, "cache", "heading-cache", |ui| {
-                        cache_section(ui, overlay, request);
-                    });
+                    // Only the active category's sections are laid out — the
+                    // panel is as short as the work in hand, and the jump bar
+                    // above reads the same list.
+                    let shown = |id: &str| sections.iter().any(|(section, _)| *section == id);
+                    if shown("areas") {
+                        nav_section(ui, jump, &mut current, "areas", "heading-areas", |ui| {
+                            crate::areas::area_list(ui, line, state, focus);
+                        });
+                    }
+                    if shown("interlock") {
+                        nav_section(
+                            ui,
+                            jump,
+                            &mut current,
+                            "interlock",
+                            "heading-interlock",
+                            |ui| {
+                                interlock_section(ui, line, state, overlay);
+                            },
+                        );
+                    }
+                    if shown("markers") {
+                        nav_section(ui, jump, &mut current, "markers", "heading-markers", |ui| {
+                            marker_section(ui, line, state, focus, marks);
+                        });
+                    }
+                    if shown("heights") {
+                        nav_section(ui, jump, &mut current, "heights", "heading-heights", |ui| {
+                            height_section(ui, line, state, overlay);
+                        });
+                    }
+                    if shown("module") {
+                        nav_section(ui, jump, &mut current, "module", "heading-module", |ui| {
+                            module_section(ui, line, state, ghost, focus);
+                        });
+                    }
+                    if shown("sky") {
+                        nav_section(ui, jump, &mut current, "sky", "heading-sky", |ui| {
+                            sky_section(ui, sky);
+                        });
+                    }
+                    if shown("checks") {
+                        nav_section(ui, jump, &mut current, "checks", "heading-checks", |ui| {
+                            checks_section(ui, line, state, focus);
+                        });
+                    }
+                    if shown("imagery") {
+                        nav_section(ui, jump, &mut current, "imagery", "heading-imagery", |ui| {
+                            imagery_section(ui, overlay, request);
+                        });
+                    }
+                    if shown("cache") {
+                        nav_section(ui, jump, &mut current, "cache", "heading-cache", |ui| {
+                            cache_section(ui, overlay, request);
+                        });
+                    }
                 });
             *active = current;
         });
+}
+
+/// Opens the content drawer on `category` — the browse buttons' shared path,
+/// with the same filter hygiene as the drawer's own category row.
+fn open_drawer_on(state: &mut EditorState, category: crate::content_drawer::Category) {
+    state.drawer.open = true;
+    state.drawer.category = category;
+    if category != crate::content_drawer::Category::SignalTypes {
+        state.drawer.system = None;
+    }
 }
 
 /// Picker of the Place-object tool: every installed `objects/*.ron`.
@@ -1520,37 +1710,174 @@ fn object_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, state: &mut
         });
 }
 
-fn tool_chips(ui: &mut egui::Ui, state: &mut EditorState) {
-    for (group, tools) in tools::TOOL_GROUPS {
-        editor_ui::subheading(ui, t!(group));
-        // Two to a row, so the palette is a grid with one left edge rather
-        // than twelve chips breaking wherever their text happens to end.
-        for pair in tools.chunks(2) {
-            ui.horizontal(|ui| {
-                for (tool, key, icon) in pair {
-                    // The number key, appended to whatever the hint says — an
-                    // accelerator nobody can see is one nobody uses.
-                    let hint = match (
-                        i18n::maybe(&format!("{key}-hint")),
-                        tools::tool_digit(*tool),
-                    ) {
-                        (Some(hint), Some(digit)) => Some(format!("{hint} ({digit})")),
-                        (Some(hint), None) => Some(hint),
-                        (None, Some(digit)) => Some(digit.to_string()),
-                        (None, None) => None,
-                    };
-                    let response =
-                        editor_ui::tool_button(ui, *icon, t!(key), state.tool == *tool, hint);
-                    if response.clicked() && state.tool != *tool {
-                        state.tool = *tool;
-                        state.drawing = None;
-                        state.forest_points.clear();
-                    }
+/// The toolbox, after Train Simulator Classic's World Editor: a narrow strip
+/// on the left edge, the categories in its upper box, the tools of the active
+/// one below. Icons alone — the tooltip names the tool and its number key,
+/// and the tool's own section in the form panel repeats the name in full.
+fn toolbox(root: &mut egui::Ui, state: &mut EditorState) {
+    egui::Panel::left("toolbox")
+        .resizable(false)
+        .default_size(52.0)
+        .frame(editor_ui::bar_frame())
+        .show(root, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(space::XS, space::XS);
+            let active = state.category.min(tools::TOOL_GROUPS.len() - 1);
+            state.category = active;
+            for (i, (key, _, _)) in tools::TOOL_GROUPS.iter().enumerate() {
+                let icon = tools::TOOL_GROUPS[i].1;
+                if editor_ui::toolbox_button(ui, icon, i == active, t!(*key)).clicked()
+                    && i != active
+                {
+                    // A fresh category starts neutral, with the select tool
+                    // in hand — its own tools are one click below.
+                    state.category = i;
+                    tools::select_tool(state, Tool::Select);
                 }
+            }
+            ui.add_space(space::XS);
+            ui.separator();
+            ui.add_space(space::XS);
+            // The select tool leads every box — picking something is wanted
+            // whatever category is up, and `1` is always it.
+            for (tool, key, icon) in std::iter::once(&tools::SELECT_ENTRY)
+                .chain(tools::TOOL_GROUPS[active].2.iter())
+            {
+                // Name and number key in the tooltip — an accelerator nobody
+                // can see is one nobody uses.
+                let name = match tools::tool_digit(*tool) {
+                    Some(digit) => format!("{} ({digit})", t!(*key)),
+                    None => t!(*key),
+                };
+                if editor_ui::toolbox_button(ui, *icon, state.tool == *tool, name).clicked()
+                    && state.tool != *tool
+                {
+                    tools::select_tool(state, *tool);
+                }
+            }
+        });
+}
+
+/// The staking parameters of the join tool — Zusi's Absteckrechner dialog:
+/// design speed, radius (0 = automatic, one compensating straight remains),
+/// transitions and their length, cant, and the least intermediate straight a
+/// double arc keeps.
+fn stake_rows(ui: &mut egui::Ui, state: &mut EditorState) {
+    let stake = &mut state.stake;
+    editor_ui::form_grid("stake-options").show(ui, |ui| {
+        row(ui, "stake-speed", |ui| {
+            editor_ui::field(ui, &mut stake.speed, 5.0, 0.0..=400.0, "km/h");
+        });
+        row(ui, "stake-radius", |ui| {
+            editor_ui::field(ui, &mut stake.radius, 10.0, 0.0..=50_000.0, "m");
+        });
+        row(ui, "stake-easements", |ui| {
+            ui.checkbox(&mut stake.easements, "");
+        });
+        if stake.easements {
+            row(ui, "stake-easement-length", |ui| {
+                editor_ui::field(ui, &mut stake.easement_length, 5.0, 0.0..=500.0, "m");
+            });
+            row(ui, "stake-cant", |ui| {
+                ui.checkbox(&mut stake.cant, "");
             });
         }
-        ui.add_space(space::XS);
-    }
+        row(ui, "stake-min-straight", |ui| {
+            editor_ui::field(ui, &mut stake.min_straight, 1.0, 1.0..=500.0, "m");
+        });
+    });
+}
+
+/// The track properties of the next piece — type, speed, gradient, wire, how
+/// many tracks at what spacing, and the radius snap. Only the piece about to
+/// be laid reads them; a piece already lying is edited through its selection.
+fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
+    let lay = &mut state.lay;
+    editor_ui::form_grid("lay-options").show(ui, |ui| {
+        row(ui, "lay-type", |ui| {
+            let current = lay
+                .track_type
+                .clone()
+                .unwrap_or_else(|| t!("track-type-default"));
+            egui::ComboBox::from_id_salt("lay-type")
+                .width(space::FIELD)
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(lay.track_type.is_none(), t!("track-type-default"))
+                        .clicked()
+                    {
+                        lay.track_type = None;
+                    }
+                    for name in types.map.keys() {
+                        if ui
+                            .selectable_label(lay.track_type.as_ref() == Some(name), name)
+                            .clicked()
+                        {
+                            lay.track_type = Some(name.clone());
+                        }
+                    }
+                });
+        });
+        row(ui, "lay-speed", |ui| {
+            // 0 = the line's default speed; the hint says so.
+            let mut speed = lay.speed.unwrap_or(0.0);
+            if editor_ui::field(ui, &mut speed, 5.0, 0.0..=400.0, "km/h").changed() {
+                lay.speed = (speed > 0.0).then_some(speed);
+            }
+        });
+        row(ui, "lay-grade", |ui| {
+            editor_ui::field(ui, &mut lay.grade, 0.5, -50.0..=50.0, "‰");
+        });
+        row(ui, "lay-power", |ui| {
+            let current = lay
+                .electrification
+                .as_deref()
+                .map(track_model::electrification_from_id);
+            let label = match current {
+                None => t!("lay-power-unset"),
+                Some(system) => power_label(system),
+            };
+            egui::ComboBox::from_id_salt("lay-power")
+                .width(space::FIELD)
+                .selected_text(label)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(current.is_none(), t!("lay-power-unset"))
+                        .clicked()
+                    {
+                        lay.electrification = None;
+                    }
+                    if ui
+                        .selectable_label(current == Some(None), power_label(None))
+                        .clicked()
+                    {
+                        lay.electrification = Some("none".into());
+                    }
+                    for system in track_model::PowerSystem::ALL {
+                        if ui
+                            .selectable_label(current == Some(Some(system)), power_label(Some(system)))
+                            .clicked()
+                        {
+                            lay.electrification = Some(system.id().into());
+                        }
+                    }
+                });
+        });
+        row(ui, "lay-parallel", |ui| {
+            editor_ui::field(ui, &mut lay.parallel, 1.0, 1.0..=8.0, "");
+        });
+        if lay.parallel > 1 {
+            row(ui, "lay-spacing", |ui| {
+                editor_ui::field(ui, &mut lay.spacing, 0.5, 3.0..=20.0, "m");
+            });
+        }
+        row(ui, "lay-snap-radius", |ui| {
+            ui.checkbox(&mut lay.snap_radius, "");
+        });
+        row(ui, "lay-easements", |ui| {
+            ui.checkbox(&mut lay.easements, "");
+        });
+    });
 }
 
 /// Species picker of the vegetation tools and panels: the placeholder tree
@@ -1641,6 +1968,7 @@ fn selection_panel(
             }
             track_type_rows(ui, line, i, length, types);
             electrification_rows(ui, line, i, length);
+            grade_rows(ui, line, i, length);
             switch_rows(ui, line, i);
             ui.add_space(space::XS);
             ui.horizontal(|ui| {
@@ -2070,6 +2398,63 @@ fn electrification_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f6
         // A new section is the useful one: the gap under a system boundary or a
         // siding, which is what anybody adds a section for.
         edge.electrification.push((s, "none".into()));
+    }
+}
+
+/// Gradient sections of the selected track: `(s, ‰)` rows over the arc
+/// length — the steps the gradient tool sets on the map, with the height the
+/// track has gained at its end as the check figure.
+fn grade_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64) {
+    editor_ui::subheading(ui, t!("sel-grade"));
+    let edge = &mut line.source.edges[i];
+    if edge.grade.is_empty() {
+        ui.small(t!("sel-grade-none"));
+    }
+    let mut remove = None;
+    editor_ui::form_grid(&format!("edge-grade-{i}"))
+        .num_columns(3)
+        .show(ui, |ui| {
+            for (k, step) in edge.grade.iter_mut().enumerate() {
+                editor_ui::field(ui, &mut step.0, 10.0, 0.0..=length, "m")
+                    .on_hover_text(t!("sel-grade-from"));
+                editor_ui::field(ui, &mut step.1, 0.5, -50.0..=50.0, "‰");
+                if ui.small_button("×").clicked() {
+                    remove = Some(k);
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(k) = remove {
+        edge.grade.remove(k);
+    }
+    if ui
+        .small_button(t!("action-add-grade-section"))
+        .on_hover_text(t!("sel-grade-hint"))
+        .clicked()
+    {
+        let s = edge
+            .grade
+            .last()
+            .map(|(s, _)| (s + 100.0).min(length))
+            .unwrap_or(0.0);
+        let g = edge.grade.last().map(|(_, g)| *g).unwrap_or(0.0);
+        edge.grade.push((s, g));
+    }
+    if !edge.grade.is_empty() {
+        // The climb over the whole edge — the figure a profile is checked by.
+        let mut climb = 0.0;
+        for (k, (s, g)) in edge.grade.iter().enumerate() {
+            let from = if k == 0 { 0.0 } else { s.clamp(0.0, length) };
+            let to = edge
+                .grade
+                .get(k + 1)
+                .map_or(length, |(next, _)| next.clamp(0.0, length));
+            climb += (to - from).max(0.0) * g / 1000.0;
+        }
+        ui.small(
+            egui::RichText::new(t!("sel-grade-climb", climb = format!("{climb:+.1}")))
+                .color(colors::TEXT_SECONDARY),
+        );
     }
 }
 
@@ -3661,23 +4046,19 @@ fn kind_label(kind: &DeviceKind) -> String {
     }
 }
 
-/// What the content drawer has armed: the key, or a hint at where to pick one.
-/// The button next to it drops the pick again.
-fn armed(ui: &mut egui::Ui, key: &mut Option<String>) {
+/// What the content drawer has armed: the key with its reset, or the button
+/// that opens the drawer where one is picked — returns `true` on that click,
+/// and the caller says which category to open on.
+fn armed(ui: &mut egui::Ui, key: &mut Option<String>) -> bool {
     match key {
         Some(name) => {
             ui.label(egui::RichText::new(name.clone()).color(colors::TEXT));
             if ui.small_button(t!("action-reset")).clicked() {
                 *key = None;
             }
+            false
         }
-        None => {
-            ui.label(
-                egui::RichText::new(t!("tool-device-pick"))
-                    .small()
-                    .color(colors::TEXT_SECONDARY),
-            );
-        }
+        None => ui.small_button(t!("action-browse-drawer")).clicked(),
     }
 }
 

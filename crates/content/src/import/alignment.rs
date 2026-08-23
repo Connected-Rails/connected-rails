@@ -68,9 +68,10 @@ impl CantRules {
     }
 
     /// Length of the cant ramp [m] — at the same time the minimum length of the
-    /// transition curve.
+    /// transition curve. Takes the magnitude: a right-hand curve carries its
+    /// cant as a negative number and still needs the full ramp.
     pub fn ramp_length(&self, cant_mm: f64, v_kmh: f64) -> f64 {
-        (cant_mm / 1000.0 * self.ramp_factor * v_kmh).max(self.min_ramp)
+        (cant_mm.abs() / 1000.0 * self.ramp_factor * v_kmh).max(self.min_ramp)
     }
 
     /// Round to the installation step.
@@ -133,7 +134,9 @@ impl Default for AlignmentOptions {
 }
 
 /// Common design radii: finely stepped in the tight range, coarser for large radii.
-fn preferred_radii() -> Vec<f64> {
+/// The standard radii an alignment is rounded to [m] — also what the editor's
+/// lay tool snaps a drawn arc onto.
+pub fn preferred_radii() -> Vec<f64> {
     let mut radii = vec![150.0, 180.0, 190.0, 200.0, 225.0, 250.0, 275.0];
     let mut r = 300.0;
     while r < 2000.0 {
@@ -285,7 +288,9 @@ pub fn fit(points: &[SamplePoint], options: &AlignmentOptions) -> Alignment {
         // section boundary is uncertain by more than a hundred metres), whereas the
         // standard ramp for the applied cant is uniquely determined. Position, radius and
         // turn angle of the curve come from the data.
-        let cant = options.cant.applied(radius, speed);
+        // Signed like the roll it produces: positive cant tips the track left
+        // (`TrackEdge::eval`), so a right-hand curve carries the minus.
+        let cant = options.cant.applied(radius, speed) * turn.signum();
         let ramp = options.cant.ramp_length(cant, speed).min(run.len(h) * 0.45);
         plan.push(PlannedRun {
             run: *run,
@@ -673,12 +678,13 @@ fn push_element(
     segments.push(segment);
 }
 
-/// Cant ramp as steps — `StepProfile` does not know interpolation.
+/// Cant ramp as steps — `StepProfile` does not know interpolation. Also what
+/// the route editor writes under the transition curves it lays.
 ///
 /// ponytail: 10 m steps instead of a linear profile. The jump per step is a few
 /// millimetres and is not noticeable in the roll motion; once `StepProfile` can
 /// interpolate, this can go away.
-fn ramp_cant(steps: &mut Vec<(f64, f64)>, start: f64, length: f64, from: f64, to: f64) {
+pub fn ramp_cant(steps: &mut Vec<(f64, f64)>, start: f64, length: f64, from: f64, to: f64) {
     if length <= 0.0 {
         return;
     }
@@ -830,6 +836,18 @@ mod tests {
             (radius - 800.0).abs() <= 100.0,
             "radius {radius} instead of 800 m"
         );
+    }
+
+    /// The mirror image: a right-hand curve gets its cant as a negative
+    /// number, so `TrackEdge::eval` rolls the track toward the inside.
+    #[test]
+    fn a_right_hand_curve_gets_negative_cant() {
+        let points = design_track(-1200.0, 120.0, 400.0, 0.0);
+        let alignment = fit(&points, &AlignmentOptions::default());
+        let low = alignment.cant.iter().map(|(_, c)| *c).fold(0.0, f64::min);
+        assert!(low < -40.0, "right-hand cant must be negative: {low}");
+        let high = alignment.cant.iter().map(|(_, c)| *c).fold(0.0, f64::max);
+        assert!(high <= 1e-9, "no positive cant on a right-hand curve: {high}");
     }
 
     #[test]

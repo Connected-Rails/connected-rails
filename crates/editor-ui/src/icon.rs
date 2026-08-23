@@ -51,12 +51,46 @@ pub enum Icon {
     Brush,
     /// Place marker — a flag on its pole.
     Marker,
-    /// Terrain brush — a hill under a brush stroke.
-    TerrainBrush,
+    /// Raise ground — a hill under the arrow lifting it.
+    TerrainRaise,
+    /// Lower ground — the same hill, the arrow pushing down.
+    TerrainLower,
+    /// Flatten — the blade line over the capped hill.
+    TerrainLevel,
+    /// Level to rail — a piece of track over the levelled ground.
+    TerrainRail,
     /// Pick DGM tiles — a grid with one cell taken.
     Tiles,
     /// Module envelope — a closed polygon on its corner points.
     Envelope,
+    /// Module — a jigsaw piece: what plugs into its neighbours.
+    Module,
+    /// Split track — a rail with a cut through it.
+    Split,
+    /// Join track ends — two rails meeting with the weld between them.
+    Join,
+    /// Offset track — a rail with its parallel and the arrow between them.
+    Offset,
+    /// Crossover — two parallel rails with the diagonal between them.
+    Crossover,
+    /// Gradient — a rail climbing, with the arrow that moves its break point.
+    Gradient,
+}
+
+/// Size of a toolbox button: the toolbox is a column of icons alone, so each
+/// one is a little larger than the bar's 26×22 — a tool is aimed at, a bar
+/// icon is only passed on the way to the map.
+const TOOLBOX: Vec2 = Vec2::new(36.0, 32.0);
+
+/// A toolbox button: icon alone at [`TOOLBOX`] size, pressed-in while
+/// `active`. The tooltip is the only text it has — name the tool and its key.
+pub fn toolbox_button(
+    ui: &mut Ui,
+    icon: Icon,
+    active: bool,
+    tooltip: impl Into<String>,
+) -> Response {
+    icon_button_sized(ui, icon, TOOLBOX, active, tooltip)
 }
 
 /// Size of an icon button: the design system's widget height, a little wider
@@ -69,7 +103,17 @@ const LINE: f32 = 1.5;
 /// An icon button, pressed-in while `active` — a pair of them reads as a
 /// choice rather than as two commands.
 pub fn icon_button(ui: &mut Ui, icon: Icon, active: bool, tooltip: impl Into<String>) -> Response {
-    let (rect, response) = ui.allocate_exact_size(BUTTON, Sense::click());
+    icon_button_sized(ui, icon, BUTTON, active, tooltip)
+}
+
+fn icon_button_sized(
+    ui: &mut Ui,
+    icon: Icon,
+    size: Vec2,
+    active: bool,
+    tooltip: impl Into<String>,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let fill = if active {
         colors::ACCENT_BG
     } else if response.hovered() {
@@ -306,6 +350,23 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(vec![at(0.82, 0.94), at(0.82, 0.66)]),
             Shape::circle_stroke(at(0.82, 0.52), rect.width() * 0.16, stroke),
         ],
+        // A jigsaw piece: the tab on top is what makes it read as one — a
+        // module plugs into its neighbours.
+        Icon::Module => {
+            let mut outline = vec![at(0.10, 0.26), at(0.34, 0.26)];
+            // The tab, a half circle bulging out of the top edge.
+            for i in 0..=8 {
+                let a = std::f32::consts::PI * (1.0 - i as f32 / 8.0);
+                outline.push(at(0.5 + 0.16 * a.cos(), 0.26 - 0.20 * a.sin()));
+            }
+            outline.extend([
+                at(0.66, 0.26),
+                at(0.90, 0.26),
+                at(0.90, 0.90),
+                at(0.10, 0.90),
+            ]);
+            vec![Shape::closed_line(outline, stroke)]
+        }
         // The envelope: a closed run of sides with its corners marked, which is
         // what the tool edits — the corners, not the area.
         Icon::Envelope => {
@@ -343,14 +404,47 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(vec![at(0.28, 0.06), at(0.28, 0.96)]),
             Shape::closed_line(vec![at(0.28, 0.10), at(0.86, 0.26), at(0.28, 0.46)], stroke),
         ],
-        // A hill with a stroke swept over it: the terrain brush shapes ground.
-        Icon::TerrainBrush => vec![
+        // A hill under the arrow that lifts it.
+        Icon::TerrainRaise => vec![
             Shape::convex_polygon(
-                vec![at(0.04, 0.94), at(0.44, 0.42), at(0.84, 0.94)],
+                vec![at(0.04, 0.94), at(0.40, 0.52), at(0.76, 0.94)],
                 color,
                 Stroke::NONE,
             ),
-            line(vec![at(0.14, 0.26), at(0.52, 0.10), at(0.94, 0.30)]),
+            line(vec![at(0.74, 0.44), at(0.74, 0.08)]),
+            line(vec![at(0.60, 0.22), at(0.74, 0.08), at(0.88, 0.22)]),
+        ],
+        // The same hill, the arrow pushing it down.
+        Icon::TerrainLower => vec![
+            Shape::convex_polygon(
+                vec![at(0.04, 0.94), at(0.40, 0.52), at(0.76, 0.94)],
+                color,
+                Stroke::NONE,
+            ),
+            line(vec![at(0.74, 0.08), at(0.74, 0.44)]),
+            line(vec![at(0.60, 0.30), at(0.74, 0.44), at(0.88, 0.30)]),
+        ],
+        // A hill capped flat, the blade line above it.
+        Icon::TerrainLevel => vec![
+            Shape::convex_polygon(
+                vec![
+                    at(0.08, 0.94),
+                    at(0.30, 0.52),
+                    at(0.66, 0.52),
+                    at(0.88, 0.94),
+                ],
+                color,
+                Stroke::NONE,
+            ),
+            line(vec![at(0.04, 0.36), at(0.96, 0.36)]),
+        ],
+        // A piece of track from above, floating over the levelled ground.
+        Icon::TerrainRail => vec![
+            line(vec![at(0.06, 0.90), at(0.94, 0.90)]),
+            line(vec![at(0.34, 0.10), at(0.34, 0.62)]),
+            line(vec![at(0.66, 0.10), at(0.66, 0.62)]),
+            line(vec![at(0.20, 0.24), at(0.80, 0.24)]),
+            line(vec![at(0.20, 0.48), at(0.80, 0.48)]),
         ],
         // A grid with one cell picked out — the height import takes tiles.
         Icon::Tiles => vec![
@@ -378,6 +472,41 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 egui::StrokeKind::Inside,
             ),
         ],
+        // A rail with a cut through it: the two halves and the gap between.
+        Icon::Split => vec![
+            line(vec![at(0.04, 0.60), at(0.42, 0.60)]),
+            line(vec![at(0.58, 0.60), at(0.96, 0.60)]),
+            line(vec![at(0.04, 0.40), at(0.42, 0.40)]),
+            line(vec![at(0.58, 0.40), at(0.96, 0.40)]),
+            line(vec![at(0.62, 0.10), at(0.38, 0.90)]),
+        ],
+        // Two rails meeting, the weld a filled dot at the joint.
+        Icon::Join => vec![
+            line(vec![at(0.04, 0.50), at(0.44, 0.50)]),
+            line(vec![at(0.56, 0.50), at(0.96, 0.50)]),
+            line(vec![at(0.16, 0.34), at(0.16, 0.66)]),
+            line(vec![at(0.84, 0.34), at(0.84, 0.66)]),
+            Shape::circle_filled(at(0.50, 0.50), rect.width() * 0.09, color),
+        ],
+        // A rail and its parallel, with the arrow that moves across.
+        Icon::Offset => vec![
+            line(vec![at(0.04, 0.26), at(0.96, 0.26)]),
+            line(vec![at(0.04, 0.74), at(0.96, 0.74)]),
+            line(vec![at(0.50, 0.34), at(0.50, 0.66)]),
+            line(vec![at(0.38, 0.54), at(0.50, 0.66), at(0.62, 0.54)]),
+        ],
+        // Two parallel rails with the diagonal that crosses from one to the other.
+        Icon::Crossover => vec![
+            line(vec![at(0.04, 0.26), at(0.96, 0.26)]),
+            line(vec![at(0.04, 0.74), at(0.96, 0.74)]),
+            line(vec![at(0.22, 0.26), at(0.78, 0.74)]),
+        ],
+        // A rail climbing from left to right, and the arrow that lifts its break point.
+        Icon::Gradient => vec![
+            line(vec![at(0.04, 0.80), at(0.40, 0.80), at(0.96, 0.40)]),
+            line(vec![at(0.40, 0.62), at(0.40, 0.14)]),
+            line(vec![at(0.28, 0.26), at(0.40, 0.14), at(0.52, 0.26)]),
+        ],
         // A drawer pulled out of its cabinet: the case, the drawer front and
         // its handle.
         Icon::Drawer => vec![
@@ -395,57 +524,6 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         ],
     };
     painter.extend(shapes);
-}
-
-/// A tool button: the icon plus its name, pressed-in while `active`.
-///
-/// A palette of a dozen tools cannot be icons alone — three of these are
-/// brushes, and no drawing tells "forest" from "marking" from "terrain" at
-/// 22 px. It cannot be text alone either, which is what the route editor had:
-/// twelve chips of different widths wrapping wherever they happened to fit,
-/// with no way to see the groups. Icon and name together give the row a fixed
-/// height and a shape the eye can find again.
-pub fn tool_button(
-    ui: &mut Ui,
-    icon: Icon,
-    label: impl Into<String>,
-    active: bool,
-    tooltip: Option<String>,
-) -> Response {
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width().min(TOOL_WIDTH), BUTTON.y + 6.0),
-        Sense::click(),
-    );
-    let fill = if active {
-        colors::ACCENT_BG
-    } else if response.hovered() {
-        colors::BG_HOVER
-    } else {
-        colors::BG_WIDGET
-    };
-    let color = if active {
-        colors::ACCENT_TEXT
-    } else {
-        colors::TEXT
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(4), fill);
-    let icon_rect = Rect::from_min_size(
-        rect.left_top() + Vec2::new(PADDING, 0.0),
-        Vec2::new(rect.height(), rect.height()),
-    );
-    draw(painter, icon_rect.shrink(PADDING), icon, color);
-    painter.text(
-        Pos2::new(icon_rect.right() + 4.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label.into(),
-        egui::FontId::proportional(13.0),
-        color,
-    );
-    match tooltip {
-        Some(text) => response.on_hover_text(text),
-        None => response,
-    }
 }
 
 /// What a catalogue entry is marked with: a drawn symbol for its kind, or a
@@ -569,10 +647,6 @@ pub fn card_entry(
 /// enough that the mark is a picture of the model rather than a symbol beside
 /// its name.
 const CARD: Vec2 = Vec2::new(208.0, 60.0);
-
-/// Width of a tool button — two of them fit the side panel's field column, so
-/// a palette lays out as a grid instead of wrapping wherever it runs out.
-const TOOL_WIDTH: f32 = 156.0;
 
 /// The icon alone, as a label for the control next to it — no fill and no
 /// hover, so it does not read as a button that does nothing.

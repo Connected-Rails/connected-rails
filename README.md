@@ -665,27 +665,54 @@ are dragged into shape afterwards (see the *Envelope* tool below, and MODS.md �
 imagery and which neighbours the module will meet, so typing it blind is the one thing worth
 a dialog.
 
-The palette is grouped, and the number keys count down it — the key and the button always
-agree, because both read the same list.
+The tools sit in a **toolbox** on the left edge, after the World Editor of Train Simulator
+Classic: the upper box holds the categories — track, lineside equipment, landscape, module —
+and the lower box the tools of the one that is up — led by the **select tool, which
+belongs to every category**: picking something is wanted whatever box is up, so `1` is
+always it and the category's own tools count from `2`. The key and the button always
+agree, because both read the same list. The form panel's *Tool* section carries the active tool's options — the
+World Editor's properties panel for the piece about to be laid, which never touches one
+already lying there.
 
 | Tool | What a click does |
 |---|---|
+| **Every category** | |
+| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it |
 | **Track** | |
-| `1` Select | Pick a track, device or object and edit its fields; `Delete` removes it |
-| `2` Draw track | Every click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction. `Enter` or right-click finishes, `Esc` cancels |
-| `3` Place switch | Splits the track and draws the branch; facing or trailing and the throw time follow in the panel |
-| `4` Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
+| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing, the snap onto the standard radius series, and easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions |
+| `3` Split track | Cuts the track at the click — two tracks on one joint |
+| `4` Join ends | First click one open end, then another: ends on the same spot are welded into one node, ends apart are **staked out like Zusi's Absteckrechner** — transitions, arc and one compensating straight (the radius on automatic grows until exactly one remains), or a double arc with an intermediate straight where no single arc reaches. The *Tool* section carries the staking parameters: design speed, radius (0 = automatic), transitions and their length, cant, and the least intermediate straight |
+| `5` Parallel track | Lays the clicked track's parallel at the set spacing, on the side of the click — exact offsets for straights and arcs |
+| `6` Crossover | First click cuts the track it leaves, the second names the parallel track it reaches: both are cut and wired into the two turnouts of a crossover, built from arcs of the set turnout radius |
+| `7` Gradient | Puts a gradient break point on the track; the selection panel edits the per mille between the points and reads out the climb |
+| `8` Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
 | **Lineside equipment** | |
-| `5` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
-| `6` Place object | Drops a mod's 3D object at its predefined offset and rotation |
-| `7` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
-| **Landscape** | |
-| `8` / `9` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
-| `0` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
-| Terrain brush | One stroke per click: raise, lower or level. The track keeps its height, cutting and embankment are laid over it afterwards |
-| DGM tiles | Shows the elevation tile grid and picks single tiles for the height import; without a pick the whole corridor is imported |
+| `2` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
+| `3` Place object | Drops a mod's 3D object at its predefined offset and rotation |
+| `4` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
+| **Vegetation** | |
+| `2` / `3` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
+| `4` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
+| **Terrain** | |
+| `2` Raise ground | One lifting stroke per click, by the set amount and radius. The track keeps its height, cutting and embankment are laid over the strokes afterwards |
+| `3` Lower ground | The same stroke downward — a hollow, a pond bed, a pit |
+| `4` Flatten | Pulls the circle to the ground height under the click — the plateau gesture |
+| `5` Level to rail | Pulls the ground to the height of the nearest rail — forecourts, depots, level yards |
+| `6` DGM tiles | Shows the elevation tile grid and picks single tiles for the height import; without a pick the whole corridor is imported |
 | **Module** | |
-| Envelope | Reshapes the module boundary: drag a corner, a click on a side adds one there, `Delete` removes the selected one. Everything the module owns has to lie inside it — the landscape strictly, the track up to the boundary itself |
+| `2` Envelope | Reshapes the module boundary: drag a corner, a click on a side adds one there, `Delete` removes the selected one. Everything the module owns has to lie inside it — the landscape strictly, the track up to the boundary itself |
+
+A turnout no longer needs a tool of its own: laying from the middle of a track *is* the
+switch, split and wired on finish, and whether it is faced or trailed is in the first drag.
+Picking a **track type in the content drawer** arms the lay tool with it, the browser-first
+order of the World Editor.
+
+The form panel follows the toolbox: beside the fixed *Tool* and *Selection* sections it
+shows only the active category's own — marked stretches and the interlocking with the
+track, the interlocking and marker layers with the equipment, the height data (DGM
+import) with the terrain, and everything the module *is* (boundaries, time of day,
+checks, imagery, cache) under the module category. The jump bar reads the same list, so
+the panel stays as short as the work in hand.
 
 The **scene is rendered into the whole window** and the panels are drawn on top of it —
 `bevy_egui` hangs its context on the same camera, so a camera viewport of its own would

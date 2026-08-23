@@ -4,13 +4,20 @@
 //! focus point — which is where a tool places what it places. What is already
 //! placed is drawn where it stands: a tree, a reference marker and a terrain
 //! stroke carry latitude and longitude only, and the ground gives them their
-//! height (`terrain::Marks`). Track drawing is an arc-to-point tool: every
-//! click appends the one circular arc (or straight) that leaves the alignment
-//! tangentially and hits the clicked point, so the drawn track is
+//! height (`terrain::Marks`).
+//!
+//! The track tools follow the World Editor of Train Simulator Classic: a
+//! **standing end** is set by pressing and dragging (the drag is the heading),
+//! the **running end** follows the mouse as one tangent arc per click — a
+//! straight while Ctrl is held — and snaps onto open track ends; a press on the
+//! middle of a track starts a branch and becomes a turnout on finish. Beside the
+//! lay tool sit the tools that work on laid track: split, join, offset,
+//! crossover and gradient. Every arc is arc-to-point, so the drawn track is
 //! G1-continuous by construction.
 
 use crate::terrain::Marks;
 use crate::{Focus, Ghost, Line, Origin, TrackObjects};
+use content::import::alignment::{CantRules, ramp_cant};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use content::LineSource;
@@ -33,9 +40,24 @@ const DEFAULT_THROW_TIME: f64 = 6.0;
 pub enum Tool {
     #[default]
     Select,
+    /// Lay track: press and drag sets the standing end, every click appends a
+    /// piece, a press on a track starts a branch (see [`Drawing`]).
     DrawTrack,
+    /// Cuts a track in two at the click — two tracks on one joint.
+    Split,
+    /// Welds two open ends: the first click picks one, the second the other.
+    /// Ends that meet are joined as they are, ends apart get a connecting
+    /// piece of two tangent arcs.
+    Join,
+    /// Lays a parallel track beside the clicked one, on the side of the click.
+    Offset,
+    /// A crossover between two parallel tracks: the first click cuts the one
+    /// it leaves, the second names the one it reaches.
+    Crossover,
+    /// Puts a gradient break point on a track; the selection panel edits the
+    /// gradient between the points.
+    Gradient,
     PlaceDevice,
-    PlaceSwitch,
     PlaceObject,
     /// One tree per click, free of the track.
     PlaceTree,
@@ -47,9 +69,14 @@ pub enum Tool {
     Brush,
     /// One reference marker per click, into the layer the panel names.
     PlaceMarker,
-    /// Terrain brush: every click stamps one stroke that raises, lowers or
-    /// levels the ground around it.
-    TerrainBrush,
+    /// One raising stroke per click — the ground climbs by the set amount.
+    TerrainRaise,
+    /// One lowering stroke per click — the same amount, downward.
+    TerrainLower,
+    /// Flattens to the ground height under the click — the plateau gesture.
+    TerrainLevel,
+    /// Pulls the ground to the height of the nearest rail.
+    TerrainRail,
     /// DGM tiles: clicks pick single terrain tiles for the height import.
     PickTile,
     /// Marks a stretch of track: the first click sets one end, the second the other. The
@@ -113,14 +140,9 @@ pub enum Highlight {
     Route(usize),
 }
 
-/// The palette, in the groups the work falls into: the track itself, what is
-/// mounted along it, the landscape it runs through, and the module itself.
-/// A dozen tools in one
-/// wrapping row named their alternatives but showed no order at all — which
-/// group a tool belongs to is the first thing a builder needs from a palette.
-/// The number keys, in the order the palette lists its tools. Ten keys for
-/// thirteen tools — the tail of the palette is mouse-only, which is why
-/// `tool_digit` answers `None` rather than a wrong number.
+/// The number keys, counted along the tools of the **active category** — the
+/// toolbox shows one category at a time, so `1` is always its first tool.
+/// Ten keys are more than any category has.
 const DIGITS: [KeyCode; 10] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
@@ -134,37 +156,83 @@ const DIGITS: [KeyCode; 10] = [
     KeyCode::Digit0,
 ];
 
-/// The tools flattened out of their groups — palette order, which is what the
-/// number keys count along.
-fn palette_order() -> impl Iterator<Item = Tool> {
+/// The select tool's palette entry — it belongs to no category: picking
+/// something is wanted whatever box is up, so the toolbox carries it above
+/// every category's tools and the number key `1` is always it.
+pub const SELECT_ENTRY: ToolEntry = (Tool::Select, "tool-select", editor_ui::Icon::Select);
+
+/// The category `tool` belongs to — an index into [`TOOL_GROUPS`]. The
+/// select tool belongs to all of them and answers with the first.
+pub fn category_of(tool: Tool) -> usize {
     TOOL_GROUPS
         .iter()
-        .flat_map(|(_, tools)| tools.iter().map(|(tool, _, _)| *tool))
+        .position(|(_, _, tools)| tools.iter().any(|(t, _, _)| *t == tool))
+        .unwrap_or(0)
 }
 
-/// The digit that picks `tool`, for its tooltip; `None` past the tenth.
+impl Tool {
+    /// The tool `--tool <name>` names — the i18n key without its prefix
+    /// (`select`, `draw`, `split`, …), so the two can never drift apart.
+    pub fn parse(name: &str) -> Option<Self> {
+        std::iter::once(&SELECT_ENTRY)
+            .chain(TOOL_GROUPS.iter().flat_map(|(_, _, tools)| tools.iter()))
+            .find(|(_, key, _)| key.trim_start_matches("tool-") == name)
+            .map(|(tool, _, _)| *tool)
+    }
+}
+
+/// The palette entry of `tool` — its i18n key and icon.
+pub fn tool_entry(tool: Tool) -> &'static ToolEntry {
+    if tool == Tool::Select {
+        return &SELECT_ENTRY;
+    }
+    TOOL_GROUPS[category_of(tool)]
+        .2
+        .iter()
+        .find(|(t, _, _)| *t == tool)
+        .expect("every tool sits in one group")
+}
+
+/// The digit that picks `tool` while its category is up, for its tooltip:
+/// `1` is always the select tool, the category's own tools count from `2`.
 pub fn tool_digit(tool: Tool) -> Option<u8> {
-    palette_order()
-        .position(|candidate| candidate == tool)
-        .filter(|index| *index < DIGITS.len())
-        .map(|index| ((index + 1) % 10) as u8)
+    if tool == Tool::Select {
+        return Some(1);
+    }
+    TOOL_GROUPS[category_of(tool)]
+        .2
+        .iter()
+        .position(|(t, _, _)| *t == tool)
+        .filter(|index| index + 2 <= 9)
+        .map(|index| (index + 2) as u8)
 }
 
-/// One palette entry: the tool, its i18n key and the icon on its button.
+/// One toolbox entry: the tool, its i18n key and the icon on its button.
 pub type ToolEntry = (Tool, &'static str, editor_ui::Icon);
 
-pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 4] = [
+/// The toolbox, after Train Simulator Classic's World Editor: an upper box of
+/// categories — the track itself, what is mounted along it, the landscape it
+/// runs through, the module itself — and a lower box with the tools of the one
+/// that is up. Which category a tool belongs to is the first thing a builder
+/// needs from a palette, and one category at a time keeps the lower box short
+/// enough to be read at a glance.
+pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 5] = [
     (
         "tool-group-track",
+        editor_ui::Icon::Track,
         &[
-            (Tool::Select, "tool-select", editor_ui::Icon::Select),
             (Tool::DrawTrack, "tool-draw", editor_ui::Icon::DrawTrack),
-            (Tool::PlaceSwitch, "tool-switch", editor_ui::Icon::Switch),
+            (Tool::Split, "tool-split", editor_ui::Icon::Split),
+            (Tool::Join, "tool-join", editor_ui::Icon::Join),
+            (Tool::Offset, "tool-offset", editor_ui::Icon::Offset),
+            (Tool::Crossover, "tool-crossover", editor_ui::Icon::Crossover),
+            (Tool::Gradient, "tool-gradient", editor_ui::Icon::Gradient),
             (Tool::MarkArea, "tool-area", editor_ui::Icon::Area),
         ],
     ),
     (
         "tool-group-equipment",
+        editor_ui::Icon::Device,
         &[
             (Tool::PlaceDevice, "tool-device", editor_ui::Icon::Device),
             (Tool::PlaceObject, "tool-object", editor_ui::Icon::Object),
@@ -172,21 +240,44 @@ pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 4] = [
         ],
     ),
     (
-        "tool-group-landscape",
+        "tool-group-vegetation",
+        editor_ui::Icon::Forest,
         &[
             (Tool::PlaceTree, "tool-tree", editor_ui::Icon::Tree),
             (Tool::PlaceForest, "tool-forest", editor_ui::Icon::Forest),
             (Tool::Brush, "tool-brush", editor_ui::Icon::Brush),
+        ],
+    ),
+    (
+        "tool-group-terrain",
+        editor_ui::Icon::Terrain,
+        &[
             (
-                Tool::TerrainBrush,
-                "tool-terrain",
-                editor_ui::Icon::TerrainBrush,
+                Tool::TerrainRaise,
+                "tool-terrain-raise",
+                editor_ui::Icon::TerrainRaise,
+            ),
+            (
+                Tool::TerrainLower,
+                "tool-terrain-lower",
+                editor_ui::Icon::TerrainLower,
+            ),
+            (
+                Tool::TerrainLevel,
+                "tool-terrain-level",
+                editor_ui::Icon::TerrainLevel,
+            ),
+            (
+                Tool::TerrainRail,
+                "tool-terrain-rail",
+                editor_ui::Icon::TerrainRail,
             ),
             (Tool::PickTile, "tool-tile", editor_ui::Icon::Tiles),
         ],
     ),
     (
         "tool-group-module",
+        editor_ui::Icon::Module,
         &[(
             Tool::EditEnvelope,
             "tool-envelope",
@@ -195,11 +286,168 @@ pub const TOOL_GROUPS: [(&str, &[ToolEntry]); 4] = [
     ),
 ];
 
+/// What the next laid piece is given — Train Simulator Classic's track
+/// properties panel, which applies to the piece about to be laid and never to
+/// one already lying there. The lay, join and offset tools all read it.
+#[derive(Clone, Debug)]
+pub struct LayOptions {
+    /// Track type (`"<mod>:<name>"`); `None` = the default type. The content
+    /// drawer arms it, like a track picked from the browser.
+    pub track_type: Option<String>,
+    /// Permitted speed [km/h]; `None` = the line's default.
+    pub speed: Option<f64>,
+    /// Gradient of the piece [‰], positive uphill.
+    pub grade: f64,
+    /// Electrification id (`"ac-15kv"`, `"none"`, …); `None` = nothing said.
+    pub electrification: Option<String>,
+    /// How many tracks one lay puts down — yards are laid several at a time.
+    pub parallel: u32,
+    /// Centre distance of parallel tracks [m]; 4 m is the German main line.
+    pub spacing: f64,
+    /// Round a drawn arc to the standard radii of the alignment rulebook.
+    pub snap_radius: bool,
+    /// Lay curves as clothoid–arc–clothoid with the rulebook's cant, instead
+    /// of bare arcs. Off by default: an eased edge carries transition curves
+    /// and therefore offers no draggable support points.
+    pub easements: bool,
+    /// Radius of the turnouts a crossover is built from [m].
+    pub turnout_radius: f64,
+}
+
+impl Default for LayOptions {
+    fn default() -> Self {
+        Self {
+            track_type: None,
+            speed: None,
+            grade: 0.0,
+            electrification: None,
+            parallel: 1,
+            spacing: 4.0,
+            snap_radius: false,
+            easements: false,
+            turnout_radius: 190.0,
+        }
+    }
+}
+
+impl LayOptions {
+    /// The step profiles a new edge starts with: one step at `s = 0` per
+    /// property the options set, nothing for the ones they leave alone.
+    fn profiles(&self) -> Profiles {
+        Profiles {
+            grade: if self.grade != 0.0 {
+                vec![(0.0, self.grade)]
+            } else {
+                Vec::new()
+            },
+            speed: self.speed.map(|v| vec![(0.0, v)]).unwrap_or_default(),
+            track_type: self
+                .track_type
+                .clone()
+                .map(|t| vec![(0.0, t)])
+                .unwrap_or_default(),
+            electrification: self
+                .electrification
+                .clone()
+                .map(|e| vec![(0.0, e)])
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl LayOptions {
+    /// The easement construction the lay tool works with while the option is
+    /// on: the default cant rulebook at the piece's speed — the line's
+    /// default speed where none is set, since cant is meaningless without one.
+    pub fn easement_rules(&self) -> Option<Easements> {
+        self.easements.then(|| Easements {
+            rules: CantRules::default(),
+            speed: self.speed.unwrap_or(content::route::DEFAULT_SPEED),
+        })
+    }
+}
+
+/// The easement construction of the lay tool: the cant rulebook, and the
+/// speed the cant and its ramps are computed for.
+#[derive(Clone, Copy, Debug)]
+pub struct Easements {
+    pub rules: CantRules,
+    pub speed: f64,
+}
+
+/// Signed cant [mm] for curvature `k`: the rulebook amount, tipping into the
+/// curve — positive rolls the track left (`TrackEdge::eval`), so a
+/// right-hand curve carries the minus.
+pub(crate) fn signed_cant(k: f64, e: Easements) -> f64 {
+    if k.abs() < 1e-9 {
+        return 0.0;
+    }
+    e.rules.applied(1.0 / k.abs(), e.speed) * k.signum()
+}
+
+/// The step profiles of an edge, as the source file carries them.
+#[derive(Default)]
+struct Profiles {
+    grade: Vec<(f64, f64)>,
+    speed: Vec<(f64, f64)>,
+    track_type: Vec<(f64, String)>,
+    electrification: Vec<(f64, String)>,
+}
+
+impl Profiles {
+    fn edge(self, from: u32, to: u32, start: EdgeStart, segments: Vec<Segment>) -> EdgeSource {
+        EdgeSource {
+            from,
+            to,
+            start,
+            segments,
+            grade: self.grade,
+            cant: vec![],
+            speed: self.speed,
+            track_type: self.track_type,
+            electrification: self.electrification,
+        }
+    }
+}
+
+/// What the status bar reads out about the piece under the cursor while
+/// laying: its length, its radius (`None` for a straight), the cant an eased
+/// piece would carry, and whether Ctrl holds it straight.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Readout {
+    pub length: f64,
+    pub radius: Option<f64>,
+    /// Cant of the piece [mm], for one built with easements.
+    pub cant: Option<f64>,
+    pub straight: bool,
+}
+
+/// An open end of the track — a buffer node, seen from the edge that ends
+/// there. What the lay tool continues from and snaps onto, and what the join
+/// tool welds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OpenEnd {
+    pub node: u32,
+    pub edge: usize,
+    /// The end is the edge's `to` side (`true`) or its `from` side.
+    pub at_end: bool,
+    pub pos: EcefPos,
+    /// Outward math heading in the ENU frame at `pos` [rad], 0 = east.
+    pub heading: f64,
+    /// Curvature walking outward [1/m] — what an entry transition of a
+    /// continuation starts from.
+    pub curvature: f64,
+}
+
 /// Tool state, selection and what the UI pass leaves behind for the input
 /// systems: the free viewport rect and whether a text field has focus.
 #[derive(Resource, Default)]
 pub struct EditorState {
     pub tool: Tool,
+    /// The toolbox category that is up — held on its own rather than derived
+    /// from the tool, so taking the select tool (which belongs to every
+    /// category) leaves the box and the panel where they are.
+    pub category: usize,
     pub selection: Selection,
     pub drawing: Option<Drawing>,
     /// Active support-point drag of the Select tool: `(edge, point index)`.
@@ -211,9 +459,24 @@ pub struct EditorState {
     pub envelope_size: Option<f64>,
     /// Kind the Place-device tool stamps.
     pub device_kind: Option<DeviceKind>,
-    /// The Place-switch tool draws a trailing connection instead of a facing
-    /// turnout — the branch then leaves against the clicked track's direction.
-    pub switch_trailing: bool,
+    /// What the next laid piece is given (see [`LayOptions`]).
+    pub lay: LayOptions,
+    /// How the join tool stakes out its connections (see
+    /// [`crate::stake::StakeOptions`]).
+    pub stake: crate::stake::StakeOptions,
+    /// Length and radius of the piece under the cursor while laying — the
+    /// status bar reads it out.
+    pub readout: Option<Readout>,
+    /// Open ends of the track this frame — computed once for the lay and join
+    /// tools, drawn as their snap targets.
+    pub open_ends: Vec<OpenEnd>,
+    /// The open end the join tool picked first, waiting for the second.
+    pub join_from: Option<OpenEnd>,
+    /// The track the crossover tool picked first, with the cut position.
+    pub crossover_from: Option<(usize, f64)>,
+    /// Where the right button went down over the map: a click finishes the
+    /// drawing, a drag is the camera look — told apart on release.
+    pub right_press: Option<Vec2>,
     /// Section or route the interlocking panel points at; the map draws it.
     /// Set by the panel every frame, so it follows the mouse by itself.
     pub highlight: Option<Highlight>,
@@ -250,11 +513,9 @@ pub struct EditorState {
     pub hidden_layers: std::collections::HashSet<String>,
     /// Radius of the terrain brush [m]; `None` = 60.
     pub terrain_radius: Option<f64>,
-    /// How much one terrain stroke raises (+) or lowers (−) the ground [m];
-    /// `None` = 2.
+    /// How far one terrain stroke moves the ground [m]; the tool in hand
+    /// decides up or down. `None` = 2.
     pub terrain_amount: Option<f64>,
-    /// The terrain brush levels to rail height instead of raising or lowering.
-    pub terrain_level: bool,
     /// DGM directory or file the height import reads from.
     pub dgm_source: Option<String>,
     /// UTM zone of that delivery; `None` = 32.
@@ -373,20 +634,50 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         | Tool::PlaceForest
         | Tool::PlaceObject
         | Tool::PlaceMarker
-        | Tool::TerrainBrush => Some(0.0),
-        Tool::DrawTrack | Tool::PlaceSwitch | Tool::PlaceDevice => Some(BOUNDARY_MARGIN),
+        | Tool::TerrainRaise
+        | Tool::TerrainLower
+        | Tool::TerrainLevel
+        | Tool::TerrainRail => Some(0.0),
+        Tool::DrawTrack | Tool::Offset | Tool::Crossover | Tool::PlaceDevice => {
+            Some(BOUNDARY_MARGIN)
+        }
         // Selecting, marking, picking tiles and editing the envelope place
-        // nothing — and the envelope cannot bound itself.
-        Tool::Select | Tool::Brush | Tool::MarkArea | Tool::PickTile | Tool::EditEnvelope => None,
+        // nothing — and the envelope cannot bound itself. Splitting, joining
+        // and grading work on track that is already inside.
+        Tool::Select
+        | Tool::Split
+        | Tool::Join
+        | Tool::Gradient
+        | Tool::Brush
+        | Tool::MarkArea
+        | Tool::PickTile
+        | Tool::EditEnvelope => None,
     }
 }
 
 /// Layer a hand-placed marker lands in when none is named.
 pub const DEFAULT_MARKER_LAYER: &str = "reference";
 
-/// A track being drawn. The first click anchors the ENU frame and the start
-/// point, the second fixes the initial heading, every further click appends a
-/// tangent-continuous arc.
+/// Where the running end is pointing: a map point, and the open end it has
+/// snapped onto, if any — the click then joins that end instead of landing
+/// beside it.
+#[derive(Clone, Copy, Debug)]
+pub struct Target {
+    pub pos: EcefPos,
+    pub end: Option<OpenEnd>,
+}
+
+impl Target {
+    pub fn free(pos: EcefPos) -> Self {
+        Self { pos, end: None }
+    }
+}
+
+/// A track being drawn, the way the World Editor lays it. The press sets the
+/// standing end and the drag its heading (`aiming`); after that every click
+/// appends one tangent arc — or a straight while Ctrl is held — towards the
+/// running end, which snaps onto open track ends. A press on a track makes a
+/// branch of it: the drag then only decides facing or trailing.
 ///
 /// ponytail: the whole alignment lives in the first point's EN plane —
 /// metre-true for the few km a hand-drawn track spans; per-segment
@@ -394,18 +685,41 @@ pub const DEFAULT_MARKER_LAYER: &str = "reference";
 pub struct Drawing {
     frame: EnuFrame,
     pub start: GeoPoint,
-    /// Compass heading of the first segment [deg]; `None` until the second click.
+    /// Compass heading of the first segment [deg]; `None` until the drag or
+    /// the second click has fixed it.
     pub heading_deg: Option<f64>,
     pub segments: Vec<Segment>,
-    /// The edge this drawing branches off (switch tool): `(edge, s)`.
+    /// The edge this drawing branches off: `(edge, s)`.
     pub branch_of: Option<(usize, f64)>,
     /// Trailing turnout: the branch leaves against the running direction of
     /// the clicked track, so the far half of the split becomes the root.
     pub trailing: bool,
+    /// The open end the drawing continues from — its node takes the start.
+    pub from_end: Option<OpenEnd>,
+    /// The open end the last click landed on — its node takes the finish.
+    pub to_end: Option<OpenEnd>,
+    /// The button is still down after the press: the drag sets the heading.
+    pub aiming: bool,
+    /// Ctrl is held — the next piece is a straight.
+    pub straight: bool,
+    /// Standard radii a drawn arc is rounded to; empty = as drawn.
+    pub radii: Vec<f64>,
+    /// Easement construction while the lay option is on: curves become
+    /// clothoid–arc–clothoid and collect their cant in [`Self::cant_steps`].
+    pub easements: Option<Easements>,
+    /// Cant steps `(s, mm)` under the eased pieces so far — written to the
+    /// edge on finish.
+    pub cant_steps: Vec<(f64, f64)>,
+    /// Running direction of the branched track in the frame, for the drag to
+    /// decide facing or trailing against.
+    base_tangent: Option<DVec2>,
     /// End of the drawn alignment in the frame's EN plane.
     end: DVec2,
     /// Math heading at the end [rad], 0 = east, counter-clockwise.
     end_heading: f64,
+    /// Curvature at the drawn end [1/m] — what the next entry transition
+    /// starts from.
+    end_curvature: f64,
 }
 
 impl Drawing {
@@ -422,18 +736,28 @@ impl Drawing {
             segments: Vec::new(),
             branch_of: None,
             trailing: false,
+            from_end: None,
+            to_end: None,
+            aiming: false,
+            straight: false,
+            radii: Vec::new(),
+            easements: None,
+            cant_steps: Vec::new(),
+            base_tangent: None,
             end: DVec2::ZERO,
             end_heading: 0.0,
+            end_curvature: 0.0,
         }
     }
 
-    /// Branch drawing for the switch tool: starts on the track at `pose`
-    /// (`edge`, `s`) with the track's own heading fixed, so the branch leaves
-    /// tangentially — a turnout, not a crossing.
+    /// Branch drawing: starts on the track at `pose` (`edge`, `s`) with the
+    /// track's own heading fixed, so the branch leaves tangentially — a
+    /// turnout, not a crossing.
     ///
     /// `trailing` turns the heading around: the branch then runs back along
     /// the clicked track, which is what a trailing connection looks like from
-    /// the driver of that track — the fork lies behind them, not ahead.
+    /// the driver of that track — the fork lies behind them, not ahead. The
+    /// drag after the press flips it (see [`Self::aim`]).
     pub fn branch_at(
         pose: &TrackPose,
         geoid_offset: f64,
@@ -442,18 +766,52 @@ impl Drawing {
         trailing: bool,
     ) -> Self {
         let mut drawing = Self::start_at(pose.pos, geoid_offset);
-        let along = if trailing {
-            -pose.tangent
-        } else {
-            pose.tangent
-        };
-        let tangent = drawing.frame.dir_to_local(along);
-        let heading = tangent.y.atan2(tangent.x);
-        drawing.heading_deg = Some((90.0 - heading.to_degrees()).rem_euclid(360.0));
-        drawing.end_heading = heading;
+        let tangent = drawing.frame.dir_to_local(pose.tangent);
+        drawing.base_tangent = Some(DVec2::new(tangent.x, tangent.y));
         drawing.branch_of = Some((edge, s));
-        drawing.trailing = trailing;
+        drawing.set_trailing(trailing);
         drawing
+    }
+
+    /// Continues from an open end: the end's node takes the start, and the
+    /// heading is the end's outward heading — the new piece leaves the old
+    /// one tangentially.
+    pub fn continue_from(end: OpenEnd, geoid_offset: f64) -> Self {
+        let mut drawing = Self::start_at(end.pos, geoid_offset);
+        drawing.fix_heading(end.heading);
+        drawing.from_end = Some(end);
+        // An entry transition starts from what the old track ends with.
+        drawing.end_curvature = end.curvature;
+        drawing
+    }
+
+    fn fix_heading(&mut self, heading: f64) {
+        self.heading_deg = Some((90.0 - heading.to_degrees()).rem_euclid(360.0));
+        self.end_heading = heading;
+    }
+
+    fn set_trailing(&mut self, trailing: bool) {
+        let Some(tangent) = self.base_tangent else {
+            return;
+        };
+        let along = if trailing { -tangent } else { tangent };
+        self.trailing = trailing;
+        self.fix_heading(along.y.atan2(along.x));
+    }
+
+    /// The drag after the press: a free start takes its heading from it, a
+    /// branch reads facing or trailing off it. A drag shorter than a metre
+    /// says nothing — the free start then waits for the second click.
+    pub fn aim(&mut self, p: EcefPos) {
+        let drag = self.local(p);
+        if drag.length() < 1.0 {
+            return;
+        }
+        match self.base_tangent {
+            Some(tangent) => self.set_trailing(drag.dot(tangent) < 0.0),
+            None if self.from_end.is_none() => self.fix_heading(drag.y.atan2(drag.x)),
+            None => {}
+        }
     }
 
     fn local(&self, p: EcefPos) -> DVec2 {
@@ -461,47 +819,136 @@ impl Drawing {
         DVec2::new(l.x, l.y)
     }
 
-    /// The segment a click at `p` would append, with the heading after it.
-    fn preview(&self, p: EcefPos) -> Option<(Segment, f64)> {
-        let target = self.local(p);
-        match self.heading_deg {
-            None => {
-                let len = target.length();
-                (len > 1.0).then(|| (Segment::straight(len), target.y.atan2(target.x)))
-            }
-            Some(_) => segment_to(self.end, self.end_heading, target),
+    /// The segments a click at `target` would append, with the heading after
+    /// them: one arc or straight towards a free point, two arcs onto an open
+    /// end so the join is tangent at both sides.
+    fn preview(&self, target: Target) -> Option<(Vec<Segment>, f64)> {
+        let p = self.local(target.pos);
+        let Some(_) = self.heading_deg else {
+            // No heading yet: the second click fixes it with a straight.
+            let len = p.length();
+            return (len > 1.0).then(|| (vec![Segment::straight(len)], p.y.atan2(p.x)));
+        };
+        if let Some(end) = target.end {
+            // Arriving at the end means running against its outward heading.
+            let arrive = end.heading + std::f64::consts::PI;
+            return biarc(self.end, self.end_heading, p, arrive)
+                .map(|[(a, _), (b, h)]| (vec![a, b], h));
         }
+        if self.straight {
+            let dir = DVec2::new(self.end_heading.cos(), self.end_heading.sin());
+            let len = (p - self.end).dot(dir);
+            return (len > 1.0).then(|| (vec![Segment::straight(len)], self.end_heading));
+        }
+        // With easements on, a curve becomes clothoid–arc–clothoid; where the
+        // fit finds no room (straight ahead, or too short for its ramps) the
+        // piece falls back to the bare arc.
+        if let Some(e) = self.easements
+            && let Some(piece) = easement_to(
+                self.end,
+                self.end_heading,
+                self.end_curvature,
+                p,
+                e,
+                &self.radii,
+            )
+        {
+            return Some(piece);
+        }
+        let (segment, heading) = segment_to(self.end, self.end_heading, p)?;
+        Some((vec![snap_radius(segment, &self.radii)], heading))
     }
 
-    /// Appends the segment towards `p`; a click behind the heading is ignored.
-    pub fn click(&mut self, p: EcefPos) {
-        let Some((segment, end_heading)) = self.preview(p) else {
+    /// Appends the piece towards `target`; a click behind the heading is
+    /// ignored. A click on an open end closes the drawing onto it — except
+    /// the heading-fixing first click, whose straight would arrive at the
+    /// end's own angle rather than tangentially.
+    pub fn click(&mut self, target: Target) {
+        let had_heading = self.heading_deg.is_some();
+        let Some((segments, end_heading)) = self.preview(target) else {
             return;
         };
-        if self.heading_deg.is_none() {
+        let mut position = self.end;
+        let mut heading = self.end_heading;
+        if !had_heading {
+            // The heading-fixing click is a straight: its direction of travel
+            // is the same before and after the piece.
             self.heading_deg = Some((90.0 - end_heading.to_degrees()).rem_euclid(360.0));
+            heading = end_heading;
         }
-        self.end = self.local(p);
-        self.end_heading = end_heading;
-        self.segments.push(segment);
+        for segment in &segments {
+            let (p, h) = advance(position, heading, segment, segment.len);
+            position = p;
+            heading = h;
+        }
+        self.end = position;
+        self.end_heading = heading;
+        // Cant under an eased piece — only the easement fit writes clothoids,
+        // so their presence is what marks one; plain pieces carry none.
+        if let Some(e) = self.easements
+            && segments.iter().any(|s| s.dk != 0.0)
+        {
+            let start: f64 = self.segments.iter().map(|s| s.len).sum();
+            append_cant(&mut self.cant_steps, start, &segments, e);
+        }
+        self.end_curvature = segments
+            .last()
+            .map_or(self.end_curvature, |s| s.end_curvature());
+        self.segments.extend(segments);
+        self.to_end = target.end.filter(|_| had_heading);
     }
 
-    /// Render polyline of the alignment so far; `cursor` appends the segment
+    /// Length, radius and cant of the piece the next click would append.
+    pub fn readout(&self, target: Target) -> Option<Readout> {
+        let (segments, _) = self.preview(target)?;
+        let length = segments.iter().map(|s| s.len).sum();
+        // The tightest arc of the piece — a biarc has two; a clothoid counts
+        // with the curvature it reaches.
+        let radius = segments
+            .iter()
+            .map(|s| s.k0.abs().max(s.end_curvature().abs()))
+            .filter(|k| *k > 1e-9)
+            .map(|k| 1.0 / k)
+            .min_by(f64::total_cmp);
+        // The cant an eased piece would carry — plain pieces write none.
+        let cant = self
+            .easements
+            .filter(|_| segments.iter().any(|s| s.dk != 0.0))
+            .map(|e| {
+                segments
+                    .iter()
+                    .map(|s| {
+                        signed_cant(s.k0, e)
+                            .abs()
+                            .max(signed_cant(s.end_curvature(), e).abs())
+                    })
+                    .fold(0.0, f64::max)
+            })
+            .filter(|cant| *cant > 0.0);
+        Some(Readout {
+            length,
+            radius,
+            cant,
+            straight: self.straight && self.heading_deg.is_some(),
+        })
+    }
+
+    /// Render polyline of the alignment so far; `cursor` appends the piece
     /// the next click would create.
-    pub fn polyline(&self, cursor: Option<EcefPos>, origin: &RenderOrigin) -> Vec<Vec3> {
+    pub fn polyline(&self, cursor: Option<Target>, origin: &RenderOrigin) -> Vec<Vec3> {
         let mut heading = self
             .heading_deg
             .map(|d| (90.0 - d).to_radians())
             .unwrap_or(0.0);
         let mut segments = self.segments.clone();
-        if let Some(p) = cursor
-            && let Some((segment, _)) = self.preview(p)
+        if let Some(target) = cursor
+            && let Some((next, _)) = self.preview(target)
         {
             if self.heading_deg.is_none() {
-                let target = self.local(p);
-                heading = target.y.atan2(target.x);
+                let p = self.local(target.pos);
+                heading = p.y.atan2(p.x);
             }
-            segments.push(segment);
+            segments.extend(next);
         }
         let mut position = DVec2::ZERO;
         let mut points = vec![self.to_render(position, origin)];
@@ -523,24 +970,228 @@ impl Drawing {
         points
     }
 
+    /// The standing end's arrow while aiming: from the start along the heading
+    /// the drag has set so far — `None` until there is one.
+    pub fn aim_arrow(&self, origin: &RenderOrigin, length: f64) -> Option<[Vec3; 2]> {
+        self.heading_deg?;
+        let dir = DVec2::new(self.end_heading.cos(), self.end_heading.sin());
+        Some([
+            self.to_render(DVec2::ZERO, origin),
+            self.to_render(dir * length, origin),
+        ])
+    }
+
     fn to_render(&self, p: DVec2, origin: &RenderOrigin) -> Vec3 {
         origin.to_render(self.frame.to_ecef(DVec3::new(p.x, p.y, 0.5)))
     }
 }
 
-/// Position and heading after `s` metres of `segment`, starting at `p` with
-/// math heading `h`. Closed form — the drawing tool only produces `dk = 0`.
-fn advance(p: DVec2, h: f64, segment: &Segment, s: f64) -> (DVec2, f64) {
-    let h1 = h + segment.k0 * s;
-    if segment.k0.abs() < 1e-9 {
-        (p + DVec2::new(h.cos(), h.sin()) * s, h1)
-    } else {
-        let k = segment.k0;
-        (
-            p + DVec2::new((h1.sin() - h.sin()) / k, (h.cos() - h1.cos()) / k),
-            h1,
-        )
+/// Rounds an arc to the nearest of `radii`, keeping its change of heading —
+/// the running end then jumps onto the standard radius, as it does in the
+/// World Editor with super-elevation on. A straight and an empty list pass.
+fn snap_radius(segment: Segment, radii: &[f64]) -> Segment {
+    if segment.k0.abs() < 1e-9 || radii.is_empty() {
+        return segment;
     }
+    let radius = 1.0 / segment.k0.abs();
+    let snapped = radii
+        .iter()
+        .copied()
+        .min_by(|a, b| (a - radius).abs().total_cmp(&(b - radius).abs()))
+        .unwrap_or(radius);
+    let turn = segment.heading_delta(segment.len);
+    Segment {
+        len: turn.abs() * snapped,
+        k0: segment.k0.signum() / snapped,
+        dk: 0.0,
+    }
+}
+
+/// Clothoid–arc–clothoid towards `target`: enters with `k_start`, leaves at
+/// zero curvature, transition lengths from the cant rulebook at the piece's
+/// speed. Fitted with Newton so the chain still passes through the clicked
+/// point — seeded with the plain arc, refined on curvature and arc length.
+/// With standard radii given, the radius snaps onto the series afterwards and
+/// only the arc length keeps the end near the click: the running end jumps,
+/// as it does in the World Editor with super-elevation on. `None` where the
+/// piece is straight, too tight (under 50 m radius — a turnout curve, which
+/// carries no easements on the prototype either), or too short for its ramps
+/// — the caller then lays the bare arc.
+fn easement_to(
+    from: DVec2,
+    heading: f64,
+    k_start: f64,
+    target: DVec2,
+    e: Easements,
+    radii: &[f64],
+) -> Option<(Vec<Segment>, f64)> {
+    let (seed, _) = segment_to(from, heading, target)?;
+    // Straight or nearly (R > 10 km): nothing worth easing.
+    if seed.k0.abs() < 1e-4 {
+        return None;
+    }
+    let build = |k: f64, arc_len: f64| -> Option<Vec<Segment>> {
+        if arc_len < 1.0 || k.abs() < 1e-6 || k.abs() > 1.0 / 50.0 {
+            return None;
+        }
+        let mut chain = Vec::with_capacity(3);
+        if (k - k_start).abs() > 1e-9 {
+            let du = (signed_cant(k, e) - signed_cant(k_start, e)).abs();
+            chain.push(Segment::transition(
+                e.rules.ramp_length(du, e.speed),
+                k_start,
+                k,
+            ));
+        }
+        chain.push(Segment {
+            len: arc_len,
+            k0: k,
+            dk: 0.0,
+        });
+        chain.push(Segment::transition(
+            e.rules.ramp_length(signed_cant(k, e), e.speed),
+            k,
+            0.0,
+        ));
+        Some(chain)
+    };
+    let end_of = |chain: &[Segment]| -> (DVec2, f64) {
+        let mut p = from;
+        let mut h = heading;
+        for segment in chain {
+            let (q, g) = advance(p, h, segment, segment.len);
+            p = q;
+            h = g;
+        }
+        (p, h)
+    };
+    // Newton on (curvature, arc length) with a numeric Jacobian, seeded with
+    // the plain arc less the room its ramps will take.
+    let mut k = seed.k0;
+    let mut arc_len =
+        (seed.len - 2.0 * e.rules.ramp_length(signed_cant(k, e), e.speed)).max(5.0);
+    let mut converged = false;
+    for _ in 0..20 {
+        let (end, _) = end_of(&build(k, arc_len)?);
+        let err = end - target;
+        if err.length() < 0.01 {
+            converged = true;
+            break;
+        }
+        let hk = (k.abs() * 1e-3).max(1e-9);
+        let (end_k, _) = end_of(&build(k + hk, arc_len)?);
+        let (end_l, _) = end_of(&build(k, arc_len + 0.1)?);
+        let d_k = (end_k - end) / hk;
+        let d_l = (end_l - end) / 0.1;
+        let det = d_k.x * d_l.y - d_l.x * d_k.y;
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        k += (-err.x * d_l.y + err.y * d_l.x) / det;
+        arc_len = (arc_len + (-d_k.x * err.y + d_k.y * err.x) / det).max(1.0);
+    }
+    if !radii.is_empty() {
+        // Radius pinned to the series; the arc length alone slides the end to
+        // the point of closest approach along its own tangent.
+        let radius = 1.0 / k.abs();
+        let snapped = radii
+            .iter()
+            .copied()
+            .min_by(|a, b| (a - radius).abs().total_cmp(&(b - radius).abs()))?;
+        k = k.signum() / snapped;
+        for _ in 0..8 {
+            let (end, h) = end_of(&build(k, arc_len)?);
+            let along = (target - end).dot(DVec2::new(h.cos(), h.sin()));
+            if along.abs() < 0.01 {
+                break;
+            }
+            arc_len = (arc_len + along).max(1.0);
+        }
+    } else if !converged {
+        let (end, _) = end_of(&build(k, arc_len)?);
+        if end.distance(target) > 0.05 {
+            return None;
+        }
+    }
+    let chain = build(k, arc_len)?;
+    let (_, end_heading) = end_of(&chain);
+    Some((chain, end_heading))
+}
+
+/// Writes the cant under one eased piece: a ramp over each transition, the
+/// arc's value held in between — 10 m steps through the importer's own
+/// [`ramp_cant`], so the editor and the import write the same profile. The
+/// last transition runs back to zero, and the step profile holds that.
+pub(crate) fn append_cant(
+    steps: &mut Vec<(f64, f64)>,
+    start: f64,
+    segments: &[Segment],
+    e: Easements,
+) {
+    let worth = segments.iter().any(|s| {
+        signed_cant(s.k0, e).abs() > 0.0 || signed_cant(s.end_curvature(), e).abs() > 0.0
+    });
+    if !worth {
+        return;
+    }
+    if steps.is_empty() && start > 0.0 {
+        // Everything before the first eased piece is level.
+        steps.push((0.0, 0.0));
+    }
+    let mut s = start;
+    for segment in segments {
+        let from = signed_cant(segment.k0, e);
+        let to = signed_cant(segment.end_curvature(), e);
+        if segment.dk != 0.0 && (from - to).abs() > 1e-9 {
+            ramp_cant(steps, s, segment.len, from, to);
+        } else if (steps.last().map_or(0.0, |(_, c)| *c) - from).abs() > 1e-9 {
+            steps.push((s, from));
+        }
+        s += segment.len;
+    }
+}
+
+/// Two tangent-continuous arcs from `from` (math heading `h0`) to `to`,
+/// arriving with heading `h1` — the biarc with equal tangent lengths, the
+/// one every CAD joins two ends with. `None` where no such pair exists (the
+/// ends point away from each other) or the ends coincide.
+fn biarc(from: DVec2, h0: f64, to: DVec2, h1: f64) -> Option<[(Segment, f64); 2]> {
+    let t0 = DVec2::new(h0.cos(), h0.sin());
+    let t1 = DVec2::new(h1.cos(), h1.sin());
+    let v = to - from;
+    if v.length() < 1.0 {
+        return None;
+    }
+    // Tangent length d: |v - d(t0 + t1)| = 2d, the joint being the midpoint
+    // between the two tangent points.
+    let a = 2.0 * (1.0 - t0.dot(t1));
+    let b = 2.0 * v.dot(t0 + t1);
+    let c = -v.length_squared();
+    let d = if a.abs() < 1e-9 {
+        (b.abs() > 1e-9).then(|| -c / b)?
+    } else {
+        (-b + (b * b - 4.0 * a * c).sqrt()) / (2.0 * a)
+    };
+    // NaN (parallel degenerate input) and non-positive d both mean "no biarc".
+    if d.is_nan() || d <= 0.0 {
+        return None;
+    }
+    let joint = (from + t0 * d + to - t1 * d) / 2.0;
+    let (first, mid) = segment_to(from, h0, joint)?;
+    let (second, end) = segment_to(joint, mid, to)?;
+    Some([(first, mid), (second, end)])
+}
+
+/// Position and heading after `s` metres of `segment`, starting at `p` with
+/// math heading `h` — [`Segment::offset`] keeps straights and arcs in closed
+/// form and integrates clothoids, so the eased pieces preview correctly too.
+pub(crate) fn advance(p: DVec2, h: f64, segment: &Segment, s: f64) -> (DVec2, f64) {
+    let off = segment.offset(s);
+    let (sh, ch) = h.sin_cos();
+    (
+        p + DVec2::new(ch * off.x - sh * off.y, sh * off.x + ch * off.y),
+        h + segment.heading_delta(s),
+    )
 }
 
 /// Tangent-continuous segment from `from` with math heading `heading` to
@@ -726,6 +1377,36 @@ pub fn object_pos(net: &TrackNetwork, object: &ObjectSource) -> Option<EcefPos> 
 /// click *selects* is measured on screen, see [`ScreenPick`].
 fn pick_radius(focus: &Focus) -> f64 {
     (focus.height * 0.02).max(8.0)
+}
+
+/// Switches the active tool and drops whatever half-done gesture the old one
+/// held — the toolbox buttons, the number keys and the content drawer all go
+/// through here.
+pub fn select_tool(state: &mut EditorState, tool: Tool) {
+    state.tool = tool;
+    // A category tool pulls its box up; the select tool belongs to every
+    // category and leaves the box where it is.
+    if tool != Tool::Select {
+        state.category = category_of(tool);
+    }
+    state.drawing = None;
+    state.forest_points.clear();
+    state.join_from = None;
+    state.crossover_from = None;
+}
+
+/// Where the running end points: snapped onto an open end within reach —
+/// except the one the drawing left from — else the free map point.
+fn lay_target(ends: &[OpenEnd], drawing: &Drawing, p: EcefPos, focus: &Focus) -> Target {
+    let end = nearest_open_end(ends, p, pick_radius(focus))
+        .filter(|end| drawing.from_end.is_none_or(|from| from.node != end.node));
+    match end {
+        Some(end) => Target {
+            pos: end.pos,
+            end: Some(end),
+        },
+        None => Target::free(p),
+    }
 }
 
 /// How near the cursor an item has to be to be picked [logical pixels].
@@ -1182,9 +1863,10 @@ pub fn marker_layers(line: &Line) -> std::collections::BTreeMap<String, usize> {
 }
 
 /// Turns the finished drawing into track: a free drawing becomes two buffer
-/// nodes and one edge; a branch drawing (switch tool) splits its base edge and
-/// wires the joint into a turnout whose diverging leg is the drawing. `false`
-/// only when the split failed — the drawing is gone either way.
+/// nodes and one edge; one that left an open end or landed on one shares that
+/// end's node, which turns into a joint; a branch drawing splits its base edge
+/// and wires the joint into a turnout whose diverging leg is the drawing.
+/// `false` only when the split failed — the drawing is gone either way.
 pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
     let Some(drawing) = state.drawing.take() else {
         return true;
@@ -1192,36 +1874,47 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
     let (Some(heading_deg), false) = (drawing.heading_deg, drawing.segments.is_empty()) else {
         return true;
     };
+    let profiles = state.lay.profiles();
+    // The far end: a new buffer, or the open end the drawing landed on.
+    // Landing on the very end it left would make a loop of one edge, which
+    // is no track — that end stays open.
+    let to_end = drawing
+        .to_end
+        .filter(|end| drawing.from_end.is_none_or(|from| from.node != end.node));
+    let to = match to_end {
+        Some(end) => end.node,
+        None => {
+            line.source.nodes.push(NodeSource::Buffer);
+            line.source.nodes.len() as u32 - 1
+        }
+    };
+    let index = line.source.edges.len();
     if let Some((base, s)) = drawing.branch_of {
         let Some((joint, straight)) = line.source.split_edge(base, s) else {
             return false;
         };
-        let buffer = line.source.nodes.len() as u32;
-        line.source.nodes.push(NodeSource::Buffer);
+        // The split appended an edge: the branch comes after it.
         let branch = line.source.edges.len();
         let trailing = drawing.trailing;
-        line.source.edges.push(EdgeSource {
-            from: joint,
-            to: buffer,
-            // Facing: Continue = end pose of the first half = the cut,
-            // tangentially. Trailing: the branch runs the other way, and a
-            // `Continue` can only ever mean "onwards" — the cut's own
-            // coordinates with the reversed heading say the same thing.
-            start: if trailing {
-                EdgeStart::Geo {
-                    point: drawing.start,
-                    heading_deg,
-                }
-            } else {
-                EdgeStart::Continue { edge: base as u32 }
-            },
-            segments: drawing.segments,
-            grade: vec![],
-            cant: vec![],
-            speed: vec![],
-            track_type: vec![],
-            electrification: Vec::new(),
-        });
+        // Facing: Continue = end pose of the first half = the cut,
+        // tangentially. Trailing: the branch runs the other way, and a
+        // `Continue` can only ever mean "onwards" — the cut's own
+        // coordinates with the reversed heading say the same thing.
+        let start = if trailing {
+            EdgeStart::Geo {
+                point: drawing.start,
+                heading_deg,
+            }
+        } else {
+            EdgeStart::Continue { edge: base as u32 }
+        };
+        line.source
+            .edges
+            .push(profiles.edge(joint, to, start, drawing.segments));
+        if !drawing.cant_steps.is_empty() {
+            line.source.edges.last_mut().expect("just pushed").cant =
+                drawing.cant_steps.clone();
+        }
         // Facing: a train reaches the fork over the first half, so that end is
         // the root. Trailing: it comes from the far side — the second half is
         // the root and the first half becomes the straight leg, which is
@@ -1241,27 +1934,363 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
                 throw_time: DEFAULT_THROW_TIME,
             }
         };
+        close_end(line, to_end);
         state.selection = Selection::Edge(branch);
         return true;
     }
+    let (from, start) = match drawing.from_end {
+        // Continuing from an end: that node takes the start. Off the edge's
+        // own end the geometry chains exactly; off its start it runs back
+        // the other way, which only the coordinates can say.
+        Some(end) => (
+            end.node,
+            if end.at_end {
+                EdgeStart::Continue {
+                    edge: end.edge as u32,
+                }
+            } else {
+                EdgeStart::Geo {
+                    point: drawing.start,
+                    heading_deg,
+                }
+            },
+        ),
+        None => {
+            line.source.nodes.push(NodeSource::Buffer);
+            (
+                line.source.nodes.len() as u32 - 1,
+                EdgeStart::Geo {
+                    point: drawing.start,
+                    heading_deg,
+                },
+            )
+        }
+    };
+    line.source
+        .edges
+        .push(profiles.edge(from, to, start, drawing.segments));
+    if !drawing.cant_steps.is_empty() {
+        line.source.edges.last_mut().expect("just pushed").cant = drawing.cant_steps.clone();
+    }
+    close_end(line, drawing.from_end);
+    close_end(line, to_end);
+    // Yards are laid several tracks at a time: the copies run parallel to the
+    // right, each one a track of its own.
+    for n in 1..state.lay.parallel.max(1) {
+        match line.source.compile() {
+            Ok(compiled) => line.net = compiled.net,
+            Err(_) => break,
+        }
+        offset_edge(line, index, -state.lay.spacing * n as f64);
+    }
+    state.selection = Selection::Edge(index);
+    true
+}
+
+/// An open end that just gained its second edge is a joint now.
+fn close_end(line: &mut Line, end: Option<OpenEnd>) {
+    if let Some(end) = end
+        && let Some(node) = line.source.nodes.get_mut(end.node as usize)
+        && matches!(node, NodeSource::Buffer)
+    {
+        *node = NodeSource::Joint;
+    }
+}
+
+/// The open ends of the line — every buffer node, seen from its edge — as
+/// world positions with their outward headings.
+pub fn open_ends(line: &Line) -> Vec<OpenEnd> {
+    let mut ends = Vec::new();
+    for (i, (source, edge)) in line.source.edges.iter().zip(line.net.edges()).enumerate() {
+        let outward = |pose: TrackPose, sign: f64| {
+            let local = EnuFrame::at(pose.pos).dir_to_local(pose.tangent * sign);
+            local.y.atan2(local.x)
+        };
+        if matches!(line.source.nodes.get(source.from as usize), Some(NodeSource::Buffer)) {
+            let pose = edge.eval(0.0);
+            ends.push(OpenEnd {
+                node: source.from,
+                edge: i,
+                at_end: false,
+                pos: pose.pos,
+                heading: outward(pose, -1.0),
+                // Walking out of the start runs the edge backwards, which
+                // turns a left curve into a right one.
+                curvature: -pose.curvature,
+            });
+        }
+        if matches!(line.source.nodes.get(source.to as usize), Some(NodeSource::Buffer)) {
+            let pose = edge.end_pose();
+            ends.push(OpenEnd {
+                node: source.to,
+                edge: i,
+                at_end: true,
+                pos: pose.pos,
+                heading: outward(pose, 1.0),
+                curvature: pose.curvature,
+            });
+        }
+    }
+    ends
+}
+
+/// The open end within `radius` of `p` (horizontally), nearest first.
+pub fn nearest_open_end(ends: &[OpenEnd], p: EcefPos, radius: f64) -> Option<OpenEnd> {
+    let frame = EnuFrame::at(p);
+    ends.iter()
+        .map(|end| {
+            let local = frame.to_local(end.pos);
+            (*end, DVec2::new(local.x, local.y).length())
+        })
+        .filter(|(_, d)| *d <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(end, _)| end)
+}
+
+/// Welds two open ends. Ends that lie on one point share a node from now on;
+/// ends apart are staked out by the calculator (see [`crate::stake`]):
+/// transitions, arc and compensating straight — or the double arc with its
+/// intermediate straight — by the staking options. The error names what
+/// stood in the way, worded like the original's messages.
+pub fn join_ends(
+    line: &mut Line,
+    lay: &LayOptions,
+    stake: &crate::stake::StakeOptions,
+    a: OpenEnd,
+    b: OpenEnd,
+) -> Result<(), String> {
+    if a.node == b.node {
+        return Err(t!("status-join-same-end"));
+    }
+    if a.pos.distance(b.pos) < 1.0 {
+        line.source.merge_nodes(a.node, b.node);
+        return Ok(());
+    }
+    let frame = EnuFrame::at(a.pos);
+    let to = frame.to_local(b.pos);
+    let arrive = b.heading + std::f64::consts::PI;
+    let e = stake.easement_rules(lay.speed.unwrap_or(content::route::DEFAULT_SPEED));
+    // Arriving at `b` runs its edge against the outward direction, which
+    // flips the curvature seen by the chain.
+    let staked = crate::stake::stake_out(
+        a.heading,
+        a.curvature,
+        DVec2::new(to.x, to.y),
+        arrive,
+        -b.curvature,
+        stake,
+        e,
+    )
+    .map_err(|err| {
+        t!(match err {
+            crate::stake::StakeError::NotPlausible => "status-stake-not-plausible",
+            crate::stake::StakeError::RadiusTooBig => "status-stake-radius-too-big",
+            crate::stake::StakeError::ArcTooShort => "status-stake-arc-too-short",
+            crate::stake::StakeError::DoubleImpossible => "status-stake-double-impossible",
+        })
+    })?;
+    let start = if a.at_end {
+        EdgeStart::Continue { edge: a.edge as u32 }
+    } else {
+        let (lat, lon, height) = geo::from_ecef(a.pos);
+        EdgeStart::Geo {
+            point: GeoPoint {
+                lat: lat.to_degrees(),
+                lon: lon.to_degrees(),
+                height: height - line.source.geoid_offset,
+            },
+            heading_deg: (90.0 - a.heading.to_degrees()).rem_euclid(360.0),
+        }
+    };
+    line.source
+        .edges
+        .push(lay.profiles().edge(a.node, b.node, start, staked.segments));
+    if !staked.cant.is_empty() {
+        line.source.edges.last_mut().expect("just pushed").cant = staked.cant;
+    }
+    close_end(line, Some(a));
+    close_end(line, Some(b));
+    Ok(())
+}
+
+/// Lays a parallel track `distance` metres beside edge `index` (positive =
+/// left of its running direction): two new buffer nodes and an edge whose
+/// segments are the offset curves — exact for straights and arcs, the
+/// profiles copied as they stand. Returns the new edge's index.
+///
+/// ponytail: a clothoid's offset is no clothoid; its curvatures are mapped
+/// end to end and the length scaled by the mean — centimetres at track
+/// spacing, and the drawing tools lay no clothoids anyway.
+pub fn offset_edge(line: &mut Line, index: usize, distance: f64) -> Option<usize> {
+    let edge = line.net.edges().get(index)?;
+    let source = line.source.edges.get(index)?.clone();
+    let pose = edge.eval(0.0);
+    let left = pose.up.cross(pose.tangent).normalize_or_zero();
+    let start = EcefPos(pose.pos.0 + left * distance);
+    let (lat, lon, height) = geo::from_ecef(start);
+    let segments: Vec<Segment> = source
+        .segments
+        .iter()
+        .map(|s| {
+            // An offset curve's curvature k' = k / (1 - k·d); its length
+            // scales by what a metre of the centre line becomes out there.
+            let k0 = s.k0 / (1.0 - s.k0 * distance);
+            let k1 = s.end_curvature() / (1.0 - s.end_curvature() * distance);
+            let mid = s.curvature_at(s.len / 2.0);
+            let len = s.len * (1.0 - mid * distance);
+            Segment::transition(len.max(0.1), k0, k1)
+        })
+        .collect();
     let node = line.source.nodes.len() as u32;
     line.source.nodes.push(NodeSource::Buffer);
     line.source.nodes.push(NodeSource::Buffer);
+    let new = line.source.edges.len();
     line.source.edges.push(EdgeSource {
         from: node,
         to: node + 1,
         start: EdgeStart::Geo {
-            point: drawing.start,
-            heading_deg,
+            point: GeoPoint {
+                lat: lat.to_degrees(),
+                lon: lon.to_degrees(),
+                height: height - line.source.geoid_offset,
+            },
+            heading_deg: (90.0 - edge.heading0.to_degrees()).rem_euclid(360.0),
         },
-        segments: drawing.segments,
-        grade: vec![],
-        cant: vec![],
-        speed: vec![],
-        track_type: vec![],
-        electrification: Vec::new(),
+        segments,
+        grade: source.grade,
+        cant: source.cant,
+        speed: source.speed,
+        track_type: source.track_type,
+        electrification: source.electrification,
     });
-    state.selection = Selection::Edge(line.source.edges.len() - 1);
+    Some(new)
+}
+
+/// Builds a crossover from edge `a` at `s` over to edge `b`: two turnouts of
+/// `radius` joined by the S of their arcs, which lands on `b` exactly where
+/// it runs parallel at the distance the arcs cover. Both tracks are cut
+/// there and wired into turnouts. The error says what stood in the way.
+pub fn crossover(
+    line: &mut Line,
+    lay: &LayOptions,
+    a: usize,
+    s: f64,
+    b: usize,
+    radius: f64,
+) -> Result<(), String> {
+    if a == b {
+        return Err(t!("status-crossover-same-track"));
+    }
+    let (edge_a, edge_b) = match (line.net.edges().get(a), line.net.edges().get(b)) {
+        (Some(ea), Some(eb)) => (ea, eb),
+        _ => return Err(t!("status-no-track-hit")),
+    };
+    let pose = edge_a.eval(s);
+    let frame = EnuFrame::at(pose.pos);
+    let tangent = frame.dir_to_local(pose.tangent);
+    let (tangent, left) = (
+        DVec2::new(tangent.x, tangent.y).normalize(),
+        DVec2::new(-tangent.y, tangent.x).normalize(),
+    );
+    // Which side the other track lies on, and how far: measured where it
+    // passes the cut.
+    let (s_b0, _) = nearest_on_edge(edge_b, pose.pos);
+    let across = frame.to_local(edge_b.eval(s_b0).pos);
+    let d = DVec2::new(across.x, across.y).dot(left);
+    if d.abs() < 2.0 || d.abs() > 2.0 * radius {
+        return Err(t!("status-crossover-not-parallel"));
+    }
+    // Two arcs of the turnout radius, each covering half the distance across.
+    let theta = (1.0 - d.abs() / (2.0 * radius)).acos();
+    let sign = d.signum();
+    let arcs = vec![
+        Segment {
+            len: radius * theta,
+            k0: sign / radius,
+            dk: 0.0,
+        },
+        Segment {
+            len: radius * theta,
+            k0: -sign / radius,
+            dk: 0.0,
+        },
+    ];
+    let landing = tangent * (2.0 * radius * theta.sin()) + left * d;
+    let landing = frame.to_ecef(DVec3::new(landing.x, landing.y, 0.0));
+    let (s_b, miss) = nearest_on_edge(edge_b, landing);
+    let pose_b = edge_b.eval(s_b);
+    let along = pose.tangent.dot(pose_b.tangent);
+    // The other track has to pass the landing point, and run parallel there
+    // — either way round.
+    if miss > 1.0 || along.abs() < 0.999 {
+        return Err(t!("status-crossover-not-parallel"));
+    }
+    let same_way = along > 0.0;
+    // Both cuts checked before the first one happens — a half-built crossover
+    // would leave one track split for nothing.
+    if s < 1.0 || s > edge_a.length() - 1.0 || s_b < 1.0 || s_b > edge_b.length() - 1.0 {
+        return Err(t!("status-split-at-end"));
+    }
+    let Some((joint_a, a2)) = line.source.split_edge(a, s) else {
+        return Err(t!("status-split-at-end"));
+    };
+    let Some((joint_b, b2)) = line.source.split_edge(b, s_b) else {
+        return Err(t!("status-split-at-end"));
+    };
+    let diagonal = line.source.edges.len() as u32;
+    line.source.edges.push(lay.profiles().edge(
+        joint_a,
+        joint_b,
+        EdgeStart::Continue { edge: a as u32 },
+        arcs,
+    ));
+    // Leaving `a`: a train over its first half faces the fork.
+    line.source.nodes[joint_a as usize] = NodeSource::Switch {
+        root: (a as u32, true),
+        straight: (a2, false),
+        diverging: (diagonal, false),
+        throw_time: DEFAULT_THROW_TIME,
+    };
+    // Arriving on `b`: the diagonal trails in, and the leg it continues onto
+    // is the root — the far half when both run the same way, the near half
+    // when `b` runs the other way.
+    line.source.nodes[joint_b as usize] = if same_way {
+        NodeSource::Switch {
+            root: (b2, false),
+            straight: (b as u32, true),
+            diverging: (diagonal, true),
+            throw_time: DEFAULT_THROW_TIME,
+        }
+    } else {
+        NodeSource::Switch {
+            root: (b as u32, true),
+            straight: (b2, false),
+            diverging: (diagonal, true),
+            throw_time: DEFAULT_THROW_TIME,
+        }
+    };
+    Ok(())
+}
+
+/// Puts a gradient break point on edge `index` at `s`: a step that starts
+/// with the gradient already there, for the panel to edit. Returns `false`
+/// when one sits within a metre already.
+pub fn add_grade_step(line: &mut Line, index: usize, s: f64) -> bool {
+    let Some(edge) = line.source.edges.get_mut(index) else {
+        return false;
+    };
+    if edge.grade.iter().any(|(x, _)| (x - s).abs() < 1.0) {
+        return false;
+    }
+    let current = edge
+        .grade
+        .iter()
+        .rev()
+        .find(|(x, _)| *x <= s)
+        .or(edge.grade.first())
+        .map_or(0.0, |(_, g)| *g);
+    edge.grade.push((s, current));
+    edge.grade.sort_by(|a, b| a.0.total_cmp(&b.0));
     true
 }
 
@@ -1279,6 +2308,7 @@ pub fn tool_input(
     signal_types: Res<crate::signals::SignalTypes>,
     gizmo: Res<crate::gizmo::GizmoState>,
     marks: Res<crate::terrain::Marks>,
+    terrain_view: Res<crate::terrain::TerrainView>,
     mut state: ResMut<EditorState>,
     mut line: ResMut<Line>,
     mut overlay: ResMut<crate::overlay::Overlay>,
@@ -1307,6 +2337,20 @@ pub fn tool_input(
     });
     if stale {
         state.marked.clear();
+    }
+    // Half-done first picks of the join and crossover tools go stale the same
+    // way (undo, a delete in between) — dropped rather than welded wrongly.
+    if state
+        .join_from
+        .is_some_and(|end| end.edge >= line.source.edges.len())
+    {
+        state.join_from = None;
+    }
+    if state
+        .crossover_from
+        .is_some_and(|(edge, _)| edge >= line.source.edges.len())
+    {
+        state.crossover_from = None;
     }
     // A gizmo handle owns the mouse while it is dragged — a click that is
     // moving a signal must not also reselect what lies under it.
@@ -1364,11 +2408,35 @@ pub fn tool_input(
         return;
     }
 
+    // What the lay and join tools snap onto and continue from.
+    state.open_ends = if matches!(state.tool, Tool::DrawTrack | Tool::Join) {
+        open_ends(&line)
+    } else {
+        Vec::new()
+    };
+    // Ctrl holds the next piece straight; radius snap and easements follow
+    // their options every frame, so flipping one mid-drawing takes effect on
+    // the next click.
+    let snap = state.lay.snap_radius;
+    let easements = state.lay.easement_rules();
+    if let Some(drawing) = &mut state.drawing {
+        drawing.straight =
+            keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+        drawing.radii = if snap {
+            content::import::alignment::preferred_radii()
+        } else {
+            Vec::new()
+        };
+        drawing.easements = easements;
+    }
+
     if keys.just_pressed(KeyCode::Escape) {
         if !state.forest_points.is_empty() {
             state.forest_points.clear();
         } else if !state.marked.is_empty() {
             state.marked.clear();
+        } else if state.join_from.take().is_some() || state.crossover_from.take().is_some() {
+            // The half-done pick of the join or crossover tool is dropped.
         } else if state.drawing.take().is_none() {
             state.selection = Selection::None;
         }
@@ -1380,21 +2448,61 @@ pub fn tool_input(
             delete_marked(&mut line, &mut state);
         }
     }
-    if keys.just_pressed(KeyCode::Enter) || buttons.just_pressed(MouseButton::Right) {
+    // Enter finishes; so does a right *click* — told apart from the camera's
+    // right-drag by the cursor standing still between press and release.
+    if buttons.just_pressed(MouseButton::Right) {
+        state.right_press = cursor;
+    }
+    let right_click = buttons.just_released(MouseButton::Right)
+        && state
+            .right_press
+            .take()
+            .zip(windows.single().ok().and_then(|w| w.cursor_position()))
+            .is_some_and(|(down, up)| down.distance(up) < 4.0);
+    if keys.just_pressed(KeyCode::Enter) || right_click {
         if !state.forest_points.is_empty() {
             finish_forest(&mut line, &mut state, &mut overlay);
         } else if !finish_drawing(&mut line, &mut state) {
             overlay.status = t!("status-split-failed");
         }
     }
-    // Tool switching from the keyboard, as every map editor has it — numbered
-    // down the palette, so the key and the button agree.
-    for (key, tool) in DIGITS.into_iter().zip(palette_order()) {
+    // Tool switching from the keyboard: `1` is always select, then the
+    // active category's own tools — the key and the button agree.
+    let boxed = state.category.min(TOOL_GROUPS.len() - 1);
+    let numbered =
+        std::iter::once(SELECT_ENTRY.0).chain(TOOL_GROUPS[boxed].2.iter().map(|(t, _, _)| *t));
+    for (key, tool) in DIGITS.into_iter().zip(numbered) {
         if keys.just_pressed(key) && state.tool != tool {
-            state.tool = tool;
-            state.drawing = None;
-            state.forest_points.clear();
+            select_tool(&mut state, tool);
         }
+    }
+
+    // The standing end is aimed while the button stays down after the press:
+    // the drag is the heading of a free start, and facing or trailing of a
+    // branch. Letting go fixes it.
+    if state.tool == Tool::DrawTrack {
+        let snapped = picked.map(|p| snap_ghost(p, &ghost, &focus));
+        if let Some(drawing) = &mut state.drawing
+            && drawing.aiming
+        {
+            if buttons.pressed(MouseButton::Left) {
+                if let Some(p) = snapped {
+                    drawing.aim(p);
+                }
+            } else {
+                drawing.aiming = false;
+            }
+        }
+        // What the piece under the cursor would be — the status bar reads it.
+        let readout = match (&state.drawing, snapped) {
+            (Some(drawing), Some(p)) if !drawing.aiming => {
+                drawing.readout(lay_target(&state.open_ends, drawing, p, &focus))
+            }
+            _ => None,
+        };
+        state.readout = readout;
+    } else {
+        state.readout = None;
     }
 
     // The marking brush sweeps while the button is held — every frame, not
@@ -1477,35 +2585,115 @@ pub fn tool_input(
     match state.tool {
         Tool::DrawTrack => {
             let p = snap_ghost(p, &ghost, &focus);
+            let ends = state.open_ends.clone();
+            let mut landed = false;
             match &mut state.drawing {
-                None => state.drawing = Some(Drawing::start_at(p, line.source.geoid_offset)),
-                Some(drawing) => drawing.click(p),
-            }
-        }
-        Tool::PlaceSwitch => {
-            let trailing = state.switch_trailing;
-            match &mut state.drawing {
-                Some(drawing) => drawing.click(snap_ghost(p, &ghost, &focus)),
-                None => match nearest_on_network(&line.net, p) {
-                    Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
-                        let length = line.net.edges()[edge].length();
-                        if s < 1.0 || s > length - 1.0 {
-                            overlay.status = t!("status-split-at-end");
-                        } else {
-                            let pose = line.net.edges()[edge].eval(s);
-                            state.drawing = Some(Drawing::branch_at(
-                                &pose,
-                                line.source.geoid_offset,
-                                edge,
-                                s,
-                                trailing,
-                            ));
+                // The press sets the standing end: on an open end it continues
+                // that track, on a track's middle it starts the branch of a
+                // turnout, on open ground it starts fresh — and the drag until
+                // release aims it.
+                None => {
+                    if let Some(end) = nearest_open_end(&ends, p, pick_radius(&focus)) {
+                        state.drawing =
+                            Some(Drawing::continue_from(end, line.source.geoid_offset));
+                    } else {
+                        match nearest_on_network(&line.net, p) {
+                            Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                                let length = line.net.edges()[edge].length();
+                                if s < 1.0 || s > length - 1.0 {
+                                    overlay.status = t!("status-split-at-end");
+                                } else {
+                                    let pose = line.net.edges()[edge].eval(s);
+                                    let mut drawing = Drawing::branch_at(
+                                        &pose,
+                                        line.source.geoid_offset,
+                                        edge,
+                                        s,
+                                        false,
+                                    );
+                                    drawing.aiming = true;
+                                    state.drawing = Some(drawing);
+                                }
+                            }
+                            _ => {
+                                let mut drawing =
+                                    Drawing::start_at(p, line.source.geoid_offset);
+                                drawing.aiming = true;
+                                state.drawing = Some(drawing);
+                            }
                         }
                     }
-                    _ => overlay.status = t!("status-no-track-hit"),
-                },
+                }
+                Some(drawing) => {
+                    drawing.click(lay_target(&ends, drawing, p, &focus));
+                    landed = drawing.to_end.is_some();
+                }
+            }
+            // A click onto an open end closes the drawing there and then —
+            // nothing more could be appended past a joint anyway.
+            if landed && !finish_drawing(&mut line, &mut state) {
+                overlay.status = t!("status-split-failed");
             }
         }
+        Tool::Split => match nearest_on_network(&line.net, p) {
+            Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                if line.source.split_edge(edge, s).is_none() {
+                    overlay.status = t!("status-split-at-end");
+                } else {
+                    state.selection = Selection::Edge(edge);
+                }
+            }
+            _ => overlay.status = t!("status-no-track-hit"),
+        },
+        Tool::Join => match nearest_open_end(&state.open_ends, p, pick_radius(&focus)) {
+            Some(end) => match state.join_from.take() {
+                None => state.join_from = Some(end),
+                Some(first) => {
+                    if let Err(status) =
+                        join_ends(&mut line, &state.lay, &state.stake, first, end)
+                    {
+                        overlay.status = status;
+                    }
+                }
+            },
+            None => overlay.status = t!("status-no-open-end"),
+        },
+        Tool::Offset => match nearest_on_network(&line.net, p) {
+            Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                // The parallel goes to the side the click fell on.
+                let pose = line.net.edges()[edge].eval(s);
+                let left = pose.up.cross(pose.tangent).normalize_or_zero();
+                let side = (p.0 - pose.pos.0).dot(left).signum();
+                let spacing = state.lay.spacing.max(1.0);
+                if let Some(new) = offset_edge(&mut line, edge, spacing * side) {
+                    state.selection = Selection::Edge(new);
+                }
+            }
+            _ => overlay.status = t!("status-no-track-hit"),
+        },
+        Tool::Crossover => match nearest_on_network(&line.net, p) {
+            Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                match state.crossover_from.take() {
+                    None => state.crossover_from = Some((edge, s)),
+                    Some((a, s_a)) => {
+                        let radius = state.lay.turnout_radius.max(50.0);
+                        if let Err(status) =
+                            crossover(&mut line, &state.lay, a, s_a, edge, radius)
+                        {
+                            overlay.status = status;
+                        }
+                    }
+                }
+            }
+            _ => overlay.status = t!("status-no-track-hit"),
+        },
+        Tool::Gradient => match nearest_on_network(&line.net, p) {
+            Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                add_grade_step(&mut line, edge, s);
+                state.selection = Selection::Edge(edge);
+            }
+            _ => overlay.status = t!("status-no-track-hit"),
+        },
         Tool::PlaceDevice => {
             match nearest_on_network(&line.net, p) {
                 Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
@@ -1629,12 +2817,27 @@ pub fn tool_input(
                 None => state.picked_tiles.push(key),
             }
         }
-        Tool::TerrainBrush => {
-            let (lat, lon, _) = geo::from_ecef(p);
-            let edit = if state.terrain_level {
-                // Level to the nearest rail — that is what levelling means on a
-                // railway, and the editor knows the rail height without a DGM.
-                match nearest_on_network(&line.net, p) {
+        Tool::TerrainRaise | Tool::TerrainLower | Tool::TerrainLevel | Tool::TerrainRail => {
+            let edit = match state.tool {
+                // Up or down by the shared amount — the tool is the sign.
+                Tool::TerrainRaise => TerrainEdit::Raise(state.terrain_amount.unwrap_or(2.0).abs()),
+                Tool::TerrainLower => {
+                    TerrainEdit::Raise(-state.terrain_amount.unwrap_or(2.0).abs())
+                }
+                // Flatten to the ground height under the click — the World
+                // Editor's plateau gesture. The tiles answer the height;
+                // before they are built there is nothing to flatten to.
+                Tool::TerrainLevel => match terrain_view.height_at_pos(p) {
+                    Some(height) => TerrainEdit::Level(height),
+                    None => {
+                        overlay.status = t!("status-no-ground-height");
+                        return;
+                    }
+                },
+                // Level to the nearest rail — that is what levelling means on
+                // a railway, and the editor knows the rail height without a
+                // DGM.
+                _ => match nearest_on_network(&line.net, p) {
                     Some((edge, s, _)) => {
                         let (_, _, height) = geo::from_ecef(line.net.edges()[edge].eval(s).pos);
                         TerrainEdit::Level(height)
@@ -1643,10 +2846,9 @@ pub fn tool_input(
                         overlay.status = t!("status-no-track-hit");
                         return;
                     }
-                }
-            } else {
-                TerrainEdit::Raise(state.terrain_amount.unwrap_or(2.0))
+                },
             };
+            let (lat, lon, _) = geo::from_ecef(p);
             line.source.terrain.push(TerrainEditSource {
                 lat: lat.to_degrees(),
                 lon: lon.to_degrees(),
@@ -2185,8 +3387,63 @@ pub fn draw_gizmos(
             let (camera, camera_transform) = camera.single().ok()?;
             pick_ground(camera, camera_transform, c, &origin.0, &focus)
         });
+    // Open ends while the lay or join tool is up: the grey weld squares of the
+    // World Editor, as circles — the one the cursor would take in accent, the
+    // join tool's first pick filled.
+    if matches!(state.tool, Tool::DrawTrack | Tool::Join) {
+        let radius = (focus.height * 0.010).max(3.5) as f32;
+        let reachable = cursor.and_then(|p| nearest_open_end(&state.open_ends, p, pick_radius(&focus)));
+        for end in &state.open_ends {
+            let near = reachable.is_some_and(|r| r.node == end.node);
+            let picked_first = state.join_from.is_some_and(|f| f.node == end.node);
+            let color = if near || picked_first {
+                accent
+            } else {
+                Color::srgb(0.62, 0.64, 0.70)
+            };
+            ground_circle(&mut gizmos, &origin.0, end.pos, radius, color);
+            if picked_first {
+                ground_circle(&mut gizmos, &origin.0, end.pos, radius * 0.5, color);
+            }
+        }
+    }
+    // The crossover's first cut, until the second track is named.
+    if let Some((edge, s)) = state.crossover_from
+        && let Some(edge) = line.net.edges().get(edge)
+    {
+        let radius = (focus.height * 0.012).max(4.0) as f32;
+        ground_circle(&mut gizmos, &origin.0, edge.eval(s).pos, radius, accent);
+    }
+    // Gradient break points of the selected edge while the gradient tool is
+    // up — where the profile steps, a circle on the rail.
+    if state.tool == Tool::Gradient
+        && let Selection::Edge(i) = state.selection
+        && let (Some(source), Some(edge)) = (line.source.edges.get(i), line.net.edges().get(i))
+    {
+        let radius = (focus.height * 0.010).max(3.5) as f32;
+        for (s, _) in &source.grade {
+            ground_circle(&mut gizmos, &origin.0, edge.eval(*s).pos, radius, accent);
+        }
+    }
     if let Some(drawing) = &state.drawing {
-        gizmos.linestrip(drawing.polyline(cursor, &origin.0), accent);
+        // While Ctrl holds the piece straight the preview turns yellow, as the
+        // World Editor's frame does; while the standing end is aimed, the
+        // arrow shows the heading the drag has set.
+        let color = if drawing.straight && drawing.heading_deg.is_some() {
+            Color::srgb(0.89, 0.71, 0.30)
+        } else {
+            accent
+        };
+        if drawing.aiming {
+            if let Some([from, to]) = drawing.aim_arrow(&origin.0, pick_radius(&focus) * 2.5) {
+                gizmos.line(from, to, color);
+            }
+        } else {
+            let target = cursor.map(|p| {
+                lay_target(&state.open_ends, drawing, snap_ghost(p, &ghost, &focus), &focus)
+            });
+            gizmos.linestrip(drawing.polyline(target, &origin.0), color);
+        }
     }
     // Forest brush preview: the ring so far, the cursor as the next corner.
     if !state.forest_points.is_empty() {
@@ -2203,12 +3460,20 @@ pub fn draw_gizmos(
         let radius = state.brush_radius.unwrap_or(30.0) as f32;
         ground_circle(&mut gizmos, &origin.0, p, radius, marked_color);
     }
-    // The same for the terrain brush — its footprint is the stroke to come.
-    if state.tool == Tool::TerrainBrush
+    // The same for the terrain tools — the footprint of the stroke to come,
+    // in the colour the laid stroke will wear: warm raising, cold lowering,
+    // grey levelling.
+    let footprint = match state.tool {
+        Tool::TerrainRaise => Some(Color::srgb(0.90, 0.55, 0.30)),
+        Tool::TerrainLower => Some(Color::srgb(0.35, 0.60, 0.90)),
+        Tool::TerrainLevel | Tool::TerrainRail => Some(Color::srgb(0.65, 0.65, 0.70)),
+        _ => None,
+    };
+    if let Some(color) = footprint
         && let Some(p) = cursor
     {
         let radius = state.terrain_radius.unwrap_or(60.0) as f32;
-        ground_circle(&mut gizmos, &origin.0, p, radius, accent);
+        ground_circle(&mut gizmos, &origin.0, p, radius, color);
     }
 
     // The DGM tile grid, only while the tile picker is in hand: green where the
@@ -2276,8 +3541,8 @@ mod tests {
         // Second click 1 km north-east, third bending further east.
         let ne = frame.to_ecef(DVec3::new(700.0, 700.0, 0.0));
         let bend = frame.to_ecef(DVec3::new(1700.0, 1100.0, 0.0));
-        drawing.click(ne);
-        drawing.click(bend);
+        drawing.click(Target::free(ne));
+        drawing.click(Target::free(bend));
         assert_eq!(drawing.segments.len(), 2);
 
         let mut line = content::LineSource {
@@ -2348,7 +3613,7 @@ mod tests {
         let frame = EnuFrame::at(pose.pos);
         let tangent = frame.dir_to_local(pose.tangent);
         let left = DVec3::new(-tangent.y, tangent.x, 0.0);
-        drawing.click(frame.to_ecef(tangent * 400.0 + left * 60.0));
+        drawing.click(Target::free(frame.to_ecef(tangent * 400.0 + left * 60.0)));
         assert_eq!(drawing.segments.len(), 1);
         let mut state = EditorState {
             drawing: Some(drawing),
@@ -2411,7 +3676,7 @@ mod tests {
         let left = DVec3::new(-tangent.y, tangent.x, 0.0);
         // Backwards along the track, curving away — the driver of edge 0 has
         // the fork behind them.
-        drawing.click(frame.to_ecef(-tangent * 400.0 + left * 60.0));
+        drawing.click(Target::free(frame.to_ecef(-tangent * 400.0 + left * 60.0)));
         let mut state = EditorState {
             drawing: Some(drawing),
             ..Default::default()
@@ -2447,6 +3712,469 @@ mod tests {
             branch.tangent.dot(cut.tangent) < -0.999,
             "the branch has to leave against the track"
         );
+    }
+
+    fn line_of(source: content::LineSource) -> Line {
+        let net = source.compile().unwrap().net;
+        Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        }
+    }
+
+    /// One straight edge running east — the bench for the track tools.
+    fn straight_east(length: f64) -> content::LineSource {
+        content::LineSource {
+            name: "bench".into(),
+            nodes: vec![NodeSource::Buffer, NodeSource::Buffer],
+            edges: vec![EdgeSource {
+                from: 0,
+                to: 1,
+                start: EdgeStart::Geo {
+                    point: GeoPoint {
+                        lat: 52.0,
+                        lon: 10.0,
+                        height: 100.0,
+                    },
+                    heading_deg: 90.0,
+                },
+                segments: vec![Segment::straight(length)],
+                grade: vec![],
+                cant: vec![],
+                speed: vec![],
+                track_type: vec![],
+                electrification: vec![],
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// The biarc lands on the far end with the asked-for heading — tangent
+    /// at both sides, which is what makes it a join and not a kink.
+    #[test]
+    fn a_biarc_arrives_tangentially() {
+        let to = DVec2::new(200.0, 60.0);
+        let [(a, mid), (b, end)] = biarc(DVec2::ZERO, 0.0, to, 0.0).expect("solvable");
+        let (p1, h1) = advance(DVec2::ZERO, 0.0, &a, a.len);
+        assert!((h1 - mid).abs() < 1e-9);
+        let (p2, h2) = advance(p1, h1, &b, b.len);
+        assert!(p2.distance(to) < 1e-6, "missed by {}", p2.distance(to));
+        assert!(h2.abs() < 1e-9, "arrived at {} rad", h2);
+        assert!((end - h2).abs() < 1e-9);
+    }
+
+    /// Joining two open ends with a gap lays a connecting piece between the
+    /// nodes; collinear ends get what amounts to a straight.
+    #[test]
+    fn joining_distant_ends_lays_a_connecting_piece() {
+        let mut source = straight_east(300.0);
+        // A second straight further east, leaving a 100 m gap.
+        let start = source.compile().unwrap().net.edges()[0].end_pose();
+        let ahead = EcefPos(start.pos.0 + start.tangent * 100.0);
+        let (lat, lon, height) = geo::from_ecef(ahead);
+        source.nodes.push(NodeSource::Buffer);
+        source.nodes.push(NodeSource::Buffer);
+        source.edges.push(EdgeSource {
+            from: 2,
+            to: 3,
+            start: EdgeStart::Geo {
+                point: GeoPoint {
+                    lat: lat.to_degrees(),
+                    lon: lon.to_degrees(),
+                    height: height - source.geoid_offset,
+                },
+                heading_deg: 90.0,
+            },
+            segments: vec![Segment::straight(300.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+            electrification: vec![],
+        });
+        let mut doc = line_of(source);
+        let ends = open_ends(&doc);
+        assert_eq!(ends.len(), 4);
+        let a = *ends.iter().find(|e| e.edge == 0 && e.at_end).unwrap();
+        let b = *ends.iter().find(|e| e.edge == 1 && !e.at_end).unwrap();
+        join_ends(
+            &mut doc,
+            &LayOptions::default(),
+            &crate::stake::StakeOptions::default(),
+            a,
+            b,
+        )
+        .expect("joins");
+        let compiled = doc.source.compile().expect("still compiles");
+        assert_eq!(doc.source.edges.len(), 3);
+        // The connecting piece runs from A's end to B's start, gap-free.
+        let joint = compiled.net.edges()[2].end_pose();
+        let b_start = compiled.net.edges()[1].eval(0.0);
+        assert!(joint.pos.distance(b_start.pos) < 0.05);
+        assert!(matches!(doc.source.nodes[1], NodeSource::Joint));
+        assert!(matches!(doc.source.nodes[2], NodeSource::Joint));
+    }
+
+    /// Joining offset parallel ends runs the stake-out calculator: the edge
+    /// it lays is a double arc with its intermediate straight, carries the
+    /// cant band of both hands, and compiles.
+    #[test]
+    fn joining_offset_ends_stakes_out_a_double_arc() {
+        let mut source = straight_east(300.0);
+        // A parallel track further east and 60 m north, running the same way:
+        // its start faces A's end across a 600 m gap with a 60 m offset.
+        let start = source.compile().unwrap().net.edges()[0].eval(0.0);
+        let left = start.up.cross(start.tangent).normalize();
+        let shifted = EcefPos(start.pos.0 + start.tangent * 900.0 + left * 60.0);
+        let (lat, lon, height) = geo::from_ecef(shifted);
+        source.nodes.push(NodeSource::Buffer);
+        source.nodes.push(NodeSource::Buffer);
+        source.edges.push(EdgeSource {
+            from: 2,
+            to: 3,
+            start: EdgeStart::Geo {
+                point: GeoPoint {
+                    lat: lat.to_degrees(),
+                    lon: lon.to_degrees(),
+                    height: height - source.geoid_offset,
+                },
+                heading_deg: 90.0,
+            },
+            segments: vec![Segment::straight(300.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+            electrification: vec![],
+        });
+        let mut doc = line_of(source);
+        let ends = open_ends(&doc);
+        let a = *ends.iter().find(|e| e.edge == 0 && e.at_end).unwrap();
+        let b = *ends.iter().find(|e| e.edge == 1 && !e.at_end).unwrap();
+        let stake = crate::stake::StakeOptions {
+            speed: 60.0,
+            ..Default::default()
+        };
+        join_ends(&mut doc, &LayOptions::default(), &stake, a, b).expect("stakes out");
+        let compiled = doc.source.compile().expect("still compiles");
+        let connector = compiled.net.edges().last().unwrap();
+        // It lands on B's start, tangentially. The chain is planned in A's
+        // chord plane while `eval` runs on the curved frame — over 900 m that
+        // is a few centimetres of height, the documented plane approximation.
+        let b_start = compiled.net.edges()[1].eval(0.0);
+        assert!(connector.end_pose().pos.distance(b_start.pos) < 0.25);
+        assert!(connector.end_pose().tangent.dot(b_start.tangent) > 0.999_9);
+        // An S of two hands, with the cant band signed to match.
+        let cant = &doc.source.edges.last().unwrap().cant;
+        assert!(!cant.is_empty(), "the calculator writes the cant band");
+        let peak = cant.iter().map(|(_, c)| *c).fold(0.0, f64::max);
+        let low = cant.iter().map(|(_, c)| *c).fold(0.0, f64::min);
+        assert!(peak > 0.0 && low < 0.0, "{peak} / {low}");
+        assert!(matches!(doc.source.nodes[1], NodeSource::Joint));
+        assert!(matches!(doc.source.nodes[2], NodeSource::Joint));
+    }
+
+    /// Ends already on one point are welded: one node from then on, and the
+    /// dropped node's index is remapped everywhere.
+    #[test]
+    fn joining_touching_ends_welds_the_nodes() {
+        let mut source = straight_east(300.0);
+        let end = source.compile().unwrap().net.edges()[0].end_pose();
+        let (lat, lon, height) = geo::from_ecef(end.pos);
+        source.nodes.push(NodeSource::Buffer);
+        source.nodes.push(NodeSource::Buffer);
+        source.edges.push(EdgeSource {
+            from: 2,
+            to: 3,
+            start: EdgeStart::Geo {
+                point: GeoPoint {
+                    lat: lat.to_degrees(),
+                    lon: lon.to_degrees(),
+                    height: height - source.geoid_offset,
+                },
+                heading_deg: 90.0,
+            },
+            segments: vec![Segment::straight(300.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+            electrification: vec![],
+        });
+        let mut doc = line_of(source);
+        let ends = open_ends(&doc);
+        let a = *ends.iter().find(|e| e.edge == 0 && e.at_end).unwrap();
+        let b = *ends.iter().find(|e| e.edge == 1 && !e.at_end).unwrap();
+        join_ends(
+            &mut doc,
+            &LayOptions::default(),
+            &crate::stake::StakeOptions::default(),
+            a,
+            b,
+        )
+        .expect("welds");
+        assert_eq!(doc.source.nodes.len(), 3, "one node gone");
+        assert_eq!(doc.source.edges.len(), 2, "no piece needed");
+        assert_eq!(doc.source.edges[1].from, doc.source.edges[0].to);
+        assert!(matches!(
+            doc.source.nodes[doc.source.edges[0].to as usize],
+            NodeSource::Joint
+        ));
+        doc.source.compile().expect("still compiles");
+    }
+
+    /// The offset tool lays a parallel: same heading, the asked-for distance,
+    /// carried over the whole length.
+    #[test]
+    fn an_offset_track_runs_parallel() {
+        let mut doc = line_of(content::musterbahn());
+        let new = offset_edge(&mut doc, 0, 4.0).expect("offsets");
+        let compiled = doc.source.compile().expect("still compiles");
+        let (base, parallel) = (&compiled.net.edges()[0], &compiled.net.edges()[new]);
+        for fraction in [0.0, 0.3, 0.7, 1.0] {
+            let p = parallel.eval(parallel.length() * fraction).pos;
+            let (_, d) = nearest_on_edge(base, p);
+            assert!(
+                (d - 4.0).abs() < 0.15,
+                "spacing {d} m at fraction {fraction}"
+            );
+        }
+    }
+
+    /// A crossover cuts both tracks and wires two turnouts with the S of
+    /// their arcs between them — and the diagonal lands tangentially.
+    #[test]
+    fn a_crossover_connects_two_parallel_tracks() {
+        let mut doc = line_of(straight_east(600.0));
+        offset_edge(&mut doc, 0, -4.0).expect("parallel");
+        doc.net = doc.source.compile().unwrap().net;
+        crossover(&mut doc, &LayOptions::default(), 0, 200.0, 1, 190.0).expect("builds");
+        let compiled = doc.source.compile().expect("still compiles");
+        let switches = doc
+            .source
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, NodeSource::Switch { .. }))
+            .count();
+        assert_eq!(switches, 2);
+        // The diagonal is the last edge; it leaves track A tangentially and
+        // arrives on track B parallel to it.
+        let diagonal = compiled.net.edges().last().unwrap();
+        let a_dir = compiled.net.edges()[0].end_pose().tangent;
+        assert!(diagonal.eval(0.0).tangent.dot(a_dir) > 0.999_9);
+        assert!(diagonal.end_pose().tangent.dot(a_dir) > 0.999_9);
+        // It actually reaches the other track.
+        let b_first = &compiled.net.edges()[1];
+        let (_, miss) = nearest_on_edge(b_first, diagonal.end_pose().pos);
+        assert!(miss < 0.5, "diagonal misses track B by {miss} m");
+    }
+
+    /// A drawing bench: one straight click east fixes the heading, so the
+    /// next click is the curve under test.
+    fn eased_drawing(speed: f64) -> (Drawing, EnuFrame) {
+        let start = world_coords::geo::to_ecef_deg(52.0, 10.0, 100.0);
+        let mut drawing = Drawing::start_at(start, 46.0);
+        drawing.easements = Some(Easements {
+            rules: CantRules::default(),
+            speed,
+        });
+        let frame = EnuFrame::at(start);
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(500.0, 0.0, 0.0))));
+        (drawing, frame)
+    }
+
+    /// With easements on, a clicked curve comes out as clothoid – arc –
+    /// clothoid: curvature-continuous, the ramps at the rulebook length, and
+    /// the chain still ends on the clicked point.
+    #[test]
+    fn an_eased_curve_is_clothoid_arc_clothoid_on_the_click() {
+        let (mut drawing, frame) = eased_drawing(160.0);
+        let target = frame.to_ecef(DVec3::new(1500.0, 300.0, 0.0));
+        drawing.click(Target::free(target));
+
+        assert_eq!(drawing.segments.len(), 4, "straight + in + arc + out");
+        let [_, t_in, arc, t_out] = drawing.segments[..] else {
+            panic!("shape");
+        };
+        assert!(t_in.dk != 0.0 && t_out.dk != 0.0 && arc.dk == 0.0);
+        // Curvature runs 0 → k → k → 0 without a jump.
+        assert!(t_in.k0.abs() < 1e-12);
+        assert!((t_in.end_curvature() - arc.k0).abs() < 1e-9);
+        assert!((t_out.k0 - arc.k0).abs() < 1e-9);
+        assert!(t_out.end_curvature().abs() < 1e-9);
+        // Left-hand curve, positive cant at the rulebook value, ramps to match.
+        let e = drawing.easements.unwrap();
+        let cant = signed_cant(arc.k0, e);
+        assert!(arc.k0 > 0.0 && cant > 0.0, "left curve carries positive cant");
+        assert!((t_in.len - e.rules.ramp_length(cant, e.speed)).abs() < 1e-6);
+        // The chain still passes through the click.
+        let mut p = DVec2::ZERO;
+        let mut h = 0.0;
+        for seg in &drawing.segments {
+            let (q, g) = advance(p, h, seg, seg.len);
+            p = q;
+            h = g;
+        }
+        let local = frame.to_local(target);
+        assert!(
+            p.distance(DVec2::new(local.x, local.y)) < 0.05,
+            "missed the click by {} m",
+            p.distance(DVec2::new(local.x, local.y))
+        );
+        // The cant band ramps up under the transitions and back to zero.
+        let peak = drawing.cant_steps.iter().map(|(_, c)| *c).fold(0.0, f64::max);
+        assert!((peak - cant).abs() < 1e-9, "peak {peak} vs {cant}");
+        assert_eq!(drawing.cant_steps.first().unwrap().1, 0.0);
+        assert_eq!(drawing.cant_steps.last().unwrap().1, 0.0);
+    }
+
+    /// A right-hand curve carries its cant as a negative number — that is
+    /// what rolls the track toward the inside in `TrackEdge::eval`.
+    #[test]
+    fn a_right_hand_eased_curve_carries_negative_cant() {
+        let (mut drawing, frame) = eased_drawing(160.0);
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(1500.0, -300.0, 0.0))));
+        let low = drawing.cant_steps.iter().map(|(_, c)| *c).fold(0.0, f64::min);
+        assert!(low < -40.0, "right-hand cant must be negative: {low}");
+    }
+
+    /// Where the click leaves no room for the ramps, the piece falls back to
+    /// the bare arc instead of inventing a distorted chain.
+    #[test]
+    fn a_curve_too_short_for_ramps_stays_a_bare_arc() {
+        let (mut drawing, frame) = eased_drawing(160.0);
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(530.0, 3.0, 0.0))));
+        assert_eq!(drawing.segments.len(), 2, "straight + bare arc");
+        assert!(drawing.segments.iter().all(|s| s.dk == 0.0));
+        assert!(drawing.cant_steps.is_empty());
+    }
+
+    /// Easements and the radius snap together: the arc lands on the standard
+    /// series and the running end slides along instead of holding the click.
+    #[test]
+    fn an_eased_arc_snaps_to_the_standard_series() {
+        let (mut drawing, frame) = eased_drawing(160.0);
+        drawing.radii = content::import::alignment::preferred_radii();
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(1500.0, 300.0, 0.0))));
+        let arc = drawing
+            .segments
+            .iter()
+            .find(|s| s.dk == 0.0 && s.k0.abs() > 1e-9)
+            .expect("an arc");
+        let radius = 1.0 / arc.k0.abs();
+        assert!(
+            drawing.radii.iter().any(|r| (r - radius).abs() < 1e-6),
+            "radius {radius} not on the series"
+        );
+    }
+
+    /// Finishing an eased drawing writes the cant into the edge, and the
+    /// compiled track rolls by it mid-curve while the straight stays level.
+    #[test]
+    fn an_eased_finish_writes_the_cant_profile() {
+        let (mut drawing, frame) = eased_drawing(160.0);
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(1500.0, 300.0, 0.0))));
+        let expected = drawing
+            .cant_steps
+            .iter()
+            .map(|(_, c)| *c)
+            .fold(0.0, f64::max);
+        let ramp_start = drawing.segments[0].len;
+        let arc_mid = ramp_start + drawing.segments[1].len + drawing.segments[2].len / 2.0;
+
+        let mut doc = line_of(content::LineSource {
+            name: "eased".into(),
+            ..Default::default()
+        });
+        let mut state = EditorState {
+            drawing: Some(drawing),
+            ..Default::default()
+        };
+        assert!(finish_drawing(&mut doc, &mut state));
+        let edge = &doc.source.edges[0];
+        assert!(!edge.cant.is_empty(), "the cant band is in the file");
+        let compiled = doc.source.compile().expect("compiles");
+        let track = &compiled.net.edges()[0];
+        assert!((track.eval(arc_mid).cant - expected).abs() < 1e-6);
+        assert_eq!(track.eval(100.0).cant, 0.0, "the straight stays level");
+    }
+
+    /// The radius snap rounds an arc onto the standard series and keeps its
+    /// change of heading, so the alignment stays tangent-continuous.
+    #[test]
+    fn arcs_snap_to_standard_radii() {
+        let arc = Segment::arc(400.0, 823.0);
+        let snapped = snap_radius(arc, &content::import::alignment::preferred_radii());
+        assert!((1.0 / snapped.k0 - 800.0).abs() < 1e-9);
+        assert!(
+            (snapped.heading_delta(snapped.len) - arc.heading_delta(arc.len)).abs() < 1e-9,
+            "the turn must survive the snap"
+        );
+        // Straights pass unchanged.
+        let straight = Segment::straight(100.0);
+        assert_eq!(
+            snap_radius(straight, &content::import::alignment::preferred_radii()),
+            straight
+        );
+    }
+
+    /// Continuing from an open end and landing on another one shares their
+    /// nodes: the ends close into joints and the geometry chains exactly.
+    #[test]
+    fn laying_between_open_ends_closes_them() {
+        let mut source = straight_east(300.0);
+        // A parallel track 40 m north, running the same way.
+        let start = source.compile().unwrap().net.edges()[0].eval(0.0);
+        let left = start.up.cross(start.tangent).normalize();
+        let shifted = EcefPos(start.pos.0 + left * 40.0);
+        let (lat, lon, height) = geo::from_ecef(shifted);
+        source.nodes.push(NodeSource::Buffer);
+        source.nodes.push(NodeSource::Buffer);
+        source.edges.push(EdgeSource {
+            from: 2,
+            to: 3,
+            start: EdgeStart::Geo {
+                point: GeoPoint {
+                    lat: lat.to_degrees(),
+                    lon: lon.to_degrees(),
+                    height: height - source.geoid_offset,
+                },
+                heading_deg: 90.0,
+            },
+            segments: vec![Segment::straight(300.0)],
+            grade: vec![],
+            cant: vec![],
+            speed: vec![],
+            track_type: vec![],
+            electrification: vec![],
+        });
+        let mut doc = line_of(source);
+        let ends = open_ends(&doc);
+        let from = *ends.iter().find(|e| e.edge == 0 && e.at_end).unwrap();
+        let to = *ends.iter().find(|e| e.edge == 1 && e.at_end).unwrap();
+        let mut drawing = Drawing::continue_from(from, doc.source.geoid_offset);
+        drawing.click(Target {
+            pos: to.pos,
+            end: Some(to),
+        });
+        assert!(drawing.to_end.is_some(), "the click lands on the end");
+        let mut state = EditorState {
+            drawing: Some(drawing),
+            ..Default::default()
+        };
+        assert!(finish_drawing(&mut doc, &mut state));
+        let compiled = doc.source.compile().expect("still compiles");
+        // Both former buffers are joints now, and the new edge closes the gap.
+        assert!(matches!(doc.source.nodes[1], NodeSource::Joint));
+        assert!(matches!(doc.source.nodes[3], NodeSource::Joint));
+        let new = compiled.net.edges().last().unwrap();
+        assert!(new.end_pose().pos.distance(to.pos) < 0.05);
     }
 
     /// The repeat function stamps a row of copies along the edge, carrying
@@ -2673,21 +4401,30 @@ mod brush_tests {
 mod palette_tests {
     use super::*;
 
-    /// The number keys count down the palette, not through the enum: `3` has
-    /// to be the third button the panel draws. Both sides read `TOOL_GROUPS`,
-    /// and this is what says so.
+    /// The number keys count down the toolbox's active box: `1` is always
+    /// the select tool, the category's own tools follow from `2`. Both sides
+    /// read `TOOL_GROUPS`, and this is what says so.
     #[test]
-    fn the_digits_follow_the_palette() {
-        let order: Vec<Tool> = palette_order().collect();
-        assert_eq!(order.len(), 13, "every tool is in a group exactly once");
-        assert_eq!(order[0], Tool::Select);
-        assert_eq!(order[2], Tool::PlaceSwitch, "third button, third digit");
+    fn the_digits_follow_the_toolbox() {
+        // Every tool sits in exactly one category — and select in none.
+        let all: Vec<Tool> = TOOL_GROUPS
+            .iter()
+            .flat_map(|(_, _, tools)| tools.iter().map(|(tool, _, _)| *tool))
+            .collect();
+        for tool in &all {
+            assert_eq!(all.iter().filter(|t| *t == tool).count(), 1, "{tool:?}");
+        }
+        assert!(!all.contains(&Tool::Select), "select belongs to every box");
+        // Digits: select first, then the box's own tools.
         assert_eq!(tool_digit(Tool::Select), Some(1));
-        assert_eq!(tool_digit(Tool::PlaceSwitch), Some(3));
-        // The tenth is `0`, and everything past it has no key to name.
-        assert_eq!(tool_digit(order[9]), Some(0));
-        for tool in &order[10..] {
-            assert_eq!(tool_digit(*tool), None, "{tool:?} has no digit");
+        assert_eq!(tool_digit(Tool::DrawTrack), Some(2));
+        assert_eq!(tool_digit(Tool::Split), Some(3));
+        assert_eq!(tool_digit(Tool::PlaceDevice), Some(2), "first of its box");
+        assert_eq!(tool_digit(Tool::PlaceTree), Some(2));
+        // The entry lookup answers for every tool, select included.
+        assert_eq!(tool_entry(Tool::Select).0, Tool::Select);
+        for tool in &all {
+            assert_eq!(tool_entry(*tool).0, *tool);
         }
     }
 }

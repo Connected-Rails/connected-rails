@@ -18,7 +18,7 @@ mod icon;
 pub use curve::{CurveSpec, Series, curve_editor, multi_plot, sparkline, sparkline_fn};
 pub use datetime::day_controls;
 pub use icon::{
-    Icon, Mark, bar_divider, bar_menu, card_entry, icon_button, icon_label, tool_button,
+    Icon, Mark, bar_divider, bar_menu, card_entry, icon_button, icon_label, toolbox_button,
 };
 
 /// Color tokens: dark neutral surfaces, one restrained blue accent.

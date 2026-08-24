@@ -671,8 +671,9 @@ module — the middle box the tools of the one that is up — led by the **selec
 belongs to every category**: picking something is wanted whatever box is up, so `1` is
 always it and the category's own tools count from `2`. The key and the button always
 agree, because both read the same list. A bottom box carries the active tool's own
-switches — the radius snap and easements while laying, the stake-out's easements while
-joining, snap to terrain while placing objects — where the World Editor keeps its context
+switches — the radius snap, easements and terrain snap while laying, the stake-out's
+easements while joining, snap to terrain while placing objects — where the World Editor
+keeps its context
 options. The form panel, docked on the **right** edge, carries the active tool's remaining
 options in its *Tool* section — the World Editor's properties panel for the piece about to
 be laid, which never touches one already lying there.
@@ -680,9 +681,9 @@ be laid, which never touches one already lying there.
 | Tool | What a click does |
 |---|---|
 | **Every category** | |
-| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it |
+| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it. `Ctrl`+click gathers devices, objects, trees and markers into a multi-selection (a second `Ctrl`+click takes one out again); a press on empty ground dragged open selects everything inside the circle — `Ctrl` adds it to what is gathered, `Delete` removes the lot in one step |
 | **Track** | |
-| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series and lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions |
+| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series, lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions — and snaps the piece to the terrain: sampled ground heights become its gradient profile, a free start drops onto the surface, an end joined onto other track keeps that track's height |
 | `3` Split track | Cuts the track at the click — two tracks on one joint |
 | `4` Join ends | First click one open end, then another: ends on the same spot are welded into one node, ends apart are **staked out like Zusi's Absteckrechner** — transitions, arc and one compensating straight (the radius on automatic grows until exactly one remains), or a double arc with an intermediate straight where no single arc reaches. The *Tool* section carries the staking parameters: design speed, radius (0 = automatic), transition length, cant, and the least intermediate straight; the transitions themselves are the toolbox's easement toggle |
 | `5` Parallel track | Lays the clicked track's parallel at the set spacing, on the side of the click — exact offsets for straights and arcs |

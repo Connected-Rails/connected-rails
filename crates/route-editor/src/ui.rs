@@ -1479,6 +1479,21 @@ fn detail_panel(
                         if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
                             ui.small(egui::RichText::new(hint).color(colors::TEXT_SECONDARY));
                         }
+                        // The multi-selection under the select tool: what
+                        // Ctrl-clicks and the circle have gathered, and the
+                        // two things one can do with it.
+                        if state.tool == Tool::Select && !state.marked.is_empty() {
+                            ui.add_space(space::XS);
+                            ui.small(t!("brush-marked", count = state.marked.len()));
+                            ui.horizontal(|ui| {
+                                if ui.button(t!("action-delete-marked")).clicked() {
+                                    tools::delete_marked(line, state);
+                                }
+                                if ui.button(t!("action-clear-marked")).clicked() {
+                                    state.marked.clear();
+                                }
+                            });
+                        }
                         if state.tool == Tool::DrawTrack {
                             ui.add_space(space::XS);
                             lay_rows(ui, state, types);
@@ -1893,6 +1908,11 @@ fn toolbox(root: &mut egui::Ui, state: &mut EditorState) {
                         "lay-snap-radius",
                     ),
                     (&mut state.lay.easements, Icon::Easement, "lay-easements"),
+                    (
+                        &mut state.lay.snap_terrain,
+                        Icon::SnapTerrain,
+                        "lay-snap-terrain",
+                    ),
                 ],
                 Tool::Join => vec![(
                     &mut state.stake.easements,

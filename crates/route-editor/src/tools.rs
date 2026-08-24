@@ -125,11 +125,26 @@ impl AreaStroke {
     }
 }
 
-/// One item the marking brush swept over.
+/// One item in the multi-selection — swept by the marking brush, caught by
+/// the select tool's circle, or Ctrl-clicked one by one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
     Tree(usize),
     Object(usize),
+    Device(usize),
+    Marker(usize),
+}
+
+/// The mark a picked thing joins the multi-selection as — the point-like
+/// things only; a track or an area stays single selection.
+fn as_mark(selection: Selection) -> Option<Mark> {
+    match selection {
+        Selection::Tree(i) => Some(Mark::Tree(i)),
+        Selection::Object(i) => Some(Mark::Object(i)),
+        Selection::Device(i) => Some(Mark::Device(i)),
+        Selection::Marker(i) => Some(Mark::Marker(i)),
+        _ => None,
+    }
 }
 
 /// What the interlocking panel points at right now — the row under the mouse.
@@ -307,6 +322,9 @@ pub struct LayOptions {
     pub spacing: f64,
     /// Round a drawn arc to the standard radii of the alignment rulebook.
     pub snap_radius: bool,
+    /// The laid piece follows the ground: sampled terrain heights become its
+    /// grade profile, and a free start drops onto the surface.
+    pub snap_terrain: bool,
     /// Lay curves as clothoid–arc–clothoid with the rulebook's cant, instead
     /// of bare arcs. Off by default: an eased edge carries transition curves
     /// and therefore offers no draggable support points.
@@ -325,6 +343,7 @@ impl Default for LayOptions {
             parallel: 1,
             spacing: 4.0,
             snap_radius: false,
+            snap_terrain: false,
             easements: false,
             turnout_radius: 190.0,
         }
@@ -543,6 +562,9 @@ pub struct EditorState {
     pub dgm_present: Vec<content::TileKey>,
     /// Items the marking brush has swept over — deleted together.
     pub marked: Vec<Mark>,
+    /// Centre of the select tool's circle selection while the button grows
+    /// it — a press on empty ground, released to mark everything inside.
+    pub select_circle: Option<EcefPos>,
     /// Radius of the marking brush [m]; `None` = 30.
     pub brush_radius: Option<f64>,
     /// The stroke the area brush is painting right now. Held while the button is down and
@@ -952,13 +974,22 @@ impl Drawing {
     }
 
     /// Render polyline of the alignment so far; `cursor` appends the piece
-    /// the next click would create.
-    pub fn polyline(&self, cursor: Option<Target>, origin: &RenderOrigin) -> Vec<Vec3> {
+    /// the next click would create. With `ground` given the line lies where
+    /// the finished piece will: on the terrain, a glued start blending onto
+    /// it over the first [`TERRAIN_SNAP_STEP`], a landed end onto the far
+    /// track's height over the last.
+    pub fn polyline(
+        &self,
+        cursor: Option<Target>,
+        origin: &RenderOrigin,
+        ground: Option<&dyn Fn(EcefPos) -> Option<f64>>,
+    ) -> Vec<Vec3> {
         let mut heading = self
             .heading_deg
             .map(|d| (90.0 - d).to_radians())
             .unwrap_or(0.0);
         let mut segments = self.segments.clone();
+        let mut end_height = None;
         if let Some(target) = cursor
             && let Some((next, _)) = self.preview(target)
         {
@@ -967,23 +998,42 @@ impl Drawing {
                 heading = p.y.atan2(p.x);
             }
             segments.extend(next);
+            end_height = target.end.map(|e| geo::from_ecef(e.pos).2);
         }
+        let total: f64 = segments.iter().map(|s| s.len).sum();
+        // A start glued to other track keeps that track's height, like the
+        // finish does; a free start stands on the ground with the rest.
+        let start_height = (self.from_end.is_some() || self.branch_of.is_some())
+            .then(|| geo::from_ecef(self.frame.to_ecef(DVec3::ZERO)).2);
+        let drop = |p: DVec2, s: f64| -> Vec3 {
+            let flat = self.frame.to_ecef(DVec3::new(p.x, p.y, 0.0));
+            let Some(mut h) = ground.and_then(|g| g(flat)) else {
+                return self.to_render(p, origin);
+            };
+            let blend = |from: f64, to: f64, w: f64| from + (to - from) * w.clamp(0.0, 1.0);
+            if let Some(h0) = start_height {
+                h = blend(h0, h, s / TERRAIN_SNAP_STEP);
+            }
+            if let Some(h1) = end_height {
+                h = blend(h1, h, (total - s) / TERRAIN_SNAP_STEP);
+            }
+            let (lat, lon, _) = geo::from_ecef(flat);
+            origin.to_render(geo::to_ecef_deg(lat.to_degrees(), lon.to_degrees(), h + 0.5))
+        };
         let mut position = DVec2::ZERO;
-        let mut points = vec![self.to_render(position, origin)];
+        let mut done = 0.0;
+        let mut points = vec![drop(position, 0.0)];
         for segment in &segments {
             let steps = (segment.len / 5.0).ceil().max(1.0) as usize;
             for i in 1..=steps {
-                let (p, _) = advance(
-                    position,
-                    heading,
-                    segment,
-                    segment.len * i as f64 / steps as f64,
-                );
-                points.push(self.to_render(p, origin));
+                let along = segment.len * i as f64 / steps as f64;
+                let (p, _) = advance(position, heading, segment, along);
+                points.push(drop(p, done + along));
             }
             let (p, h) = advance(position, heading, segment, segment.len);
             position = p;
             heading = h;
+            done += segment.len;
         }
         points
     }
@@ -1411,6 +1461,7 @@ pub fn select_tool(state: &mut EditorState, tool: Tool) {
     state.forest_points.clear();
     state.join_from = None;
     state.crossover_from = None;
+    state.select_circle = None;
 }
 
 /// Where the running end points: snapped onto an open end within reach —
@@ -1720,18 +1771,23 @@ pub fn delete_layer(line: &mut Line, state: &mut EditorState, layer: &str) {
     }
 }
 
-/// Deletes everything the marking brush swept over — one undo step.
+/// Deletes everything in the multi-selection — brush sweep, circle or
+/// Ctrl-clicks — as one undo step.
 pub fn delete_marked(line: &mut Line, state: &mut EditorState) {
     let mut trees: Vec<usize> = Vec::new();
     let mut objects: Vec<usize> = Vec::new();
+    let mut devices: Vec<usize> = Vec::new();
+    let mut markers: Vec<usize> = Vec::new();
     for mark in state.marked.drain(..) {
         match mark {
             Mark::Tree(i) => trees.push(i),
             Mark::Object(i) => objects.push(i),
+            Mark::Device(i) => devices.push(i),
+            Mark::Marker(i) => markers.push(i),
         }
     }
     // Descending order, so earlier removals do not shift later indices.
-    for list in [&mut trees, &mut objects] {
+    for list in [&mut trees, &mut objects, &mut devices, &mut markers] {
         list.sort_unstable();
         list.dedup();
     }
@@ -1745,7 +1801,16 @@ pub fn delete_marked(line: &mut Line, state: &mut EditorState) {
             line.source.objects.remove(i);
         }
     }
-    // Tree/object indices shifted under the selection.
+    // A device takes its signal and the signal's route references along.
+    for i in devices.into_iter().rev() {
+        line.source.remove_device(i);
+    }
+    for i in markers.into_iter().rev() {
+        if i < line.source.markers.len() {
+            line.source.markers.remove(i);
+        }
+    }
+    // Indices shifted under the selection.
     state.selection = Selection::None;
 }
 
@@ -1760,6 +1825,27 @@ fn mark_within(state: &mut EditorState, line: &Line, marks: &Marks, p: EcefPos, 
         let near = object_pos(&line.net, object).is_some_and(|q| q.distance(p) <= radius);
         if near && !state.marked.contains(&Mark::Object(i)) {
             state.marked.push(Mark::Object(i));
+        }
+    }
+}
+
+/// Marks everything within `radius` of `p` — the select tool's circle:
+/// trees and objects like the brush, plus devices and the reference markers
+/// of visible layers.
+fn mark_circle(state: &mut EditorState, line: &Line, marks: &Marks, p: EcefPos, radius: f64) {
+    mark_within(state, line, marks, p, radius);
+    for (i, device) in line.source.devices.iter().enumerate() {
+        let near = device_pos(&line.net, device).is_some_and(|q| q.distance(p) <= radius);
+        if near && !state.marked.contains(&Mark::Device(i)) {
+            state.marked.push(Mark::Device(i));
+        }
+    }
+    for (i, marker) in line.source.markers.iter().enumerate() {
+        if state.layer_visible(&marker.layer)
+            && marks.marker(i, marker).distance(p) <= radius
+            && !state.marked.contains(&Mark::Marker(i))
+        {
+            state.marked.push(Mark::Marker(i));
         }
     }
 }
@@ -1885,7 +1971,12 @@ pub fn marker_layers(line: &Line) -> std::collections::BTreeMap<String, usize> {
 /// end's node, which turns into a joint; a branch drawing splits its base edge
 /// and wires the joint into a turnout whose diverging leg is the drawing.
 /// `false` only when the split failed — the drawing is gone either way.
-pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
+pub fn finish_drawing(
+    line: &mut Line,
+    state: &mut EditorState,
+    ground: Option<&dyn Fn(EcefPos) -> Option<f64>>,
+) -> bool {
+    let ground = if state.lay.snap_terrain { ground } else { None };
     let Some(drawing) = state.drawing.take() else {
         return true;
     };
@@ -1953,6 +2044,9 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
             }
         };
         close_end(line, to_end);
+        if let Some(g) = ground {
+            snap_edge_to_terrain(line, branch, g, false, to_end.map(|e| geo::from_ecef(e.pos).2));
+        }
         state.selection = Selection::Edge(branch);
         return true;
     }
@@ -1992,6 +2086,15 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
     }
     close_end(line, drawing.from_end);
     close_end(line, to_end);
+    if let Some(g) = ground {
+        snap_edge_to_terrain(
+            line,
+            index,
+            g,
+            drawing.from_end.is_none(),
+            to_end.map(|e| geo::from_ecef(e.pos).2),
+        );
+    }
     // Yards are laid several tracks at a time: the copies run parallel to the
     // right, each one a track of its own.
     for n in 1..state.lay.parallel.max(1) {
@@ -1999,7 +2102,11 @@ pub fn finish_drawing(line: &mut Line, state: &mut EditorState) -> bool {
             Ok(compiled) => line.net = compiled.net,
             Err(_) => break,
         }
-        offset_edge(line, index, -state.lay.spacing * n as f64);
+        let copy = offset_edge(line, index, -state.lay.spacing * n as f64);
+        // Each copy stands on its own ground — a yard on a hillside.
+        if let (Some(g), Some(copy)) = (ground, copy) {
+            snap_edge_to_terrain(line, copy, g, true, None);
+        }
     }
     state.selection = Selection::Edge(index);
     true
@@ -2012,6 +2119,71 @@ fn close_end(line: &mut Line, end: Option<OpenEnd>) {
         && matches!(node, NodeSource::Buffer)
     {
         *node = NodeSource::Joint;
+    }
+}
+
+/// Ground sample spacing of the terrain snap [m] — grade steps land at this
+/// interval, coarse enough to keep an edge's profile list readable.
+const TERRAIN_SNAP_STEP: f64 = 20.0;
+
+/// Rewrites the vertical profile of edge `index` so the track follows the
+/// ground: heights sampled every [`TERRAIN_SNAP_STEP`] along the compiled
+/// alignment become grade steps. A free `Geo` start drops onto the surface;
+/// a start glued to other track (`free_start = false`) keeps its height and
+/// the first interval works the difference off. `end_height` pins the far
+/// end the same way — a drawing that landed on an open end has to meet that
+/// track, not the ground under it. Where the ground gives no answer the
+/// profile is left alone.
+fn snap_edge_to_terrain(
+    line: &mut Line,
+    index: usize,
+    ground: &dyn Fn(EcefPos) -> Option<f64>,
+    free_start: bool,
+    end_height: Option<f64>,
+) {
+    let Ok(compiled) = line.source.compile() else {
+        return;
+    };
+    let Some(edge) = compiled.net.edges().get(index) else {
+        return;
+    };
+    let length = edge.length();
+    if length < 1.0 {
+        return;
+    }
+    let count = (length / TERRAIN_SNAP_STEP).ceil().max(1.0) as usize;
+    let step = length / count as f64;
+    let mut heights = Vec::with_capacity(count + 1);
+    for i in 0..=count {
+        let Some(h) = ground(edge.eval(step * i as f64).pos) else {
+            return;
+        };
+        heights.push(h);
+    }
+    if !free_start {
+        heights[0] = geo::from_ecef(edge.eval(0.0).pos).2;
+    }
+    if let Some(h) = end_height {
+        *heights.last_mut().expect("count >= 1") = h;
+    }
+    let mut grade: Vec<(f64, f64)> = Vec::new();
+    for (i, pair) in heights.windows(2).enumerate() {
+        let g = (pair[1] - pair[0]) / step * 1000.0;
+        if grade.last().is_none_or(|(_, last)| (g - last).abs() > 0.01) {
+            grade.push((step * i as f64, g));
+        }
+    }
+    // A profile that came out dead level is no profile at all.
+    if grade.len() == 1 && grade[0].1.abs() < 0.01 {
+        grade.clear();
+    }
+    let geoid = line.source.geoid_offset;
+    let source = &mut line.source.edges[index];
+    source.grade = grade;
+    if free_start
+        && let EdgeStart::Geo { point, .. } = &mut source.start
+    {
+        point.height = heights[0] - geoid;
     }
 }
 
@@ -2353,6 +2525,8 @@ pub fn tool_input(
     let stale = state.marked.iter().any(|m| match m {
         Mark::Tree(i) => *i >= line.source.trees.len(),
         Mark::Object(i) => *i >= line.source.objects.len(),
+        Mark::Device(i) => *i >= line.source.devices.len(),
+        Mark::Marker(i) => *i >= line.source.markers.len(),
     });
     if stale {
         state.marked.clear();
@@ -2450,7 +2624,9 @@ pub fn tool_input(
     }
 
     if keys.just_pressed(KeyCode::Escape) {
-        if !state.forest_points.is_empty() {
+        if state.select_circle.take().is_some() {
+            // The growing circle is dropped, nothing else changes hands.
+        } else if !state.forest_points.is_empty() {
             state.forest_points.clear();
         } else if !state.marked.is_empty() {
             state.marked.clear();
@@ -2478,10 +2654,13 @@ pub fn tool_input(
             .take()
             .zip(windows.single().ok().and_then(|w| w.cursor_position()))
             .is_some_and(|(down, up)| down.distance(up) < 4.0);
+    // The ground the terrain snap reads: loaded tiles first, the builder's
+    // blended surface where no tile is in the scene yet.
+    let ground = |p: EcefPos| terrain_view.ground_height(p);
     if keys.just_pressed(KeyCode::Enter) || right_click {
         if !state.forest_points.is_empty() {
             finish_forest(&mut line, &mut state, &mut overlay);
-        } else if !finish_drawing(&mut line, &mut state) {
+        } else if !finish_drawing(&mut line, &mut state, Some(&ground)) {
             overlay.status = t!("status-split-failed");
         }
     }
@@ -2522,6 +2701,30 @@ pub fn tool_input(
         state.readout = readout;
     } else {
         state.readout = None;
+    }
+
+    // The select tool's circle: a press on empty ground grows a radius while
+    // the button is held — Train Simulator Classic's area selection. The
+    // release marks everything inside; with Ctrl held it adds to what is
+    // marked, alone it replaces it. Under 2 m it was just a click.
+    if let Some(center) = state.select_circle {
+        if state.tool != Tool::Select {
+            state.select_circle = None;
+        } else if buttons.pressed(MouseButton::Left) {
+            return;
+        } else {
+            state.select_circle = None;
+            if let Some(p) = picked
+                && center.distance(p) >= 2.0
+            {
+                let ctrl =
+                    keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+                if !ctrl {
+                    state.marked.clear();
+                }
+                mark_circle(&mut state, &line, &marks, center, center.distance(p));
+            }
+        }
     }
 
     // The marking brush sweeps while the button is held — every frame, not
@@ -2650,7 +2853,7 @@ pub fn tool_input(
             }
             // A click onto an open end closes the drawing there and then —
             // nothing more could be appended past a joint anyway.
-            if landed && !finish_drawing(&mut line, &mut state) {
+            if landed && !finish_drawing(&mut line, &mut state, Some(&ground)) {
                 overlay.status = t!("status-split-failed");
             }
         }
@@ -2947,11 +3150,36 @@ pub fn tool_input(
                 .chain(terrain)
                 .filter_map(|(sel, pos)| Some((sel, pick.hits(pos)?)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
+            // Ctrl collects a multi-selection instead of replacing the
+            // single one — the World Editor's add-to-selection hotkey. A
+            // second Ctrl-click on the same thing takes it out again.
+            let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+            if ctrl {
+                match nearest.and_then(|(sel, _)| as_mark(sel)) {
+                    Some(mark) => match state.marked.iter().position(|m| *m == mark) {
+                        Some(k) => {
+                            state.marked.remove(k);
+                        }
+                        None => state.marked.push(mark),
+                    },
+                    // Ctrl on empty ground grows the circle that adds.
+                    None if nearest.is_none() && nearest_edge(&line, pick).is_none() => {
+                        state.select_circle = Some(p);
+                    }
+                    None => {}
+                }
+                return;
+            }
             // Point candidates first, the track last.
             state.selection = match nearest {
                 Some((sel, _)) => sel,
                 None => nearest_edge(&line, pick).map_or(Selection::None, Selection::Edge),
             };
+            // A press that found nothing may grow into the circle selection;
+            // one that stays under 2 m keeps meaning "deselect".
+            if state.selection == Selection::None {
+                state.select_circle = Some(p);
+            }
             // The World Editor's double click: the second pick of the same
             // thing within the window sends the panel to its properties —
             // which also unfolds a folded panel.
@@ -3490,12 +3718,25 @@ pub fn draw_gizmos(
             gizmos.line(center - Vec3::Z * arm, center + Vec3::Z * arm, color);
         }
     }
-    // Marked objects wear the same orange as marked trees.
+    // Marked objects, devices and markers wear the same orange as marked
+    // trees.
     for mark in &state.marked {
-        if let Mark::Object(i) = mark
-            && let Some(object) = line.source.objects.get(*i)
-            && let Some(p) = object_pos(&line.net, object)
-        {
+        let pos = match *mark {
+            Mark::Object(i) => line
+                .source
+                .objects
+                .get(i)
+                .and_then(|o| object_pos(&line.net, o)),
+            Mark::Device(i) => line
+                .source
+                .devices
+                .get(i)
+                .and_then(|d| device_pos(&line.net, d)),
+            Mark::Marker(i) => line.source.markers.get(i).map(|m| ground.marks.marker(i, m)),
+            // Trees are tinted in their own pass above.
+            Mark::Tree(_) => None,
+        };
+        if let Some(p) = pos {
             let radius = (focus.height * 0.010).max(3.0) as f32;
             ground_circle(&mut gizmos, &origin.0, p, radius, marked_color);
         }
@@ -3510,6 +3751,13 @@ pub fn draw_gizmos(
             let (camera, camera_transform) = camera.single().ok()?;
             pick_ground(camera, camera_transform, c, &origin.0, &focus)
         });
+    // The select tool's circle, growing under the held button.
+    if let Some(center) = state.select_circle
+        && let Some(p) = cursor
+    {
+        let radius = center.distance(p).max(2.0) as f32;
+        ground_circle(&mut gizmos, &origin.0, center, radius, marked_color);
+    }
     // Rail joints while the track category is up, after the World Editor: a
     // square at every node — grey where edges weld (a switch is a weld of
     // three), red where an end is loose. The loose end is the thing to
@@ -3622,7 +3870,12 @@ pub fn draw_gizmos(
             let target = cursor.map(|p| {
                 lay_target(&state.open_ends, drawing, snap_ghost(p, &ghost, &focus), &focus)
             });
-            gizmos.linestrip(drawing.polyline(target, &origin.0), color);
+            // The preview lies where the finish will put the piece: on the
+            // ground while the terrain snap is on.
+            let terrain_h = |p: EcefPos| ground.view.ground_height(p);
+            let follow: Option<&dyn Fn(EcefPos) -> Option<f64>> =
+                if state.lay.snap_terrain { Some(&terrain_h) } else { None };
+            gizmos.linestrip(drawing.polyline(target, &origin.0, follow), color);
         }
     }
     // Forest brush preview: the ring so far, the cursor as the next corner.
@@ -3888,7 +4141,7 @@ mod tests {
             recenter: false,
             issues: Vec::new(),
         };
-        assert!(finish_drawing(&mut doc, &mut state));
+        assert!(finish_drawing(&mut doc, &mut state, None));
         line = doc.source;
         let compiled = line.compile().expect("compiles");
         let end = compiled.net.edges()[0].end_pose().pos;
@@ -3897,6 +4150,125 @@ mod tests {
             "end missed the click by {} m",
             end.distance(bend)
         );
+    }
+
+    /// Terrain snap: the laid piece follows the sampled ground — the heights
+    /// become a grade profile, and the free start drops onto the surface.
+    #[test]
+    fn terrain_snap_follows_the_ground() {
+        let start = world_coords::geo::to_ecef_deg(52.0, 10.0, 146.0);
+        let mut drawing = Drawing::start_at(start, 46.0);
+        let frame = EnuFrame::at(start);
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(400.0, 0.0, 0.0))));
+        drawing.click(Target::free(frame.to_ecef(DVec3::new(800.0, 0.0, 0.0))));
+        let mut state = EditorState {
+            drawing: Some(drawing),
+            ..Default::default()
+        };
+        state.lay.snap_terrain = true;
+        let mut doc = Line {
+            source: content::LineSource {
+                name: "drawn".into(),
+                geoid_offset: 46.0,
+                electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
+                ..Default::default()
+            },
+            net: track_model::TrackNetwork::new(),
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        };
+        // The ground: an 8 ‰ eastward slope, 130 m ellipsoidal at the start.
+        let ground = |p: EcefPos| Some(130.0 + 0.008 * frame.to_local(p).x);
+        assert!(finish_drawing(&mut doc, &mut state, Some(&ground)));
+
+        let edge = &doc.source.edges[0];
+        assert!(!edge.grade.is_empty());
+        for (s, g) in &edge.grade {
+            assert!((g - 8.0).abs() < 0.1, "grade {g} ‰ at {s} m");
+        }
+        // The start dropped onto the ground — stored above the geoid.
+        let content::route::EdgeStart::Geo { point, .. } = &edge.start else {
+            panic!("free start stays geo-anchored");
+        };
+        assert!((point.height - (130.0 - 46.0)).abs() < 0.05, "{}", point.height);
+        // Integrated over 800 m the profile climbs onto the slope's far end.
+        let compiled = doc.source.compile().expect("compiles");
+        let end = world_coords::geo::from_ecef(compiled.net.edges()[0].end_pose().pos).2;
+        assert!((end - (130.0 + 0.008 * 800.0)).abs() < 0.2, "{end}");
+    }
+
+    /// The lay preview lies where the finish will put the piece: a free
+    /// start stands on the ground with the rest, a glued start keeps its
+    /// height and blends onto the ground over the first sample interval.
+    #[test]
+    fn the_preview_lies_on_the_ground() {
+        let start = world_coords::geo::to_ecef_deg(52.0, 10.0, 100.0);
+        let frame = EnuFrame::at(start);
+        let origin = RenderOrigin::new(start);
+        // Terrain 10 m above the drawing plane, everywhere.
+        let ground = |_: EcefPos| Some(110.0);
+
+        let mut free = Drawing::start_at(start, 46.0);
+        free.click(Target::free(frame.to_ecef(DVec3::new(400.0, 0.0, 0.0))));
+        let points = free.polyline(None, &origin, Some(&ground));
+        assert!((points[0].y - 10.5).abs() < 0.6, "{}", points[0].y);
+        assert!((points.last().unwrap().y - 10.5).abs() < 0.6);
+
+        let mut glued = Drawing::continue_from(
+            OpenEnd {
+                node: 0,
+                edge: 0,
+                at_end: true,
+                pos: start,
+                heading: 0.0,
+                curvature: 0.0,
+            },
+            46.0,
+        );
+        glued.click(Target::free(frame.to_ecef(DVec3::new(400.0, 0.0, 0.0))));
+        let points = glued.polyline(None, &origin, Some(&ground));
+        // Start at the old track's height, on the ground from 20 m on.
+        assert!((points[0].y - 0.5).abs() < 0.6, "{}", points[0].y);
+        assert!((points[4].y - 10.5).abs() < 0.6, "{}", points[4].y);
+        assert!((points.last().unwrap().y - 10.5).abs() < 0.6);
+    }
+
+    /// The circle selection marks the point things inside — a device
+    /// included — and the bulk delete removes them all in one step, with
+    /// the signal references cleaned up so the result still compiles.
+    #[test]
+    fn circle_selection_marks_and_deletes() {
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let mut doc = Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        };
+        let mut state = EditorState::default();
+        let center = device_pos(&doc.net, &doc.source.devices[0]).unwrap();
+        mark_circle(&mut state, &doc, &Marks::default(), center, 15.0);
+        assert!(state.marked.contains(&Mark::Device(0)), "device 0 caught");
+
+        let devices = doc.source.devices.len();
+        let caught = state
+            .marked
+            .iter()
+            .filter(|m| matches!(m, Mark::Device(_)))
+            .count();
+        delete_marked(&mut doc, &mut state);
+        assert!(state.marked.is_empty());
+        assert_eq!(doc.source.devices.len(), devices - caught);
+        assert!(doc.source.compile().is_ok(), "signal refs cleaned up");
     }
 
     /// The switch tool splits the clicked edge and wires the drawn branch as
@@ -3928,7 +4300,7 @@ mod tests {
             drawing: Some(drawing),
             ..Default::default()
         };
-        assert!(finish_drawing(&mut doc, &mut state));
+        assert!(finish_drawing(&mut doc, &mut state, None));
 
         let compiled = doc.source.compile().expect("turnout compiles");
         // Split into first half, curve, climb, second half, branch.
@@ -3990,7 +4362,7 @@ mod tests {
             drawing: Some(drawing),
             ..Default::default()
         };
-        assert!(finish_drawing(&mut doc, &mut state));
+        assert!(finish_drawing(&mut doc, &mut state, None));
 
         let compiled = doc.source.compile().expect("turnout compiles");
         let switch = doc
@@ -4405,7 +4777,7 @@ mod tests {
             drawing: Some(drawing),
             ..Default::default()
         };
-        assert!(finish_drawing(&mut doc, &mut state));
+        assert!(finish_drawing(&mut doc, &mut state, None));
         let edge = &doc.source.edges[0];
         assert!(!edge.cant.is_empty(), "the cant band is in the file");
         let compiled = doc.source.compile().expect("compiles");
@@ -4477,7 +4849,7 @@ mod tests {
             drawing: Some(drawing),
             ..Default::default()
         };
-        assert!(finish_drawing(&mut doc, &mut state));
+        assert!(finish_drawing(&mut doc, &mut state, None));
         let compiled = doc.source.compile().expect("still compiles");
         // Both former buffers are joints now, and the new edge closes the gap.
         assert!(matches!(doc.source.nodes[1], NodeSource::Joint));

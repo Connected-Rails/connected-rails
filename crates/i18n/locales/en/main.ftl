@@ -697,7 +697,7 @@ tool-group-equipment = Lineside equipment
 tool-group-vegetation = Vegetation
 tool-group-terrain = Terrain
 tool-select = Select
-tool-select-hint = Click a device or a track to inspect it · Delete removes it
+tool-select-hint = Click picks a single thing · Ctrl+click gathers a multi-selection, a second Ctrl+click takes it out again · press on empty ground and drag to select in a circle · Delete removes what is selected
 tool-draw = Lay track
 tool-draw-hint = Press sets the standing end, the drag its heading — on an open end it continues that track, on a track's middle it starts a turnout branch. Every click appends a tangent arc, a straight while Ctrl is held; the running end snaps onto open ends. Enter or right-click finishes · Esc cancels
 tool-split = Split track
@@ -769,6 +769,8 @@ lay-snap-radius = Snap to standard radii
 lay-snap-radius-hint = Rounds a drawn arc to the alignment rulebook's radius series, the way the World Editor snaps its running end
 lay-easements = Easements & cant
 lay-easements-hint = Lays curves as clothoid – arc – clothoid with the rulebook's cant for the piece's speed (ramp 1:10v, 160 mm cap), instead of bare arcs. An eased track carries transition curves, so its support points cannot be dragged afterwards
+lay-snap-terrain = Snap to terrain
+lay-snap-terrain-hint = The laid piece follows the ground: sampled terrain heights become its gradient profile, and a free start drops onto the surface. An end joined onto other track keeps that track's height
 lay-turnout-radius = Turnout radius
 lay-turnout-radius-hint = Radius of the two turnout arcs a crossover is built from; 190 m is the common German EW 190 geometry
 # --- Stake-out calculator --------------------------------------------------

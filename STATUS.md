@@ -303,7 +303,9 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   What the piece is laid as comes from the *Tool* section — track type (the content
   drawer's track-type cards arm it too), speed, gradient, electrification, **parallel
   tracks** at a spacing, an optional **snap onto the standard radius series** of
-  the alignment rulebook, and **easements with cant**: a curve then goes down as
+  the alignment rulebook, an optional **terrain snap** (sampled ground heights become
+  the piece's grade profile, a free start drops onto the surface, an end joined onto
+  other track keeps that track's height), and **easements with cant**: a curve then goes down as
   clothoid – arc – clothoid with the rulebook's cant for the piece's speed
   (`CantRules` — equilibrium minus deficiency, capped, ramp 1:10·v), the cant band
   written as the same 10 m steps the importer writes (`ramp_cant`), signed by the
@@ -553,6 +555,12 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   tool now connects two open ends the way Zusi's Absteckrechner does (see the join
   tool under *Editors*), with its parameters — design speed, radius or automatic,
   transitions, cant, least intermediate straight — as the tool's options.
+  **The select tool grew the World Editor's multi-selection**: `Ctrl`+click gathers
+  devices, objects, trees and markers into the marked set (a second `Ctrl`+click takes
+  one out), a press on empty ground dragged open is the **circle selection** over the
+  same kinds, and `Delete` removes the whole set as one undo step — the marking
+  brush's machinery (`Mark`, `delete_marked`), taught two more kinds and given the
+  select tool as a second front end.
 - **Vehicle editor completed (2026-08-19):** the gaps against Zusi 3's vehicle editor are
   closed, and the data behind them is read by the simulator rather than sitting in the file.
   - **Metadata, variants and loads** (`VehicleSpec::meta`/`variants`/`loads`): class,

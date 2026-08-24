@@ -286,10 +286,12 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   All of it controllable through a RON file, reloadable at runtime.
 - **Editors (ch. 15):** three separate programs with a desktop UI (menu bar, docked panels,
   native file dialogs): `route-editor` edits a line over the aerial imagery overlay
-  (editor v3), its tools in a **toolbox strip** on the left edge after Train Simulator
-  Classic's World Editor — categories in the upper box (track, lineside equipment,
-  landscape, module), the active category's tools below, the number keys counting down
-  the box that is up, and the form panel's *Tool* section carrying the active tool's
+  (editor v3), its tools in a **toolbox** on the left edge after Train Simulator
+  Classic's World Editor — categories in the top box (track, lineside equipment,
+  vegetation, terrain, module), the active category's tools in the middle box, the
+  active tool's own switches (radius snap, easements, terrain snap) in the bottom
+  box, the number keys counting down the box that is up — and the form panel docked
+  on the **right** edge, its *Tool* section carrying the active tool's remaining
   options. The **lay tool** works standing-end/running-end: the press sets the start —
   on an open end it continues that track, on a track's middle it starts a turnout
   branch, on open ground it starts fresh — and the drag until release sets the heading
@@ -482,6 +484,46 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
   time against a reference body of the length over buffers.
+- **Toolbox boxes and the right-hand panel (2026-08-24, route editor):** the editor's
+  frame now matches the World Editor's. The toolbox became three card-framed boxes of
+  paired icon columns — the categories, the active category's tools, and the active
+  tool's own switches: the lay tool's radius snap and easements, the join tool's
+  easements, the object tool's snap to terrain, which moved out of the form rows into
+  the strip (an object placed with the toggle on starts with `snap_to_terrain` set).
+  The form panel docked over to the **right** edge and holds its width — a size cap
+  keeps one wide row from ratcheting the panel wider for the rest of the session
+  (egui persists the width content grew a panel to), the counts joined the heading's
+  line, and the drawer button beside the object picker became an icon. **The section
+  interiors followed**: interlocking sections and routes became one card each
+  (identifier and delete in the header, fields and chips in the body — the route's
+  delete no longer sits amid the chip "×"s), the marker layers and the area list
+  are grids instead of per-row `horizontal`s so their counts and buttons sit in
+  columns, the DGM source path truncates with the full path on hover, and the
+  route editor learned the vehicle editor's `--window WxH` flag.
+  **Placement grew a preview** (`tools::placement_preview`): the object and tree
+  tools carry the model as a ghost at the cursor — spawned once per picked model,
+  moved every frame, hidden off-snap — standing exactly where the click would put
+  it (`scatter_objects`' own pose maths); the device tool draws its snap point
+  and track direction. A **double click** on a selection jumps the panel to its
+  properties (own detector in `tool_input` — the map is no egui widget), the
+  gradient tool draws **slope chevrons** (a V every 60 m pointing uphill on every
+  graded stretch), and the editor **remembers language, window size and panel
+  width** between runs (`settings.rs` after the vehicle editor's; the language
+  menu used to throw the choice away at the next start).
+  **Orientation and view controls followed** (`viewport_bar`, `view.rs`): a drawn
+  **compass** whose needle shows where north lies — the click faces north — and a
+  **top-down toggle** that tips the camera vertical for track work over the
+  imagery (`Focus::toggle_top_down`), both also under View; the **properties
+  panel folds away** (`EditorState::panel_hidden`, viewport-bar button and View
+  entry; any jump into the panel unfolds it), and the File/Edit menus finally
+  **show their accelerators** (`Button::shortcut_text`).
+  **The map followed the same original** (`tools.rs::draw_gizmos`): while the track
+  category is up, every edge wears the World Editor's spline line (blue, drawn
+  first so highlights and selection paint over it), every node a square — grey
+  weld at joints and switches, red at loose ends, replacing the lay/join-only
+  grey circles; the cursor-near and join-first-pick states stayed. The selected
+  edge grew the red/blue direction arrows out of its start and end, which say
+  which way its metre figures run.
 - **Track laying after the World Editor (2026-08-23, route editor):** the toolbox strip
   and the track-tool set described under *Editors* above — standing-end/running-end
   laying with Ctrl-straights, end snapping and drag-decided facing/trailing turnouts,

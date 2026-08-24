@@ -37,41 +37,49 @@ pub fn area_list(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, fo
         .iter()
         .map(|area| area_position(line, area))
         .collect();
-    for (i, area) in line.source.areas.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("\u{25a0}").color(egui::Color32::from_rgb(
-                    (area.color.0.clamp(0.0, 1.0) * 255.0) as u8,
-                    (area.color.1.clamp(0.0, 1.0) * 255.0) as u8,
-                    (area.color.2.clamp(0.0, 1.0) * 255.0) as u8,
-                )),
-            );
-            let here = state.selection == Selection::TrackArea(i);
-            let mut label = egui::RichText::new(if area.name.is_empty() {
-                t!("area-unnamed")
-            } else {
-                area.name.clone()
-            });
-            if here {
-                label = label.color(colors::TEXT_STRONG);
-            }
-            if ui.selectable_label(here, label).clicked() {
-                state.selection = Selection::TrackArea(i);
-                state.jump_to = Some("selection");
-                if let Some(Some(p)) = positions.get(i) {
-                    focus.position = *p;
+    // A grid, not one `horizontal` per row: the names and lengths then sit in
+    // columns whatever width the colour square and the name happen to have.
+    editor_ui::form_grid("area-list")
+        .num_columns(3)
+        // The 84 px widget minimum would hold the colour-square column open
+        // that wide.
+        .min_col_width(0.0)
+        .show(ui, |ui| {
+            for (i, area) in line.source.areas.iter().enumerate() {
+                ui.label(
+                    egui::RichText::new("\u{25a0}").color(egui::Color32::from_rgb(
+                        (area.color.0.clamp(0.0, 1.0) * 255.0) as u8,
+                        (area.color.1.clamp(0.0, 1.0) * 255.0) as u8,
+                        (area.color.2.clamp(0.0, 1.0) * 255.0) as u8,
+                    )),
+                );
+                let here = state.selection == Selection::TrackArea(i);
+                let mut label = egui::RichText::new(if area.name.is_empty() {
+                    t!("area-unnamed")
+                } else {
+                    area.name.clone()
+                });
+                if here {
+                    label = label.color(colors::TEXT_STRONG);
                 }
+                if ui.selectable_label(here, label).clicked() {
+                    state.selection = Selection::TrackArea(i);
+                    state.jump_to = Some("selection");
+                    if let Some(Some(p)) = positions.get(i) {
+                        focus.position = *p;
+                    }
+                }
+                ui.label(
+                    egui::RichText::new(t!(
+                        "sel-area-list-covers",
+                        length = format!("{:.0}", area.length())
+                    ))
+                    .small()
+                    .color(colors::TEXT_SECONDARY),
+                );
+                ui.end_row();
             }
-            ui.label(
-                egui::RichText::new(t!(
-                    "sel-area-list-covers",
-                    length = format!("{:.0}", area.length())
-                ))
-                .small()
-                .color(colors::TEXT_SECONDARY),
-            );
         });
-    }
     if ui
         .small_button(t!("action-add-area"))
         .on_hover_text(t!("action-add-area-hint"))

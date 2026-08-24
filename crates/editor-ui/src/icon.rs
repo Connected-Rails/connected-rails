@@ -75,6 +75,16 @@ pub enum Icon {
     Crossover,
     /// Gradient — a rail climbing, with the arrow that moves its break point.
     Gradient,
+    /// Snap to the rulebook's standard radii — a graduated arc.
+    SnapRadius,
+    /// Transition curves — the S a clothoid pair draws.
+    Easement,
+    /// Snap to terrain — a crate dropping onto the ground line.
+    SnapTerrain,
+    /// Top-down view — a viewfinder: four corner brackets around a dot.
+    TopDown,
+    /// The right-hand properties panel — a frame with its right column.
+    PanelRight,
 }
 
 /// Size of a toolbox button: the toolbox is a column of icons alone, so each
@@ -129,6 +139,39 @@ fn icon_button_sized(
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(4), fill);
     draw(painter, square(rect).shrink(PADDING), icon, color);
+    response.on_hover_text(tooltip.into())
+}
+
+/// A compass at bar-button size: the needle points to where north lies on
+/// screen, its red half north as on the real instrument. The one icon that is
+/// drawn live rather than from the table — it turns with the camera.
+pub fn compass(ui: &mut Ui, yaw: f32, tooltip: impl Into<String>) -> Response {
+    let (rect, response) = ui.allocate_exact_size(BUTTON, Sense::click());
+    let fill = if response.hovered() {
+        colors::BG_HOVER
+    } else {
+        colors::BG_WIDGET
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(4), fill);
+    let center = rect.center();
+    let radius = (rect.height() * 0.5 - 3.0).min(rect.width() * 0.5 - 3.0);
+    painter.circle_stroke(center, radius, Stroke::new(1.0, colors::TEXT_SECONDARY));
+    // Screen direction of north: looking north (yaw 0) puts it straight up,
+    // looking east puts it on the left.
+    let a = -yaw;
+    let dir = Vec2::new(a.sin(), -a.cos());
+    let side = Vec2::new(-dir.y, dir.x) * (radius * 0.32);
+    painter.add(Shape::convex_polygon(
+        vec![center + dir * radius, center + side, center - side],
+        colors::ERROR,
+        Stroke::NONE,
+    ));
+    painter.add(Shape::convex_polygon(
+        vec![center - dir * radius, center - side, center + side],
+        colors::TEXT_SECONDARY,
+        Stroke::NONE,
+    ));
     response.on_hover_text(tooltip.into())
 }
 
@@ -506,6 +549,82 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(vec![at(0.04, 0.80), at(0.40, 0.80), at(0.96, 0.40)]),
             line(vec![at(0.40, 0.62), at(0.40, 0.14)]),
             line(vec![at(0.28, 0.26), at(0.40, 0.14), at(0.52, 0.26)]),
+        ],
+        // An arc over its radial ticks — a graduated arc, the drawn radius
+        // landing on the rulebook's series.
+        Icon::SnapRadius => {
+            let spoke = |radius: f32, degrees: f32| {
+                let a = degrees.to_radians();
+                at(0.08 + radius * a.cos(), 0.92 - radius * a.sin())
+            };
+            let arc: Vec<Pos2> = (0..=12)
+                .map(|i| spoke(0.78, 8.0 + 74.0 * i as f32 / 12.0))
+                .collect();
+            vec![
+                line(arc),
+                line(vec![spoke(0.66, 20.0), spoke(0.90, 20.0)]),
+                line(vec![spoke(0.66, 45.0), spoke(0.90, 45.0)]),
+                line(vec![spoke(0.66, 70.0), spoke(0.90, 70.0)]),
+            ]
+        }
+        // The S a pair of transition curves draws: straight in, straight out,
+        // the curvature in between.
+        Icon::Easement => {
+            let s: Vec<Pos2> = (0..=16)
+                .map(|i| {
+                    let t = i as f32 / 16.0;
+                    at(0.06 + 0.88 * t, 0.90 - 0.80 * (t * t * (3.0 - 2.0 * t)))
+                })
+                .collect();
+            vec![line(s)]
+        }
+        // A crate over the ground line, the arrow pulling it down onto it.
+        Icon::SnapTerrain => vec![
+            line(vec![at(0.04, 0.88), at(0.96, 0.88)]),
+            Shape::closed_line(
+                vec![
+                    at(0.32, 0.06),
+                    at(0.68, 0.06),
+                    at(0.68, 0.34),
+                    at(0.32, 0.34),
+                ],
+                stroke,
+            ),
+            line(vec![at(0.50, 0.42), at(0.50, 0.78)]),
+            line(vec![at(0.38, 0.66), at(0.50, 0.78), at(0.62, 0.66)]),
+        ],
+        // A viewfinder seen from above: four corner brackets and the point
+        // they are aimed at.
+        Icon::TopDown => {
+            let bracket = |cx: f32, cy: f32, dx: f32, dy: f32| {
+                line(vec![
+                    at(cx + dx * 0.26, cy),
+                    at(cx, cy),
+                    at(cx, cy + dy * 0.26),
+                ])
+            };
+            vec![
+                bracket(0.08, 0.10, 1.0, 1.0),
+                bracket(0.92, 0.10, -1.0, 1.0),
+                bracket(0.08, 0.90, 1.0, -1.0),
+                bracket(0.92, 0.90, -1.0, -1.0),
+                Shape::circle_filled(at(0.50, 0.50), rect.width() * 0.08, color),
+            ]
+        }
+        // A window frame with its right-hand column — the properties panel.
+        Icon::PanelRight => vec![
+            Shape::closed_line(
+                vec![
+                    at(0.06, 0.12),
+                    at(0.94, 0.12),
+                    at(0.94, 0.88),
+                    at(0.06, 0.88),
+                ],
+                stroke,
+            ),
+            line(vec![at(0.60, 0.12), at(0.60, 0.88)]),
+            line(vec![at(0.68, 0.32), at(0.86, 0.32)]),
+            line(vec![at(0.68, 0.50), at(0.86, 0.50)]),
         ],
         // A drawer pulled out of its cabinet: the case, the drawer front and
         // its handle.

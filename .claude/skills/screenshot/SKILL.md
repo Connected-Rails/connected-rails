@@ -54,7 +54,8 @@ Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für gel
 ## Nur Moduleditor (`trainsim-route-editor`)
 
 Modul­datei als erstes Argument (ohne: Beispielmodul), `--imagery <konfig.ron>` für eine andere
-Bildmaterial-Konfiguration als `imagery.ron`.
+Bildmaterial-Konfiguration als `imagery.ron`, `--window 1280x2000` für eine feste Fenstergröße
+(hohe Fenster zeigen das ganze Panel).
 
 ## Nur Fahrzeugeditor (`trainsim-vehicle-editor`)
 

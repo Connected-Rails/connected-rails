@@ -25,7 +25,8 @@ use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
     ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
-use glam::{DVec2, DVec3};
+use bevy::world_serialization::WorldAsset;
+use glam::{DQuat, DVec2, DVec3};
 use i18n::t;
 use sim_core::interlock::{SignalKind, SignalSystem};
 use track_model::{DeviceKind, Facing, Segment, TrackNetwork, TrackPose};
@@ -486,11 +487,22 @@ pub struct EditorState {
     pub overlap_length: Option<f64>,
     /// The content drawer: what the installed mods bring, over the map.
     pub drawer: crate::content_drawer::Drawer,
+    /// The properties panel is folded away — the World Editor's flyouts give
+    /// the map the whole window. Session state, and any jump into the panel
+    /// unfolds it again.
+    pub panel_hidden: bool,
+    /// The select tool's last pick, for the double click: when it was made
+    /// and what it hit — two picks of the same thing within the window send
+    /// the panel to the properties.
+    pub last_select: Option<(f64, Selection)>,
     /// Panel section to scroll to on the next frame — a row that belongs
     /// somewhere else (a signal's routes) sends the panel there.
     pub jump_to: Option<&'static str>,
     /// Object (`"<mod>:<name>"`) the Place-object tool stamps.
     pub object: Option<String>,
+    /// The next placed object stands on the terrain instead of at the track's
+    /// height — the toolbox toggle, stamped into the object at placement.
+    pub place_snap_to_terrain: bool,
     /// Signal type (`"<mod>:<name>"`) a signal placed with the Place-device
     /// tool gets; `None` = the device stays a bare signal without a type.
     pub signal_type: Option<String>,
@@ -576,6 +588,12 @@ impl EditorState {
     /// it — what every mouse binding of the viewport is gated on.
     pub fn over_viewport(&self, cursor: Vec2) -> bool {
         self.viewport.contains(cursor) && !self.pointer_over_ui
+    }
+
+    /// The i18n key of the toolbox category that is up, clamped — the map
+    /// draws its track markings only while the track category is.
+    pub fn active_category(&self) -> &'static str {
+        TOOL_GROUPS[self.category.min(TOOL_GROUPS.len() - 1)].0
     }
 
     pub fn device_kind(&self) -> DeviceKind {
@@ -2309,6 +2327,7 @@ pub fn tool_input(
     gizmo: Res<crate::gizmo::GizmoState>,
     marks: Res<crate::terrain::Marks>,
     terrain_view: Res<crate::terrain::TerrainView>,
+    time: Res<Time>,
     mut state: ResMut<EditorState>,
     mut line: ResMut<Line>,
     mut overlay: ResMut<crate::overlay::Overlay>,
@@ -2758,7 +2777,7 @@ pub fn tool_input(
                         lateral_offset: spec.map_or(0.0, |o| o.lateral_offset),
                         yaw_deg: spec.map_or(0.0, |o| o.yaw_deg),
                         height: spec.map_or(0.0, |o| o.height),
-                        snap_to_terrain: false,
+                        snap_to_terrain: state.place_snap_to_terrain,
                     });
                     state.selection = Selection::Object(line.source.objects.len() - 1);
                 }
@@ -2933,6 +2952,18 @@ pub fn tool_input(
                 Some((sel, _)) => sel,
                 None => nearest_edge(&line, pick).map_or(Selection::None, Selection::Edge),
             };
+            // The World Editor's double click: the second pick of the same
+            // thing within the window sends the panel to its properties —
+            // which also unfolds a folded panel.
+            let now = time.elapsed_secs_f64();
+            if let Some((at, what)) = state.last_select
+                && now - at < 0.35
+                && what == state.selection
+                && state.selection != Selection::None
+            {
+                state.jump_to = Some("selection");
+            }
+            state.last_select = Some((now, state.selection));
         }
         // Handled above — the brush owns the whole press, not just the click.
         Tool::Brush => {}
@@ -2962,6 +2993,71 @@ pub(crate) fn ground_circle(
         radius,
         color,
     );
+}
+
+/// Square gizmo lying flat on the ground at `p` — the World Editor's weld
+/// marker shape: a circle is a device, a diamond a reference marker, the
+/// square is a rail joint.
+pub(crate) fn ground_square(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    p: EcefPos,
+    half: f32,
+    color: Color,
+) {
+    let center = origin.to_render(p) + origin.dir_to_render(EnuFrame::at(p).up) * MARK_LIFT;
+    let (x, z) = (Vec3::X * half, Vec3::Z * half);
+    gizmos.linestrip(
+        [
+            center - x - z,
+            center + x - z,
+            center + x + z,
+            center - x + z,
+            center - x - z,
+        ],
+        color,
+    );
+}
+
+/// Arrow out of an edge end along the track, lying on the ground — the World
+/// Editor's direction handle.
+fn end_arrow(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    pose: TrackPose,
+    sign: f64,
+    len: f64,
+    color: Color,
+) {
+    let dir3 = (pose.tangent * sign).normalize_or_zero();
+    let side3 = dir3.cross(pose.up).normalize_or_zero();
+    let base = origin.to_render(pose.pos) + origin.dir_to_render(pose.up) * MARK_LIFT;
+    let dir = origin.dir_to_render(dir3);
+    let side = origin.dir_to_render(side3);
+    let tip = base + dir * len as f32;
+    let head = (len * 0.3) as f32;
+    gizmos.line(base, tip, color);
+    gizmos.line(tip, tip - dir * head + side * (head * 0.6), color);
+    gizmos.line(tip, tip - dir * head - side * (head * 0.6), color);
+}
+
+/// A V on the rail pointing uphill — the World Editor's slope arrow.
+fn chevron(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    pose: TrackPose,
+    sign: f64,
+    arm: f64,
+    color: Color,
+) {
+    let dir3 = (pose.tangent * sign).normalize_or_zero();
+    let side3 = dir3.cross(pose.up).normalize_or_zero();
+    let base = origin.to_render(pose.pos) + origin.dir_to_render(pose.up);
+    let dir = origin.dir_to_render(dir3) * arm as f32;
+    let side = origin.dir_to_render(side3) * (arm * 0.7) as f32;
+    let tip = base + dir;
+    gizmos.line(tip, base - dir + side, color);
+    gizmos.line(tip, base - dir - side, color);
 }
 
 /// Track ribbon of one edge as a line on the ground.
@@ -3180,6 +3276,22 @@ pub fn draw_gizmos(
         .cursor_height
         .unwrap_or_else(|| geo::from_ecef(focus.position).2);
 
+    // The spline line of every edge while the track category is up — the
+    // World Editor's loft line: over aerial imagery the grey rails vanish at
+    // height, and the line is what keeps the alignment readable. Drawn first,
+    // so the highlights and the selection paint over it. The selected edge is
+    // skipped; it wears the accent line instead.
+    let track_work = state.active_category() == "tool-group-track";
+    if track_work {
+        let spline = Color::srgba(0.40, 0.58, 0.90, 0.85);
+        for (i, edge) in line.net.edges().iter().enumerate() {
+            if state.selection == Selection::Edge(i) {
+                continue;
+            }
+            edge_line(&mut gizmos, &origin.0, edge, spline);
+        }
+    }
+
     if let Some(highlight) = state.highlight {
         draw_highlight(&mut gizmos, &line, &origin.0, &focus, highlight);
     }
@@ -3228,6 +3340,17 @@ pub fn draw_gizmos(
         Selection::Edge(i) => {
             if let Some(edge) = line.net.edges().get(i) {
                 edge_line(&mut gizmos, &origin.0, edge, accent);
+                // Direction handles, the World Editor's pair: red out of the
+                // start, blue out of the end. The arrows say which way `s`
+                // runs — what every metre figure in the panel is measured
+                // along.
+                let len = pick_radius(&focus);
+                for (pose, sign, color) in [
+                    (edge.eval(0.0), -1.0, Color::srgb(0.87, 0.28, 0.23)),
+                    (edge.end_pose(), 1.0, Color::srgb(0.30, 0.56, 0.95)),
+                ] {
+                    end_arrow(&mut gizmos, &origin.0, pose, sign, len, color);
+                }
             }
             // Draggable support points as handles.
             if state.tool == Tool::Select {
@@ -3387,23 +3510,39 @@ pub fn draw_gizmos(
             let (camera, camera_transform) = camera.single().ok()?;
             pick_ground(camera, camera_transform, c, &origin.0, &focus)
         });
-    // Open ends while the lay or join tool is up: the grey weld squares of the
-    // World Editor, as circles — the one the cursor would take in accent, the
-    // join tool's first pick filled.
-    if matches!(state.tool, Tool::DrawTrack | Tool::Join) {
-        let radius = (focus.height * 0.010).max(3.5) as f32;
-        let reachable = cursor.and_then(|p| nearest_open_end(&state.open_ends, p, pick_radius(&focus)));
-        for end in &state.open_ends {
-            let near = reachable.is_some_and(|r| r.node == end.node);
-            let picked_first = state.join_from.is_some_and(|f| f.node == end.node);
-            let color = if near || picked_first {
-                accent
-            } else {
-                Color::srgb(0.62, 0.64, 0.70)
-            };
-            ground_circle(&mut gizmos, &origin.0, end.pos, radius, color);
-            if picked_first {
-                ground_circle(&mut gizmos, &origin.0, end.pos, radius * 0.5, color);
+    // Rail joints while the track category is up, after the World Editor: a
+    // square at every node — grey where edges weld (a switch is a weld of
+    // three), red where an end is loose. The loose end is the thing to
+    // continue from or to fix, so it is the one that shouts. While laying or
+    // joining, the end the cursor would take turns accent and the join tool's
+    // first pick is filled.
+    if track_work {
+        let half = (focus.height * 0.008).max(3.0) as f32;
+        let loose = Color::srgb(0.87, 0.28, 0.23);
+        let weld = Color::srgb(0.62, 0.64, 0.70);
+        let reachable =
+            cursor.and_then(|p| nearest_open_end(&state.open_ends, p, pick_radius(&focus)));
+        let mut seen = vec![false; line.source.nodes.len()];
+        for (source, edge) in line.source.edges.iter().zip(line.net.edges()) {
+            for (node, pose) in [(source.from, edge.eval(0.0)), (source.to, edge.end_pose())] {
+                let Some(kind) = line.source.nodes.get(node as usize) else {
+                    continue;
+                };
+                if std::mem::replace(&mut seen[node as usize], true) {
+                    continue;
+                }
+                let is_loose = matches!(kind, NodeSource::Buffer);
+                let near = reachable.is_some_and(|r| r.node == node);
+                let picked_first = state.join_from.is_some_and(|f| f.node == node);
+                let color = match (is_loose, near || picked_first) {
+                    (true, true) => accent,
+                    (true, false) => loose,
+                    (false, _) => weld,
+                };
+                ground_square(&mut gizmos, &origin.0, pose.pos, half, color);
+                if picked_first {
+                    ground_square(&mut gizmos, &origin.0, pose.pos, half * 0.5, color);
+                }
             }
         }
     }
@@ -3424,6 +3563,47 @@ pub fn draw_gizmos(
         for (s, _) in &source.grade {
             ground_circle(&mut gizmos, &origin.0, edge.eval(*s).pos, radius, accent);
         }
+    }
+    // Gradient chevrons while the gradient tool is up, after the World
+    // Editor's slope arrows: a V on the rail every 60 m pointing uphill, on
+    // every graded stretch of the line — a level one draws nothing, so the
+    // picture is where the line climbs, not that it exists.
+    if state.tool == Tool::Gradient {
+        let amber = Color::srgb(0.89, 0.71, 0.30);
+        let arm = (focus.height * 0.006).max(2.5);
+        for (source, edge) in line.source.edges.iter().zip(line.net.edges()) {
+            for (k, (start, grade)) in source.grade.iter().enumerate() {
+                if *grade == 0.0 {
+                    continue;
+                }
+                let end = source
+                    .grade
+                    .get(k + 1)
+                    .map_or(edge.length(), |(s, _)| *s)
+                    .min(edge.length());
+                let mut s = *start + 30.0;
+                while s < end {
+                    chevron(&mut gizmos, &origin.0, edge.eval(s), grade.signum(), arm, amber);
+                    s += 60.0;
+                }
+            }
+        }
+    }
+    // Where the device tool would stamp: the snap point on the rail and a
+    // tick along the track — the click lands here, not under the pointer.
+    if state.tool == Tool::PlaceDevice
+        && let Some(p) = cursor
+        && let Some((edge, s, distance)) = nearest_on_network(&line.net, p)
+        && distance <= pick_radius(&focus)
+        && let Some(edge) = line.net.edges().get(edge)
+    {
+        let pose = edge.eval(s);
+        let radius = (focus.height * 0.010).max(3.5) as f32;
+        ground_circle(&mut gizmos, &origin.0, pose.pos, radius, accent);
+        let base =
+            origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * MARK_LIFT;
+        let dir = origin.0.dir_to_render(pose.tangent) * (radius * 2.0);
+        gizmos.line(base - dir, base + dir, accent);
     }
     if let Some(drawing) = &state.drawing {
         // While Ctrl holds the piece straight the preview turns yellow, as the
@@ -3497,6 +3677,135 @@ pub fn draw_gizmos(
             });
             gizmos.linestrip(corners, color);
         }
+    }
+}
+
+/// The model at the cursor before the click — the World Editor shows the
+/// thing about to be placed, not a bare pointer. One entity, respawned when
+/// the picked model changes, moved every frame, hidden when nothing snaps.
+#[derive(Resource, Default)]
+pub struct GhostPreview {
+    entity: Option<Entity>,
+    /// Model file the entity was spawned with.
+    model: Option<String>,
+}
+
+/// Marks the preview entity, so the transform query cannot catch anything else.
+#[derive(Component)]
+pub struct GhostModel;
+
+/// Keeps the placement preview under the cursor: the object tool's model on
+/// its track snap with the spec's own offset and rotation, the tree tool's
+/// species upright on the ground. Placeholder trees have no model file and
+/// draw nothing — the click is the preview there, as it always was.
+#[allow(clippy::too_many_arguments)]
+pub fn placement_preview(
+    mut commands: Commands,
+    assets: Res<AssetServer>,
+    mut preview: ResMut<GhostPreview>,
+    state: Res<EditorState>,
+    line: Res<Line>,
+    objects: Res<TrackObjects>,
+    origin: Res<Origin>,
+    focus: Res<Focus>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    mut ghost: Query<(&mut Transform, &mut Visibility), With<GhostModel>>,
+) {
+    // What the active tool would place, by its model file.
+    let name = match state.tool {
+        Tool::PlaceObject => state
+            .object
+            .clone()
+            .or_else(|| objects.map.keys().next().cloned()),
+        Tool::PlaceTree => state.tree_object.clone(),
+        _ => None,
+    };
+    let spec = name.as_deref().and_then(|name| objects.map.get(name));
+    let model = spec.map(|spec| spec.model.clone());
+
+    // Respawn when the model changes; despawn when no tool wants one.
+    if preview.model != model {
+        if let Some(entity) = preview.entity.take() {
+            commands.entity(entity).despawn();
+        }
+        if let Some(model) = &model {
+            let scene: Handle<WorldAsset> =
+                assets.load(GltfAssetLabel::Scene(0).from_asset(world_render::asset_path(model)));
+            preview.entity = Some(
+                commands
+                    .spawn((
+                        WorldAssetRoot(scene),
+                        Transform::default(),
+                        Visibility::Hidden,
+                        GhostModel,
+                    ))
+                    .id(),
+            );
+        }
+        preview.model = model;
+    }
+    let Some(entity) = preview.entity else {
+        return;
+    };
+    let Ok((mut transform, mut visibility)) = ghost.get_mut(entity) else {
+        return;
+    };
+
+    let cursor = windows
+        .single()
+        .ok()
+        .and_then(|w| w.cursor_position())
+        .filter(|c| state.over_viewport(*c))
+        .and_then(|c| {
+            let (camera, camera_transform) = camera.single().ok()?;
+            pick_ground(camera, camera_transform, c, &origin.0, &focus)
+        });
+    // The pose the click would stamp — the same maths as the placement and
+    // the tile scatter, so the ghost stands exactly where the object will.
+    let pose = cursor.and_then(|p| match state.tool {
+        Tool::PlaceObject => {
+            let spec = spec?;
+            let (edge, s, distance) = nearest_on_network(&line.net, p)?;
+            if distance > pick_radius(&focus) {
+                return None;
+            }
+            let pose = line.net.edges().get(edge)?.eval(s);
+            let right = pose.tangent.cross(pose.up).normalize_or_zero();
+            // Terrain snap resolves against the height grid at build time;
+            // the preview stands on the rail plane, which is where the eye
+            // checks the spot anyway.
+            let base = EcefPos(
+                pose.pos.0 + right * spec.lateral_offset + pose.up * spec.height,
+            );
+            let dir =
+                DQuat::from_axis_angle(pose.up, -spec.yaw_deg.to_radians()) * pose.tangent;
+            Some((base, dir, pose.up))
+        }
+        Tool::PlaceTree => {
+            let frame = EnuFrame::at(p);
+            Some((p, frame.north, frame.up))
+        }
+        _ => None,
+    });
+    match pose {
+        Some((base, dir, up)) => {
+            // The model's frame in render axes: forward along `dir`, up the
+            // local vertical — `scatter_objects`' own construction, Bevy's
+            // -Z = forward convention included.
+            let f = origin.0.dir_to_render(dir).normalize_or_zero();
+            let u = origin.0.dir_to_render(up).normalize_or_zero();
+            let right = f.cross(u).normalize_or_zero();
+            let rotation = if right.length_squared() < 0.5 {
+                Quat::IDENTITY
+            } else {
+                Quat::from_mat3(&Mat3::from_cols(right, right.cross(f), -f))
+            };
+            *transform =
+                Transform::from_translation(origin.0.to_render(base)).with_rotation(rotation);
+            *visibility = Visibility::Visible;
+        }
+        None => *visibility = Visibility::Hidden,
     }
 }
 

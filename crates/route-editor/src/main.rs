@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N] [--height M]
-//!                        [--drawer [objects|signal-types|signal-models|track-types]]
+//!                        [--window WxH] [--drawer [objects|signal-types|signal-models|track-types]]
 //! ```
 //!
 //! Without a line file the example line is loaded. The overlay configuration is created
@@ -16,6 +16,7 @@ mod envelope;
 mod gizmo;
 mod new_module;
 mod overlay;
+mod settings;
 mod signals;
 mod stake;
 mod terrain;
@@ -303,6 +304,10 @@ pub struct Request {
 }
 
 fn main() {
+    // Before anything is built: the very first `t!` is the window title, and
+    // it has to come out in the remembered language already.
+    let editor_settings = settings::Settings::load();
+    editor_settings.apply_language();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| -> Option<String> {
         args.iter()
@@ -313,6 +318,12 @@ fn main() {
     let line_path = args.first().filter(|a| !a.starts_with("--")).cloned();
     let config_path = flag("--imagery").unwrap_or_else(|| "imagery.ron".into());
     let shot = flag("--screenshot");
+    // `--window 1280x2000` — fixed size for reproducible screenshots, the
+    // vehicle editor's convention.
+    let window_size = flag("--window").and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?))
+    });
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -345,11 +356,18 @@ fn main() {
     // Models of trees and scenery objects come from the mods: `mods://<mod>/…`.
     // Has to be registered before the asset plugin.
     app.register_asset_source(world_render::MOD_SOURCE, world_render::mod_asset_source());
+    let mut window = Window {
+        title: t!("window-route-editor"),
+        ..default()
+    };
+    // `--window` overrides the remembered size for this one run.
+    if let Some((w, h)) = window_size {
+        window.resolution = bevy::window::WindowResolution::new(w, h);
+    } else if let Some((w, h)) = editor_settings.window {
+        window.resolution = bevy::window::WindowResolution::new(w as u32, h as u32);
+    }
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: t!("window-route-editor"),
-            ..default()
-        }),
+        primary_window: Some(window),
         // The close button must pass through `confirm_close`, or it is the one
         // route that still throws unsaved work away.
         close_when_requested: false,
@@ -388,11 +406,13 @@ fn main() {
         category,
         ..default()
     })
+    .insert_resource(editor_settings)
     .init_resource::<Ghost>()
     .init_resource::<gizmo::GizmoState>()
     .init_resource::<thumbnails::Thumbnails>()
     .init_resource::<new_module::NewModule>()
     .init_resource::<terrain::Marks>()
+    .init_resource::<tools::GhostPreview>()
     // A glTF spawns its own children, and a render layer does not reach them by
     // itself — the content drawer's preview scene would be drawn into the map.
     .add_plugins(bevy::app::HierarchyPropagatePlugin::<
@@ -424,12 +444,12 @@ fn main() {
             signals::light_lamps,
             signals::show_finest_lod,
             rebase_origin,
-            (thumbnails::render, tools::draw_gizmos).chain(),
+            (thumbnails::render, tools::draw_gizmos, tools::placement_preview).chain(),
             gizmo::draw,
             scale_markers,
             // Nested only because a schedule tuple stops at twenty entries.
             (feed_sky, update_title, ui::poll_file_dialog),
-            confirm_close,
+            (track_window_size, confirm_close),
         )
             .chain(),
     );
@@ -1185,12 +1205,29 @@ fn update_title(
     }
 }
 
+/// Keeps the window size in the settings struct — in memory only. Writing on
+/// every frame of a resize drag would hammer the disk; the file is written
+/// when the user leaves.
+fn track_window_size(
+    mut settings: ResMut<settings::Settings>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let size = (window.width(), window.height());
+    if settings.window != Some(size) {
+        settings.window = Some(size);
+    }
+}
+
 /// The window's close button goes through the discard guard like Quit does.
 fn confirm_close(
     mut requests: MessageReader<bevy::window::WindowCloseRequested>,
     mut line: ResMut<Line>,
     mut state: ResMut<EditorState>,
     mut overlay: ResMut<Overlay>,
+    settings: Res<settings::Settings>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if requests.read().next().is_none() {
@@ -1198,6 +1235,7 @@ fn confirm_close(
     }
     requests.clear();
     if ui::confirm_discard(&mut line, &mut state, &mut overlay) {
+        settings.save();
         exit.write(AppExit::Success);
     }
 }

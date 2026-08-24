@@ -40,11 +40,12 @@ assertions, and type designations that are names rather than prose (`KE-GPR`,
 
 The language comes from `TRAINSIM_LANG`, otherwise from the choice made under
 View → Language (editors) or Settings → Language (simulator), otherwise from the
-operating system, otherwise English. Both editors switch it at runtime; the
-vehicle editor remembers the choice in its own `settings.rs`, the simulator in
-the settings file of `crates/app/src/settings.rs` (Bevy's `bevy::settings`). The
-route and signal editors do not — `i18n::set_language` sets an in-memory value,
-so a menu that calls it and nothing else throws the choice away at the next start.
+operating system, otherwise English. The editors switch it at runtime; the
+vehicle and route editors remember the choice in their own `settings.rs`, the
+simulator in the settings file of `crates/app/src/settings.rs` (Bevy's
+`bevy::settings`). The signal editor does not — `i18n::set_language` sets an
+in-memory value, so a menu that calls it and nothing else throws the choice
+away at the next start.
 
 # Multiplayer
 

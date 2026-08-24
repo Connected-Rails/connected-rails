@@ -54,7 +54,10 @@ mod section_tests {
         }
         // Nothing the panel can draw is orphaned from every category.
         for id in known {
-            assert!(covered.contains(id), "section {id} reachable from no category");
+            assert!(
+                covered.contains(id),
+                "section {id} reachable from no category"
+            );
         }
     }
 }
@@ -78,6 +81,10 @@ const SHORTCUT_REDO_ALT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
 /// The content drawer, on Unreal's own binding.
 const SHORTCUT_DRAWER: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Space);
+/// Delete is handled by the tools, not consumed here — the constant only
+/// names the key beside the menu entry.
+const SHORTCUT_DELETE: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Delete);
 
 /// One frame of UI. Panels live inside a background `Ui` (egui 0.35).
 #[allow(clippy::too_many_arguments)]
@@ -92,7 +99,12 @@ pub fn draw(
     mut ghost: ResMut<Ghost>,
     ground: crate::terrain::Ground,
     mut gizmo: ResMut<crate::gizmo::GizmoState>,
-    mut sky: ResMut<world_render::sky::Sky>,
+    // Paired into one parameter: Bevy systems carry at most sixteen, and this
+    // one is full.
+    (mut sky, mut settings): (
+        ResMut<world_render::sky::Sky>,
+        ResMut<crate::settings::Settings>,
+    ),
     mut catalogs: crate::Catalogs,
     mut themed: Local<bool>,
     mut active: Local<Option<&'static str>>,
@@ -132,6 +144,8 @@ pub fn draw(
         &mut state,
         &mut overlay,
         &mut request,
+        &mut focus,
+        &mut settings,
         &mut exit,
     );
     status_bar(
@@ -140,27 +154,46 @@ pub fn draw(
     // Over the status bar and under the side panel, so it spans the window the
     // way Unreal's does — the catalogue is not a property of the selection.
     crate::content_drawer::draw(&mut root, &mut state, &mut catalogs);
-    // The toolbox docks first, so it takes the window's left edge and the
-    // form panel lines up beside it.
+    // The toolbox takes the window's left edge, the detail panel the right —
+    // tools on one side, properties on the other, the map between them.
     toolbox(&mut root, &mut state);
-    left_panel(
-        &mut root,
-        &mut line,
-        &mut state,
-        &mut ghost,
-        &catalogs.types,
-        &catalogs.objects,
-        &mut overlay,
-        &mut request,
-        &mut focus,
-        &mut sky,
-        &ground.marks,
-        &mut active,
-    );
+    // A jump into the panel unfolds it: the findings badge and the area list
+    // send the user somewhere they have to be able to see.
+    if state.jump_to.is_some() {
+        state.panel_hidden = false;
+    }
+    if state.panel_hidden {
+        // The panel would have cleared it; without the panel nothing else may
+        // leave last frame's interlocking highlight burning on the map.
+        state.highlight = None;
+    } else {
+        detail_panel(
+            &mut root,
+            &mut line,
+            &mut state,
+            &mut ghost,
+            &catalogs.types,
+            &catalogs.objects,
+            &mut overlay,
+            &mut request,
+            &mut focus,
+            &mut sky,
+            &ground.marks,
+            &mut active,
+            &mut settings,
+        );
+    }
 
     // Docked into the space the side panel leaves, so it takes its width from
     // the viewport and its clicks never reach the tools underneath.
-    viewport_bar(&mut root, &mut focus, &mut gizmo, &overlay, &mut request);
+    viewport_bar(
+        &mut root,
+        &mut focus,
+        &mut gizmo,
+        &overlay,
+        &mut request,
+        &mut state,
+    );
 
     // The rect the panels leave free, and whether a text field owns the
     // keyboard — the input systems read both from here: the hand-built panel
@@ -234,9 +267,10 @@ fn viewport_bar(
     gizmo: &mut crate::gizmo::GizmoState,
     overlay: &Overlay,
     request: &mut Request,
+    state: &mut EditorState,
 ) {
     use crate::gizmo::GizmoMode;
-    use editor_ui::{Icon, bar_divider, icon_button, icon_label};
+    use editor_ui::{Icon, bar_divider, compass, icon_button, icon_label};
 
     egui::Panel::top("viewport-bar")
         .frame(editor_ui::bar_frame())
@@ -263,8 +297,40 @@ fn viewport_bar(
                     request.config = Some((config, false));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Against the panel it folds, so the button stays where
+                    // the panel was.
+                    if icon_button(ui, Icon::PanelRight, !state.panel_hidden, t!("view-panel"))
+                        .clicked()
+                    {
+                        state.panel_hidden = !state.panel_hidden;
+                    }
+                    bar_divider(ui);
                     camera_speed(ui, focus);
                     icon_label(ui, Icon::Speed);
+                    bar_divider(ui);
+                    // Where north lies, and the two clicks that put the view
+                    // back in order over an aerial picture: face north, look
+                    // straight down — the World Editor's compass and 2D map.
+                    let heading = focus.yaw.to_degrees().rem_euclid(360.0);
+                    if compass(
+                        ui,
+                        focus.yaw as f32,
+                        t!("view-north-hint", degrees = format!("{heading:.0}")),
+                    )
+                    .clicked()
+                    {
+                        focus.face_north();
+                    }
+                    if icon_button(
+                        ui,
+                        Icon::TopDown,
+                        focus.is_top_down(),
+                        t!("view-top-down-hint"),
+                    )
+                    .clicked()
+                    {
+                        focus.toggle_top_down();
+                    }
                 });
             });
         });
@@ -931,6 +997,7 @@ pub(crate) fn new_line(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn menu_bar(
     root: &mut egui::Ui,
     line: &mut Line,
@@ -938,27 +1005,37 @@ fn menu_bar(
     state: &mut EditorState,
     overlay: &mut Overlay,
     request: &mut Request,
+    focus: &mut Focus,
+    settings: &mut crate::settings::Settings,
     exit: &mut MessageWriter<AppExit>,
 ) {
     egui::Panel::top("menu")
         .frame(editor_ui::bar_frame())
         .show(root, |ui| {
+            // The accelerator beside the entry — a shortcut nobody can see is
+            // one nobody uses.
+            let keys = |ui: &egui::Ui, shortcut| ui.ctx().format_shortcut(shortcut);
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button(t!("menu-file"), |ui| {
-                    if ui.button(t!("action-new-line")).clicked() {
+                    let new_button = egui::Button::new(t!("action-new-line"))
+                        .shortcut_text(keys(ui, &SHORTCUT_NEW));
+                    if ui.add(new_button).clicked() {
                         ui.close();
                         if confirm_discard(line, state, overlay) {
                             request.new_module = true;
                         }
                     }
-                    if ui.button(t!("action-open-line")).clicked() {
+                    let open_button = egui::Button::new(t!("action-open-line"))
+                        .shortcut_text(keys(ui, &SHORTCUT_OPEN));
+                    if ui.add(open_button).clicked() {
                         ui.close();
                         if confirm_discard(line, state, overlay) {
                             open(state);
                         }
                     }
                     ui.separator();
-                    let save_button = egui::Button::new(t!("action-save"));
+                    let save_button = egui::Button::new(t!("action-save"))
+                        .shortcut_text(keys(ui, &SHORTCUT_SAVE));
                     if ui.add_enabled(needs_saving(line), save_button).clicked() {
                         ui.close();
                         save(line, state, overlay);
@@ -989,12 +1066,14 @@ fn menu_bar(
                     if ui.button(t!("action-quit")).clicked() {
                         ui.close();
                         if confirm_discard(line, state, overlay) {
+                            settings.save();
                             exit.write(AppExit::Success);
                         }
                     }
                 });
                 ui.menu_button(t!("menu-edit"), |ui| {
-                    let undo_button = egui::Button::new(t!("action-undo"));
+                    let undo_button = egui::Button::new(t!("action-undo"))
+                        .shortcut_text(keys(ui, &SHORTCUT_UNDO));
                     if ui
                         .add_enabled(!history.undo.is_empty(), undo_button)
                         .clicked()
@@ -1002,7 +1081,8 @@ fn menu_bar(
                         undo(line, history, state);
                         ui.close();
                     }
-                    let redo_button = egui::Button::new(t!("action-redo"));
+                    let redo_button = egui::Button::new(t!("action-redo"))
+                        .shortcut_text(keys(ui, &SHORTCUT_REDO));
                     if ui
                         .add_enabled(!history.redo.is_empty(), redo_button)
                         .clicked()
@@ -1012,7 +1092,8 @@ fn menu_bar(
                     }
                     ui.separator();
                     let has_target = state.selection != Selection::None || !state.marked.is_empty();
-                    let delete_button = egui::Button::new(t!("action-delete"));
+                    let delete_button = egui::Button::new(t!("action-delete"))
+                        .shortcut_text(keys(ui, &SHORTCUT_DELETE));
                     if ui.add_enabled(has_target, delete_button).clicked() {
                         if state.marked.is_empty() {
                             tools::delete_selection(line, state);
@@ -1046,7 +1127,31 @@ fn menu_bar(
                     }
                 });
                 ui.menu_button(t!("menu-view"), |ui| {
-                    language_menu(ui);
+                    // The bar's view controls again, menu-reachable: the
+                    // drawer, the vertical map view, the compass click and
+                    // the panel fold.
+                    let drawer_button = egui::Button::new(t!("action-content-drawer"))
+                        .shortcut_text(keys(ui, &SHORTCUT_DRAWER));
+                    if ui.add(drawer_button).clicked() {
+                        state.drawer.toggle();
+                        ui.close();
+                    }
+                    let mut top_down = focus.is_top_down();
+                    if ui.checkbox(&mut top_down, t!("view-top-down")).clicked() {
+                        focus.toggle_top_down();
+                        ui.close();
+                    }
+                    if ui.button(t!("view-north")).clicked() {
+                        focus.face_north();
+                        ui.close();
+                    }
+                    let mut panel = !state.panel_hidden;
+                    if ui.checkbox(&mut panel, t!("view-panel")).clicked() {
+                        state.panel_hidden = !state.panel_hidden;
+                        ui.close();
+                    }
+                    ui.separator();
+                    language_menu(ui, settings);
                 });
                 ui.menu_button(t!("menu-help"), |ui| {
                     ui.label(t!("help-fly"));
@@ -1191,11 +1296,9 @@ fn status_bar(
                     // The rule check's findings, visible from every category —
                     // the click opens them where they live.
                     if !line.issues.is_empty() {
-                        let label = egui::RichText::new(t!(
-                            "status-issues",
-                            count = line.issues.len()
-                        ))
-                        .color(colors::WARN);
+                        let label =
+                            egui::RichText::new(t!("status-issues", count = line.issues.len()))
+                                .color(colors::WARN);
                         if ui
                             .add(egui::Button::new(label).small())
                             .on_hover_text(t!("status-issues-hint"))
@@ -1285,7 +1388,7 @@ fn nav_section(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn left_panel(
+fn detail_panel(
     root: &mut egui::Ui,
     line: &mut Line,
     state: &mut EditorState,
@@ -1298,31 +1401,41 @@ fn left_panel(
     sky: &mut world_render::sky::Sky,
     marks: &crate::terrain::Marks,
     active: &mut Option<&'static str>,
+    settings: &mut crate::settings::Settings,
 ) {
-    egui::Panel::left("info")
-        .default_size(360.0)
+    // The size range is a working cap, not decoration: egui persists the width
+    // a panel's content grew it to, so without the cap one over-wide row (a
+    // long button beside a combo) ratchets the panel wider for the rest of the
+    // session and the width jumps with every tool change.
+    let response = egui::Panel::right("info")
+        .default_size(settings.panel.unwrap_or(420.0))
+        .size_range(320.0..=560.0)
         .resizable(true)
         .frame(editor_ui::panel_frame())
         .show(root, |ui| {
             // Heading, name and jump bar stay out of the scroll area, so the
             // name of the line being edited never leaves the screen and every
-            // section is findable without scrolling past it.
-            ui.label(editor_ui::heading(t!("heading-line")));
+            // section is findable without scrolling past it. The counts share
+            // the heading's line — a readout, not a row of its own.
+            ui.horizontal(|ui| {
+                ui.label(editor_ui::heading(t!("heading-line")));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(t!(
+                            "line-counts",
+                            edges = line.source.edges.len(),
+                            devices = line.source.devices.len()
+                        ))
+                        .small()
+                        .color(colors::TEXT_SECONDARY),
+                    );
+                });
+            });
             ui.add_space(space::XS);
             ui.add(
                 egui::TextEdit::singleline(&mut line.source.name)
                     .hint_text(t!("line-name"))
                     .desired_width(f32::INFINITY),
-            );
-            ui.add_space(2.0);
-            ui.label(
-                egui::RichText::new(t!(
-                    "line-counts",
-                    edges = line.source.edges.len(),
-                    devices = line.source.devices.len()
-                ))
-                .small()
-                .color(colors::TEXT_SECONDARY),
             );
             ui.add_space(space::S);
             // A row of another panel may have asked for a section last frame.
@@ -1364,9 +1477,7 @@ fn left_panel(
                         // section title tier, like a card header.
                         ui.label(editor_ui::section_title(t!(*key)));
                         if let Some(hint) = i18n::maybe(&format!("{key}-hint")) {
-                            ui.small(
-                                egui::RichText::new(hint).color(colors::TEXT_SECONDARY),
-                            );
+                            ui.small(egui::RichText::new(hint).color(colors::TEXT_SECONDARY));
                         }
                         if state.tool == Tool::DrawTrack {
                             ui.add_space(space::XS);
@@ -1476,15 +1587,20 @@ fn left_panel(
                                 editor_ui::form_grid("place-object").show(ui, |ui| {
                                     row(ui, "obj-kind", |ui| {
                                         object_combo(ui, "place-object-kind", objects, state);
-                                        browse =
-                                            ui.small_button(t!("action-browse-drawer")).clicked();
+                                        // An icon, not the spelled-out button:
+                                        // beside the combo the text forced the
+                                        // panel wider than its column.
+                                        browse = editor_ui::icon_button(
+                                            ui,
+                                            editor_ui::Icon::Drawer,
+                                            false,
+                                            t!("action-browse-drawer"),
+                                        )
+                                        .clicked();
                                     });
                                 });
                                 if browse {
-                                    open_drawer_on(
-                                        state,
-                                        crate::content_drawer::Category::Objects,
-                                    );
+                                    open_drawer_on(state, crate::content_drawer::Category::Objects);
                                 }
                             }
                         }
@@ -1587,8 +1703,7 @@ fn left_panel(
                                 // tool in hand is the sign.
                                 if matches!(state.tool, Tool::TerrainRaise | Tool::TerrainLower) {
                                     row(ui, "terrain-amount", |ui| {
-                                        let mut amount =
-                                            state.terrain_amount.unwrap_or(2.0).abs();
+                                        let mut amount = state.terrain_amount.unwrap_or(2.0).abs();
                                         if editor_ui::field(ui, &mut amount, 0.5, 0.5..=100.0, "m")
                                             .changed()
                                         {
@@ -1679,6 +1794,8 @@ fn left_panel(
                 });
             *active = current;
         });
+    // In memory only; written when the user leaves.
+    settings.panel = Some(response.response.rect.width());
 }
 
 /// Opens the content drawer on `category` — the browse buttons' shared path,
@@ -1710,57 +1827,117 @@ fn object_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, state: &mut
         });
 }
 
-/// The toolbox, after Train Simulator Classic's World Editor: a narrow strip
-/// on the left edge, the categories in its upper box, the tools of the active
-/// one below. Icons alone — the tooltip names the tool and its number key,
-/// and the tool's own section in the form panel repeats the name in full.
+/// The toolbox, after Train Simulator Classic's World Editor: boxed icon
+/// groups on the left edge — the categories in the top box, the tools of the
+/// active one in the middle, and the active tool's own switches (radius snap,
+/// easements, terrain snap) in the bottom box, where the World Editor keeps
+/// its context options. Icons alone — the tooltip names the tool and its
+/// number key, and the tool's section in the form panel repeats the name in
+/// full.
 fn toolbox(root: &mut egui::Ui, state: &mut EditorState) {
+    use editor_ui::Icon;
+
     egui::Panel::left("toolbox")
         .resizable(false)
-        .default_size(52.0)
+        .default_size(108.0)
         .frame(editor_ui::bar_frame())
         .show(root, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(space::XS, space::XS);
             let active = state.category.min(tools::TOOL_GROUPS.len() - 1);
             state.category = active;
-            for (i, (key, _, _)) in tools::TOOL_GROUPS.iter().enumerate() {
-                let icon = tools::TOOL_GROUPS[i].1;
-                if editor_ui::toolbox_button(ui, icon, i == active, t!(*key)).clicked()
-                    && i != active
-                {
-                    // A fresh category starts neutral, with the select tool
-                    // in hand — its own tools are one click below.
-                    state.category = i;
-                    tools::select_tool(state, Tool::Select);
+            toolbox_box(ui, "toolbox-categories", |ui| {
+                for (i, (key, icon, _)) in tools::TOOL_GROUPS.iter().enumerate() {
+                    if editor_ui::toolbox_button(ui, *icon, i == active, t!(*key)).clicked()
+                        && i != active
+                    {
+                        // A fresh category starts neutral, with the select
+                        // tool in hand — its own tools are one box below.
+                        state.category = i;
+                        tools::select_tool(state, Tool::Select);
+                    }
+                    if i % 2 == 1 {
+                        ui.end_row();
+                    }
                 }
-            }
-            ui.add_space(space::XS);
-            ui.separator();
-            ui.add_space(space::XS);
+            });
             // The select tool leads every box — picking something is wanted
             // whatever category is up, and `1` is always it.
-            for (tool, key, icon) in std::iter::once(&tools::SELECT_ENTRY)
-                .chain(tools::TOOL_GROUPS[active].2.iter())
-            {
-                // Name and number key in the tooltip — an accelerator nobody
-                // can see is one nobody uses.
-                let name = match tools::tool_digit(*tool) {
-                    Some(digit) => format!("{} ({digit})", t!(*key)),
-                    None => t!(*key),
-                };
-                if editor_ui::toolbox_button(ui, *icon, state.tool == *tool, name).clicked()
-                    && state.tool != *tool
+            toolbox_box(ui, "toolbox-tools", |ui| {
+                for (i, (tool, key, icon)) in std::iter::once(&tools::SELECT_ENTRY)
+                    .chain(tools::TOOL_GROUPS[active].2.iter())
+                    .enumerate()
                 {
-                    tools::select_tool(state, *tool);
+                    // Name and number key in the tooltip — an accelerator
+                    // nobody can see is one nobody uses.
+                    let name = match tools::tool_digit(*tool) {
+                        Some(digit) => format!("{} ({digit})", t!(*key)),
+                        None => t!(*key),
+                    };
+                    if editor_ui::toolbox_button(ui, *icon, state.tool == *tool, name).clicked()
+                        && state.tool != *tool
+                    {
+                        tools::select_tool(state, *tool);
+                    }
+                    if i % 2 == 1 {
+                        ui.end_row();
+                    }
                 }
+            });
+            // The active tool's own switches, in the strip where the World
+            // Editor keeps them: a toggle belongs to the hand, the values it
+            // gates stay in the form panel.
+            let mut toggles: Vec<(&mut bool, Icon, &str)> = match state.tool {
+                Tool::DrawTrack => vec![
+                    (
+                        &mut state.lay.snap_radius,
+                        Icon::SnapRadius,
+                        "lay-snap-radius",
+                    ),
+                    (&mut state.lay.easements, Icon::Easement, "lay-easements"),
+                ],
+                Tool::Join => vec![(
+                    &mut state.stake.easements,
+                    Icon::Easement,
+                    "stake-easements",
+                )],
+                Tool::PlaceObject => vec![(
+                    &mut state.place_snap_to_terrain,
+                    Icon::SnapTerrain,
+                    "obj-snap",
+                )],
+                _ => Vec::new(),
+            };
+            if !toggles.is_empty() {
+                toolbox_box(ui, "toolbox-toggles", |ui| {
+                    for (i, (value, icon, key)) in toggles.iter_mut().enumerate() {
+                        if editor_ui::toolbox_button(ui, *icon, **value, t!(*key)).clicked() {
+                            **value = !**value;
+                        }
+                        if i % 2 == 1 {
+                            ui.end_row();
+                        }
+                    }
+                });
             }
         });
 }
 
+/// One box of the toolbox strip: a card around a two-column grid of icon
+/// buttons — the World Editor's grouped boxes rather than one long strip.
+fn toolbox_box(ui: &mut egui::Ui, id: &str, body: impl FnOnce(&mut egui::Ui)) {
+    editor_ui::card_frame().show(ui, |ui| {
+        egui::Grid::new(id)
+            // The theme's 84 px widget minimum is a form width — here it
+            // would spread the two icon columns across a form-sized box.
+            .min_col_width(0.0)
+            .spacing(egui::vec2(space::XS, space::XS))
+            .show(ui, body);
+    });
+}
+
 /// The staking parameters of the join tool — Zusi's Absteckrechner dialog:
 /// design speed, radius (0 = automatic, one compensating straight remains),
-/// transitions and their length, cant, and the least intermediate straight a
-/// double arc keeps.
+/// transition length and cant (while the toolbox's easement toggle is on),
+/// and the least intermediate straight a double arc keeps.
 fn stake_rows(ui: &mut egui::Ui, state: &mut EditorState) {
     let stake = &mut state.stake;
     editor_ui::form_grid("stake-options").show(ui, |ui| {
@@ -1770,9 +1947,8 @@ fn stake_rows(ui: &mut egui::Ui, state: &mut EditorState) {
         row(ui, "stake-radius", |ui| {
             editor_ui::field(ui, &mut stake.radius, 10.0, 0.0..=50_000.0, "m");
         });
-        row(ui, "stake-easements", |ui| {
-            ui.checkbox(&mut stake.easements, "");
-        });
+        // The easement switch itself is the toolbox's toggle box; only the
+        // values it gates stay here.
         if stake.easements {
             row(ui, "stake-easement-length", |ui| {
                 editor_ui::field(ui, &mut stake.easement_length, 5.0, 0.0..=500.0, "m");
@@ -1788,8 +1964,9 @@ fn stake_rows(ui: &mut egui::Ui, state: &mut EditorState) {
 }
 
 /// The track properties of the next piece — type, speed, gradient, wire, how
-/// many tracks at what spacing, and the radius snap. Only the piece about to
-/// be laid reads them; a piece already lying is edited through its selection.
+/// many tracks at what spacing. Only the piece about to be laid reads them; a
+/// piece already lying is edited through its selection. The radius snap and
+/// the easements sit in the toolbox's toggle box.
 fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
     let lay = &mut state.lay;
     editor_ui::form_grid("lay-options").show(ui, |ui| {
@@ -1855,7 +2032,10 @@ fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
                     }
                     for system in track_model::PowerSystem::ALL {
                         if ui
-                            .selectable_label(current == Some(Some(system)), power_label(Some(system)))
+                            .selectable_label(
+                                current == Some(Some(system)),
+                                power_label(Some(system)),
+                            )
                             .clicked()
                         {
                             lay.electrification = Some(system.id().into());
@@ -1871,12 +2051,8 @@ fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
                 editor_ui::field(ui, &mut lay.spacing, 0.5, 3.0..=20.0, "m");
             });
         }
-        row(ui, "lay-snap-radius", |ui| {
-            ui.checkbox(&mut lay.snap_radius, "");
-        });
-        row(ui, "lay-easements", |ui| {
-            ui.checkbox(&mut lay.easements, "");
-        });
+        // Radius snap and easements are the toolbox's toggle box — a switch
+        // belongs to the hand, not to the form.
     });
 }
 
@@ -2943,36 +3119,47 @@ fn interlock_section(
     }
     let mut remove = None;
     for (i, section) in line.source.sections.iter_mut().enumerate() {
-        let row = ui.horizontal_wrapped(|ui| {
-            ui.label(
-                egui::RichText::new(t!("il-section-row", index = i)).color(colors::TEXT_SECONDARY),
-            );
-            let mut drop_edge = None;
-            for (k, edge) in section.edges.iter().enumerate() {
-                if ui.small_button(format!("{edge} ×")).clicked() {
-                    drop_edge = Some(k);
+        // One card per section — its edges as chips inside, its own delete in
+        // the header, so the chip "×"s and the entry's cannot be mistaken for
+        // one another.
+        let card = editor_ui::card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(t!("il-section-row", index = i));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text(t!("action-delete"))
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                });
+            });
+            ui.horizontal_wrapped(|ui| {
+                let mut drop_edge = None;
+                for (k, edge) in section.edges.iter().enumerate() {
+                    if ui.small_button(format!("{edge} ×")).clicked() {
+                        drop_edge = Some(k);
+                    }
                 }
-            }
-            if let Some(k) = drop_edge {
-                section.edges.remove(k);
-            }
-            let addable = selected_edge.filter(|e| !section.edges.contains(e));
-            let add = ui.add_enabled(
-                addable.is_some(),
-                egui::Button::new(t!("action-add-track")).small(),
-            );
-            if add
-                .on_disabled_hover_text(t!("il-add-track-hint"))
-                .clicked()
-                && let Some(edge) = addable
-            {
-                section.edges.push(edge);
-            }
-            if ui.small_button("×").clicked() {
-                remove = Some(i);
-            }
+                if let Some(k) = drop_edge {
+                    section.edges.remove(k);
+                }
+                let addable = selected_edge.filter(|e| !section.edges.contains(e));
+                let add = ui.add_enabled(
+                    addable.is_some(),
+                    egui::Button::new(t!("action-add-track")).small(),
+                );
+                if add
+                    .on_disabled_hover_text(t!("il-add-track-hint"))
+                    .clicked()
+                    && let Some(edge) = addable
+                {
+                    section.edges.push(edge);
+                }
+            });
         });
-        if ui.rect_contains_pointer(row.response.rect) {
+        if ui.rect_contains_pointer(card.response.rect) {
             state.highlight = Some(Highlight::Section(i));
         }
     }
@@ -3038,7 +3225,22 @@ fn interlock_section(
     let mut remove = None;
     let mut derive = None;
     for (i, route) in line.source.routes.iter_mut().enumerate() {
-        let block = ui.scope(|ui| {
+        // One card per route: the index in the header (the file addresses
+        // routes by it), the delete beside it, the fields and chip lists in
+        // the body — a wall of chips reads as one route again.
+        let card = editor_ui::card_frame().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(t!("il-route-row", index = i));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text(t!("action-delete-route"))
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                });
+            });
             editor_ui::form_grid(&format!("route-{i}")).show(ui, |ui| {
                 row(ui, "route-entry", |ui| {
                     signal_combo(ui, ("route-entry", i), &mut route.entry, &labels);
@@ -3066,23 +3268,17 @@ fn interlock_section(
             );
             switch_chips(ui, i, &mut route.switches, &switches);
             flank_chips(ui, i, &mut route.flank, &switches, &labels, &holding);
-            ui.horizontal(|ui| {
-                if ui
-                    .small_button(t!("action-derive-route"))
-                    .on_hover_text(t!("action-derive-route-hint"))
-                    .clicked()
-                {
-                    derive = Some(i);
-                }
-                if ui.small_button(t!("action-delete-route")).clicked() {
-                    remove = Some(i);
-                }
-            });
+            if ui
+                .small_button(t!("action-derive-route"))
+                .on_hover_text(t!("action-derive-route-hint"))
+                .clicked()
+            {
+                derive = Some(i);
+            }
         });
-        if ui.rect_contains_pointer(block.response.rect) {
+        if ui.rect_contains_pointer(card.response.rect) {
             state.highlight = Some(Highlight::Route(i));
         }
-        ui.add_space(space::XS);
     }
     // Both act on the table the loop just borrowed.
     if let Some(i) = derive {
@@ -3290,7 +3486,8 @@ fn envelope_rows(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, fo
     ui.small(t!("envelope-points", count = line.source.envelope.len()));
     ui.add_space(space::XS);
     let mut size_km = state.envelope_size.unwrap_or(DEFAULT_ENVELOPE_KM);
-    ui.horizontal(|ui| {
+    // Wrapped: four controls at German label lengths overrun a 400 px panel.
+    ui.horizontal_wrapped(|ui| {
         if ui.button(t!("action-edit-envelope")).clicked() {
             state.tool = tools::Tool::EditEnvelope;
         }
@@ -3732,11 +3929,17 @@ fn height_section(
         });
     });
     if let Some(source) = &state.dgm_source {
-        ui.label(
-            egui::RichText::new(source.clone())
-                .monospace()
-                .color(colors::TEXT_SECONDARY),
-        );
+        // Truncated with the full path on hover — a delivery path wraps the
+        // panel into four lines otherwise.
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(source.clone())
+                    .monospace()
+                    .color(colors::TEXT_SECONDARY),
+            )
+            .truncate(),
+        )
+        .on_hover_text(source.clone());
     }
 
     ui.add_space(space::XS);
@@ -3801,37 +4004,53 @@ fn marker_section(
     }
     // Deleting inside the loop would shift the indices the rows are drawn from.
     let mut delete: Option<String> = None;
-    for (layer, count) in &layers {
-        ui.horizontal(|ui| {
-            let mut visible = state.layer_visible(layer);
-            if ui.checkbox(&mut visible, "").changed() {
-                if visible {
-                    state.hidden_layers.remove(layer);
-                } else {
-                    state.hidden_layers.insert(layer.clone());
+    let mut center: Option<String> = None;
+    // A grid, not one `horizontal` per row: the counts and buttons then sit in
+    // columns instead of trailing each layer name at its own x.
+    editor_ui::form_grid("marker-layers")
+        .num_columns(5)
+        // The 84 px widget minimum is a form width — here it would hold a
+        // checkbox column open that wide.
+        .min_col_width(0.0)
+        .show(ui, |ui| {
+            for (layer, count) in &layers {
+                let mut visible = state.layer_visible(layer);
+                if ui.checkbox(&mut visible, "").changed() {
+                    if visible {
+                        state.hidden_layers.remove(layer);
+                    } else {
+                        state.hidden_layers.insert(layer.clone());
+                    }
                 }
-            }
-            ui.label(layer);
-            ui.label(
-                egui::RichText::new(format!("{count}"))
-                    .monospace()
-                    .color(colors::TEXT_SECONDARY),
-            );
-            // First marker of the layer as the place to look at.
-            if ui.button(t!("action-center")).clicked()
-                && let Some((i, marker)) = line
-                    .source
-                    .markers
-                    .iter()
-                    .enumerate()
-                    .find(|(_, m)| &m.layer == layer)
-            {
-                focus.position = marks.marker(i, marker);
-            }
-            if ui.button(t!("action-delete-layer")).clicked() {
-                delete = Some(layer.clone());
+                ui.label(layer);
+                ui.label(
+                    egui::RichText::new(format!("{count}"))
+                        .monospace()
+                        .color(colors::TEXT_SECONDARY),
+                );
+                if ui.small_button(t!("action-center")).clicked() {
+                    center = Some(layer.clone());
+                }
+                if ui
+                    .small_button("×")
+                    .on_hover_text(t!("action-delete-layer"))
+                    .clicked()
+                {
+                    delete = Some(layer.clone());
+                }
+                ui.end_row();
             }
         });
+    // First marker of the layer as the place to look at.
+    if let Some(layer) = center
+        && let Some((i, marker)) = line
+            .source
+            .markers
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.layer == layer)
+    {
+        focus.position = marks.marker(i, marker);
     }
     if let Some(layer) = delete {
         tools::delete_layer(line, state, &layer);
@@ -4143,12 +4362,15 @@ fn facing_combo(ui: &mut egui::Ui, facing: &mut Facing) {
 }
 
 /// Language picker.
-fn language_menu(ui: &mut egui::Ui) {
+fn language_menu(ui: &mut egui::Ui, settings: &mut crate::settings::Settings) {
     ui.menu_button(t!("menu-language"), |ui| {
         let current = i18n::language();
         for (code, name) in i18n::LANGUAGES {
             if ui.selectable_label(current == *code, *name).clicked() {
                 i18n::set_language(code);
+                // Remembered — the choice used to be thrown away at the next
+                // start, which is a menu that lies.
+                settings.set_language(code);
                 ui.close();
             }
         }

@@ -107,18 +107,28 @@ random shape, not as tofu — the failure is silent.
   the control beside it. Never an `icon_button` that ignores its click.
 - `bar_divider(ui)` — hairline between groups. `ui.separator()` in a
   horizontal layout stretches to the full row height and reads as a panel edge.
+- `compass(ui, yaw, tooltip)` — a bar-button-sized compass whose needle shows
+  where north lies on screen (red half north); the route editor's click faces
+  north. The one icon drawn live rather than from the table — it turns with
+  the camera.
 - `toolbox_button(ui, icon, active, tooltip)` — the icon alone at 36×32, for
-  the route editor's toolbox strip (`toolbox` in its `ui.rs`): a narrow
-  `Panel::left` docked before the form panel, categories in the upper box and
-  the active category's tools below, after Train Simulator Classic's World
-  Editor. Icons alone work *here* because the box shows one category at a
+  the route editor's toolbox (`toolbox` in its `ui.rs`): a narrow
+  `Panel::left` of card-framed boxes, each a two-column icon grid
+  (`min_col_width(0.0)`, or the theme's 84 px widget minimum spreads the
+  columns) — the categories on top, the active category's tools below, and
+  the active tool's own **toggles** (radius snap, easements, terrain snap) in
+  the bottom box, after Train Simulator Classic's World Editor: a switch
+  belongs to the hand, only the values it gates stay in the form. Icons alone
+  work *here* because the box shows one category at a
   time and the form panel's Tool section repeats the active tool's name and
   hint in full; the tooltip still names the tool and its number key. The
   select tool leads every box (`SELECT_ENTRY`, digit `1`), and the active
   category is held in `EditorState::category` rather than derived from the
   tool — taking select must not switch the panel away. Larger
   than `icon_button` because a tool is aimed at, a bar icon only passed on
-  the way to the map. **The form panel follows the toolbox**: beside the
+  the way to the map. **The form panel follows the toolbox**: docked on the
+  right edge (`detail_panel`, a `Panel::right` whose `size_range` cap keeps
+  one over-wide row from ratcheting the persisted width), beside the
   fixed Tool and Selection sections it lays out only the active category's
   own (`category_sections` in the route editor's `ui.rs`, keyed by the
   category's i18n key and pinned by a test), and the jump bar reads the same

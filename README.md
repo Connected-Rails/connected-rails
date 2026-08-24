@@ -666,29 +666,32 @@ imagery and which neighbours the module will meet, so typing it blind is the one
 a dialog.
 
 The tools sit in a **toolbox** on the left edge, after the World Editor of Train Simulator
-Classic: the upper box holds the categories — track, lineside equipment, landscape, module —
-and the lower box the tools of the one that is up — led by the **select tool, which
+Classic: the top box holds the categories — track, lineside equipment, vegetation, terrain,
+module — the middle box the tools of the one that is up — led by the **select tool, which
 belongs to every category**: picking something is wanted whatever box is up, so `1` is
 always it and the category's own tools count from `2`. The key and the button always
-agree, because both read the same list. The form panel's *Tool* section carries the active tool's options — the
-World Editor's properties panel for the piece about to be laid, which never touches one
-already lying there.
+agree, because both read the same list. A bottom box carries the active tool's own
+switches — the radius snap and easements while laying, the stake-out's easements while
+joining, snap to terrain while placing objects — where the World Editor keeps its context
+options. The form panel, docked on the **right** edge, carries the active tool's remaining
+options in its *Tool* section — the World Editor's properties panel for the piece about to
+be laid, which never touches one already lying there.
 
 | Tool | What a click does |
 |---|---|
 | **Every category** | |
 | `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it |
 | **Track** | |
-| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing, the snap onto the standard radius series, and easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions |
+| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series and lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions |
 | `3` Split track | Cuts the track at the click — two tracks on one joint |
-| `4` Join ends | First click one open end, then another: ends on the same spot are welded into one node, ends apart are **staked out like Zusi's Absteckrechner** — transitions, arc and one compensating straight (the radius on automatic grows until exactly one remains), or a double arc with an intermediate straight where no single arc reaches. The *Tool* section carries the staking parameters: design speed, radius (0 = automatic), transitions and their length, cant, and the least intermediate straight |
+| `4` Join ends | First click one open end, then another: ends on the same spot are welded into one node, ends apart are **staked out like Zusi's Absteckrechner** — transitions, arc and one compensating straight (the radius on automatic grows until exactly one remains), or a double arc with an intermediate straight where no single arc reaches. The *Tool* section carries the staking parameters: design speed, radius (0 = automatic), transition length, cant, and the least intermediate straight; the transitions themselves are the toolbox's easement toggle |
 | `5` Parallel track | Lays the clicked track's parallel at the set spacing, on the side of the click — exact offsets for straights and arcs |
 | `6` Crossover | First click cuts the track it leaves, the second names the parallel track it reaches: both are cut and wired into the two turnouts of a crossover, built from arcs of the set turnout radius |
 | `7` Gradient | Puts a gradient break point on the track; the selection panel edits the per mille between the points and reads out the climb |
 | `8` Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
 | **Lineside equipment** | |
 | `2` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
-| `3` Place object | Drops a mod's 3D object at its predefined offset and rotation |
+| `3` Place object | Drops a mod's 3D object at its predefined offset and rotation; the toolbox's terrain-snap toggle bases it on the ground instead of the rail plane |
 | `4` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
 | **Vegetation** | |
 | `2` / `3` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
@@ -707,7 +710,34 @@ switch, split and wired on finish, and whether it is faced or trailed is in the 
 Picking a **track type in the content drawer** arms the lay tool with it, the browser-first
 order of the World Editor.
 
-The form panel follows the toolbox: beside the fixed *Tool* and *Selection* sections it
+While the track category is up, the map wears the World Editor's own markings: the
+**spline line** over every edge (over aerial imagery the grey rails vanish at height — the
+line is what keeps the alignment readable), **grey squares** at rail joints and switches,
+**red squares** at loose ends — the thing to continue from or to fix — and, on the selected
+track, the **red/blue direction arrows** out of its start and end, which say which way the
+metre figures of the panel run. While laying or joining, the end the cursor would take turns
+accent and the join tool's first pick is filled.
+
+Placement is previewed before it happens: the object and tree tools carry a **ghost of
+the model at the cursor**, standing on its track snap with the spec's own offset and
+rotation — the World Editor's loose preview — and the device tool marks the snap point
+and track direction the stamp would take. A **double click** on anything selectable
+sends the properties panel to its selection section, and with the gradient tool the map
+wears **slope chevrons**: a V every 60 m pointing uphill on every graded stretch. The
+editor also **remembers** language, window size and panel width between runs
+(`settings.rs`, `%APPDATA%\Connected Rails\route-editor.ron`), the vehicle editor's
+pattern — `--window` and `TRAINSIM_LANG` override the stored values for one run.
+
+The viewport bar carries the orientation controls a free camera over an aerial picture
+needs: a **compass** whose needle shows where north lies (click to face north) and a
+**top-down toggle** that tips the camera vertical — the World Editor's 2D-map gesture.
+Beside the camera speed dial sits the **panel fold**: the properties panel gives the map
+the whole window and comes back by itself the moment something jumps into it (the
+findings badge, an area row). All of it is under View as well, and the File and Edit
+menus name their keyboard shortcuts beside the entries.
+
+The form panel — tools on the left edge, properties on the right — follows the toolbox:
+beside the fixed *Tool* and *Selection* sections it
 shows only the active category's own — marked stretches and the interlocking with the
 track, the interlocking and marker layers with the equipment, the height data (DGM
 import) with the terrain, and everything the module *is* (boundaries, time of day,

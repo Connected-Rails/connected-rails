@@ -53,6 +53,27 @@ const BASE_FLY_SPEED: f64 = 20.0;
 const PRECISION: f64 = 0.5;
 
 impl Focus {
+    /// Whether the view is the vertical map view rather than the free one.
+    pub fn is_top_down(&self) -> bool {
+        self.pitch > 1.5
+    }
+
+    /// Switches between the vertical map view and the free view — the World
+    /// Editor's 2D-map gesture for track work over the imagery. Pivot and
+    /// height stay; only the look direction tips.
+    pub fn toggle_top_down(&mut self) {
+        self.pitch = if self.is_top_down() {
+            DEFAULT_PITCH
+        } else {
+            PITCH_LIMIT
+        };
+    }
+
+    /// Turns the view to face north — the compass click.
+    pub fn face_north(&mut self) {
+        self.yaw = 0.0;
+    }
+
     /// Unit look direction of the camera — from the camera towards the pivot.
     pub fn look_dir(&self) -> DVec3 {
         let frame = EnuFrame::at(self.position);

@@ -698,7 +698,7 @@ tool-group-equipment = Streckenausrüstung
 tool-group-vegetation = Vegetation
 tool-group-terrain = Gelände
 tool-select = Auswählen
-tool-select-hint = Klick auf Gerät oder Gleis wählt es aus · Entf löscht es
+tool-select-hint = Klick wählt Einzelnes aus · Strg+Klick sammelt eine Mehrfachauswahl, ein zweiter Strg+Klick nimmt es wieder heraus · auf freiem Boden drücken und ziehen wählt im Kreis · Entf löscht die Auswahl
 tool-draw = Gleis verlegen
 tool-draw-hint = Drücken setzt das stehende Ende, das Ziehen seine Richtung — auf einem offenen Ende führt es das Gleis fort, auf der Gleismitte beginnt der Zweig einer Weiche. Jeder Klick hängt einen tangentialen Bogen an, mit gehaltenem Strg eine Gerade; das laufende Ende rastet auf offenen Enden ein. Enter oder Rechtsklick schließt ab · Esc bricht ab
 tool-split = Gleis trennen
@@ -770,6 +770,8 @@ lay-snap-radius = Auf Regelradien einrasten
 lay-snap-radius-hint = Rundet einen gezeichneten Bogen auf die Radienreihe der Trassierung, wie der World Editor sein laufendes Ende einrasten lässt
 lay-easements = Übergangsbögen & Überhöhung
 lay-easements-hint = Legt Bögen als Klothoide – Bogen – Klothoide mit der Regelwerks-Überhöhung für die Geschwindigkeit des Stücks (Rampe 1:10v, Deckel 160 mm) statt als nackte Kreisbögen. Ein Gleis mit Übergangsbögen hat danach keine ziehbaren Stützpunkte mehr
+lay-snap-terrain = Auf Gelände legen
+lay-snap-terrain-hint = Das gelegte Stück folgt dem Boden: abgetastete Geländehöhen werden sein Steigungsprofil, ein freier Anfang fällt auf die Oberfläche. Ein an bestehendes Gleis angeschlossenes Ende behält dessen Höhe
 lay-turnout-radius = Weichenradius
 lay-turnout-radius-hint = Radius der zwei Weichenbögen, aus denen eine Gleisverbindung gebaut wird; 190 m ist die verbreitete deutsche EW-190-Geometrie
 # --- Absteckrechner ---------------------------------------------------------

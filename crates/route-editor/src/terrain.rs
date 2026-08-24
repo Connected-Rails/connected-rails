@@ -297,6 +297,13 @@ impl TerrainView {
         self.height_at(terrain::to_utm(pos, &self.options))
     }
 
+    /// Ground height a tool reads: the tiles in the scene first, the
+    /// builder's blended surface where no tile is loaded yet.
+    pub fn ground_height(&self, pos: EcefPos) -> Option<f64> {
+        self.height_at_pos(pos)
+            .or_else(|| self.builder().map(|b| b.surface_height(pos)))
+    }
+
     /// Takes an edit over: the tiles it reached are marked for a new ground
     /// or a new scatter, and built from the next builder generation.
     fn invalidate(&mut self, change: &TerrainChange) {

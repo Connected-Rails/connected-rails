@@ -400,6 +400,7 @@ fn main() {
         close_when_requested: false,
         ..default()
     }))
+    .add_plugins(app_icon::plugin)
     .add_plugins(EguiPlugin::default())
     // The UI belongs on our own camera. Left to itself, `bevy_egui` creates a context on a
     // camera without a render graph — depending on which startup system runs first, and the

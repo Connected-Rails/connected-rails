@@ -326,6 +326,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "ai-driver",
+ "app-icon",
  "bevy",
  "content",
  "glam 0.32.1",
@@ -337,8 +338,18 @@ dependencies = [
  "serde",
  "sim-core",
  "track-model",
+ "winresource",
  "world-coords",
  "world-render",
+]
+
+[[package]]
+name = "app-icon"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "image",
+ "winit",
 ]
 
 [[package]]
@@ -7965,6 +7976,7 @@ dependencies = [
 name = "route-editor"
 version = "0.1.0"
 dependencies = [
+ "app-icon",
  "bevy",
  "bevy_egui",
  "content",
@@ -7977,6 +7989,7 @@ dependencies = [
  "serde",
  "sim-core",
  "track-model",
+ "winresource",
  "world-coords",
  "world-render",
 ]
@@ -8345,6 +8358,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 name = "signal-editor"
 version = "0.1.0"
 dependencies = [
+ "app-icon",
  "bevy",
  "bevy_egui",
  "editor-ui",
@@ -8353,6 +8367,7 @@ dependencies = [
  "ron",
  "serde",
  "sim-core",
+ "winresource",
 ]
 
 [[package]]
@@ -9580,6 +9595,7 @@ checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 name = "vehicle-editor"
 version = "0.1.0"
 dependencies = [
+ "app-icon",
  "bevy",
  "bevy_egui",
  "content",
@@ -9592,6 +9608,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sim-core",
+ "winresource",
 ]
 
 [[package]]
@@ -10502,6 +10519,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winresource"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087"
+dependencies = [
+ "toml",
+ "version_check",
 ]
 
 [[package]]

@@ -230,6 +230,7 @@ fn main() {
             // device and hold it for nothing.
             .disable::<bevy::audio::AudioPlugin>(),
     )
+    .add_plugins(app_icon::plugin)
     // Terrain splatting (plan ch. 14): shader and material, shared with the
     // route editor, which draws the same ground.
     .add_plugins(world_render::WorldRenderPlugin)

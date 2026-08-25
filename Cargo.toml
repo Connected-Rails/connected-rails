@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/i18n",
+    "crates/app-icon",
     "crates/world-coords",
     "crates/track-model",
     "crates/sim-core",
@@ -46,6 +47,7 @@ lightyear = { version = "0.29", default-features = false, features = [
 rfd = "0.17"
 
 i18n = { path = "crates/i18n" }
+app-icon = { path = "crates/app-icon" }
 world-coords = { path = "crates/world-coords" }
 track-model = { path = "crates/track-model" }
 sim-core = { path = "crates/sim-core" }

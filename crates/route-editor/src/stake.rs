@@ -63,7 +63,11 @@ impl StakeOptions {
     pub fn easement_rules(&self, lay_speed: f64) -> Easements {
         Easements {
             rules: CantRules::default(),
-            speed: if self.speed > 0.0 { self.speed } else { lay_speed },
+            speed: if self.speed > 0.0 {
+                self.speed
+            } else {
+                lay_speed
+            },
         }
     }
 }
@@ -150,9 +154,7 @@ pub fn stake_out(
         Ok(chain) => finish(chain, opts, e),
         // A fixed radius that does not fit is the user's to change — only
         // the cases where *no* single arc exists fall through.
-        Err(err @ (StakeError::RadiusTooBig | StakeError::ArcTooShort))
-            if opts.radius > 0.0 =>
-        {
+        Err(err @ (StakeError::RadiusTooBig | StakeError::ArcTooShort)) if opts.radius > 0.0 => {
             Err(err)
         }
         Err(_) => match double_arc(h0, k0, target, h1, k1, opts, e) {
@@ -257,8 +259,8 @@ fn single_arc(
     let free = |g: f64, k_end: f64| if k_end.abs() < 1e-9 { g } else { 0.0 };
 
     let (g0, g1, middle) = if opts.radius > 0.0 {
-        let (g0, g1, middle) = solve(1.0 / opts.radius.max(MIN_RADIUS))
-            .ok_or(StakeError::ArcTooShort)?;
+        let (g0, g1, middle) =
+            solve(1.0 / opts.radius.max(MIN_RADIUS)).ok_or(StakeError::ArcTooShort)?;
         if g0 < -STRAIGHT_EPS || g1 < -STRAIGHT_EPS {
             return Err(StakeError::RadiusTooBig);
         }
@@ -555,7 +557,11 @@ mod tests {
         let h1 = 0.6;
         let staked = stake_out(0.0, 0.0, target, h1, 0.0, &opts, rules(120.0)).expect("stakes");
         let (end, h) = end_pose(&staked.segments, 0.0);
-        assert!(end.distance(target) < 0.05, "missed by {}", end.distance(target));
+        assert!(
+            end.distance(target) < 0.05,
+            "missed by {}",
+            end.distance(target)
+        );
         assert!(wrap(h - h1).abs() < 1e-4);
         // One straight, two transitions, one arc.
         let straights = staked
@@ -611,7 +617,11 @@ mod tests {
         let target = DVec2::new(800.0, 120.0);
         let staked = stake_out(0.0, 0.0, target, 0.0, 0.0, &opts, rules(60.0)).expect("stakes");
         let (end, h) = end_pose(&staked.segments, 0.0);
-        assert!(end.distance(target) < 0.05, "missed by {}", end.distance(target));
+        assert!(
+            end.distance(target) < 0.05,
+            "missed by {}",
+            end.distance(target)
+        );
         assert!(wrap(h).abs() < 1e-4);
         // Two arcs of opposite hand around a straight of at least 30 m.
         let arcs: Vec<f64> = staked
@@ -698,10 +708,13 @@ mod tests {
         let opts = StakeOptions::default();
         let k0 = 1.0 / 1200.0;
         let target = DVec2::new(600.0, 350.0);
-        let staked =
-            stake_out(0.0, k0, target, 0.9, 0.0, &opts, rules(120.0)).expect("stakes");
+        let staked = stake_out(0.0, k0, target, 0.9, 0.0, &opts, rules(120.0)).expect("stakes");
         let (end, h) = end_pose(&staked.segments, 0.0);
-        assert!(end.distance(target) < 0.05, "missed by {}", end.distance(target));
+        assert!(
+            end.distance(target) < 0.05,
+            "missed by {}",
+            end.distance(target)
+        );
         assert!(wrap(h - 0.9).abs() < 1e-4);
         // The chain starts curved: no leading straight, and the first
         // element picks the curvature up at k0.

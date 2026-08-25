@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 i18n = { workspace = true }
+app-icon = { workspace = true }
 sim-core = { workspace = true }
 track-model = { workspace = true }
 world-coords = { workspace = true }
@@ -41,3 +42,7 @@ kira = { version = "0.12", default-features = false, features = [
 # Links Bevy as a shared library instead of statically: much faster relinks.
 # Local development only, the resulting binary needs the Bevy DLL next to it.
 dev = ["bevy/dynamic_linking"]
+
+[target.'cfg(windows)'.build-dependencies]
+# Compiles `icon.ico` into the executable's resource — see `build.rs`.
+winresource = "0.1"

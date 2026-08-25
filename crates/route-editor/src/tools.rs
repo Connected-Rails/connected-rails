@@ -17,15 +17,15 @@
 
 use crate::terrain::Marks;
 use crate::{Focus, Ghost, Line, Origin, TrackObjects};
-use content::import::alignment::{CantRules, ramp_cant};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use bevy::world_serialization::WorldAsset;
 use content::LineSource;
+use content::import::alignment::{CantRules, ramp_cant};
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
     ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
-use bevy::world_serialization::WorldAsset;
 use glam::{DQuat, DVec2, DVec3};
 use i18n::t;
 use sim_core::interlock::{SignalKind, SignalSystem};
@@ -241,7 +241,11 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 5] = [
             (Tool::Split, "tool-split", editor_ui::Icon::Split),
             (Tool::Join, "tool-join", editor_ui::Icon::Join),
             (Tool::Offset, "tool-offset", editor_ui::Icon::Offset),
-            (Tool::Crossover, "tool-crossover", editor_ui::Icon::Crossover),
+            (
+                Tool::Crossover,
+                "tool-crossover",
+                editor_ui::Icon::Crossover,
+            ),
             (Tool::Gradient, "tool-gradient", editor_ui::Icon::Gradient),
             (Tool::MarkArea, "tool-area", editor_ui::Icon::Area),
         ],
@@ -1018,7 +1022,11 @@ impl Drawing {
                 h = blend(h1, h, (total - s) / TERRAIN_SNAP_STEP);
             }
             let (lat, lon, _) = geo::from_ecef(flat);
-            origin.to_render(geo::to_ecef_deg(lat.to_degrees(), lon.to_degrees(), h + 0.5))
+            origin.to_render(geo::to_ecef_deg(
+                lat.to_degrees(),
+                lon.to_degrees(),
+                h + 0.5,
+            ))
         };
         let mut position = DVec2::ZERO;
         let mut done = 0.0;
@@ -1136,8 +1144,7 @@ fn easement_to(
     // Newton on (curvature, arc length) with a numeric Jacobian, seeded with
     // the plain arc less the room its ramps will take.
     let mut k = seed.k0;
-    let mut arc_len =
-        (seed.len - 2.0 * e.rules.ramp_length(signed_cant(k, e), e.speed)).max(5.0);
+    let mut arc_len = (seed.len - 2.0 * e.rules.ramp_length(signed_cant(k, e), e.speed)).max(5.0);
     let mut converged = false;
     for _ in 0..20 {
         let (end, _) = end_of(&build(k, arc_len)?);
@@ -1196,9 +1203,9 @@ pub(crate) fn append_cant(
     segments: &[Segment],
     e: Easements,
 ) {
-    let worth = segments.iter().any(|s| {
-        signed_cant(s.k0, e).abs() > 0.0 || signed_cant(s.end_curvature(), e).abs() > 0.0
-    });
+    let worth = segments
+        .iter()
+        .any(|s| signed_cant(s.k0, e).abs() > 0.0 || signed_cant(s.end_curvature(), e).abs() > 0.0);
     if !worth {
         return;
     }
@@ -2021,8 +2028,7 @@ pub fn finish_drawing(
             .edges
             .push(profiles.edge(joint, to, start, drawing.segments));
         if !drawing.cant_steps.is_empty() {
-            line.source.edges.last_mut().expect("just pushed").cant =
-                drawing.cant_steps.clone();
+            line.source.edges.last_mut().expect("just pushed").cant = drawing.cant_steps.clone();
         }
         // Facing: a train reaches the fork over the first half, so that end is
         // the root. Trailing: it comes from the far side — the second half is
@@ -2045,7 +2051,13 @@ pub fn finish_drawing(
         };
         close_end(line, to_end);
         if let Some(g) = ground {
-            snap_edge_to_terrain(line, branch, g, false, to_end.map(|e| geo::from_ecef(e.pos).2));
+            snap_edge_to_terrain(
+                line,
+                branch,
+                g,
+                false,
+                to_end.map(|e| geo::from_ecef(e.pos).2),
+            );
         }
         state.selection = Selection::Edge(branch);
         return true;
@@ -2180,9 +2192,7 @@ fn snap_edge_to_terrain(
     let geoid = line.source.geoid_offset;
     let source = &mut line.source.edges[index];
     source.grade = grade;
-    if free_start
-        && let EdgeStart::Geo { point, .. } = &mut source.start
-    {
+    if free_start && let EdgeStart::Geo { point, .. } = &mut source.start {
         point.height = heights[0] - geoid;
     }
 }
@@ -2196,7 +2206,10 @@ pub fn open_ends(line: &Line) -> Vec<OpenEnd> {
             let local = EnuFrame::at(pose.pos).dir_to_local(pose.tangent * sign);
             local.y.atan2(local.x)
         };
-        if matches!(line.source.nodes.get(source.from as usize), Some(NodeSource::Buffer)) {
+        if matches!(
+            line.source.nodes.get(source.from as usize),
+            Some(NodeSource::Buffer)
+        ) {
             let pose = edge.eval(0.0);
             ends.push(OpenEnd {
                 node: source.from,
@@ -2209,7 +2222,10 @@ pub fn open_ends(line: &Line) -> Vec<OpenEnd> {
                 curvature: -pose.curvature,
             });
         }
-        if matches!(line.source.nodes.get(source.to as usize), Some(NodeSource::Buffer)) {
+        if matches!(
+            line.source.nodes.get(source.to as usize),
+            Some(NodeSource::Buffer)
+        ) {
             let pose = edge.end_pose();
             ends.push(OpenEnd {
                 node: source.to,
@@ -2280,7 +2296,9 @@ pub fn join_ends(
         })
     })?;
     let start = if a.at_end {
-        EdgeStart::Continue { edge: a.edge as u32 }
+        EdgeStart::Continue {
+            edge: a.edge as u32,
+        }
     } else {
         let (lat, lon, height) = geo::from_ecef(a.pos);
         EdgeStart::Geo {
@@ -2816,8 +2834,7 @@ pub fn tool_input(
                 // release aims it.
                 None => {
                     if let Some(end) = nearest_open_end(&ends, p, pick_radius(&focus)) {
-                        state.drawing =
-                            Some(Drawing::continue_from(end, line.source.geoid_offset));
+                        state.drawing = Some(Drawing::continue_from(end, line.source.geoid_offset));
                     } else {
                         match nearest_on_network(&line.net, p) {
                             Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
@@ -2838,8 +2855,7 @@ pub fn tool_input(
                                 }
                             }
                             _ => {
-                                let mut drawing =
-                                    Drawing::start_at(p, line.source.geoid_offset);
+                                let mut drawing = Drawing::start_at(p, line.source.geoid_offset);
                                 drawing.aiming = true;
                                 state.drawing = Some(drawing);
                             }
@@ -2871,8 +2887,7 @@ pub fn tool_input(
             Some(end) => match state.join_from.take() {
                 None => state.join_from = Some(end),
                 Some(first) => {
-                    if let Err(status) =
-                        join_ends(&mut line, &state.lay, &state.stake, first, end)
+                    if let Err(status) = join_ends(&mut line, &state.lay, &state.stake, first, end)
                     {
                         overlay.status = status;
                     }
@@ -2899,8 +2914,7 @@ pub fn tool_input(
                     None => state.crossover_from = Some((edge, s)),
                     Some((a, s_a)) => {
                         let radius = state.lay.turnout_radius.max(50.0);
-                        if let Err(status) =
-                            crossover(&mut line, &state.lay, a, s_a, edge, radius)
+                        if let Err(status) = crossover(&mut line, &state.lay, a, s_a, edge, radius)
                         {
                             overlay.status = status;
                         }
@@ -3732,7 +3746,11 @@ pub fn draw_gizmos(
                 .devices
                 .get(i)
                 .and_then(|d| device_pos(&line.net, d)),
-            Mark::Marker(i) => line.source.markers.get(i).map(|m| ground.marks.marker(i, m)),
+            Mark::Marker(i) => line
+                .source
+                .markers
+                .get(i)
+                .map(|m| ground.marks.marker(i, m)),
             // Trees are tinted in their own pass above.
             Mark::Tree(_) => None,
         };
@@ -3831,7 +3849,14 @@ pub fn draw_gizmos(
                     .min(edge.length());
                 let mut s = *start + 30.0;
                 while s < end {
-                    chevron(&mut gizmos, &origin.0, edge.eval(s), grade.signum(), arm, amber);
+                    chevron(
+                        &mut gizmos,
+                        &origin.0,
+                        edge.eval(s),
+                        grade.signum(),
+                        arm,
+                        amber,
+                    );
                     s += 60.0;
                 }
             }
@@ -3848,8 +3873,7 @@ pub fn draw_gizmos(
         let pose = edge.eval(s);
         let radius = (focus.height * 0.010).max(3.5) as f32;
         ground_circle(&mut gizmos, &origin.0, pose.pos, radius, accent);
-        let base =
-            origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * MARK_LIFT;
+        let base = origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * MARK_LIFT;
         let dir = origin.0.dir_to_render(pose.tangent) * (radius * 2.0);
         gizmos.line(base - dir, base + dir, accent);
     }
@@ -3868,13 +3892,21 @@ pub fn draw_gizmos(
             }
         } else {
             let target = cursor.map(|p| {
-                lay_target(&state.open_ends, drawing, snap_ghost(p, &ghost, &focus), &focus)
+                lay_target(
+                    &state.open_ends,
+                    drawing,
+                    snap_ghost(p, &ghost, &focus),
+                    &focus,
+                )
             });
             // The preview lies where the finish will put the piece: on the
             // ground while the terrain snap is on.
             let terrain_h = |p: EcefPos| ground.view.ground_height(p);
-            let follow: Option<&dyn Fn(EcefPos) -> Option<f64>> =
-                if state.lay.snap_terrain { Some(&terrain_h) } else { None };
+            let follow: Option<&dyn Fn(EcefPos) -> Option<f64>> = if state.lay.snap_terrain {
+                Some(&terrain_h)
+            } else {
+                None
+            };
             gizmos.linestrip(drawing.polyline(target, &origin.0, follow), color);
         }
     }
@@ -4028,11 +4060,8 @@ pub fn placement_preview(
             // Terrain snap resolves against the height grid at build time;
             // the preview stands on the rail plane, which is where the eye
             // checks the spot anyway.
-            let base = EcefPos(
-                pose.pos.0 + right * spec.lateral_offset + pose.up * spec.height,
-            );
-            let dir =
-                DQuat::from_axis_angle(pose.up, -spec.yaw_deg.to_radians()) * pose.tangent;
+            let base = EcefPos(pose.pos.0 + right * spec.lateral_offset + pose.up * spec.height);
+            let dir = DQuat::from_axis_angle(pose.up, -spec.yaw_deg.to_radians()) * pose.tangent;
             Some((base, dir, pose.up))
         }
         Tool::PlaceTree => {
@@ -4194,7 +4223,11 @@ mod tests {
         let content::route::EdgeStart::Geo { point, .. } = &edge.start else {
             panic!("free start stays geo-anchored");
         };
-        assert!((point.height - (130.0 - 46.0)).abs() < 0.05, "{}", point.height);
+        assert!(
+            (point.height - (130.0 - 46.0)).abs() < 0.05,
+            "{}",
+            point.height
+        );
         // Integrated over 800 m the profile climbs onto the slope's far end.
         let compiled = doc.source.compile().expect("compiles");
         let end = world_coords::geo::from_ecef(compiled.net.edges()[0].end_pose().pos).2;
@@ -4692,7 +4725,10 @@ mod tests {
         // Left-hand curve, positive cant at the rulebook value, ramps to match.
         let e = drawing.easements.unwrap();
         let cant = signed_cant(arc.k0, e);
-        assert!(arc.k0 > 0.0 && cant > 0.0, "left curve carries positive cant");
+        assert!(
+            arc.k0 > 0.0 && cant > 0.0,
+            "left curve carries positive cant"
+        );
         assert!((t_in.len - e.rules.ramp_length(cant, e.speed)).abs() < 1e-6);
         // The chain still passes through the click.
         let mut p = DVec2::ZERO;
@@ -4709,7 +4745,11 @@ mod tests {
             p.distance(DVec2::new(local.x, local.y))
         );
         // The cant band ramps up under the transitions and back to zero.
-        let peak = drawing.cant_steps.iter().map(|(_, c)| *c).fold(0.0, f64::max);
+        let peak = drawing
+            .cant_steps
+            .iter()
+            .map(|(_, c)| *c)
+            .fold(0.0, f64::max);
         assert!((peak - cant).abs() < 1e-9, "peak {peak} vs {cant}");
         assert_eq!(drawing.cant_steps.first().unwrap().1, 0.0);
         assert_eq!(drawing.cant_steps.last().unwrap().1, 0.0);
@@ -4721,7 +4761,11 @@ mod tests {
     fn a_right_hand_eased_curve_carries_negative_cant() {
         let (mut drawing, frame) = eased_drawing(160.0);
         drawing.click(Target::free(frame.to_ecef(DVec3::new(1500.0, -300.0, 0.0))));
-        let low = drawing.cant_steps.iter().map(|(_, c)| *c).fold(0.0, f64::min);
+        let low = drawing
+            .cant_steps
+            .iter()
+            .map(|(_, c)| *c)
+            .fold(0.0, f64::min);
         assert!(low < -40.0, "right-hand cant must be negative: {low}");
     }
 

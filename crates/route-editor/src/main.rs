@@ -373,6 +373,7 @@ fn main() {
         close_when_requested: false,
         ..default()
     }))
+    .add_plugins(app_icon::plugin)
     .add_plugins(EguiPlugin::default())
     // Terrain, trees and objects are drawn with the simulator's own code.
     .add_plugins(world_render::WorldRenderPlugin)
@@ -444,7 +445,12 @@ fn main() {
             signals::light_lamps,
             signals::show_finest_lod,
             rebase_origin,
-            (thumbnails::render, tools::draw_gizmos, tools::placement_preview).chain(),
+            (
+                thumbnails::render,
+                tools::draw_gizmos,
+                tools::placement_preview,
+            )
+                .chain(),
             gizmo::draw,
             scale_markers,
             // Nested only because a schedule tuple stops at twenty entries.

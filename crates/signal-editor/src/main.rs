@@ -352,6 +352,7 @@ fn main() {
         close_when_requested: false,
         ..default()
     }))
+    .add_plugins(app_icon::plugin)
     .add_plugins(EguiPlugin::default())
     // The UI belongs on our own camera (see the vehicle editor for the why).
     .insert_resource(bevy_egui::EguiGlobalSettings {

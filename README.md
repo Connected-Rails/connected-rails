@@ -280,6 +280,7 @@ or the whole corridor.
 | Crate | Contents |
 |---|---|
 | `i18n` | Translations of everything the user reads (Fluent `.ftl`, English and German) |
+| `app-icon` | The window icon of all four programs: the drawing itself, the Windows resource beside it |
 | `world-coords` | ECEF f64 world coordinates, floating origin, geodesy (plan ch. 4) |
 | `track-model` | Track geometry (straight/curve/clothoid), topology, switches, lineside equipment (ch. 5) |
 | `sim-core` | Driving dynamics (adhesion axle by axle), air and vacuum brake, electrics, steam, train protection, interlocking, timetable, scenario and scoring — **without Bevy**, deterministic (ch. 6–11) |

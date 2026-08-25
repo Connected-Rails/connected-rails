@@ -847,7 +847,10 @@ mod tests {
         let low = alignment.cant.iter().map(|(_, c)| *c).fold(0.0, f64::min);
         assert!(low < -40.0, "right-hand cant must be negative: {low}");
         let high = alignment.cant.iter().map(|(_, c)| *c).fold(0.0, f64::max);
-        assert!(high <= 1e-9, "no positive cant on a right-hand curve: {high}");
+        assert!(
+            high <= 1e-9,
+            "no positive cant on a right-hand curve: {high}"
+        );
     }
 
     #[test]

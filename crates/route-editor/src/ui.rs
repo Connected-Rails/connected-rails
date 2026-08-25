@@ -997,7 +997,6 @@ pub(crate) fn new_line(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn menu_bar(
     root: &mut egui::Ui,
     line: &mut Line,

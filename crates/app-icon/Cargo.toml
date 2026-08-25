@@ -1,0 +1,13 @@
+[package]
+name = "app-icon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+# Bevy re-exports no `Icon`, so the type has to come from winit itself — and from the
+# same version Bevy links, or the runner is handed a foreign type.
+winit = "0.30"
+# The decoder for the one PNG below. Bevy already builds this crate with `png`.
+image = { version = "0.25", default-features = false, features = ["png"] }

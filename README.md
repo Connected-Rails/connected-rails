@@ -53,6 +53,18 @@ relink after a code change. The first build with the flag recompiles Bevy, and t
 binary needs the Bevy DLL next to it — so use it for development only, never for a release.
 Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit.
 
+Several worktrees on one machine can share their intermediate artifacts, so dependencies
+compile once per machine: a `.cargo/config.toml` in a directory *above* the worktrees (nothing
+lands in the repo) sets `build.build-dir` to one shared directory and `[unstable]
+checksum-freshness = true`, and a `rust-toolchain.toml` next to it pins nightly. The checksum
+fingerprints are what makes sharing safe — with mtimes, stable Cargo takes a worktree whose files
+are older than another worktree's build for fresh and runs the wrong binary. Measured: a fresh
+worktree builds and runs `app --features dev` in 54 s instead of 366 s, recompiling only the
+workspace crates; builds in different worktrees take turns on the build-dir lock. `sccache` as
+`build.rustc-wrapper` also works across worktrees but gains little here (366 s → 351 s):
+`serde_core` and `thiserror` `include!` build-script output from `OUT_DIR`, so their crate hash
+carries the build-dir path and every crate above them — most of Bevy — misses in another directory.
+
 Train protection and door control are **vehicle equipment**, not command line options: the
 `safety` and `doors` fields of a `VehicleSpec` state which Indusi/PZB build, which Sifa and
 which door control a vehicle carries (see [Mods](#vehicles)). Whether the equipment can do

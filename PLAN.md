@@ -406,20 +406,54 @@ scenario action it already sends. The two values that are *not* interpolated are
 accumulations, `wetness` and `snow_depth`: they integrate in the fixed 200 Hz step out of
 precipitation and temperature, dry off slowly, and are what `RailCondition` should come from
 (rain on a long-dry rail is slippery before it is merely wet; snow at 0 °C is not snow at
-−10 °C). The wind is a real quantity, not decoration: it slants the streaks (it already
-does), moves the foliage and the clouds, and drives a blowing snow.
+−10 °C). The wind is a real quantity, not decoration: it slants the streaks, drifts the cloud deck and
+its shadows over the ground, and drives a blowing snow. Two things it does *not* do yet, and
+this line used to claim one of them: **the foliage does not move** — there is no sway anywhere
+in the renderer, so the trees stand still in a 20 m/s blizzard — and the wind the drops meet
+gusts (`Weather::gust`) while the deck above drifts smoothly, which is right for a cloud at
+1.8 km but leaves gusts a ground-level effect only.
 
 **Clouds.** A ground-based camera never enters a cloud, and that one fact buys the whole
 performance argument. The clouds are raymarched — Perlin-Worley shape noise (64³) with a
 curl-perturbed detail octave (32³), coverage and type from the weather state, and the Nubis
 model's lighting: Beer-Powder attenuation, a dual-lobe Henyey-Greenstein phase for the silver
-lining, and three octaves of *multiple* scattering, without which a cloud renders as a dark
-smudge whatever the sun does. But **not per screen pixel**: the march writes a 768 × 384
-equirectangular panorama through an offscreen camera, and a sky dome samples it. That is
-295 k pixels a frame whatever the window is, against 2 M at 1080p, and it is why this can be
-half a millisecond where a screen-space march is two to four. One layer with a height profile
-that runs from fair-weather cumulus to a closed deck; a cirrus sheet above it is the next
-step.
+lining, and four octaves of *multiple* scattering, without which a cloud renders as a dark
+smudge whatever the sun does. But **not per screen pixel**: the march writes a 2048 × 1024
+equirectangular panorama through an offscreen camera, and a sky dome samples it. One layer
+with a height profile that runs from fair-weather cumulus to a closed deck; a cirrus sheet
+above it is the next step.
+
+Two things make that resolution affordable, and both matter more than the march itself.
+**The panorama is amortised**: one texel in sixteen is rewritten each frame on a 4 × 4 Bayer
+slot and the pass does not clear, so 131 k texels a frame buy a sky at 0.18° a texel — fewer
+texels than a 768 × 384 panorama rewritten whole, and 2.7 × the angular resolution, which is
+the difference between a cumulus edge and a staircase. Sixteen frames is a quarter of a second,
+in which a cloud five kilometres out drifts a fifth of a texel. **The noise is sampled
+anisotropically**: the third texture coordinate is the fraction of the way up the deck rather
+than a metre count, because a layer is a kilometre thick against eighteen across and one scale
+for all three axes extrudes a single horizontal slice through the whole cloud.
+
+**The deck moves in two ways, and needs both.** It *drifts* with the wind — at
+`WIND_ALOFT` × the weather's own figure, because `Weather::wind` is the ten-metre wind a
+station reports and a kilometre and a half up, out of the friction of the ground, it blows two
+to three times that. Drifting at the ground's speed is what made a fair-weather sky sit almost
+still. And it *evolves*: the deck occupies about a third of the shape volume's vertical axis,
+so the rest of that axis is a supply of shapes nobody is using, and walking into it over time
+turns one cloud into the next. That reads as growing and dissolving rather than sliding,
+because the height profile stays put and the base of the deck holds still while the body above
+it changes. Both are functions of the scenario clock, so both are free over the network.
+
+The evolution rate is capped by something other than taste: no two heights of the volume hold
+quite the same amount of cloud, so walking the axis makes the *cover* breathe on its own.
+Welcome — weather does that — but twice the current rate visibly emptied a `cover` of 0.45
+inside ten minutes, which is a setting quietly overruling itself.
+
+**Two paths, one setting** (`Graphics::volumetric_clouds`). The volumetric one is the march
+above. The cheap one reads the same shape field on three slices through the middle of the deck
+and walks the self-shadow across that height field instead of marching a volume — a dozen
+texture fetches against several hundred, at the same panorama resolution, so what a weak
+machine loses is the billows and the parallax through a cloud rather than the sharpness. Both
+share the scattering, so they draw the same weather.
 
 The dome needs **no render-graph node**: Bevy's atmosphere draws in `render_sky` between the
 opaque and the transparent pass, so a transparent mesh at `SKY_RADIUS` composites over the

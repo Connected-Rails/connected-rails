@@ -124,6 +124,7 @@ built world down with it, so the next one starts from an empty world.
 | | `shadows` | Shadow maps of the sun. |
 | | `bloom` | Glow around lamps and signals after dark. |
 | | `shadow_quality` | Edge length of the sun's shadow map: `Low` 1024, `Medium` 2048, `High` 4096 texels. |
+| | `volumetric_clouds` | Marches the cloud deck as a volume — billows, a lit interior, a silver lining. Off draws the same clouds as one lit sheet at the same resolution, for about a twentieth of the cost. |
 | | `mist` | Ground mist as a volume, with the sun's shafts through it. |
 | | `mist_quality` | Steps of the raymarch through it: `Low` 16, `Medium` 32, `High` 64. |
 | | `texture_quality` | Size and filtering of the generated ground textures: `Low` 128², `Medium` 256², `High` 512². |

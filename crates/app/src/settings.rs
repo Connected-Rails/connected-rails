@@ -72,6 +72,10 @@ pub struct Graphics {
     pub shadows: bool,
     /// Edge length of the sun's shadow map — where a shadow's steps come from.
     pub shadow_quality: Quality,
+    /// March the clouds as a volume rather than drawing the deck as one lit
+    /// sheet. Both are the same shapes at the same resolution; this is what puts
+    /// billows and a lit interior into them, at roughly twenty times the cost.
+    pub volumetric_clouds: bool,
     /// Ground mist as a volume, with the sun's shafts through it — half a
     /// millisecond a frame in foggy weather, and nothing at all in clear.
     pub mist: bool,
@@ -97,6 +101,7 @@ impl Default for Graphics {
             bloom: true,
             shadows: true,
             shadow_quality: Quality::Medium,
+            volumetric_clouds: true,
             mist: true,
             mist_quality: Quality::Medium,
             texture_quality: Quality::Medium,
@@ -553,6 +558,7 @@ fn apply_scene(
     view: Option<ResMut<ViewDistance>>,
     streamer: Option<ResMut<TerrainStreamer>>,
     quality: Option<ResMut<world_render::mist::Quality>>,
+    clouds: Option<ResMut<world_render::clouds::Quality>>,
     cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
 ) {
     // The sun's shadow map is a resource of Bevy's own, rebuilt from it every frame.
@@ -563,6 +569,14 @@ fn apply_scene(
     if let Some(mut quality) = quality {
         quality.volumetric = graphics.mist;
         quality.steps = graphics.mist_quality.mist_steps();
+    }
+    // Only on a real change: the cloud pass marches its whole panorama again
+    // whenever this resource is touched, and `apply_scene` runs on every frame
+    // that wrote *any* graphics setting.
+    if let Some(mut clouds) = clouds
+        && clouds.volumetric != graphics.volumetric_clouds
+    {
+        clouds.volumetric = graphics.volumetric_clouds;
     }
     if let Some(mut view) = view {
         view.0 = graphics.view_distance;

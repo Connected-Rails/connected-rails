@@ -297,7 +297,9 @@ fn main() {
         (ui::grab_cursor, hud::hud_visibility, hud::refresh_help_caps),
     )
     // The sound table and the display cameras need the trains, which `setup` only
-    // creates when its commands are applied — the chain inserts that sync point.
+    // creates when its commands are applied — the chain inserts that sync point. It runs
+    // when there is no run yet: coming back from the pause overlay enters `Driving` too,
+    // and building the world a second time is not what resuming means (`RunBuilt`).
     .add_systems(
         OnEnter(GameState::Driving),
         (
@@ -305,8 +307,10 @@ fn main() {
             setup,
             audio::setup_audio,
             displays::setup_displays,
+            mark_run_built,
         )
-            .chain(),
+            .chain()
+            .run_if(not(resource_exists::<RunBuilt>)),
     )
     .add_systems(
         Update,
@@ -458,6 +462,23 @@ fn remember_before_run(mut commands: Commands, entities: Query<Entity>) {
     commands.insert_resource(BeforeRun(entities.iter().collect()));
 }
 
+/// A run's world stands built. `OnEnter(GameState::Driving)` fires on the way back out of
+/// the pause overlay exactly as it does on the way in from the menu, and the chain behind
+/// it *builds* a run: without this guard, resuming would put a second world, a second
+/// camera and a second simulation on top of the first, and drive the one the player is
+/// no longer looking through.
+///
+/// Set last in the chain and dropped by [`tear_down_run`], so the state is "a run exists"
+/// rather than "the player was once driving": leaving for the title screen tears the
+/// world down and the next `Drive` builds one again.
+#[derive(Resource)]
+struct RunBuilt;
+
+/// Closes the chain that built the run.
+fn mark_run_built(mut commands: Commands) {
+    commands.insert_resource(RunBuilt);
+}
+
 /// Drops the built world when the player leaves a run for the title screen, so the next
 /// `setup` builds into an empty world rather than beside the old one.
 ///
@@ -492,6 +513,7 @@ fn tear_down_run(
     *walker = default();
     *camera = default();
     commands.remove_resource::<BeforeRun>();
+    commands.remove_resource::<RunBuilt>();
 }
 
 /// The pause key during a run raises the overlay, which also holds the settings. Leaving
@@ -1511,6 +1533,81 @@ mod tests {
             world.iter_entities().count(),
             left,
             "a second visit took more"
+        );
+    }
+
+    /// Resuming out of the pause overlay enters `Driving` a second time. The chain that
+    /// builds the run must not come with it — a second `setup` would put a second world,
+    /// a second camera and a second simulation on top of the one being driven. Leaving
+    /// for the title screen tears the world down, so the next drive builds again.
+    #[test]
+    fn the_run_is_built_once_and_not_again_on_resuming() {
+        #[derive(Resource, Default)]
+        struct Builds(usize);
+
+        /// Everything a run put into the world, in this test one entity.
+        #[derive(Component)]
+        struct OfTheRun;
+
+        // Stands in for `setup`, which needs a GPU.
+        fn build(mut commands: Commands, mut builds: ResMut<Builds>) {
+            builds.0 += 1;
+            commands.spawn(OfTheRun);
+        }
+
+        // How much of a run stands in the world right now.
+        fn standing(app: &mut App) -> usize {
+            let mut of_the_run = app.world_mut().query::<&OfTheRun>();
+            of_the_run.iter(app.world()).count()
+        }
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .init_resource::<Builds>()
+            .init_resource::<walk::Walker>()
+            .init_resource::<ui::CameraState>()
+            .insert_state(GameState::Menu)
+            .add_systems(OnEnter(GameState::Menu), tear_down_run)
+            .add_systems(
+                OnEnter(GameState::Driving),
+                (remember_before_run, build, mark_run_built)
+                    .chain()
+                    .run_if(not(resource_exists::<RunBuilt>)),
+            );
+        app.update();
+
+        let go = |app: &mut App, state| {
+            app.world_mut().insert_resource(NextState::Pending(state));
+            app.update();
+        };
+        go(&mut app, GameState::Driving);
+        assert_eq!(app.world().resource::<Builds>().0, 1);
+        assert_eq!(standing(&mut app), 1);
+
+        // Esc and back again: the same run, not a new one.
+        go(&mut app, GameState::Paused);
+        go(&mut app, GameState::Driving);
+        assert_eq!(
+            app.world().resource::<Builds>().0,
+            1,
+            "resuming built the world a second time"
+        );
+
+        // The title screen still takes the run with it — the pause must not have moved
+        // the snapshot the teardown works from onto the built world.
+        go(&mut app, GameState::Menu);
+        assert_eq!(standing(&mut app), 0, "the run outlived the title screen");
+        assert!(
+            app.world().get_resource::<RunBuilt>().is_none(),
+            "the torn-down run still counts as built"
+        );
+
+        // And the drive after it builds one again.
+        go(&mut app, GameState::Driving);
+        assert_eq!(
+            app.world().resource::<Builds>().0,
+            2,
+            "the next drive stayed on the title screen's empty world"
         );
     }
 

@@ -695,14 +695,19 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   no camera of its own — the cab's draws the UI — no wallpaper, a thinner scrim so the
   world stays recognisable, and Resume / Settings / Back to the main menu / Quit. Every
   driving system is gated on `Driving`, so the pause freezes simulation, clock and camera
-  by itself. The overlay's settings page is the front end's minus the language and the
-  reset. **Going back to the title screen tears the built world down** (`tear_down_run`):
-  the run carries no despawn marker, so what is dropped is decided by a snapshot of the
-  entities that existed *before* `setup` — everything newer goes, except resources (which
-  are entities of their own in Bevy 0.19), observers, and what a plugin put up once at
-  startup and marked `world_render::Persistent` (the cloud dome, the mist volume). The
-  mixer's tracks are dropped with it, so the loops of the run stop, and walker and camera
-  state — both of which point into the world that has just gone — go back to default.
+  by itself. **Resuming does not build a second run:** it enters `Driving` again, and the
+  chain behind `OnEnter(Driving)` is what builds one — `RunBuilt` is the resource that
+  says a world already stands and holds the chain back until `tear_down_run` drops it, so
+  the Esc that resumes gives the run back rather than putting a second world, a second
+  camera and a second simulation on top of it. The overlay's settings page is the front
+  end's minus the language and the reset. **Going back to the title screen tears the built
+  world down** (`tear_down_run`): the run carries no despawn marker, so what is dropped is
+  decided by a snapshot of the entities that existed *before* `setup` — everything newer
+  goes, except resources (which are entities of their own in Bevy 0.19), observers, and
+  what a plugin put up once at startup and marked `world_render::Persistent` (the cloud
+  dome, the mist volume). The mixer's tracks are dropped with it, so the loops of the run
+  stop, and walker and camera state — both of which point into the world that has just
+  gone — go back to default.
   Any run flag on the command line (`--line`, `--frames`, …) skips the menu, so CLI and CI
   invocations stay non-interactive, and a flag beats the menu's choice where both are set;
   `--menu` puts the menu back in front, which is the only way to photograph it.

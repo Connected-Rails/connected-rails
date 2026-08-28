@@ -6,6 +6,7 @@
 mod audio;
 mod bindings;
 mod cab;
+mod console;
 mod crew;
 mod displays;
 mod glyphs;
@@ -199,6 +200,7 @@ fn main() {
         "--date",
         "--weather",
         "--wipers",
+        "--console",
     ];
     // `--menu` overrules them again — the only way to put the menu itself in front of
     // `--screenshot`, which would otherwise photograph the world behind it. It takes an
@@ -256,6 +258,10 @@ fn main() {
     })
     // Multiplayer, if the command line asked for it — otherwise this adds nothing.
     .add_plugins(net::plugin)
+    // The command console (F8): its panel exists for the whole process, its typing runs
+    // in the driving chain, and its weather wishes travel as a message whether a socket
+    // does or not.
+    .add_plugins(console::plugin)
     .init_resource::<ui::CameraState>()
     .init_resource::<walk::Walker>()
     .init_resource::<cab::CabMouse>()
@@ -278,6 +284,9 @@ fn main() {
     // The wish to take a train over. It is written in single player too and read only by
     // the network layer, so the type has to exist whether a socket does or not.
     .add_message::<net::TakeOverRequest>()
+    // The console's weather wish, the same shape of thing: written in single player,
+    // posted only where a socket exists (`net::client_send`).
+    .add_message::<net::WeatherRequest>()
     .add_systems(Startup, log_mods)
     // The world the last run built goes first — otherwise the next `setup` would put a
     // second one on top of it.
@@ -293,9 +302,15 @@ fn main() {
             .chain()
             .run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
     )
-    .add_systems(Update, pause_on_escape.run_if(in_state(GameState::Driving)))
+    .add_systems(
+        Update,
+        pause_on_escape
+            .after(console::console)
+            .run_if(in_state(GameState::Driving)),
+    )
     // Both run in every state: the pause menu needs its cursor back, and the HUD has to
-    // go away behind the overlay rather than shine through it.
+    // go away behind the overlay rather than shine through it. The console's panel goes
+    // with them — it hides behind the pause overlay like the HUD does.
     .add_systems(
         Update,
         (ui::grab_cursor, hud::hud_visibility, hud::refresh_help_caps),
@@ -319,10 +334,13 @@ fn main() {
     .add_systems(
         Update,
         (
-            // The simulation, in the order one step of it happens: the levers, who is on
-            // them, what the plan puts on the line, the AI, and then the step itself.
-            // A group of its own because Bevy's tuples end at twenty.
+            // The simulation, in the order one step of it happens: the console first —
+            // it holds the keyboard while it is open, and its answer to Enter lands
+            // before the step reads the world — then the levers, who is on them, what
+            // the plan puts on the line, the AI, and the step itself. A group of its
+            // own because Bevy's tuples end at twenty.
             (
+                console::console,
                 ui::player_input,
                 cab::apply_mouse,
                 crew::crew_change,
@@ -534,7 +552,18 @@ fn tear_down_run(
 /// it again is the overlay's own job — this system only runs while `Driving`, so the Esc
 /// that resumes cannot bounce straight back into the pause. The menu's own Esc stays a
 /// key rather than a binding: whatever the pause is bound to, there is always a way out.
-fn pause_on_escape(input: bindings::Input, mut next: ResMut<NextState<GameState>>) {
+///
+/// While the console is open, Esc belongs to it: it closes the console, and the pause
+/// waits for the next press. `console::console` runs first in the driving chain, so the
+/// closing has already happened when this reads the flag.
+fn pause_on_escape(
+    input: bindings::Input,
+    console: Res<console::Console>,
+    mut next: ResMut<NextState<GameState>>,
+) {
+    if console.open {
+        return;
+    }
     if input.just_pressed(bindings::Action::Pause) {
         next.set(GameState::Paused);
     }

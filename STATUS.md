@@ -1369,6 +1369,20 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   key bindings to a sheet on **F5** that also says what the ten annunciators mean;
   `--overlays` opens both for a screenshot. Palette and the two faces are shared with the
   menu through `crates/app/src/theme.rs`.
+- **The console on F8 (plan 16.3)** is the simulator's one command line: a panel on the
+  bottom edge built from the same plain UI nodes as the rest of the game — no egui — with
+  the commands in one static table (`weather`, `time`, `help`, `clear`), `Tab` completion
+  over commands and their arguments, and a history over `↑`/`↓`. Everything it prints goes
+  through the i18n crate; commands and arguments stay English — a `preset` is one of
+  `sim_core::weather`'s names in lower case, the same word the `--weather` flag takes.
+  **Multiplayer**: the world is the server's, so a client's `weather` posts
+  a wish (`net::WeatherRequest` → `WeatherWish`); the server applies it to its timeline
+  and answers *every* client with a `WeatherSet` anchored to the moment it applied, so all
+  peers run the same five-minute transition. `time` moves the run's clock, which the
+  dispatcher, the scenario and the sun all hang off — a clock jump has no setpoint shape,
+  so on a client it is refused rather than half-shipped. While the console is open it holds
+  the keyboard: the driving keys, the walker, the takeover key and Esc all rest until it
+  lets go.
 - **A composed line runs one script** — the composition's, or the single module script
   found; further module scripts are dropped with a note. Running every module's hook
   side by side needs a script list in the runtime, nothing in the format.

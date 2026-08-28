@@ -1308,6 +1308,7 @@ hud-key-walk = Gehen (F4)
 hud-key-hud = Anzeige: voll · reduziert · aus
 hud-key-overlays = Diese Übersicht · Diagnose
 hud-key-mods = Mod-Verwaltung
+hud-key-console = Konsole
 hud-key-pause = Pause
 
 # Die Diagnose, F6. Maschinenausgabe — sie darf so dicht sein, wie sie will.
@@ -1593,6 +1594,7 @@ ctl-zoom-out = Kamera weg
 ctl-help-overlay = Tastenhilfe
 ctl-diagnostics = Diagnose
 ctl-hud-mode = HUD-Stufe
+ctl-console = Konsole
 ctl-mod-manager = Mod-Verwaltung
 ctl-pause = Pausenmenü
 
@@ -1622,6 +1624,27 @@ mods-content = Inhalte: { $vehicles } Fahrzeuge, { $lines } Module, { $compositi
 mods-log = Warnungen:
 mods-restart = Änderung wirkt nach einem Neustart.
 mods-keys = ↑/↓ auswählen   Enter ein/aus   F9 schließen
+
+## Konsole
+
+console-hint = Enter ausführen · Tab vervollständigen · ↑/↓ Verlauf · Esc schließen
+console-unknown = Unbekannter Befehl: { $name } — help listet sie auf
+console-unknown-weather = Unbekanntes Wetter: { $name }
+console-weather-list = Vorgaben: { $list }
+console-weather-now = { $weather } · { $rate } mm/h · Wind { $wind } m/s · { $temp } °C
+console-weather-set = Das Wetter schlägt um auf { $weather } — es zieht über fünf Minuten auf
+console-weather-asked = Der Server wird um { $weather } gebeten
+console-time-now = { $time }
+console-time-set = Die Uhr springt auf { $time } — die Züge behalten ihren Zustand, der Plan zieht nach
+console-time-mp = Die Uhr lässt sich nur im Einzelspieler bewegen
+console-usage-weather = weather [preset]
+console-usage-time = time [HH:MM[:SS]]
+console-usage-help = help [command]
+console-usage-clear = clear
+console-help-weather = das Wetter ändern — ohne Name zeigt es das aktuelle
+console-help-time = die Uhr auf eine Tageszeit vorstellen — ohne Zeit zeigt sie die aktuelle
+console-help-help = die Befehle auflisten
+console-help-clear = den Log leeren
 
 ## Wertung
 

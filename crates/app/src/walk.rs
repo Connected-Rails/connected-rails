@@ -98,7 +98,13 @@ pub fn walk_player(
     mut walker: ResMut<Walker>,
     mut ray: MeshRayCast,
     precipitation: Query<(), With<Precipitation>>,
+    console: Res<crate::console::Console>,
 ) {
+    // The console holds the keyboard while it is open (`crate::console`) — W is a
+    // letter there, not a step forward.
+    if console.open {
+        return;
+    }
     match state.mode {
         // Back on the seat the body is gone; the next walk starts at the eye point again.
         CameraMode::Cab => {

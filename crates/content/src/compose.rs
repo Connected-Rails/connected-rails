@@ -370,6 +370,9 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
         merged.yards.push(y);
     }
     merged.trees.extend(module.trees.iter().cloned());
+    // Walkways too: geo-positioned polylines and polygons.
+    merged.walk_paths.extend(module.walk_paths.iter().cloned());
+    merged.walk_areas.extend(module.walk_areas.iter().cloned());
     // The same for reference markers — geo-positioned, and their layer name is
     // the same string in every module.
     merged.markers.extend(module.markers.iter().cloned());

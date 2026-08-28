@@ -25,6 +25,72 @@ use world_coords::EcefPos;
 mod section_tests {
     use super::*;
 
+    /// A walkway the rule check calls out is reached from its first vertex,
+    /// and the jump selects it so its fields are on screen.
+    #[test]
+    fn a_short_walkway_jumps_to_its_first_vertex() {
+        use content::route::{WalkAreaSource, WalkPathSource, WalkPoint};
+        let line = Line {
+            source: content::LineSource {
+                walk_paths: vec![WalkPathSource {
+                    name: String::new(),
+                    points: vec![WalkPoint {
+                        lat: 52.0,
+                        lon: 10.0,
+                    }],
+                    width: 2.0,
+                    people: 4,
+                    height: 0.0,
+                    tags: Vec::new(),
+                }],
+                walk_areas: vec![WalkAreaSource {
+                    name: String::new(),
+                    polygon: Vec::new(),
+                    people: 6,
+                    walking_share: 0.5,
+                    height: 0.0,
+                    tags: Vec::new(),
+                }],
+                ..Default::default()
+            },
+            net: Default::default(),
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        };
+        let first = world_coords::geo::to_ecef_deg(52.0, 10.0, 0.0);
+        let focus = Focus {
+            position: first,
+            height: 900.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            speed_step: 1,
+            speed_scalar: 1.0,
+        };
+        let marks = crate::terrain::Marks::default();
+        let (position, selection) = issue_target(
+            &line,
+            &RuleIssue::WalkPathTooShort { path: 0 },
+            &focus,
+            &marks,
+        );
+        assert!(position.is_some_and(|p| p.distance(first) < 1.0));
+        assert_eq!(selection, Selection::WalkPath(0));
+        // An area without a single corner has nowhere to jump to, but is
+        // still selected — the panel is where it gets deleted.
+        let (position, selection) = issue_target(
+            &line,
+            &RuleIssue::WalkAreaTooSmall { area: 0 },
+            &focus,
+            &marks,
+        );
+        assert!(position.is_none());
+        assert_eq!(selection, Selection::WalkArea(0));
+    }
+
     /// Every category names only sections the panel can draw, never one
     /// twice — the jump bar and the scroll area read the same list.
     #[test]
@@ -976,6 +1042,8 @@ pub(crate) fn new_line(
         objects: vec![],
         yards: vec![],
         trees: vec![],
+        walk_paths: vec![],
+        walk_areas: vec![],
         markers: vec![],
         terrain: vec![],
         heights: vec![],
@@ -1644,6 +1712,10 @@ fn detail_panel(
                                 }
                             });
                         }
+                        if let Some(kind) = crate::walkways::Kind::of_tool(state.tool) {
+                            ui.add_space(space::XS);
+                            crate::walkways::tool_rows(ui, line, state, kind);
+                        }
                         if state.tool == Tool::Brush {
                             ui.add_space(space::XS);
                             editor_ui::form_grid("brush").show(ui, |ui| {
@@ -1793,7 +1865,7 @@ fn detail_panel(
                     }
                     if shown("checks") {
                         nav_section(ui, jump, &mut current, "checks", "heading-checks", |ui| {
-                            checks_section(ui, line, state, focus);
+                            checks_section(ui, line, state, focus, marks);
                         });
                     }
                     if shown("imagery") {
@@ -2116,6 +2188,28 @@ fn selection_panel(
         }
         Selection::TrackArea(i) => {
             crate::areas::area_rows(ui, line, i, types, focus, state);
+        }
+        Selection::WalkPath(i) => {
+            crate::walkways::rows(
+                ui,
+                line,
+                state,
+                marks,
+                focus,
+                crate::walkways::Kind::Path,
+                i,
+            );
+        }
+        Selection::WalkArea(i) => {
+            crate::walkways::rows(
+                ui,
+                line,
+                state,
+                marks,
+                focus,
+                crate::walkways::Kind::Area,
+                i,
+            );
         }
         Selection::Edge(i) => {
             let Some(edge) = line.source.edges.get(i) else {
@@ -3791,7 +3885,12 @@ fn ghost_loaded(path: PathBuf, ghost: &mut Ghost, state: &EditorState, overlay: 
 
 /// What the issue is about, for the center button: a world position to jump to
 /// and the selection that puts its fields on screen.
-fn issue_target(line: &Line, issue: &RuleIssue, focus: &Focus) -> (Option<EcefPos>, Selection) {
+fn issue_target(
+    line: &Line,
+    issue: &RuleIssue,
+    focus: &Focus,
+    marks: &crate::terrain::Marks,
+) -> (Option<EcefPos>, Selection) {
     let device_target = |device: u32| {
         let position = line
             .source
@@ -3876,6 +3975,29 @@ fn issue_target(line: &Line, issue: &RuleIssue, focus: &Focus) -> (Option<EcefPo
                 .map(|c| crate::envelope::point_pos(c, crate::envelope::height(line, focus))),
             Selection::None,
         ),
+        // The first vertex of the way — where looking at it starts — and the
+        // way itself, so its fields are on screen. One without a single
+        // vertex has nowhere to jump to, but is still selected.
+        RuleIssue::WalkPathTooShort { path } => (
+            crate::walkways::vertex_pos(
+                line,
+                marks,
+                crate::walkways::Kind::Path,
+                *path as usize,
+                0,
+            ),
+            Selection::WalkPath(*path as usize),
+        ),
+        RuleIssue::WalkAreaTooSmall { area } => (
+            crate::walkways::vertex_pos(
+                line,
+                marks,
+                crate::walkways::Kind::Area,
+                *area as usize,
+                0,
+            ),
+            Selection::WalkArea(*area as usize),
+        ),
     }
 }
 
@@ -3906,23 +4028,33 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::YardOffEdge { yard } => t!("check-yard-off-edge", yard = yard),
         RuleIssue::PortalNotAtTheEdge { yard } => t!("check-portal-inside", yard = yard),
         RuleIssue::DuplicateYardName { yard } => t!("check-yard-name-twice", yard = yard),
+        RuleIssue::WalkPathTooShort { path } => t!("check-walk-path-short", path = path),
+        RuleIssue::WalkAreaTooSmall { area } => t!("check-walk-area-small", area = area),
         RuleIssue::EnvelopeSelfIntersects => t!("check-envelope-crossed"),
         RuleIssue::OutsideEnvelope {
             trees,
             terrain,
             markers,
+            walkways,
         } => t!(
             "check-outside-envelope",
             trees = trees,
             terrain = terrain,
-            markers = markers
+            markers = markers,
+            walkways = walkways
         ),
     }
 }
 
 /// Findings of the rule check, refreshed with every rebuild — each one jumps
 /// to the thing it is about.
-fn checks_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, focus: &mut Focus) {
+fn checks_section(
+    ui: &mut egui::Ui,
+    line: &mut Line,
+    state: &mut EditorState,
+    focus: &mut Focus,
+    marks: &crate::terrain::Marks,
+) {
     if line.issues.is_empty() {
         ui.small(t!("check-ok"));
         return;
@@ -3930,7 +4062,7 @@ fn checks_section(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorState, f
     let issues = line.issues.clone();
     for issue in &issues {
         ui.horizontal(|ui| {
-            let (position, selection) = issue_target(line, issue, focus);
+            let (position, selection) = issue_target(line, issue, focus, marks);
             if ui
                 .add_enabled(
                     position.is_some(),

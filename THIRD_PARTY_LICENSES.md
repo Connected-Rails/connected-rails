@@ -89,6 +89,26 @@ SOFTWARE.
 The `egui-phosphor` crate that bundles the font (© 2023 Romet Tagobert) is MIT
 OR Apache-2.0; the font file it ships is compiled into the editor binaries.
 
+## People in `mods/people/`
+
+The characters — the walker's body and the passengers — are generated out of
+[MakeHuman 2](https://github.com/makehumancommunity/makehuman2) by
+`tools/characters/` (see its README). The glTF files check in the geometry of
+the MakeHuman base mesh with its morph targets applied, the `game_engine` rig,
+and the meshes and textures of the MakeHuman system asset packs: skins, eyes,
+eyebrows, eyelashes, hair, the casual/elegant/work/sport suits, the shoes, the
+hats and the poses. All of that was released by the MakeHuman project under
+CC0 1.0 Universal (<https://creativecommons.org/publicdomain/zero/1.0/>) —
+the asset files say so in their headers: *"This asset was explicitly released
+as CC0 in september 2020. The copyright holders at the point of the release to
+CC0 were: Data Collection AB, Joel Palmius, Jonas Hauquier."* The MakeHuman
+base mesh and targets are CC0 as well (MakeHuman's `makehuman_license.txt`).
+
+Nothing of MakeHuman's program code is included; the pipeline runs it, the
+repository only keeps what it exported. The generated files are content of
+this repository and, being derived from CC0 material, carry no further
+attribution requirement — the credit above is given because it is deserved.
+
 ## Rust dependencies
 
 Crates pulled in by Cargo are not vendored here; their licences are those

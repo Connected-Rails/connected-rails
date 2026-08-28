@@ -1135,7 +1135,9 @@ check-area-off-track = Gleisbereich { $area }: ein Abschnitt liegt auf keinem Gl
 check-area-no-effect = Gleisbereich { $area }: deckt nichts ab oder setzt nichts — er erreicht das Modul nicht
 check-area-track-type = Gleisbereich { $area }: nennt eine Gleisbauart, die kein installiertes Mod kennt
 check-lzb-no-conductor = Gleis { $edge }: LZB-Gleisart, aber das Modul verlegt keinen Linienleiter
-check-outside-envelope = Außerhalb der Hüllkurve: Bäume { $trees }, Geländestriche { $terrain }, Marker { $markers } — Grenze verlegen oder löschen
+check-outside-envelope = Außerhalb der Hüllkurve: Bäume { $trees }, Geländestriche { $terrain }, Marker { $markers }, Wegpunkte { $walkways } — Grenze verlegen oder löschen
+check-walk-path-short = Fußweg { $path } hat weniger als zwei Punkte — Weg zeichnen oder löschen
+check-walk-area-small = Gehfläche { $area } hat weniger als drei Ecken — Fläche umreißen oder löschen
 check-envelope-crossed = Die Hüllkurve überschneidet sich — so eine Grenze hat kein Innen; die Ecke zurückziehen
 status-outside-envelope-track = Hinter der Hüllkurve — ein Gleis darf die Grenze erreichen, nicht überschreiten
 heading-imagery = Luftbilder
@@ -2401,6 +2403,34 @@ status-outside-envelope = Außerhalb der Hüllkurve — dieser Boden gehört dem
 status-forest-baked-clipped = { $count } Bäume gesetzt, { $dropped } außerhalb der Hüllkurve verworfen
 status-forest-imported-clipped = { $count } Bäume aus { $areas } Flächen, { $dropped } außerhalb der Hüllkurve verworfen
 action-cancel = Abbrechen
+
+# --- Menschen: Fußwege und Gehflächen ---------------------------------------
+tool-group-people = Menschen
+tool-walk-path = Fußweg
+tool-walk-path-hint = Klicks setzen die Punkte eines Weges, den Menschen entlanggehen; Enter oder Rechtsklick schließt ihn ab, Esc bricht ab · an einem gezeichneten Weg: Punkt ziehen, Klick auf eine Seite des gewählten Weges legt einen neuen an, Entf löscht den gegriffenen Punkt
+tool-walk-area = Gehfläche
+tool-walk-area-hint = Klicks umreißen einen Platz, auf dem Menschen unterwegs sind; Enter oder Rechtsklick schließt ihn, Esc bricht ab · an einer gezeichneten Fläche: Ecke ziehen, Klick auf eine Seite der gewählten Fläche legt eine neue an, Entf löscht die gegriffene Ecke
+walk-path-active = Fußweg — Punkte: { $points } · Enter oder Rechtsklick schließt ab, Esc bricht ab
+walk-area-active = Gehfläche — Ecken: { $corners } · Enter oder Rechtsklick schließt sie, Esc bricht ab
+walk-count = Fußwege: { $paths } · Gehflächen: { $areas }
+walk-name = Name
+walk-name-hint = Freie Bezeichnung — Panel und Prüfung nennen den Weg danach
+walk-width = Breite
+walk-width-hint = Über diese Breite des Weges verteilen sich die Menschen
+walk-people = Menschen
+walk-people-hint = Wie viele gleichzeitig darauf unterwegs sind — null ist erlaubt, ein Weg darf angelegt werden, bevor er belebt wird
+walk-share = Anteil Gehende
+walk-share-hint = Anteil der Menschen, die zwischen Stellen umhergehen statt zu stehen, 0 … 1
+walk-height = Höhe über Grund
+walk-height-hint = Über dem Gelände unter jedem Punkt — eine Fußgängerbrücke, ein modellierter Bahnsteig
+walk-tags = Tags
+walk-tags-hint = Kommagetrennt, kebab-case in Kleinbuchstaben wie überall
+sel-walk-path-summary = Fußweg { $index } — Punkte: { $points }
+sel-walk-area-summary = Gehfläche { $index } — Ecken: { $corners }
+sel-walk-vertex = Punkt { $index } von { $count } gegriffen — Entf löscht ihn
+status-walk-path-points = Ein Fußweg braucht mindestens zwei Punkte — den nächsten klicken
+status-walk-area-points = Eine Gehfläche braucht mindestens drei Ecken — die nächste klicken
+status-walk-vertex-added = Punkt angelegt — an seinen Platz ziehen.
 
 ## Rangieren
 

@@ -26,6 +26,7 @@ mods/<id>/mod.ron           manifest
          /signals/*.ron     SignalType
          /signal_models/*.ron SignalModel — glTF parts on mount points, lamp bindings
          /blocks/*.ron      block presets for the vehicle editor's palette
+         /characters/*.ron  CharacterSpec — a person model: the walker's body, the passengers
          /scripts/*.lua     behaviour
          /assets/…          models, textures, sounds — as `mods://<id>/assets/…`
 ```
@@ -478,6 +479,10 @@ re-run the script after editing it.
 model: Some((
     file: "example/assets/br101.gltf",
     lods: [(level: 0, distance: 150.0), (level: 1, distance: 400.0)],
+    // Where a passenger may sit (see People): the floor point below the pelvis in
+    // model space — the seat is 0.45 m above it, knees and feet in front of it — and
+    // which way the seat faces (0 = ahead, 180 = backwards).
+    seats: [(pos: (0.6, 1.25, -3.0)), (pos: (-0.6, 1.25, -3.0), yaw_deg: 180.0)],
     parts: [
         (node: "door_left", function: "door_left",
          motion: Translate(axis: (0.0, 0.0, 1.0), metres: 0.8)),
@@ -633,20 +638,22 @@ the train.
 
 ### The character
 
-`--character <file>` hangs a model on the walker, from the same `mods://` paths as the
-vehicle models:
+The walker wears one of the mods' people (see *People* below): without a flag the first
+character with the `Player` role, in registry order, and `--character` picks another one
+— by name, or as a file from the same `mods://` paths as the vehicle models:
 
 ```
+cargo run -p app -- --camera walk --character people:f01_lena
 cargo run -p app -- --camera walk --character example/models/driver.glb
 ```
 
 The model stands in its own origin — feet at Y = 0, looking along −Z, metres, Y up, which
-is what a glTF export out of MakeHuman gives. It is shown whenever the camera is not the
+is what the character pipeline gives. It is shown whenever the camera is not the
 walker's own eye (F2, F3); in the first person it is hidden, because the eye sits inside
-its head and its body would otherwise be in the way of the walker's ray casts.
-
-<!-- ponytail: no animation. The clips of the model are ignored until there is a model
-     with clips to try them against. -->
+its head and its body would otherwise be in the way of the walker's ray casts. A model
+with the clips `idle` and `walk` is animated: it stands with a little life in it and
+walks when the walker walks, the cycle sped up with his pace; a model without clips
+simply stands.
 
 ### Displays
 
@@ -1210,6 +1217,18 @@ its own — `BlockMarker` devices naming the section behind them:
 (kind: BlockMarker, edge: 2, s: 0.0, payload: "(section:2)"),
 ```
 
+A **platform** is a device too — the stop board of a timetable stop and the ground the
+waiting passengers stand on (see *People*): it sits at the platform's start and runs on
+for `length`, on the side the sign of its `lateral_offset` says (positive = left of
+increasing arc length), and `height` is the platform surface above the railhead. A line
+whose platforms are not modelled leaves the height out and the people stand on the
+ground:
+
+```ron
+(kind: Platform, edge: 0, s: 1770.0, facing: Both, lateral_offset: 5.0,
+ payload: "(name:\"Beispielstadt\",length:210.0,height:0.76)"),
+```
+
 An authority runs to the first boundary that is not clear: a block marker whose section is
 occupied, or a main signal at stop. v-target is the most restrictive point ahead — a speed
 step of the line counts as much as a stop, so a slow section needs no device of its own.
@@ -1380,6 +1399,24 @@ Which one is spawned follows the scenario's start date (see *Seasons* below): th
 variant while snow lies, the autumn one while the leaves have turned, the year-round model
 otherwise. An object that ships no variant is never treated as a mistake.
 
+**Walkways in the model.** A platform, a footbridge or a station forecourt brings the
+places its people walk along with it, as empty nodes in the glTF (in Blender: empties,
+named in the outliner):
+
+| Nodes | Meaning |
+|---|---|
+| `wp_<name>_0`, `wp_<name>_1`, … | the vertices of a **footpath** `<name>`, in walking order; people walk it up and down |
+| `wa_<name>_0`, `wa_<name>_1`, … | the corners of a **walk area** `<name>` in ring order; people wander inside it, the rest stand |
+
+Custom properties on the `_0` node (exported as glTF `extras`) size the crowd: `people`
+(how many, default 4 on a path and 6 in an area), `width` (metres, a path's; default 2)
+and `walking_share` (0 … 1, the share of an area's people that wander; default 0.5). The
+positions are the model's own, so the way follows the object wherever a line places it,
+and the people stand at the height the nodes are at — on the platform's surface, not on
+the ground under it. `mods/example/assets/platform.gltf` (`tools/gen_platform.py`) is the
+worked example: a 210 m platform with `wp_edge_*` along its length and `wa_middle_*` as
+its waiting area, placed on the example line at the stop at km 1.98.
+
 A line places instances under `objects:`; each placement stores concrete values (stamped
 from the object's defaults, editable per instance), so the file stands on its own:
 
@@ -1430,6 +1467,38 @@ Haus.gltf
 ├── fenster          the dark pane by day
 └── fenster_NIGHT    the emissive one, shown after dusk
 ```
+
+### Walkways
+
+People need places to be: **footpaths** and **walk areas** are line content, geo-positioned
+like the trees, with the height taken from the terrain:
+
+```ron
+walk_paths: [
+    // A footbridge from the forecourt to the platform, walked up and down by four
+    // people at a time; `height` lifts a way that is not on the ground.
+    (name: "Zugang", points: [(lat: 52.0002, lon: 10.0210), (lat: 52.0004, lon: 10.0214)],
+     width: 2.0, people: 4, height: 0.0, tags: ["station"]),
+],
+walk_areas: [
+    // The forecourt: twelve people about, half of them wandering between spots
+    // inside the polygon, the rest standing.
+    (name: "Vorplatz", polygon: [(lat: 52.0000, lon: 10.0205), (lat: 52.0000, lon: 10.0212),
+                                 (lat: 52.0003, lon: 10.0212), (lat: 52.0003, lon: 10.0205)],
+     people: 12, walking_share: 0.5),
+],
+```
+
+A path needs two points, an area three corners (the rule check says so), and both have
+to lie inside the module envelope — a corner dragged outside is reported. The route
+editor's **footpath** and **walk area** tools (the *People* group of the palette) draw
+them with clicks — Enter or right-click finishes, Esc cancels — and edit them like the
+envelope: drag a vertex, click a side of the selected way to add one, Delete removes the
+held vertex or the way. The people
+themselves are the app's (see *People*): which character walks where, and at what pace,
+is decided from the line and the scenario clock, never stored. A platform that is a
+model carries its own walkways (see *Track objects*), so a line only draws what no model
+brings.
 
 ### Stabling roads and portals
 
@@ -2053,6 +2122,81 @@ The answer may contain:
 has (switch, route, weather, score, finish) without any of them being written in Lua. The
 other two are there for a line that carries behaviour without a scenario.
 `mods/example/scenarios/probefahrt.ron` plus `scripts/probefahrt.lua` is the worked example.
+
+## People
+
+A mod may ship **characters** (`characters/*.ron`): the models the walker wears and the
+passengers are made of. The shipped `people` mod carries twenty-four of them, generated
+out of MakeHuman 2 by `tools/characters/` (its README explains the pipeline and how to
+add faces of your own); a mod of yours adds people the same way:
+
+```ron
+(
+    name: "Lena",                        // display name — content, not translated
+    model: "people/assets/f01_lena.glb", // glTF below mods/, like every other model
+    gender: Female,                      // Female | Male | Unspecified
+    roles: [Player, Passenger],          // what the app may pick it for; default both
+    height: 1.68,                        // m, informational
+    tags: ["young", "casual"],
+)
+```
+
+The file is all the app needs; everything else is convention in the model, so a
+character needs no per-file tables:
+
+- **Origin and axes:** metres, Y up, the origin on the ground between the feet, the face
+  towards −Z — the frame the walker and the vehicles use.
+- **Levels of detail:** the skinned mesh as nodes `char_LOD0` … `char_LOD3` (the `_LOD<n>`
+  convention every model shares), finest first, all on one skeleton so a level switches
+  without a pose change. The generated people carry about 30 000 / 6 000 / 1 600 / 500
+  triangles; the app hands over at 30, 80 and 200 m and culls a person at 500 m (300 m
+  for somebody aboard a train).
+- **Clips:** `idle` and `idle2` (looping stands with a little life in them), `walk` (one
+  cycle at about 1.5 m/s), `stand`, `stand2`, `stand3` (single-frame standing poses) and
+  `sit` (feet on the floor, the seat about 0.45 m up). Whatever is missing is not used —
+  a character with no clips stands in its rest pose.
+- **Textures:** one opaque atlas for skin and clothes, one cut-out atlas (alpha mask) for
+  hair, brows, lashes and eyes; the app builds the mip chain the first time a character
+  is shown.
+
+**Where people appear.** Passengers are placed by the app, not by the line file — they
+are cosmetic and derived, so nothing about them is stored or sent:
+
+- **On platforms:** every `Platform` device gets a waiting crowd along its length, one
+  person per six metres or so (at least one, at most sixty), 2.3–2.9 m beside the track
+  on the platform's side, standing on the platform's height (or on the ground where none
+  is given), facing the track give or take — a few look along the platform — in a mix
+  of the idle and standing clips with staggered starts so no two move in step. About a
+  third of them walk instead, up and down a 1.2 m wide lane 3.8 m from the track, a
+  shoulder's width behind the crowd. Which person stands where is decided by a hash of the line's name and the
+  device's index, so every client of a multiplayer run — and every restart — shows the
+  same crowd.
+- **In seats:** a vehicle whose model block lists `seats` (see *Model (glTF)*) has about
+  two thirds of them taken, decided by a hash of the train, the vehicle and the seat, with
+  the `sit` clip. A vehicle that lists none carries nobody.
+- **On walkways:** a line may draw **footpaths** and **walk areas** (see *Walkways* under
+  *Lines and scenarios*), and a model may carry them (see *Track objects*): people walk a
+  footpath round and round without stopping, and wander a walk area between spots
+  inside it while the rest of its people stand about. Nobody walks through anybody: on
+  a footpath everyone keeps to the right (0.35 m and more from the middle, so two
+  meeting pass a shoulder's width apart), walks at the one pace the way has (so nobody
+  overtakes) and turns round at each end in a half circle from one lane onto the other
+  — an oval nobody on it ever has to cross; a wanderer's spots and ways keep clear of
+  the people standing in the area and of the spots the other wanderers stop at — two
+  wanderers may still cross while both walk.
+- **The walker:** see *The character* above. What another player's walker looks like is
+  not sent over the wire yet; remote walkers are not drawn at all.
+
+Where a person is at any moment is a **pure function of the line, a seed and the scenario
+clock** — nothing about the crowd is stored or sent, every client computes the same
+people in the same places, and the crowd stands still while the run is paused. People
+stream with the terrain tiles like trees and scenery objects, so a long line with many
+stations costs nothing where nobody is looking.
+
+The glTF files of the `people` mod are **Git LFS** objects, like every binary asset below
+`mods/` (`.gitattributes` lists the extensions): a checkout needs `git lfs install` once,
+otherwise the files are pointers — the mod manager then warns `… is a Git LFS pointer`
+for each model instead of loading nothing.
 
 ## Sandbox
 

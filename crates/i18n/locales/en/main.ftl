@@ -1134,7 +1134,9 @@ check-area-off-track = Marked area { $area }: a stretch lies on no track, or pas
 check-area-no-effect = Marked area { $area }: covers nothing, or sets nothing — it does not reach the module
 check-area-track-type = Marked area { $area }: names a track type no installed mod defines
 check-lzb-no-conductor = Track { $edge }: LZB track type, but the module places no line conductor
-check-outside-envelope = Outside the envelope: trees { $trees }, terrain strokes { $terrain }, markers { $markers } — move the boundary or delete them
+check-outside-envelope = Outside the envelope: trees { $trees }, terrain strokes { $terrain }, markers { $markers }, walkway vertices { $walkways } — move the boundary or delete them
+check-walk-path-short = Footpath { $path } has fewer than two points — draw the way or delete it
+check-walk-area-small = Walk area { $area } has fewer than three corners — outline the area or delete it
 check-envelope-crossed = The envelope crosses itself — a boundary like that has no inside; pull the corner back
 status-outside-envelope-track = Past the module envelope — a track may reach the boundary, not cross it
 heading-imagery = Aerial imagery
@@ -2398,6 +2400,34 @@ status-outside-envelope = Outside the module envelope — that ground belongs to
 status-forest-baked-clipped = { $count } trees baked, { $dropped } dropped outside the envelope
 status-forest-imported-clipped = { $count } trees from { $areas } areas, { $dropped } dropped outside the envelope
 action-cancel = Cancel
+
+# --- People: footpaths and walk areas --------------------------------------
+tool-group-people = People
+tool-walk-path = Footpath
+tool-walk-path-hint = Clicks set the vertices of a way people walk along; Enter or right-click finishes it, Esc cancels · on a drawn way: drag a vertex, click a side of the selected way to add one, Delete removes the held vertex
+tool-walk-area = Walk area
+tool-walk-area-hint = Clicks outline a place people are about on; Enter or right-click closes it, Esc cancels · on a drawn area: drag a corner, click a side of the selected area to add one, Delete removes the held corner
+walk-path-active = Footpath — vertices: { $points } · Enter or right-click finishes it, Esc cancels
+walk-area-active = Walk area — corners: { $corners } · Enter or right-click closes it, Esc cancels
+walk-count = Footpaths: { $paths } · walk areas: { $areas }
+walk-name = Name
+walk-name-hint = Free label — the panel and the rule check call the way by it
+walk-width = Width
+walk-width-hint = The people spread across this width of the way
+walk-people = People
+walk-people-hint = How many are on it at a time — none is allowed, a way may be laid out before it is peopled
+walk-share = Walking share
+walk-share-hint = Share of the people who wander between spots instead of standing, 0 … 1
+walk-height = Height above ground
+walk-height-hint = Above the terrain under each vertex — a footbridge, a modelled platform
+walk-tags = Tags
+walk-tags-hint = Comma-separated, lower-case kebab like everywhere else
+sel-walk-path-summary = Footpath { $index } — vertices: { $points }
+sel-walk-area-summary = Walk area { $index } — corners: { $corners }
+sel-walk-vertex = Vertex { $index } of { $count } held — Delete removes it
+status-walk-path-points = A footpath needs at least two vertices — click the next one
+status-walk-area-points = A walk area needs at least three corners — click the next one
+status-walk-vertex-added = Vertex added — drag it where it belongs.
 
 ## Shunting
 

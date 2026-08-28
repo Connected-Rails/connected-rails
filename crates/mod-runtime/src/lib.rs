@@ -19,6 +19,7 @@
 //!          /signal_models/*.ron SignalModel (glTF parts on mount points, lamp bindings)
 //!          /track_types/*.ron TrackType (texture, roughness, superstructure speed, LZB)
 //!          /objects/*.ron     TrackObject (3D object with its default pose relative to the track)
+//!          /characters/*.ron  CharacterSpec (a person model: the walker's body, the passengers)
 //!          /scripts/*.lua     behaviour scripts
 //!          /assets/…          models, textures, sounds (asset source `mods://`)
 //! ```
@@ -29,6 +30,7 @@
 pub mod display;
 pub mod script;
 
+use content::CharacterSpec;
 use content::Composition;
 use content::compose::{Composed, ModuleOffsets};
 use content::route::LineSource;
@@ -128,6 +130,8 @@ pub struct Mods {
     pub signal_models: BTreeMap<String, SignalModel>,
     pub track_types: BTreeMap<String, TrackType>,
     pub objects: BTreeMap<String, TrackObject>,
+    /// People: the walker's body and the passengers (`characters/*.ron`, plan ch. 12).
+    pub characters: BTreeMap<String, CharacterSpec>,
     /// Lua sources, keyed `"<mod>:<file stem>"`.
     pub scripts: BTreeMap<String, String>,
     /// Everything that went wrong — displayed, never fatal (plan 19.3).
@@ -275,6 +279,34 @@ impl Mods {
             &mut self.objects,
             &mut self.warnings,
         );
+        read_ron(
+            &dir.join("characters"),
+            id,
+            &mut self.characters,
+            &mut self.warnings,
+        );
+        // The binary assets live in Git LFS: a clone without it has pointer files where
+        // the models should be, and Bevy would only say "not a glTF" much later.
+        let prefix = format!("{id}:");
+        let models = self
+            .characters
+            .iter()
+            .filter(|(key, _)| key.starts_with(&prefix))
+            .map(|(key, c)| (key.clone(), c.model.clone()))
+            .chain(
+                self.vehicles
+                    .iter()
+                    .filter(|(key, _)| key.starts_with(&prefix))
+                    .filter_map(|(key, v)| Some((key.clone(), v.model.as_ref()?.file.clone()))),
+            );
+        let root = dir.parent().unwrap_or(dir);
+        for (key, model) in models {
+            if is_lfs_pointer(&root.join(&model)) {
+                self.warnings.push(format!(
+                    "{key}: {model} is a Git LFS pointer, not the model — run `git lfs pull`"
+                ));
+            }
+        }
         for path in files(&dir.join("scripts"), "lua") {
             insert(path, id, &mut self.scripts, &mut self.warnings, |t| {
                 Ok(t.to_string())
@@ -520,6 +552,19 @@ fn files(dir: &Path, extension: &str) -> Vec<PathBuf> {
     files
 }
 
+/// Whether `path` is a Git LFS pointer file instead of the object it stands for — what a
+/// checkout without `git lfs install` leaves behind. A missing file is not a pointer; that
+/// case is reported where the model is loaded.
+pub fn is_lfs_pointer(path: &Path) -> bool {
+    const SIGNATURE: &[u8] = b"version https://git-lfs.github.com/spec/";
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 64];
+    let read = std::io::Read::read(&mut file, &mut head).unwrap_or(0);
+    head[..read].starts_with(SIGNATURE)
+}
+
 /// Reads every `*.ron` of a directory into `into`, keyed `"<mod>:<file stem>"`.
 fn read_ron<T: DeserializeOwned>(
     dir: &Path,
@@ -575,9 +620,11 @@ mod tests {
         assert!(mods.vehicles.contains_key("example:br101_afb"));
         assert!(mods.signal_types.contains_key("example:ks_main"));
         assert!(mods.objects.contains_key("example:mast"));
-        // The example line places that object; the check knows the registry.
+        // The example line places that object (and the platform); the check knows the
+        // registry.
         let line = &mods.lines["example:beispielstrecke"];
-        assert_eq!(line.objects.len(), 2);
+        assert_eq!(line.objects.len(), 3);
+        assert!(mods.objects.contains_key("example:platform"));
         assert!(
             line.check(&mods.track_types, &mods.objects).is_empty(),
             "{:?}",
@@ -590,6 +637,107 @@ mod tests {
         let timetable = &mods.timetables[name];
         assert!(!timetable.stops.is_empty());
         assert!(mods.compositions.contains_key("example:gesamtstrecke"));
+    }
+
+    /// The example line and its modules are wired for the BR 101 on every edge: an edge
+    /// that states no `electrification` carries no wire, and an electric loco under no
+    /// wire reads 0 kV at the pantograph and never closes its main switch.
+    #[test]
+    fn the_example_lines_are_wired_for_the_br101() {
+        use track_model::{EdgeId, PowerSystem};
+        let mods = example_mods();
+        for key in [
+            "example:beispielstrecke",
+            "example:modul_ost",
+            "example:modul_west",
+        ] {
+            let compiled = mods.lines[key].compile().expect("line compiles");
+            for (i, edge) in compiled.net.edges().iter().enumerate() {
+                for s in [0.0, edge.length() / 2.0, edge.length()] {
+                    assert_eq!(
+                        compiled.net.electrification_at(EdgeId(i as u32), s),
+                        Some(PowerSystem::Ac15kv),
+                        "{key} edge {i} at {s} m"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The `people` mod is the generated roster (tools/characters/): every entry names a
+    /// model that ships, both genders are there, and everyone has a role — the app
+    /// picks the walker's body and the crowds out of exactly this.
+    #[test]
+    fn people_mod_ships_the_roster() {
+        let mods = example_mods();
+        assert!(mods.warnings.is_empty(), "warnings: {:?}", mods.warnings);
+        let people: Vec<_> = mods
+            .characters
+            .iter()
+            .filter(|(key, _)| key.starts_with("people:"))
+            .collect();
+        assert_eq!(
+            people.len(),
+            24,
+            "{:?}",
+            people.iter().map(|(k, _)| k).collect::<Vec<_>>()
+        );
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../mods"));
+        for (key, spec) in &people {
+            assert!(
+                root.join(&spec.model).is_file(),
+                "{key}: {} missing",
+                spec.model
+            );
+            assert!(!spec.roles.is_empty(), "{key} has no role");
+            assert!(
+                (1.5..2.0).contains(&spec.height),
+                "{key}: {} m",
+                spec.height
+            );
+        }
+        let women = people
+            .iter()
+            .filter(|(_, s)| s.gender == content::Gender::Female)
+            .count();
+        assert_eq!(women, 12);
+        assert!(
+            people
+                .iter()
+                .any(|(_, s)| s.has_role(content::Role::Player))
+        );
+    }
+
+    /// A checkout without Git LFS leaves pointer files where the models should be; the
+    /// loader says so in words instead of leaving it to a glTF parse error.
+    #[test]
+    fn an_lfs_pointer_instead_of_a_model_is_a_warning() {
+        let root = std::env::temp_dir().join(format!("mods-lfs-{}", std::process::id()));
+        let dir = root.join("lfs");
+        std::fs::create_dir_all(dir.join("characters")).unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("mod.ron"), "(id: \"lfs\", name: \"LFS\")").unwrap();
+        std::fs::write(
+            dir.join("characters/anna.ron"),
+            "(name: \"Anna\", model: \"lfs/assets/anna.glb\")",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("assets/anna.glb"),
+            "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n",
+        )
+        .unwrap();
+        let mods = Mods::load(&root);
+        assert!(mods.characters.contains_key("lfs:anna"));
+        assert!(
+            mods.warnings.iter().any(|w| w.contains("Git LFS pointer")),
+            "{:?}",
+            mods.warnings
+        );
+        assert!(is_lfs_pointer(&dir.join("assets/anna.glb")));
+        assert!(!is_lfs_pointer(&dir.join("mod.ron")));
+        assert!(!is_lfs_pointer(&dir.join("missing.glb")));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// The example line's track types resolve against `track_types/*.ron`:

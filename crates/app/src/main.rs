@@ -46,8 +46,7 @@ use world_coords::RenderOrigin;
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
 // `update_daylight`, read by everything that switches with darkness: the
 // headlights here, the mods' `_NIGHT` nodes in `world-render`.
-use bevy::gltf::GltfAssetLabel;
-use world_render::{Daylight, sky};
+use world_render::{Daylight, PeopleClock, sky};
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
 /// the menu apply without restarting the process.
@@ -332,6 +331,7 @@ fn main() {
                 step_simulation,
             )
                 .chain(),
+            feed_people_clock,
             run_mod_scripts,
             displays::update_displays,
             rebase_origin,
@@ -341,6 +341,7 @@ fn main() {
             walk::walk_player,
             ui::camera_control,
             walk::place_character,
+            walk::animate_walker,
             update_precipitation,
             streaming::stream_terrain,
             terrain_visibility,
@@ -720,8 +721,34 @@ fn setup(
         fallback_height: 100.0,
         ..default()
     };
-    // Trees and scenery objects come with the tiles: each stands on the ground
-    // of the tile it lands on, and streams in and out with it.
+    // The people (plan ch. 12): the passengers the crowd and the seats are made
+    // of, in registry order, and the walker's own body. Nothing about them is
+    // replicated — the crowd is a function of the line's name and the seats of
+    // the train's indices, so every client shows the same faces.
+    let passenger_names: Vec<String> = mods
+        .mods
+        .characters
+        .iter()
+        .filter(|(_, c)| c.has_role(content::Role::Passenger))
+        .map(|(key, _)| key.clone())
+        .collect();
+    let crowd = content::Crowd::from_line(
+        &line_source,
+        &sim.net,
+        terrain_options.zone,
+        &passenger_names,
+        content::people::line_seed(&line_source.name),
+    );
+    info!(
+        "people: {} on the platforms and ways ({} of them walking), {} passenger characters installed",
+        crowd.len(),
+        crowd.walking(),
+        passenger_names.len()
+    );
+    let passengers =
+        world_render::Passengers::resolve(&passenger_names, &mods.mods.characters, &assets);
+    // Trees, scenery objects and people come with the tiles: each stands on
+    // the ground of the tile it lands on, and streams in and out with it.
     let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
         .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone))
         .with_scenery(Scenery::from_line(
@@ -729,6 +756,7 @@ fn setup(
             &sim.net,
             terrain_options.zone,
         ))
+        .with_crowd(crowd)
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(
@@ -780,12 +808,13 @@ fn setup(
     commands.insert_resource(aspect_materials);
     commands.insert_resource(world_render::SignalModels(signal_models));
 
-    // Vegetation and scenery: the line's object names resolved against the
-    // installed mods.
+    // Vegetation, scenery and the crowd: the line's object names resolved
+    // against the installed mods.
     let catalog = world_render::WorldCatalog::new(
         terrain_builder.tree_objects(),
         terrain_builder.scenery_objects(),
         &mods.mods.objects,
+        passengers.clone(),
         &assets,
         &mut meshes,
         &mut materials,
@@ -824,6 +853,7 @@ fn setup(
             ..default()
         }),
         tail_mesh: meshes.add(Sphere::new(0.09)),
+        passengers,
     };
     for train in std::iter::once(player).chain(drivers.iter().map(|(t, _)| *t)) {
         spawn_vehicle_views(
@@ -937,13 +967,36 @@ fn setup(
     commands.insert_resource(drawings);
     mods_ui::spawn_panel(&mut commands);
 
-    // A character model for the walker (plan ch. 12.4): `--character <file>` takes the
-    // same `mods://` paths as the vehicle models. Without one the walker stays a body
-    // without a picture, which in the first person is all he ever is.
-    if let Some(file) = arg("--character") {
-        let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(models::asset_path(&file)));
+    // A character model for the walker (plan ch. 12.4): `--character` names one of
+    // the mods' people (`people:f01_lena`) or takes a file on the same `mods://` paths
+    // as the vehicle models; without the flag the first character with the `Player`
+    // role, in registry order. Without any the walker stays a body without a picture,
+    // which in the first person is all he ever is. The model is a person like the
+    // passengers (`world_render::people`); `walk::animate_walker` moves it.
+    let character = match arg("--character") {
+        Some(key) => Some(
+            mods.mods
+                .characters
+                .get(&key)
+                .map_or(key, |c| c.model.clone()),
+        ),
+        None => mods
+            .mods
+            .characters
+            .values()
+            .find(|c| c.has_role(content::Role::Player))
+            .map(|c| c.model.clone()),
+    };
+    if let Some(file) = character {
+        info!("walker: character {file}");
+        let character = world_render::CharacterAssets::load(&assets, &file);
         commands.spawn((
-            WorldAssetRoot(scene),
+            world_render::person_bundle(
+                &character,
+                content::Pose::Idle,
+                0.0,
+                world_render::PERSON_CULL,
+            ),
             Transform::default(),
             Visibility::Hidden,
             walk::CharacterModel,
@@ -1114,10 +1167,13 @@ pub(crate) struct VehicleKit {
     coach: Handle<StandardMaterial>,
     tail_material: Handle<StandardMaterial>,
     tail_mesh: Handle<Mesh>,
+    /// The people a vehicle's seats are filled from (plan ch. 12).
+    passengers: world_render::Passengers,
 }
 
-/// Everything one train is drawn with: a body or its glTF per vehicle, the headlight
-/// cones and tail lamps at both ends, and the cab lamp in the player's leading vehicle.
+/// Everything one train is drawn with: a body or its glTF per vehicle, the passengers
+/// in the seats its model lists, the headlight cones and tail lamps at both ends, and
+/// the cab lamp in the player's leading vehicle.
 pub(crate) fn spawn_vehicle_views(
     commands: &mut Commands,
     assets: &AssetServer,
@@ -1141,6 +1197,24 @@ pub(crate) fn spawn_vehicle_views(
                 .spawn((Transform::default(), Visibility::default(), view))
                 .id();
             models::spawn(commands, assets, entity, &view, &file);
+            // The seats: about two thirds taken, decided by the indices alone, so
+            // every client seats the same people (`world_render::people`).
+            if let Some(seats) = v
+                .spec
+                .model
+                .as_ref()
+                .map(|m| m.seats.as_slice())
+                .filter(|s| !s.is_empty())
+            {
+                commands.entity(entity).with_children(|parent| {
+                    let taken =
+                        world_render::spawn_seated(parent, &kit.passengers, seats, train, i);
+                    info!(
+                        "train {train}, vehicle {i}: {taken} of {} seats taken",
+                        seats.len()
+                    );
+                });
+            }
             entity
         } else {
             let mesh = meshes.add(
@@ -1338,6 +1412,17 @@ pub(crate) fn drive_ai(
 
 pub(crate) fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
     sim.0.advance(time.delta_secs_f64());
+}
+
+/// Hands the walkers their clock (`world_render::PeopleClock`): the
+/// simulation's, not the frame's, so they stand still while the run is paused
+/// and every client — the clock is what the server keeps in step — walks them
+/// to the same spots. Nothing about them travels (CLAUDE.md, *Multiplayer*).
+pub(crate) fn feed_people_clock(sim: Res<SimResource>, mut clock: ResMut<PeopleClock>) {
+    let now = sim.0.clock();
+    if clock.0 != now {
+        clock.0 = now;
+    }
 }
 
 /// Behaviour scripts of the mods — signal aspects and cab automation (plan ch. 19).

@@ -63,6 +63,12 @@ pub enum Icon {
     Tiles,
     /// Module envelope — a closed polygon on its corner points.
     Envelope,
+    /// People — a figure: head, body, arms out, legs apart.
+    People,
+    /// Footpath — the dashed way a map draws for walkers, its ends marked.
+    WalkPath,
+    /// Walk area — an outline with the stipple a map puts on a pedestrian area.
+    WalkArea,
     /// Module — a jigsaw piece: what plugs into its neighbours.
     Module,
     /// Split track — a rail with a cut through it.
@@ -425,6 +431,54 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                     .iter()
                     .map(|c| Shape::circle_filled(*c, LINE, stroke.color)),
             );
+            shapes
+        }
+        // A figure — head over a body, arms out, legs apart. The box it
+        // heads is about where people walk, and a person is the one symbol
+        // everyone reads at 30 px.
+        Icon::People => vec![
+            Shape::circle_stroke(at(0.5, 0.20), rect.width() * 0.12, stroke),
+            line(vec![at(0.5, 0.32), at(0.5, 0.60)]),
+            line(vec![at(0.26, 0.46), at(0.74, 0.46)]),
+            line(vec![at(0.32, 0.94), at(0.5, 0.60), at(0.68, 0.94)]),
+        ],
+        // A footpath as a map draws one: a dashed line bending across the
+        // tile, a dot at either end where it starts and stops.
+        Icon::WalkPath => {
+            let way = [
+                at(0.08, 0.86),
+                at(0.28, 0.70),
+                at(0.38, 0.62),
+                at(0.58, 0.54),
+                at(0.68, 0.44),
+                at(0.90, 0.14),
+            ];
+            let mut shapes: Vec<Shape> = way.chunks(2).map(|dash| line(dash.to_vec())).collect();
+            shapes.push(Shape::circle_filled(way[0], LINE, color));
+            shapes.push(Shape::circle_filled(way[5], LINE, color));
+            shapes
+        }
+        // A pedestrian area as a map draws one: the outline, and the stipple
+        // inside that says people are about on it.
+        Icon::WalkArea => {
+            let mut shapes = vec![Shape::closed_line(
+                vec![
+                    at(0.10, 0.22),
+                    at(0.90, 0.14),
+                    at(0.84, 0.88),
+                    at(0.16, 0.80),
+                ],
+                stroke,
+            )];
+            for (x, y) in [
+                (0.34, 0.40),
+                (0.62, 0.36),
+                (0.48, 0.58),
+                (0.30, 0.66),
+                (0.66, 0.64),
+            ] {
+                shapes.push(Shape::circle_filled(at(x, y), LINE * 0.8, color));
+            }
             shapes
         }
         // A brush: handle, ferrule and the bristles that make it one.

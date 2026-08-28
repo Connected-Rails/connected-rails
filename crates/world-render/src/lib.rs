@@ -20,7 +20,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
-use content::{SceneryInstance, TerrainTile, Tree};
+use content::{PersonInstance, SceneryInstance, TerrainTile, Tree};
 use glam::DVec3;
 use sim_core::interlock::{Aspect, DistantAspect, MainAspect, SignalKind, SignalModel};
 use sim_core::train::lod_level;
@@ -29,12 +29,19 @@ use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 pub mod clouds;
 pub mod mist;
+pub mod people;
 pub mod precipitation;
 pub mod scatter;
 pub mod sky;
 pub mod weather;
 pub mod windscreen;
 
+pub use people::{
+    CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
+    PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
+    WalkwayHost, WalkwaysBound, bind_walkways, gait, move_strollers, person_bundle, play_gait,
+    spawn_seated, spawn_strollers,
+};
 pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, WorldCatalog,
     materialise_trees,
@@ -51,6 +58,9 @@ impl Plugin for WorldRenderPlugin {
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()
+            .init_resource::<people::CharacterGraphs>()
+            .init_resource::<people::PeopleTextures>()
+            .init_resource::<people::PeopleClock>()
             .add_plugins((
                 sky::plugin,
                 clouds::plugin,
@@ -59,7 +69,21 @@ impl Plugin for WorldRenderPlugin {
                 weather::plugin,
                 windscreen::plugin,
             ))
-            .add_systems(Update, (switch_night_nodes, materialise_trees));
+            .add_systems(
+                Update,
+                (
+                    switch_night_nodes,
+                    materialise_trees,
+                    // A walker dressed this frame gets its gait the same frame.
+                    (
+                        people::dress_people,
+                        people::move_strollers,
+                        people::mip_people_textures,
+                    )
+                        .chain(),
+                    people::bind_walkways,
+                ),
+            );
     }
 }
 
@@ -473,9 +497,9 @@ fn colored(mut mesh: Mesh, color: [f32; 4]) -> Mesh {
 }
 
 /// Spawns a single terrain tile from [`content::terrain`] (streaming, plan 4.3)
-/// with its trees and scenery objects as children — they stream in and out
-/// with the tile. The caller adds what it needs on top (the simulator its view
-/// distance, the editor its own marker).
+/// with its trees, scenery objects, people and walkers as children — they
+/// stream in and out with the tile. The caller adds what it needs on top (the
+/// simulator its view distance, the editor its own marker).
 pub fn spawn_terrain_tile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -493,20 +517,29 @@ pub fn spawn_terrain_tile(
         Transform::from_translation(translation).with_rotation(rotation),
         anchored,
     ));
-    scatter::spawn_scatter(&mut entity, tile.trees.clone(), &tile.objects, catalog);
+    scatter::spawn_scatter(
+        &mut entity,
+        tile.trees.clone(),
+        &tile.objects,
+        &tile.people,
+        &tile.walkways,
+        catalog,
+    );
     entity.id()
 }
 
-/// Places the trees and objects of a standing tile anew — the editor moved
-/// one, and the ground under them is the same. `old` is what the tile
+/// Places the trees, objects and people of a standing tile anew — the editor
+/// moved one, and the ground under them is the same. `old` is what the tile
 /// carried so far (its [`Scattered`] children); the new set is spawned the
-/// way [`spawn_terrain_tile`] did it.
+/// way [`spawn_terrain_tile`] did it, less the walkers: the editor, which is
+/// who does this, shows no crowd and builds no ways.
 pub fn respawn_scatter(
     commands: &mut Commands,
     tile: Entity,
     old: impl IntoIterator<Item = Entity>,
     trees: Vec<Tree>,
     objects: &[SceneryInstance],
+    people: &[PersonInstance],
     catalog: &WorldCatalog,
 ) {
     let Ok(mut entity) = commands.get_entity(tile) else {
@@ -519,7 +552,7 @@ pub fn respawn_scatter(
     let Ok(mut entity) = commands.get_entity(tile) else {
         return;
     };
-    scatter::spawn_scatter(&mut entity, trees, objects, catalog);
+    scatter::spawn_scatter(&mut entity, trees, objects, people, &[], catalog);
 }
 
 /// Track gauge [m].
@@ -1174,7 +1207,7 @@ fn ground_texture(
             data.push(255);
         }
     }
-    let (data, mip_level_count) = with_mipmaps(data, size);
+    let (data, mip_level_count) = with_mipmaps(data, size, size);
 
     // `Image::new` checks the data length against mip level 0 — build uninit
     // and attach the full mip chain by hand.
@@ -1237,30 +1270,35 @@ fn hash01(x: u64, y: u64, seed: u64) -> f32 {
     ((z >> 40) as f32) / (1u64 << 24) as f32
 }
 
-/// Appends a box-filtered mip chain — generated images have no loader to build
-/// one, and without it the ground shimmers at a distance.
-fn with_mipmaps(mut data: Vec<u8>, size: u32) -> (Vec<u8>, u32) {
+/// Appends a box-filtered mip chain to a plain RGBA8 image of `width` ×
+/// `height` texels — generated images have no loader to build one, the
+/// characters' atlases ship without one, and without it a texture shimmers at
+/// a distance. Levels halve each side down to 1 × 1 (a side that reaches 1
+/// first stays there, as the GPU expects); an odd side folds its last texel
+/// in twice rather than dropping it. Returns the data with the chain appended
+/// and the level count.
+pub(crate) fn with_mipmaps(mut data: Vec<u8>, width: u32, height: u32) -> (Vec<u8>, u32) {
     let mut levels = 1;
-    let mut prev_size = size as usize;
+    let (mut prev_w, mut prev_h) = (width.max(1) as usize, height.max(1) as usize);
     let mut prev_start = 0usize;
-    while prev_size > 1 {
-        let next = prev_size / 2;
-        let mut level = Vec::with_capacity(next * next * 4);
-        for y in 0..next {
-            for x in 0..next {
+    while prev_w > 1 || prev_h > 1 {
+        let (next_w, next_h) = ((prev_w / 2).max(1), (prev_h / 2).max(1));
+        let mut level = Vec::with_capacity(next_w * next_h * 4);
+        for y in 0..next_h {
+            let (y0, y1) = ((2 * y).min(prev_h - 1), (2 * y + 1).min(prev_h - 1));
+            for x in 0..next_w {
+                let (x0, x1) = ((2 * x).min(prev_w - 1), (2 * x + 1).min(prev_w - 1));
                 for c in 0..4 {
-                    let at =
-                        |px: usize, py: usize| data[prev_start + (py * prev_size + px) * 4 + c];
-                    let sum = at(2 * x, 2 * y) as u32
-                        + at(2 * x + 1, 2 * y) as u32
-                        + at(2 * x, 2 * y + 1) as u32
-                        + at(2 * x + 1, 2 * y + 1) as u32;
+                    let at = |px: usize, py: usize| {
+                        u32::from(data[prev_start + (py * prev_w + px) * 4 + c])
+                    };
+                    let sum = at(x0, y0) + at(x1, y0) + at(x0, y1) + at(x1, y1);
                     level.push((sum / 4) as u8);
                 }
             }
         }
         prev_start = data.len();
-        prev_size = next;
+        (prev_w, prev_h) = (next_w, next_h);
         data.extend_from_slice(&level);
         levels += 1;
     }
@@ -1271,6 +1309,28 @@ fn with_mipmaps(mut data: Vec<u8>, size: u32) -> (Vec<u8>, u32) {
 mod tests {
     use super::*;
     use sim_core::interlock::SignalPart;
+
+    /// A 4 × 2 image halves to 2 × 1 and then 1 × 1 — three levels, the short
+    /// side held at one; the chain is the box average of the level before.
+    #[test]
+    fn mip_chains_cover_non_square_images() {
+        let mut data = Vec::new();
+        for v in [0u8, 40, 80, 120, 160, 200, 240, 255] {
+            data.extend_from_slice(&[v, v, v, 255]);
+        }
+        let (chain, levels) = with_mipmaps(data, 4, 2);
+        assert_eq!(levels, 3);
+        assert_eq!(chain.len(), (8 + 2 + 1) * 4);
+        // Level 1, texel 0: the average of texels (0,0), (1,0), (0,1), (1,1).
+        // The average of 0, 40, 160 and 200.
+        assert_eq!(chain[8 * 4], 100);
+        assert_eq!(chain[8 * 4 + 3], 255);
+        // A square image keeps the old count: 256 → 9 levels.
+        let (_, levels) = with_mipmaps(vec![0; 256 * 256 * 4], 256, 256);
+        assert_eq!(levels, 9);
+        // A single texel is its own chain.
+        assert_eq!(with_mipmaps(vec![1, 2, 3, 4], 1, 1).1, 1);
+    }
 
     /// The ballast bed is seen from above — from the cab as much as from the
     /// editor's map. A ribbon wound the other way round is a backface and the

@@ -30,8 +30,28 @@ pub fn save_vehicle(spec: &VehicleSpec) -> String {
     ron::ser::to_string_pretty(spec, ron::ser::PrettyConfig::default()).expect("serializable")
 }
 
+/// The example mod's BR 101 file, the one the vehicle editor edits and the AFB variant
+/// runs with — embedded so the built-in reference loco can wear the same dress. The
+/// glTF, the 3D cab, the moving parts, the displays and the sound table are described
+/// once, there, and not a second time in code.
+const EXAMPLE_BR101: &str = include_str!("../../../mods/example/vehicles/br101_afb.ron");
+
+/// The example BR 101 parsed once; `br101()` is called per menu row and per dispatch,
+/// and a 400-line RON is not what either wants to read each time.
+fn example_br101() -> &'static VehicleSpec {
+    static SPEC: std::sync::OnceLock<VehicleSpec> = std::sync::OnceLock::new();
+    SPEC.get_or_init(|| load_vehicle(EXAMPLE_BR101).expect("the example BR 101 parses"))
+}
+
 /// BR 101 — three-phase loco with converter, LZB/PZB, electric brake.
+///
+/// The data is the reference; the look is the example mod's: model, cab, displays and
+/// sounds come out of `mods/example/vehicles/br101_afb.ron`, so the built-in loco has
+/// the same cab as the AFB variant and differs from it only in the behaviour script.
+/// The model file lives in the example mod — without `mods/example` installed the loco
+/// stays a body without a picture, as every vehicle whose glTF is missing does.
 pub fn br101() -> VehicleSpec {
+    let dress = example_br101();
     VehicleSpec {
         name: "BR 101".into(),
         length: 19.1,
@@ -90,10 +110,8 @@ pub fn br101() -> VehicleSpec {
         doors: DoorSystem::Tb0,
         hunting: 0.0,
         script: None,
-        model: None,
-        // No table of its own: the vehicle runs on the generated loops
-        // (`sim_core::sound::default_table`).
-        sounds: Vec::new(),
+        model: dress.model.clone(),
+        sounds: dress.sounds.clone(),
         graph: None,
         signal: Default::default(),
         supply: Default::default(),
@@ -725,6 +743,25 @@ pub fn railcar() -> VehicleSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The built-in BR 101 and the example mod's AFB variant are one loco in two
+    /// behaviours: same glTF, same cab, same displays, same sounds — only the script
+    /// differs, and the built-in one carries none.
+    #[test]
+    fn the_built_in_br101_wears_the_example_dress() {
+        let built_in = br101();
+        let example = load_vehicle(EXAMPLE_BR101).unwrap();
+        let model = built_in
+            .model
+            .as_ref()
+            .expect("the reference loco has a model");
+        assert_eq!(model.file, "example/assets/br101.gltf");
+        assert!(model.cab.is_some(), "the 3D cab comes with the model");
+        assert_eq!(built_in.model, example.model);
+        assert_eq!(built_in.sounds, example.sounds);
+        assert!(built_in.script.is_none() && example.script.is_some());
+        assert_eq!(built_in.mass_empty, example.mass_empty);
+    }
 
     #[test]
     fn vehicle_specs_roundtrip_through_ron() {

@@ -86,6 +86,12 @@ pub enum Tool {
     /// Reshapes the module envelope: drag a corner, click a side to add one,
     /// `Delete` removes the selected corner (see [`crate::envelope`]).
     EditEnvelope,
+    /// Footpath: clicks set the vertices of a way people walk along,
+    /// Enter/right-click finishes it; on a drawn way the envelope's gestures
+    /// reshape it (see [`crate::walkways`]).
+    PlaceWalkPath,
+    /// Walk area: the same as a closed polygon people are about on.
+    PlaceWalkArea,
 }
 
 /// What the Select tool holds.
@@ -103,6 +109,11 @@ pub enum Selection {
     TrackArea(usize),
     /// A corner of the module envelope.
     EnvelopePoint(usize),
+    /// A footpath — the whole way; the vertex held, if any, is
+    /// [`EditorState::walk_vertex`].
+    WalkPath(usize),
+    /// A walk area, likewise.
+    WalkArea(usize),
 }
 
 /// The stroke the area brush is painting: one stretch of one track, growing under the
@@ -228,11 +239,11 @@ pub type ToolEntry = (Tool, &'static str, editor_ui::Icon);
 
 /// The toolbox, after Train Simulator Classic's World Editor: an upper box of
 /// categories — the track itself, what is mounted along it, the landscape it
-/// runs through, the module itself — and a lower box with the tools of the one
-/// that is up. Which category a tool belongs to is the first thing a builder
-/// needs from a palette, and one category at a time keeps the lower box short
-/// enough to be read at a glance.
-pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 5] = [
+/// runs through, the people about on it, the module itself — and a lower box
+/// with the tools of the one that is up. Which category a tool belongs to is
+/// the first thing a builder needs from a palette, and one category at a time
+/// keeps the lower box short enough to be read at a glance.
+pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 6] = [
     (
         "tool-group-track",
         editor_ui::Icon::Track,
@@ -293,6 +304,22 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 5] = [
                 editor_ui::Icon::TerrainRail,
             ),
             (Tool::PickTile, "tool-tile", editor_ui::Icon::Tiles),
+        ],
+    ),
+    (
+        "tool-group-people",
+        editor_ui::Icon::People,
+        &[
+            (
+                Tool::PlaceWalkPath,
+                "tool-walk-path",
+                editor_ui::Icon::WalkPath,
+            ),
+            (
+                Tool::PlaceWalkArea,
+                "tool-walk-area",
+                editor_ui::Icon::WalkArea,
+            ),
         ],
     ),
     (
@@ -538,6 +565,23 @@ pub struct EditorState {
     pub forest_points: Vec<EcefPos>,
     /// Forest brush density [m² per tree]; `None` = 500.
     pub forest_area: Option<f64>,
+    /// Vertices of the walkway being drawn — footpath or walk area, the tool
+    /// in hand says which (see [`crate::walkways`]).
+    pub walk_points: Vec<EcefPos>,
+    /// The vertex of the selected walkway that was last picked: what Delete
+    /// takes out, and whose coordinates the panel shows.
+    pub walk_vertex: Option<usize>,
+    /// Vertex of the selected walkway being dragged.
+    pub walk_drag: Option<usize>,
+    /// What the next drawn footpath is given — width [m] and people; `None`
+    /// = the file format's defaults.
+    pub walk_width: Option<f64>,
+    pub walk_path_people: Option<u32>,
+    /// The same for the next walk area: people, and the share of them walking.
+    pub walk_area_people: Option<u32>,
+    pub walk_share: Option<f64>,
+    /// Height of the next walkway above the ground [m]; `None` = 0.
+    pub walk_height: Option<f64>,
     /// Layer the marker tool writes into; `None` = `"reference"`.
     pub marker_layer: Option<String>,
     /// Label the marker tool stamps — empty is allowed.
@@ -687,7 +731,9 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         }
         // Selecting, marking, picking tiles and editing the envelope place
         // nothing — and the envelope cannot bound itself. Splitting, joining
-        // and grading work on track that is already inside.
+        // and grading work on track that is already inside. The walkway
+        // tools check the vertex they add themselves: a click on a vertex
+        // that lies outside has to be able to pick it up and bring it back.
         Tool::Select
         | Tool::Split
         | Tool::Join
@@ -695,7 +741,9 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         | Tool::Brush
         | Tool::MarkArea
         | Tool::PickTile
-        | Tool::EditEnvelope => None,
+        | Tool::EditEnvelope
+        | Tool::PlaceWalkPath
+        | Tool::PlaceWalkArea => None,
     }
 }
 
@@ -1466,6 +1514,8 @@ pub fn select_tool(state: &mut EditorState, tool: Tool) {
     }
     state.drawing = None;
     state.forest_points.clear();
+    state.walk_points.clear();
+    state.walk_drag = None;
     state.join_from = None;
     state.crossover_from = None;
     state.select_circle = None;
@@ -1486,7 +1536,7 @@ fn lay_target(ends: &[OpenEnd], drawing: &Drawing, p: EcefPos, focus: &Focus) ->
 }
 
 /// How near the cursor an item has to be to be picked [logical pixels].
-const PICK_PIXELS: f32 = 12.0;
+pub(crate) const PICK_PIXELS: f32 = 12.0;
 
 /// Selection measured on screen instead of in the world: in the 3D view a
 /// metre at the horizon is a fraction of a pixel, so a world-space radius
@@ -1500,12 +1550,25 @@ pub struct ScreenPick<'a> {
 }
 
 impl ScreenPick<'_> {
-    /// Pixels between the cursor and `p`; `None` when it is off screen.
-    pub fn distance(&self, p: EcefPos) -> Option<f32> {
+    /// Where `p` lands on the screen, as a point of the pixel plane — the
+    /// space the polyline helpers of [`crate::envelope`] measure in; `None`
+    /// when it is off screen.
+    pub fn screen(&self, p: EcefPos) -> Option<DVec3> {
         self.camera
             .world_to_viewport(self.transform, self.origin.to_render(p))
             .ok()
-            .map(|screen| screen.distance(self.cursor))
+            .map(|screen| DVec3::new(screen.x as f64, screen.y as f64, 0.0))
+    }
+
+    /// The cursor in that same plane.
+    pub fn cursor(&self) -> DVec3 {
+        DVec3::new(self.cursor.x as f64, self.cursor.y as f64, 0.0)
+    }
+
+    /// Pixels between the cursor and `p`; `None` when it is off screen.
+    pub fn distance(&self, p: EcefPos) -> Option<f32> {
+        self.screen(p)
+            .map(|screen| screen.distance(self.cursor()) as f32)
     }
 
     /// The same, but only within grabbing distance.
@@ -1542,6 +1605,11 @@ pub fn selection_pos(
             let edge = line.net.edges().get(span.edge as usize)?;
             let s = ((span.from + span.to) / 2.0).clamp(0.0, edge.length());
             Some(edge.eval(s).pos)
+        }
+        // The first vertex — where the rule check jumps to as well.
+        Selection::WalkPath(_) | Selection::WalkArea(_) => {
+            let (kind, index) = crate::walkways::Kind::of_selection(selection)?;
+            crate::walkways::vertex_pos(line, marks, kind, index, 0)
         }
         Selection::None => None,
     }
@@ -1763,6 +1831,20 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
         Selection::EnvelopePoint(i) => {
             if !crate::envelope::remove_point(line, i) {
                 state.selection = Selection::EnvelopePoint(i);
+            }
+        }
+        // The picked vertex goes and the way stays selected for the next
+        // one; with no vertex held, or when taking it out would leave less
+        // than a way, the whole walkway goes.
+        selection @ (Selection::WalkPath(_) | Selection::WalkArea(_)) => {
+            let Some((kind, index)) = crate::walkways::Kind::of_selection(selection) else {
+                return;
+            };
+            match state.walk_vertex.take() {
+                Some(vertex) if crate::walkways::remove_vertex(line, kind, index, vertex) => {
+                    state.selection = selection;
+                }
+                _ => crate::walkways::remove(line, kind, index),
             }
         }
         Selection::None => {}
@@ -2537,7 +2619,21 @@ pub fn tool_input(
         Selection::EnvelopePoint(i) if i >= line.source.envelope.len() => {
             state.selection = Selection::None;
         }
+        Selection::WalkPath(i) if i >= line.source.walk_paths.len() => {
+            state.selection = Selection::None;
+        }
+        Selection::WalkArea(i) if i >= line.source.walk_areas.len() => {
+            state.selection = Selection::None;
+        }
         _ => {}
+    }
+    // The held vertex goes with the walkway it belongs to.
+    if let Some(vertex) = state.walk_vertex
+        && crate::walkways::Kind::of_selection(state.selection)
+            .and_then(|(kind, index)| crate::walkways::vertices(&line.source, kind, index))
+            .is_none_or(|points| vertex >= points.len())
+    {
+        state.walk_vertex = None;
     }
     // Stale marks likewise — one out-of-range index and the sweep is void.
     let stale = state.marked.iter().any(|m| match m {
@@ -2609,6 +2705,30 @@ pub fn tool_input(
         return;
     }
 
+    // And a vertex of a walkway — dragged on the plane through its own
+    // height: in the 3D view a probe on the focus plane lands metres away
+    // from a vertex on a slope.
+    if let Some(vertex) = state.walk_drag {
+        if !buttons.pressed(MouseButton::Left) {
+            state.walk_drag = None;
+        } else if let Some((kind, index)) = crate::walkways::Kind::of_selection(state.selection)
+            && let Some(at) = crate::walkways::vertex_pos(&line, &marks, kind, index, vertex)
+            && let Some(p) = view.and_then(|(c, (camera, camera_transform))| {
+                pick_plane(
+                    camera,
+                    camera_transform,
+                    c,
+                    &origin.0,
+                    &focus,
+                    Some(geo::from_ecef(at).2),
+                )
+            })
+        {
+            crate::walkways::drag_vertex(&mut line, kind, index, vertex, p);
+        }
+        return;
+    }
+
     // An active support-point drag owns the mouse until the button goes up.
     if let Some((edge, point)) = state.drag {
         if !buttons.pressed(MouseButton::Left) {
@@ -2646,6 +2766,8 @@ pub fn tool_input(
             // The growing circle is dropped, nothing else changes hands.
         } else if !state.forest_points.is_empty() {
             state.forest_points.clear();
+        } else if !state.walk_points.is_empty() {
+            state.walk_points.clear();
         } else if !state.marked.is_empty() {
             state.marked.clear();
         } else if state.join_from.take().is_some() || state.crossover_from.take().is_some() {
@@ -2678,6 +2800,10 @@ pub fn tool_input(
     if keys.just_pressed(KeyCode::Enter) || right_click {
         if !state.forest_points.is_empty() {
             finish_forest(&mut line, &mut state, &mut overlay);
+        } else if !state.walk_points.is_empty() {
+            if let Some(status) = crate::walkways::finish(&mut line, &mut state) {
+                overlay.status = status;
+            }
         } else if !finish_drawing(&mut line, &mut state, Some(&ground)) {
             overlay.status = t!("status-split-failed");
         }
@@ -3042,6 +3168,70 @@ pub fn tool_input(
                 None => overlay.status = t!("status-envelope-no-hit"),
             }
         }
+        Tool::PlaceWalkPath | Tool::PlaceWalkArea => {
+            use crate::walkways::{Hit, Kind};
+            let Some(kind) = Kind::of_tool(state.tool) else {
+                return;
+            };
+            // While a way is being drawn every click is its next vertex,
+            // whatever it lands on — a way has to be drawable right beside
+            // another one.
+            let hit = if state.walk_points.is_empty() {
+                let selected = Kind::of_selection(state.selection)
+                    .filter(|(k, _)| *k == kind)
+                    .map(|(_, index)| index);
+                pick.as_ref().and_then(|pick| {
+                    crate::walkways::pick(
+                        &line,
+                        &marks,
+                        kind,
+                        selected,
+                        |q| pick.screen(q),
+                        pick.cursor(),
+                        PICK_PIXELS as f64,
+                    )
+                })
+            } else {
+                None
+            };
+            match hit {
+                Some(Hit::Vertex { index, vertex }) => {
+                    state.selection = kind.selection(index);
+                    state.walk_vertex = Some(vertex);
+                    state.walk_drag = Some(vertex);
+                }
+                Some(Hit::Side { index, side, t }) => {
+                    if let Some(vertex) =
+                        crate::walkways::insert_vertex(&mut line, kind, index, side, t)
+                    {
+                        state.selection = kind.selection(index);
+                        state.walk_vertex = Some(vertex);
+                        // Straight into a drag, like the envelope's corner: the
+                        // vertex was added where the click landed, and it is
+                        // placed by moving it from there.
+                        state.walk_drag = Some(vertex);
+                        overlay.status = t!("status-walk-vertex-added");
+                    }
+                }
+                Some(Hit::Body { index }) => {
+                    state.selection = kind.selection(index);
+                    state.walk_vertex = None;
+                }
+                None => {
+                    // A new vertex has to lie inside the module, like every
+                    // tree and every stroke.
+                    let (lat, lon, _) = geo::from_ecef(p);
+                    if !line
+                        .source
+                        .envelope_contains(lat.to_degrees(), lon.to_degrees())
+                    {
+                        overlay.status = t!("status-outside-envelope");
+                        return;
+                    }
+                    state.walk_points.push(p);
+                }
+            }
+        }
         // Handled above, where the button is held rather than only clicked.
         Tool::MarkArea => {}
         Tool::PickTile => {
@@ -3156,12 +3346,23 @@ pub fn tool_input(
                 .filter(|(_, m)| state.layer_visible(&m.layer))
                 .map(|(i, m)| (Selection::Marker(i), marks.marker(i, m)))
                 .collect::<Vec<_>>();
+            // Walkways by their vertices — picked as a whole; reshaping them
+            // is their own tools' job.
+            let mut walkways = Vec::new();
+            for kind in [crate::walkways::Kind::Path, crate::walkways::Kind::Area] {
+                for i in 0..kind.count(&line.source) {
+                    for pos in crate::walkways::positions(&line, &marks, kind, i) {
+                        walkways.push((kind.selection(i), pos));
+                    }
+                }
+            }
             let nearest = device
                 .into_iter()
                 .chain(objects_)
                 .chain(trees)
                 .chain(markers)
                 .chain(terrain)
+                .chain(walkways)
                 .filter_map(|(sel, pos)| Some((sel, pick.hits(pos)?)))
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             // Ctrl collects a multi-selection instead of replacing the
@@ -3189,6 +3390,8 @@ pub fn tool_input(
                 Some((sel, _)) => sel,
                 None => nearest_edge(&line, pick).map_or(Selection::None, Selection::Edge),
             };
+            // A walkway picked here is the whole way; no vertex is held.
+            state.walk_vertex = None;
             // A press that found nothing may grow into the circle selection;
             // one that stays under 2 m keeps meaning "deselect".
             if state.selection == Selection::None {
@@ -3643,11 +3846,13 @@ pub fn draw_gizmos(
             }
         }
         // Trees, markers and terrain strokes are drawn below; the envelope
-        // draws its own corners, selected one included.
+        // and the walkways draw their own vertices, selected one included.
         Selection::Tree(_)
         | Selection::Marker(_)
         | Selection::TerrainEdit(_)
-        | Selection::EnvelopePoint(_) => {}
+        | Selection::EnvelopePoint(_)
+        | Selection::WalkPath(_)
+        | Selection::WalkArea(_) => {}
         Selection::None => {}
     }
 
@@ -3910,6 +4115,16 @@ pub fn draw_gizmos(
             gizmos.linestrip(drawing.polyline(target, &origin.0, follow), color);
         }
     }
+    // Footpaths and walk areas, with the way being drawn.
+    crate::walkways::draw(
+        &mut gizmos,
+        &line,
+        &origin.0,
+        &focus,
+        &ground.marks,
+        &state,
+        cursor,
+    );
     // Forest brush preview: the ring so far, the cursor as the next corner.
     if !state.forest_points.is_empty() {
         let points = state.forest_points.iter().copied().chain(cursor).map(|p| {
@@ -5151,5 +5366,28 @@ mod palette_tests {
         for tool in &all {
             assert_eq!(tool_entry(*tool).0, *tool);
         }
+    }
+
+    /// `--tool <name>` names a tool by its i18n key without the prefix — the
+    /// walkway tools included, and both in the people box.
+    #[test]
+    fn the_tool_flag_names_the_walkway_tools() {
+        assert_eq!(Tool::parse("walk-path"), Some(Tool::PlaceWalkPath));
+        assert_eq!(Tool::parse("walk-area"), Some(Tool::PlaceWalkArea));
+        assert_eq!(Tool::parse("select"), Some(Tool::Select));
+        assert_eq!(Tool::parse("walkway"), None);
+        assert_eq!(
+            category_of(Tool::PlaceWalkPath),
+            category_of(Tool::PlaceWalkArea)
+        );
+        assert_eq!(
+            TOOL_GROUPS[category_of(Tool::PlaceWalkPath)].0,
+            "tool-group-people"
+        );
+        // Switching tools drops a half-drawn way, like a half-drawn forest.
+        let mut state = EditorState::default();
+        state.walk_points.push(geo::to_ecef_deg(52.0, 10.0, 0.0));
+        select_tool(&mut state, Tool::Select);
+        assert!(state.walk_points.is_empty());
     }
 }

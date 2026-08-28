@@ -24,6 +24,7 @@ mod thumbnails;
 mod tools;
 mod ui;
 mod view;
+mod walkways;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -613,6 +614,7 @@ fn setup(
             &[],
             &[],
             &Default::default(),
+            default(),
             &assets,
             &mut meshes,
             &mut materials,
@@ -696,7 +698,12 @@ fn diff(
         || last.boundaries != now.boundaries
         || last.electrification != now.electrification
         || last.anchor != now.anchor
-        || last.envelope != now.envelope;
+        || last.envelope != now.envelope
+        // The walkways are drawn as gizmos, but the rule check that reports
+        // a vertex outside the envelope runs with the rebuild, like the
+        // envelope's own.
+        || last.walk_paths != now.walk_paths
+        || last.walk_areas != now.walk_areas;
     if !track {
         // A stroke reaches the ground under its disc, before and after.
         for stroke in changed(&last.terrain, &now.terrain) {

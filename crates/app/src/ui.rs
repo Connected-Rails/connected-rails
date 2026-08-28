@@ -56,12 +56,18 @@ impl CameraMode {
 /// `bindings.rs`; this is only what each action moves.
 pub fn player_input(
     input: Input,
+    console: Res<crate::console::Console>,
     mut sim: ResMut<SimResource>,
     player: Res<PlayerTrain>,
     duty: Res<crate::crew::Duty>,
     time: Res<Time>,
     camera: Res<CameraState>,
 ) {
+    // The console holds the keyboard while it is open: `W` is a letter there, not
+    // throttle up (`crate::console`).
+    if console.open {
+        return;
+    }
     // Away from the seat WASD walks; the cab keys only answer to the driver sitting
     // at the desk.
     if camera.mode == CameraMode::Walk {
@@ -301,6 +307,7 @@ pub fn camera_control(
     origin: Res<Origin>,
     player: Res<PlayerTrain>,
     manager: Res<ModManager>,
+    console: Res<crate::console::Console>,
     gameplay: Res<Gameplay>,
     walker: Res<crate::walk::Walker>,
     mut state: ResMut<CameraState>,
@@ -323,8 +330,13 @@ pub fn camera_control(
     if input.just_pressed(Action::ViewWalk) {
         state.mode = CameraMode::Walk;
     }
-    // With the mod manager open the arrow keys belong to its list, not to the camera.
-    let turn = if manager.open { 0.0 } else { 1.2 * dt };
+    // With the mod manager open the arrow keys belong to its list, not to the camera;
+    // with the console open they walk the command history.
+    let turn = if manager.open || console.open {
+        0.0
+    } else {
+        1.2 * dt
+    };
     if input.pressed(Action::LookLeft) {
         state.yaw += turn;
     }

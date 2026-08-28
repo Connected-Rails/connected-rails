@@ -191,9 +191,14 @@ pub fn crew_change(
     run: Option<Res<DayRun>>,
     host: Option<Res<net::Host>>,
     role: Option<Res<net::Role>>,
+    console: Res<crate::console::Console>,
 ) {
     // The dedicated server has no player of its own standing anywhere.
     if role.as_deref() == Some(&net::Role::Server) {
+        return;
+    }
+    // Tab completes in the console while it is open — the takeover key rests.
+    if console.open {
         return;
     }
     let run = run.as_deref();
@@ -345,6 +350,7 @@ mod tests {
             .init_resource::<crate::bindings::Binds>()
             .init_resource::<CameraState>()
             .init_resource::<Dispatch>()
+            .init_resource::<crate::console::Console>()
             .insert_resource(Walker {
                 place: Some(Place::Aboard {
                     vehicle: 0,

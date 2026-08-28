@@ -1307,6 +1307,7 @@ hud-key-walk = Walk (F4)
 hud-key-hud = Display: full · reduced · off
 hud-key-overlays = This sheet · diagnostics
 hud-key-mods = Mod manager
+hud-key-console = Console
 hud-key-pause = Pause
 
 # The diagnostics, F6. Machine output — it may be as dense as it likes.
@@ -1591,6 +1592,7 @@ ctl-zoom-out = Move camera away
 ctl-help-overlay = Key help
 ctl-diagnostics = Diagnostics
 ctl-hud-mode = HUD step
+ctl-console = Console
 ctl-mod-manager = Mod manager
 ctl-pause = Pause menu
 
@@ -1620,6 +1622,27 @@ mods-content = Content: { $vehicles } vehicles, { $lines } modules, { $compositi
 mods-log = Warnings:
 mods-restart = Change takes effect after a restart.
 mods-keys = ↑/↓ select   Enter on/off   F9 close
+
+## Console
+
+console-hint = Enter run · Tab complete · ↑/↓ history · Esc close
+console-unknown = Unknown command: { $name } — help lists them
+console-unknown-weather = Unknown weather: { $name }
+console-weather-list = Presets: { $list }
+console-weather-now = { $weather } · { $rate } mm/h · wind { $wind } m/s · { $temp } °C
+console-weather-set = The weather turns to { $weather } — it moves in over five minutes
+console-weather-asked = The server is asked for { $weather }
+console-time-now = { $time }
+console-time-set = The clock jumps to { $time } — trains keep their state, the plan catches up
+console-time-mp = The clock can only be moved in single player
+console-usage-weather = weather [preset]
+console-usage-time = time [HH:MM[:SS]]
+console-usage-help = help [command]
+console-usage-clear = clear
+console-help-weather = change the weather — without a name it shows the current one
+console-help-time = move the clock forward to a time of day — without a time it shows the current one
+console-help-help = list the commands
+console-help-clear = empty the log
 
 ## Scoring
 

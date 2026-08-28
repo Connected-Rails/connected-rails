@@ -26,6 +26,7 @@ cargo run -p app           # start the simulator (main menu: drive, mods, settin
 cargo run -p app -- --frames 120   # rendering smoke test (CI)
 cargo run -p app -- --screenshot screenshots/hud.png   # capture an image and exit
 cargo run -p app -- --screenshot shot.png --overlays   # …with the F5 and F6 overlays open
+cargo run -p app -- --screenshot shot.png --console    # …with the F8 console open
 cargo run -p app -- --screenshot shot.png --hud reduced # …with the display on one of its three steps
 cargo run -p app -- --menu --screenshot screenshots/menu.png   # …of the menu instead
 cargo run -p app -- --screenshot night.png --time 22:30 --date 2026-01-15  # …at another hour of another day
@@ -447,6 +448,7 @@ The table below is what everything ships with.
 | `F1`–`F4` | Camera: driver's seat / external / lineside / first person |
 | `F5` / `F6` | Keyboard sheet / diagnostics overlay |
 | `F7` | Display: full → reduced → off, and round again |
+| `F8` | Console: `weather` and `time` move the world (`Tab` completes, `↑`/`↓` history, `Enter` runs, `Esc` closes). Against a server the weather is asked of it, the clock stays single player |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 | `WASD` / `Shift` | First person (`F4`): walk (1.5 m/s) and run (5 m/s) through the train and over the ground. The walker falls where the ground drops away, climbs what is no higher than a step, is stopped by what stands at chest height and walks on through the train from vehicle to vehicle. The mouse looks around on its own, the cursor is caught on the crosshair and the driving keys rest until `F1` puts the driver back on the seat |

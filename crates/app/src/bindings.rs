@@ -115,6 +115,8 @@ pub enum Action {
     HelpOverlay,
     Diagnostics,
     HudMode,
+    /// The command console (`crate::console`).
+    Console,
     ModManager,
     Pause,
     // On foot.
@@ -314,6 +316,7 @@ pub const ACTIONS: [(&str, &[Row]); 7] = [
             ),
             (Action::Diagnostics, "diagnostics", KeyCode::F6, None),
             (Action::HudMode, "hud-mode", KeyCode::F7, None),
+            (Action::Console, "console", KeyCode::F8, None),
             (Action::ModManager, "mod-manager", KeyCode::F9, None),
             (
                 Action::Pause,

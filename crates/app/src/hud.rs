@@ -502,6 +502,7 @@ const HELP: [(&str, &[HelpLine]); 5] = [
             ),
             (&[Action::HudMode], "hud-key-hud"),
             (&[Action::ModManager], "hud-key-mods"),
+            (&[Action::Console], "hud-key-console"),
             (&[Action::Pause], "hud-key-pause"),
         ],
     ),
@@ -2302,6 +2303,7 @@ fn build_diagnostics(commands: &mut Commands, fonts: &Fonts, root: Entity) {
 /// overlay draws its own scrim, and a HUD showing through it would read as still live.
 pub fn hud_visibility(
     input: bindings::Input,
+    console: Res<crate::console::Console>,
     mut gameplay: ResMut<Gameplay>,
     over: Option<Res<HudOverride>>,
     game: Res<State<crate::GameState>>,
@@ -2309,10 +2311,13 @@ pub fn hud_visibility(
     mut root: Query<&mut Visibility, With<Hud>>,
 ) {
     let driving = *game.get() == crate::GameState::Driving;
-    if driving && input.just_pressed(Action::HelpOverlay) {
+    // The console holds the keyboard while it is open; the overlay keys rest until it
+    // lets go (`crate::console`).
+    let free = driving && !console.open;
+    if free && input.just_pressed(Action::HelpOverlay) {
         overlays.help = !overlays.help;
     }
-    if driving && input.just_pressed(Action::Diagnostics) {
+    if free && input.just_pressed(Action::Diagnostics) {
         overlays.diagnostics = !overlays.diagnostics;
     }
     // The HUD key walks full → reduced → off → full. The resource is only written on the press:

@@ -39,6 +39,7 @@ use mod_runtime::ModRuntime;
 use serde::{Deserialize, Serialize};
 use sim_core::Sim;
 use sim_core::cab::CabInputs;
+use sim_core::weather::Preset;
 use track_model::{EdgeId, TrackPosition};
 use world_coords::EcefPos;
 
@@ -150,6 +151,28 @@ pub struct TakeOver(pub u16);
 #[derive(Message, Clone, Copy, Debug)]
 pub struct TakeOverRequest(pub u16);
 
+/// The console's weather wish inside the client's own app (`crate::console`). Written
+/// there, posted by [`client_send`] as a [`WeatherWish`], and answered by the server
+/// with a [`WeatherSet`] every client hears — the world is the server's, so the command
+/// asks rather than takes.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct WeatherRequest(pub Preset);
+
+/// Client → server on the wire: the console asked for a weather.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct WeatherWish {
+    pub preset: Preset,
+}
+
+/// Server → client: the weather was set, anchored to the server's simulation time. The
+/// same answer goes to every client, the asking one included, so all peers call
+/// `Timeline::set` with the same preset and the same moment and stay in the same rain.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct WeatherSet {
+    pub preset: Preset,
+    pub at: f64,
+}
+
 /// Ordered and reliable: everything that is an event and must not be lost — a lever
 /// movement, a joining client.
 struct Control;
@@ -167,11 +190,15 @@ fn protocol(app: &mut App) {
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<TakeOver>()
         .add_direction(NetworkDirection::ClientToServer);
+    app.register_message::<WeatherWish>()
+        .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<Welcome>()
         .add_direction(NetworkDirection::ServerToClient);
     app.register_message::<Setpoints>()
         .add_direction(NetworkDirection::ServerToClient);
     app.register_message::<SyncBatch>()
+        .add_direction(NetworkDirection::ServerToClient);
+    app.register_message::<WeatherSet>()
         .add_direction(NetworkDirection::ServerToClient);
 
     app.add_channel::<Control>(ChannelSettings {
@@ -334,6 +361,8 @@ fn client_send(
     mut input: Query<&mut MessageSender<DriverInput>, (With<Client>, With<Connected>)>,
     mut wishes: MessageReader<TakeOverRequest>,
     mut takeover: Query<&mut MessageSender<TakeOver>, (With<Client>, With<Connected>)>,
+    mut asks: MessageReader<WeatherRequest>,
+    mut weather: Query<&mut MessageSender<WeatherWish>, (With<Client>, With<Connected>)>,
 ) {
     // Not connected, or not any more: ask again when the link comes back.
     if join.is_empty() {
@@ -345,6 +374,12 @@ fn client_send(
     for wish in wishes.read() {
         for mut tx in &mut takeover {
             tx.send::<Control>(TakeOver(wish.0));
+        }
+    }
+    // The console's weather goes the same way as the takeover's: a wish, not a fact.
+    for ask in asks.read() {
+        for mut tx in &mut weather {
+            tx.send::<Control>(WeatherWish { preset: ask.0 });
         }
     }
     if !session.asked {
@@ -386,6 +421,7 @@ fn client_receive(
     mut welcome: Query<&mut MessageReceiver<Welcome>, With<Client>>,
     mut setpoints: Query<&mut MessageReceiver<Setpoints>, With<Client>>,
     mut batches: Query<&mut MessageReceiver<SyncBatch>, With<Client>>,
+    mut weather: Query<&mut MessageReceiver<WeatherSet>, With<Client>>,
 ) {
     for mut rx in &mut welcome {
         for greeting in rx.receive() {
@@ -456,6 +492,14 @@ fn client_receive(
                     );
                 accept(sim, &mut session.error, state, latency, resync);
             }
+        }
+    }
+
+    // The server's answer to a console weather wish — the same answer every client
+    // hears, so all peers move the sky from the same moment (`crate::console`).
+    for mut rx in &mut weather {
+        for set in rx.receive() {
+            sim.weather.set(set.preset.weather(), set.at);
         }
     }
 }
@@ -637,6 +681,8 @@ pub fn run_dedicated(address: &str) {
             (
                 server_join,
                 server_receive,
+                // The console's wishes: the world is the server's, so a client asks.
+                server_weather,
                 // The operating day keeps putting trains on the line while the server
                 // runs; it draws none of them, and it owns every driver.
                 crate::dispatch_services,
@@ -753,6 +799,40 @@ fn server_receive(
             if let Some(cab) = sim.0.controls.get_mut(train) {
                 *cab = input.0;
             }
+        }
+    }
+}
+
+/// Grants what a client's console asked for: the weather is the server's, so the wish
+/// becomes a [`weather::Timeline::set`] here — and the same answer goes to every
+/// client, the asking one included, anchored to the moment it was applied. All peers
+/// then run the same transition off the same anchor and stay in the same rain.
+fn server_weather(
+    mut sim: ResMut<SimResource>,
+    mut clients: Connections<(
+        &'static mut MessageReceiver<WeatherWish>,
+        &'static mut MessageSender<WeatherSet>,
+    )>,
+) {
+    let mut granted: Vec<Preset> = Vec::new();
+    for (entity, (mut wishes, _)) in &mut clients {
+        for wish in wishes.receive() {
+            let at = sim.0.time;
+            sim.0.weather.set(wish.preset.weather(), at);
+            granted.push(wish.preset);
+            info!(
+                "client {entity} sets the weather to {:?} at {at}",
+                wish.preset
+            );
+        }
+    }
+    if granted.is_empty() {
+        return;
+    }
+    let at = sim.0.time;
+    for (_, (_, mut tx)) in &mut clients {
+        for &preset in &granted {
+            tx.send::<Control>(WeatherSet { preset, at });
         }
     }
 }

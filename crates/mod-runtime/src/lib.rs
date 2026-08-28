@@ -14,6 +14,7 @@
 //!          /compositions/*.ron Composition — modules merged into one line
 //!          /scenarios/*.ron   Scenario
 //!          /timetable/*.ron   Timetable (referenced by a scenario for stop scoring)
+//!          /days/*.ron        OperatingDay — a whole day of services, looping every 24 h
 //!          /signals/*.ron     SignalType (state machine, optional script hook)
 //!          /signal_models/*.ron SignalModel (glTF parts on mount points, lamp bindings)
 //!          /track_types/*.ron TrackType (texture, roughness, superstructure speed, LZB)
@@ -33,6 +34,8 @@ use content::compose::{Composed, ModuleOffsets};
 use content::route::LineSource;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use sim_core::consist::ConsistSource;
+use sim_core::day::OperatingDay;
 use sim_core::interlock::{Interlock, SignalModel, SignalType};
 use sim_core::scenario::{Action, Scenario, Trigger};
 use sim_core::timetable::Timetable;
@@ -119,6 +122,8 @@ pub struct Mods {
     pub compositions: BTreeMap<String, Composition>,
     pub scenarios: BTreeMap<String, Scenario>,
     pub timetables: BTreeMap<String, Timetable>,
+    /// Operating days: a line's whole timetable, looping every 24 h (plan ch. 11).
+    pub days: BTreeMap<String, OperatingDay>,
     pub signal_types: BTreeMap<String, SignalType>,
     pub signal_models: BTreeMap<String, SignalModel>,
     pub track_types: BTreeMap<String, TrackType>,
@@ -245,6 +250,7 @@ impl Mods {
             &mut self.timetables,
             &mut self.warnings,
         );
+        read_ron(&dir.join("days"), id, &mut self.days, &mut self.warnings);
         read_ron(
             &dir.join("signals"),
             id,
@@ -372,6 +378,9 @@ pub fn qualify_scenario(
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     let default = scenario.module.take();
+    for consist in &mut scenario.consists {
+        qualify_consist(consist, default.as_deref(), offsets, &mut warnings);
+    }
     for event in &mut scenario.events {
         let Some(module) = event.module.take().or_else(|| default.clone()) else {
             continue;
@@ -408,6 +417,70 @@ pub fn qualify_timetable(
         stop.edge.0 += off.edges;
     }
     warnings
+}
+
+/// The operating day's counterpart of [`qualify_timetable`]: shifts each service's
+/// origin and every one of its stops by its module's offset. Same rules again — per
+/// service `module` beats the day's, the fields are cleared, an unknown module warns and
+/// leaves the service where it was.
+pub fn qualify_day(
+    day: &mut OperatingDay,
+    offsets: &BTreeMap<String, ModuleOffsets>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let default = day.module.take();
+    for consist in &mut day.consists {
+        qualify_consist(consist, default.as_deref(), offsets, &mut warnings);
+    }
+    for service in &mut day.services {
+        let module = service.module.take().or_else(|| default.clone());
+        // The stops may name a module of their own; whatever is left over falls to the
+        // service's, so one timetable can run across several modules.
+        let mut timetable = service.timetable();
+        timetable.module = module.clone();
+        for warning in qualify_timetable(&mut timetable, offsets) {
+            warnings.push(format!("service {}: {warning}", service.number));
+        }
+        service.stops = timetable.stops;
+        // The origin may name a module of its own, or fall back to the service's.
+        let module = service.origin.module().map(str::to_string).or(module);
+        let Some(module) = module else { continue };
+        match offsets.get(&module) {
+            Some(off) => service.origin.shift(off.edges),
+            None => warnings.push(format!(
+                "service {}: unknown module {module}",
+                service.number
+            )),
+        }
+    }
+    warnings
+}
+
+/// Shifts a consist's spawn point by its module's offset. The spawn's own `module` wins
+/// over the consist's, which wins over the scenario's or the day's; a spawn that names a
+/// road is addressed by name and needs no shifting at all.
+fn qualify_consist(
+    consist: &mut ConsistSource,
+    default: Option<&str>,
+    offsets: &BTreeMap<String, ModuleOffsets>,
+    warnings: &mut Vec<String>,
+) {
+    let module = consist
+        .at
+        .module()
+        .map(str::to_string)
+        .or_else(|| consist.module.take())
+        .or_else(|| default.map(str::to_string));
+    let Some(module) = module else {
+        return;
+    };
+    match offsets.get(&module) {
+        Some(off) => consist.at.shift(off.edges),
+        None => warnings.push(format!(
+            "consist {}: unknown module {module}",
+            consist.number
+        )),
+    }
 }
 
 fn shift_trigger(trigger: &mut Trigger, off: &ModuleOffsets) {
@@ -588,6 +661,105 @@ mod tests {
         assert_eq!(compiled.interlock.signals.len(), 2);
     }
 
+    /// The example line brings somewhere to shunt to: two portals at its ends and a
+    /// stabling siding off the turnout, all of them clean against the rule check and
+    /// resolved onto the graph by the compiler (plan ch. 11).
+    #[test]
+    fn the_example_line_brings_its_stabling_roads_and_portals() {
+        use sim_core::yard::YardKind;
+
+        let mods = example_mods();
+        let line = &mods.lines["example:beispielstrecke"];
+        assert_eq!(line.yards.len(), 3);
+        assert!(
+            line.check(&mods.track_types, &mods.objects)
+                .iter()
+                .all(|issue| !matches!(
+                    issue,
+                    content::route::RuleIssue::YardOffEdge { .. }
+                        | content::route::RuleIssue::PortalNotAtTheEdge { .. }
+                        | content::route::RuleIssue::DuplicateYardName { .. }
+                )),
+            "yards: {:?}",
+            line.check(&mods.track_types, &mods.objects)
+        );
+
+        let compiled = line.compile().expect("line compiles");
+        let siding = compiled
+            .yards
+            .iter()
+            .find(|y| y.name == "Abstellgleis 1")
+            .expect("the siding is named")
+            .clone();
+        assert_eq!(siding.kind, YardKind::Stabling);
+        assert_eq!(siding.at.dir, -1, "a unit stands facing out of the siding");
+        assert_eq!(
+            compiled
+                .yards
+                .iter()
+                .filter(|y| y.kind == YardKind::Portal)
+                .count(),
+            2
+        );
+
+        // And a train fits on the road it names: the length is not just a number in the
+        // file, it is the road behind the mark.
+        let mut sim = sim_core::Sim::new(compiled.net, compiled.interlock, 3);
+        sim.yards = compiled.yards;
+        let head = siding.at;
+        let coaches: Vec<sim_core::train::Vehicle> = (0..3)
+            .map(|_| sim_core::train::Vehicle::new(content::vehicles::passenger_coach(), head))
+            .collect();
+        let unit = sim.add_train(sim_core::train::Train::assemble(coaches, head, &sim.net));
+        sim.trains[unit].stabled = true;
+        sim.place_at(unit, "Abstellgleis 1").expect("it fits");
+        assert!(!sim.trains[unit].stabled);
+    }
+
+    /// The example mod's shunting scenario says what stands on the line, and which of
+    /// those trains the player drives.
+    #[test]
+    fn the_example_scenario_brings_its_own_trains() {
+        let mods = Mods::load("../../mods");
+        let scenario = &mods.scenarios["example:rangierfahrt"];
+        assert_eq!(scenario.consists.len(), 2);
+        assert_eq!(scenario.player_train, 1);
+        // One of them starts on a road of the line rather than at a place on it.
+        assert_eq!(
+            scenario.consists[1].at.yard(),
+            Some("Abstellgleis 1"),
+            "the light engine stands in the siding"
+        );
+        assert_eq!(scenario.consists[0].length(), 3);
+        // Every vehicle it names is one the mods actually have.
+        for consist in &scenario.consists {
+            for (id, _) in consist.each_vehicle() {
+                assert!(mods.vehicles.contains_key(id), "unknown vehicle {id}");
+            }
+        }
+    }
+
+    /// The example mod's operating day loads, and every service in it is usable: a
+    /// timetable that names a stop no line has is a mod bug the loader has to show.
+    #[test]
+    fn the_example_operating_day_loads() {
+        let mods = Mods::load("../../mods");
+        let day = mods.days.get("example:beispieltag").expect("day loaded");
+        assert_eq!(day.line.as_deref(), Some("example:beispielstrecke"));
+        assert!(day.services.len() >= 3);
+        // The run picker offers the passenger services and leaves the freight alone.
+        assert!(day.playable().count() < day.services.len());
+        // The night freight runs over midnight and is a quarter of an hour long, not
+        // minus a day.
+        let night = day
+            .services
+            .iter()
+            .find(|s| s.number == "Gz 51230")
+            .expect("the night freight");
+        assert_eq!(night.duration(), 15.0 * 60.0);
+        assert!(night.runs_at(60.0), "still running after midnight");
+    }
+
     /// Module-qualified indices in scenario and timetable resolve against the
     /// composition's offsets — no offset arithmetic in the content files.
     #[test]
@@ -724,8 +896,8 @@ mod tests {
         );
         assert_eq!(sim.interlock.signals[0].lamps, ["green"]);
 
-        sim.interlock.update_occupancy(&[EdgeId(0)]);
-        sim.interlock.update(&mut sim.net);
+        sim.interlock.update_occupancy(&[(0, EdgeId(0))]);
+        sim.interlock.update(&mut sim.net, 0.05);
         assert_eq!(sim.interlock.signals[0].aspect.main, Some(MainAspect::Stop));
         assert_eq!(sim.interlock.signals[0].lamps, ["red"]);
     }
@@ -745,13 +917,13 @@ mod tests {
         compiled.interlock.signals[0].type_index = Some(index);
 
         let mut sim = Sim::new(compiled.net, compiled.interlock, 1);
-        sim.interlock.update_occupancy(&[EdgeId(0)]);
-        sim.interlock.update(&mut sim.net);
+        sim.interlock.update_occupancy(&[(0, EdgeId(0))]);
+        sim.interlock.update(&mut sim.net, 0.05);
         runtime.post_step(&mut sim, 0.0);
         assert_eq!(sim.interlock.signals[0].aspect.main, Some(MainAspect::Stop));
 
         sim.time = 200.0;
-        sim.interlock.update(&mut sim.net);
+        sim.interlock.update(&mut sim.net, 0.05);
         runtime.post_step(&mut sim, 0.0);
         assert_eq!(
             sim.interlock.signals[0].aspect.main,

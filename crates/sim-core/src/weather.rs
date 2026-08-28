@@ -307,6 +307,133 @@ impl Preset {
     }
 }
 
+/// How a run's weather is decided (plan 14.1).
+///
+/// A scenario brings its own sky and does not ask. A timetable run does ask: it is the
+/// same line at the same hour every time it is driven, so either the day makes its own
+/// weather or the player names one and gets exactly that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum WeatherChoice {
+    /// The sky makes itself out of the run's seed and the clock — fronts move through,
+    /// and no two days on the same service look alike.
+    #[default]
+    Dynamic,
+    /// One named weather, placed at the start of the run and left where it is.
+    Fixed(Preset),
+}
+
+/// Step of the slow octave \[s\] — the day's own trend, the front that takes half a day
+/// to cross the country.
+const SLOW: f64 = 5.0 * 3_600.0;
+/// … and of the fast one: the shower that crosses within the hour.
+const FAST: f64 = 3_600.0;
+
+/// Weather that makes itself out of the clock (plan 14.1).
+///
+/// Two octaves of value noise give a *severity* between 0 and 1, and that severity is
+/// read off a ladder of presets: the sky walks from clear through cloudy and overcast
+/// into what falls out of it, and back down again. Which ladder it walks is the month's
+/// decision — the front that rains in June snows in January.
+///
+/// It is a pure function of `(seed, clock)`: no state to carry, nothing to replicate, and
+/// two peers that agree on the day agree on the sky forever without a message
+/// (CLAUDE.md, ch. 20). That is also why the run's seed has to come out of the *content*
+/// (the day plan and the date) rather than out of a clock reading at start-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dynamic {
+    /// What makes this day's weather this day's.
+    pub seed: u64,
+    /// Month the run plays in, 1–12.
+    pub month: u32,
+}
+
+impl Dynamic {
+    /// The ladder this month walks: fair weather at the foot, the worst of it at the top.
+    /// Clear and cloudy stand twice down there because most days are one of the two, and
+    /// a ladder is walked at an even pace.
+    pub fn ladder(self) -> [Preset; 8] {
+        // November to March a front arrives as sleet and snow, and a cold night leaves
+        // fog in the valley; the rest of the year it arrives as rain, with the summer
+        // heat putting a thunderstorm at the top.
+        if self.month >= 11 || self.month <= 3 {
+            [
+                Preset::Clear,
+                Preset::Cloudy,
+                Preset::Cloudy,
+                Preset::Overcast,
+                Preset::Fog,
+                Preset::Drizzle,
+                Preset::Sleet,
+                Preset::Snow,
+            ]
+        } else {
+            [
+                Preset::Clear,
+                Preset::Clear,
+                Preset::Cloudy,
+                Preset::Overcast,
+                Preset::Drizzle,
+                Preset::Rain,
+                Preset::Storm,
+                Preset::Thunderstorm,
+            ]
+        }
+    }
+
+    /// How bad it is at `clock`, 0 = the foot of the ladder … 1 = its top.
+    pub fn severity(self, clock: f64) -> f32 {
+        let mix =
+            0.62 * noise(self.seed, 1, clock / SLOW) + 0.38 * noise(self.seed, 2, clock / FAST);
+        // Most days are fair. Without the curve the sky would sit in the middle of the
+        // ladder for good — permanently overcast, which is not a climate but an average.
+        mix.clamp(0.0, 1.0).powf(1.9)
+    }
+
+    /// The weather at `clock` \[s since local midnight of the run's first day\].
+    pub fn at(self, clock: f64) -> Weather {
+        self.rung(self.severity(clock))
+    }
+
+    /// The weather at a severity of 0 … 1 — the ladder read at that height.
+    ///
+    /// Between two rungs the two presets are simply interpolated, so the day has no steps
+    /// in it: the cover thickens, the base comes down, and the rain starts when the rung
+    /// that has rain in it is halfway reached.
+    pub fn rung(self, severity: f32) -> Weather {
+        let ladder = self.ladder();
+        let top = (ladder.len() - 1) as f32;
+        let height = (severity * top).clamp(0.0, top);
+        let i = (height.floor() as usize).min(ladder.len() - 2);
+        Weather::lerp(
+            ladder[i].weather(),
+            ladder[i + 1].weather(),
+            height - i as f32,
+        )
+    }
+}
+
+/// One octave of value noise: smooth between two hashed lattice points, in 0 … 1.
+fn noise(seed: u64, salt: u64, x: f64) -> f32 {
+    let cell = x.floor();
+    let f = (x - cell) as f32;
+    let cell = cell as i64;
+    let (a, b) = (hash01(seed, salt, cell), hash01(seed, salt, cell + 1));
+    // Smoothstep, so there is no corner in the sky where one hour hands over to the next.
+    a + (b - a) * f * f * (3.0 - 2.0 * f)
+}
+
+/// A number in 0 … 1 out of a seed, a salt and a lattice index.
+fn hash01(seed: u64, salt: u64, index: i64) -> f32 {
+    let mut h = seed
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add((index as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F))
+        .wrapping_add(salt.wrapping_mul(0x1656_67B1_9E37_79F9));
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    h ^= h >> 29;
+    (h >> 40) as f32 / (1 << 24) as f32
+}
+
 /// How long a change of weather takes \[s\]. Weather moves in over a front, it does
 /// not switch; five minutes is about what a shower needs to cross a valley.
 pub const TRANSITION: f64 = 300.0;
@@ -396,6 +523,11 @@ pub struct Timeline {
     /// leaves, sanded rail, a scenario that wants one specific problem. It survives
     /// until the next change of weather.
     pub rail_override: Option<RailCondition>,
+    /// The sky making itself out of the clock — what a timetable run set to
+    /// [`WeatherChoice::Dynamic`] is driven under. `None` = the weather only moves where
+    /// something moves it, which is what a scenario wants.
+    #[serde(default)]
+    pub dynamic: Option<Dynamic>,
 }
 
 impl Default for Timeline {
@@ -410,6 +542,7 @@ impl Default for Timeline {
             wetness: 0.0,
             snow: 0.0,
             rail_override: None,
+            dynamic: None,
         }
     }
 }
@@ -418,12 +551,17 @@ impl Timeline {
     /// Starts a change to `to` at simulation time `time`, taking [`TRANSITION`].
     /// A change of weather clears a hand-set rail condition — the sky has taken
     /// the question over again.
+    ///
+    /// It also switches a running [`Dynamic`] off: a scenario that says it starts to rain
+    /// means it, and a generator that carried on underneath would wash the front away
+    /// again a few minutes later.
     pub fn set(&mut self, to: Weather, time: f64) {
         self.from = self.now;
         self.to = to;
         self.t0 = time;
         self.span = TRANSITION;
         self.rail_override = None;
+        self.dynamic = None;
     }
 
     /// Places `weather` immediately, with no transition — what the start of a run
@@ -438,9 +576,26 @@ impl Timeline {
         self.wetness = if weather.precip.is_liquid() { 1.0 } else { 0.0 };
         self.snow = f32::from(u8::from(weather.precip == Precip::Snow));
         self.rail_override = None;
+        self.dynamic = None;
     }
 
-    /// The weather at simulation time `time`.
+    /// Hands the sky to a generator: the weather at `clock` is placed, and from there on
+    /// the day makes its own (see [`Dynamic`]).
+    ///
+    /// `clock` is seconds since local midnight of the run's first day — the same reading
+    /// [`Sim::clock`](crate::Sim::clock) gives, so a run that starts at eight in the
+    /// morning starts in that morning's weather rather than in the day's first hour.
+    pub fn generate(&mut self, dynamic: Dynamic, clock: f64) {
+        self.place(dynamic.at(clock), 0.0);
+        self.dynamic = Some(dynamic);
+    }
+
+    /// The keyframed weather at simulation time `time` — where the run came from and
+    /// where it is going.
+    ///
+    /// A [`Dynamic`] day does not come through here: it hangs off the wall clock rather
+    /// than the run's own time, and [`step`](Self::step) reads it straight off
+    /// [`Dynamic::at`].
     pub fn at(&self, time: f64) -> Weather {
         let t = if self.span > 0.0 {
             ((time - self.t0) / self.span).clamp(0.0, 1.0) as f32
@@ -451,8 +606,16 @@ impl Timeline {
     }
 
     /// One simulation step: interpolates the sky and integrates what falls out of it.
-    pub fn step(&mut self, time: f64, dt: f64) {
-        self.now = self.at(time);
+    ///
+    /// `time` is seconds since the start of the run and `clock` seconds since local
+    /// midnight — the keyframes hang off the first, a [`Dynamic`] day off the second,
+    /// because a front at three in the afternoon has to be there whichever run drove into
+    /// it.
+    pub fn step(&mut self, time: f64, clock: f64, dt: f64) {
+        self.now = match self.dynamic {
+            Some(dynamic) => dynamic.at(clock),
+            None => self.at(time),
+        };
         let dt = dt as f32;
         let w = self.now;
         let falling = if w.precip == Precip::None {
@@ -603,7 +766,7 @@ mod tests {
         let step_to = |line: &mut Timeline, end: f64, from: f64| {
             let mut t = from;
             while t < end {
-                line.step(t, 0.05);
+                line.step(t, t, 0.05);
                 t += 0.05;
             }
         };
@@ -623,7 +786,7 @@ mod tests {
         line.place(Preset::Snow.weather(), 0.0);
         let mut t = 0.0;
         while t < 1_800.0 {
-            line.step(t, 0.1);
+            line.step(t, t, 0.1);
             t += 0.1;
         }
         assert!(line.snow > 0.5, "snow {}", line.snow);
@@ -632,7 +795,7 @@ mod tests {
         line.set(Preset::Cloudy.weather(), t);
         let end = t + 8.0 * 3_600.0;
         while t < end {
-            line.step(t, 0.5);
+            line.step(t, t, 0.5);
             t += 0.5;
         }
         assert_eq!(line.snow, 0.0, "a mild day clears it");
@@ -646,7 +809,7 @@ mod tests {
         let mut thunder = 0.0f32;
         let mut t = 0.0;
         while t < 600.0 {
-            line.step(t, 0.05);
+            line.step(t, t, 0.05);
             if let Some(strike) = line.lightning(t) {
                 if strike.brightness(t) > 0.0 && !strikes.contains(&strike.at) {
                     strikes.push(strike.at);
@@ -678,6 +841,81 @@ mod tests {
         let mut clear = Timeline::default();
         clear.place(Preset::Clear.weather(), 0.0);
         assert_eq!(clear.lightning(100.0), None);
+    }
+
+    #[test]
+    fn a_generated_day_is_the_same_day_on_every_machine() {
+        let dynamic = Dynamic {
+            seed: 0x5eed_1234,
+            month: 7,
+        };
+        // No state, no seed to replicate: the clock alone says what the sky does.
+        for clock in [0.0, 12_345.0, 43_200.0, 86_399.0] {
+            assert_eq!(dynamic.at(clock), dynamic.at(clock));
+        }
+        // And it does not stand still — a day has weather in it, not one weather.
+        let over_the_day: Vec<f32> = (0..24)
+            .map(|h| dynamic.severity(f64::from(h) * 3_600.0))
+            .collect();
+        let low = over_the_day.iter().copied().fold(f32::MAX, f32::min);
+        let high = over_the_day.iter().copied().fold(0.0f32, f32::max);
+        assert!(high - low > 0.1, "flat day: {low} … {high}");
+    }
+
+    #[test]
+    fn a_generated_day_has_no_steps_in_it() {
+        let dynamic = Dynamic { seed: 7, month: 10 };
+        let mut previous = dynamic.at(0.0);
+        let mut clock = 0.0;
+        while clock < 86_400.0 {
+            clock += 10.0;
+            let now = dynamic.at(clock);
+            assert!(
+                (now.cover - previous.cover).abs() < 0.05,
+                "the sky jumped at {clock} s: {} to {}",
+                previous.cover,
+                now.cover
+            );
+            previous = now;
+        }
+    }
+
+    #[test]
+    fn the_same_front_rains_in_june_and_snows_in_january() {
+        let summer = Dynamic { seed: 42, month: 6 };
+        let winter = Dynamic { seed: 42, month: 1 };
+        // The foot of both ladders is the same fair day …
+        assert_eq!(summer.rung(0.0).precip, Precip::None);
+        assert_eq!(winter.rung(0.0).precip, Precip::None);
+        // … and the top of them is the same front in two air masses.
+        assert_eq!(summer.rung(1.0).precip, Precip::Rain);
+        assert_eq!(winter.rung(1.0).precip, Precip::Snow);
+        assert!(winter.rung(1.0).temperature < 0.0);
+        assert!(summer.rung(1.0).temperature > 10.0);
+    }
+
+    #[test]
+    fn a_generated_day_starts_the_run_in_the_weather_of_its_hour() {
+        let dynamic = Dynamic { seed: 99, month: 5 };
+        let mut line = Timeline::default();
+        // Eight in the morning, not the first hour of the plan.
+        let clock = 8.0 * 3_600.0;
+        line.generate(dynamic, clock);
+        assert_eq!(line.now, dynamic.at(clock));
+        // And it carries on off the clock rather than off the run's own time.
+        line.step(30.0, clock + 30.0, 0.05);
+        assert_eq!(line.now, dynamic.at(clock + 30.0));
+    }
+
+    #[test]
+    fn a_scenario_takes_the_sky_over_from_the_generator() {
+        let mut line = Timeline::default();
+        line.generate(Dynamic { seed: 3, month: 6 }, 8.0 * 3_600.0);
+        assert!(line.dynamic.is_some());
+        line.set(Preset::Thunderstorm.weather(), 0.0);
+        assert!(line.dynamic.is_none(), "the action owns the sky now");
+        line.step(TRANSITION, 8.0 * 3_600.0 + TRANSITION, 0.05);
+        assert_eq!(line.now.thunder, Preset::Thunderstorm.weather().thunder);
     }
 
     #[test]

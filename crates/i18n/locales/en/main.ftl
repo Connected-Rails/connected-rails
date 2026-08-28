@@ -924,6 +924,9 @@ obj-height-hint = Above the railhead — above the terrain instead while "Snap t
 obj-snap = Snap to terrain
 obj-snap-hint = Puts the object's base on the terrain surface instead of the rail plane; resolved in the app, which has the elevation data
 check-object-off-edge = Object { $object } sits outside its track
+check-yard-off-edge = Road { $yard } sits outside its track
+check-portal-inside = Portal { $yard } is not at the edge of the line — the track behind it has to run out to a buffer stop or a module boundary
+check-yard-name-twice = Road { $yard } carries a name another one already has
 check-unknown-object = Object { $object }: names an object no installed mod has
 check-flank-guard = Route { $route }: flank protection names a node that is no turnout, or a signal that is gone
 obj-repeat = Repeat
@@ -997,6 +1000,9 @@ view-panel = Properties panel
 il-route-row = Route { $index }
 route-entry = Entry signal
 route-exit = Exit signal
+route-kind = Kind
+route-kind-train = Train route
+route-kind-shunt = Shunting route
 route-diverging = Diverging route
 route-diverging-hint = The route runs over the diverging leg — the entry signal shows the slow aspect
 route-sections = Sections
@@ -1166,6 +1172,11 @@ hud-late = +{ $minutes } min
 hud-early = −{ $minutes } min
 hud-on-time = on time
 hud-free-run = Free run
+# Which kind of movement the player is making (Ril 301): a train movement carries a
+# train number and is signalled by the main signals, a shunting movement carries none
+# and is let past by Sh 1 alone.
+movement-train = Train movement
+movement-shunt = Shunting movement
 hud-score = Score
 hud-scenario-passed = passed
 hud-scenario-failed = failed
@@ -1241,6 +1252,13 @@ hud-alert-cut-off = TRACTION CUT OFF
 hud-alert-blocked = ROUTE NOT SET
 hud-control = { $name }: { $value } %
 
+# What the shunter on the ground answers, on the same line the train protection
+# interrupts on (plan ch. 11).
+hud-shunt-coupled = COUPLED
+hud-shunt-uncoupled = UNCOUPLED
+hud-shunt-waiting = SHUNTER WAITING — { $reason }
+hud-shunt-refused = CANNOT BE DONE — { $reason }
+
 # The key help, F5.
 hud-help = Keyboard
 hud-help-close = F5 closes · F6 shows the diagnostics
@@ -1278,6 +1296,8 @@ hud-key-lamps = Headlights · cab light
 hud-key-dimmer = Instrument dimmer
 hud-key-wipers = Wipers
 hud-key-doors = Release left · right · close
+hud-key-shunt = Couple · uncouple
+hud-key-take-over = Take over · hand back
 hud-key-cameras = Cab · outside · lineside · walk
 hud-key-look = Look around
 hud-key-zoom = Camera distance
@@ -1306,7 +1326,7 @@ hud-network-connecting = connecting …
 
 menu-tagline = German railway simulation
 menu-drive = Drive
-menu-drive-hint = Module, vehicle and scenario
+menu-drive-hint = Module, vehicle and run
 menu-mods = Mods
 menu-mods-hint = Switch installed content on and off
 menu-settings = Settings
@@ -1324,8 +1344,8 @@ menu-select-line = Select module
 menu-select-line-hint = Where the run takes place.
 menu-select-loco = Select vehicle
 menu-select-loco-hint = What is at the head of the train.
-menu-select-scenario = Select scenario
-menu-select-scenario-hint = A timetable and a task, or free rein.
+menu-select-run = Select run
+menu-select-run-hint = A scenario, a service out of the day's timetable, or free rein.
 # The built-in content the simulator falls back on when nothing is picked. The chip on
 # the row says so, so the name itself no longer has to.
 menu-chip-builtin = Built in
@@ -1364,6 +1384,48 @@ menu-fact-km = { $value } km
 menu-fact-m = { $value } m
 menu-fact-t = { $value } t
 menu-fact-kmh = { $value } km/h
+
+## Timetable runs
+#
+# Besides the scenarios a line can be driven from its operating day: the whole
+# timetable of a day, looping every 24 hours, out of which the player takes one
+# service. Where a scenario brings its own hour and its own sky, a service is the
+# same hour of the same line every time — so the date and the weather are set
+# here, on the step between picking the run and starting it.
+
+# The heading over an operating day's services in the run list.
+menu-day-heading = Timetable · { $name }
+# One service in that list: where it starts and where it ends.
+menu-service = { $from } – { $to }
+menu-run-setup = Set up the run
+menu-run-setup-hint = Which day it runs on, and what the weather does over it.
+menu-fact-train = Train
+menu-fact-departure = Departure
+menu-fact-arrival = Arrival
+menu-fact-stops = Stops
+run-date = Date
+run-date-hint = Decides the season and where the sun stands.
+run-weather = Weather
+run-weather-hint = Made by the day itself, or named and held.
+run-weather-dynamic = Dynamic
+run-weather-fixed = Set by hand
+run-preset = Which weather
+run-preset-hint = Held from the first minute to the last.
+
+## Changing trains
+#
+# A driver is responsible for one train at a time, or for none. Getting out hands
+# the working to the AI; walking into another train and sitting down at its desk
+# takes that one over. Every refusal is shown rather than swallowed.
+
+crew-took-over = { $train } taken over.
+crew-handed-over = { $train } handed over — the AI is driving.
+crew-secured = { $train } secured and left standing.
+crew-not-aboard = Not from the platform: get into the cab first.
+crew-out-of-service = That train is out of service.
+crew-nothing-to-drive = Nothing in this train pulls.
+crew-scenario-train = A scenario is driven in its own train.
+crew-another-driver = Somebody else is driving that train.
 
 ## Settings
 #
@@ -1460,6 +1522,7 @@ ctl-group-driving = Driving
 ctl-group-brakes = Brakes
 ctl-group-safety = Train protection
 ctl-group-vehicle = Vehicle
+ctl-group-shunting = Shunting
 ctl-group-view = View and overlays
 ctl-group-walk = On foot
 
@@ -1509,6 +1572,9 @@ ctl-wipers = Wipers
 ctl-door-left = Release doors left
 ctl-door-right = Release doors right
 ctl-door-close = Close doors
+ctl-couple = Couple to what stands ahead
+ctl-uncouple = Uncouple behind the occupied vehicle
+ctl-take-over = Take the train over
 
 ctl-view-cab = Cab view
 ctl-view-outside = Outside view
@@ -2332,3 +2398,38 @@ status-outside-envelope = Outside the module envelope — that ground belongs to
 status-forest-baked-clipped = { $count } trees baked, { $dropped } dropped outside the envelope
 status-forest-imported-clipped = { $count } trees from { $areas } areas, { $dropped } dropped outside the envelope
 action-cancel = Cancel
+
+## Shunting
+
+# Why the shunter refused a coupling or an uncoupling. Each one is a condition
+# that was not met; they stand behind "cannot be done" in the HUD.
+shunt-refused-no-train = no train there
+shunt-refused-no-coupler = the consist has no such coupler
+shunt-refused-couplers = the coupling gear does not match
+shunt-refused-moving = still moving
+shunt-refused-too-fast = closing too fast
+shunt-refused-nothing-in-reach = nothing within reach
+shunt-refused-same-train = that is this train
+
+# The two ends of a consist.
+shunt-end-head = head
+shunt-end-tail = rear
+
+# What kind of coupling gear a vehicle carries.
+coupler-screw = screw coupling
+coupler-center-buffer = centre buffer coupler
+coupler-bar = bar
+
+# Places for stock: a siding on the line, or the edge of it.
+yard-kind-stabling = stabling road
+yard-kind-portal = portal
+
+# Why a train could not be put on a road, or taken off the line.
+yard-refused-no-yard = the line has no road of that name
+yard-refused-no-train = no train there
+yard-refused-too-long = longer than the road
+yard-refused-occupied = the road is occupied
+yard-refused-off-the-graph = the track behind the mark runs out
+yard-refused-not-a-portal = only a portal takes a train off the line
+yard-refused-not-there = the train is not standing at that portal
+yard-refused-moving = still moving

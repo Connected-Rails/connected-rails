@@ -47,8 +47,10 @@ use content::musterbahn;
 use content::route::LineSource;
 use i18n::t;
 use sim_core::brakes::BrakeKind;
+use sim_core::day::{Date, OperatingDay, RunSetup};
 use sim_core::drive::TractionSpec;
 use sim_core::train::{VehicleSpec, VehicleVariant};
+use sim_core::weather::{Preset, WeatherChoice};
 
 use crate::bindings::{self, Action, Bind, Bindable, Bindings, Binds, Rebind};
 use crate::mods_ui::{self, ModManager};
@@ -57,6 +59,7 @@ use crate::theme::{
     ACCENT, BASE, BRAND, CHIP, Face, Fonts, HAIRLINE, PANE, ROW, ROW_ACTIVE, ROW_HOVER, SLOT, TEXT,
     TEXT_BRIGHT, TEXT_DIM, TEXT_FAINT, TEXT_MID, TRACK, WARN, Wallpaper, rule, text,
 };
+use crate::world::{BUILTIN_DAY, ServiceRef, resolve_day};
 use crate::{GameState, Mods};
 
 /// Height of a row, of a section heading on the settings page, and the gap below either.
@@ -83,6 +86,12 @@ pub struct Selection {
     /// Which of the vehicle's variants it runs in — the index `Vehicle::variant` takes.
     /// `None` = the vehicle itself, which is what a vehicle without variants is.
     pub variant: Option<usize>,
+    /// The service out of an operating day the player took instead of a scenario
+    /// (plan ch. 11).
+    pub service: Option<ServiceRef>,
+    /// The date and the weather they set for it on [`Page::Run`]. `None` = whatever the
+    /// plan itself says, which is what a run started from the command line gets.
+    pub setup: Option<RunSetup>,
 }
 
 /// The verbs on the title screen, in order: the key of the label, and the page it opens.
@@ -115,6 +124,9 @@ enum Page {
     Line,
     Loco,
     Scenario,
+    /// Date and weather for a timetable run — the one step that is only walked when the
+    /// run picked is a service rather than a scenario.
+    Run,
     Mods,
     Settings,
     /// The keyboard and the controllers, one row per action. A page of its own rather
@@ -143,15 +155,18 @@ impl Page {
             Page::Controls => Some(Page::Settings),
             Page::Loco => Some(Page::Line),
             Page::Scenario => Some(Page::Loco),
+            Page::Run => Some(Page::Scenario),
         }
     }
 
-    /// Position of this page in the three steps of picking a run.
+    /// Position of this page in the three steps of picking a run. Setting up a timetable
+    /// run is the second half of the third step, not a fourth one — the rail would
+    /// otherwise promise a step that a scenario never walks.
     fn step(self) -> Option<usize> {
         match self {
             Page::Line => Some(1),
             Page::Loco => Some(2),
-            Page::Scenario => Some(3),
+            Page::Scenario | Page::Run => Some(3),
             _ => None,
         }
     }
@@ -178,9 +193,9 @@ pub struct MenuState {
     /// counter rather than an index — [`variant_of`] wraps it into what the vehicle has,
     /// so moving to a vehicle with fewer variants can never point past the end.
     variant: usize,
-    /// Labels of the line and the vehicle already picked — the step rail shows them under
-    /// their step, and only the menu ever needs them as text.
-    chosen: [String; 2],
+    /// Labels of the line, the vehicle and the run already picked — the step rail shows
+    /// them under their step, and only the menu ever needs them as text.
+    chosen: [String; 3],
     /// The two screens, shown one at a time.
     title_screen: Option<Entity>,
     flow_screen: Option<Entity>,
@@ -212,6 +227,7 @@ impl Page {
             "line" => Some(Page::Line),
             "loco" => Some(Page::Loco),
             "scenario" => Some(Page::Scenario),
+            "run" => Some(Page::Run),
             "mods" => Some(Page::Mods),
             "settings" => Some(Page::Settings),
             "controls" => Some(Page::Controls),
@@ -266,8 +282,13 @@ struct Entry {
     setting: Option<Setting>,
     /// … or what it binds, on the controls page.
     binding: Option<Bindable>,
+    /// … or which of the run picker's own values it dials.
+    run: Option<RunOption>,
     /// … and how it is operated, read off the settings when the row is built.
     control: Option<Control>,
+    /// The service this row takes, where the row is one out of an operating day rather
+    /// than a scenario.
+    service: Option<ServiceRef>,
 }
 
 impl Entry {
@@ -303,6 +324,106 @@ enum Setting {
     /// Opens [`Page::Controls`]; it holds no value of its own.
     Controls,
     Reset,
+}
+
+/// A value the run picker sets before a timetable run starts (plan ch. 11).
+///
+/// A scenario brings its own date and its own sky and is started straight from the list.
+/// A service does not: it is the same hour of the same line every time it is taken, so
+/// the day it plays on and the weather over it are the player's to choose.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RunOption {
+    /// The day the service runs on — the plan's own to begin with.
+    Date,
+    /// Generated for that day, or one weather named and held.
+    Weather,
+    /// Which weather, where one is named. Absent while the day makes its own.
+    Preset,
+}
+
+/// The rows of [`Page::Run`], in order — the second of them decides whether the third is
+/// there at all.
+const RUN_OPTIONS: [RunOption; 3] = [RunOption::Date, RunOption::Weather, RunOption::Preset];
+
+impl RunOption {
+    /// The message key of the label; the help line is this plus `-hint`.
+    fn key(self) -> &'static str {
+        match self {
+            RunOption::Date => "run-date",
+            RunOption::Weather => "run-weather",
+            RunOption::Preset => "run-preset",
+        }
+    }
+
+    /// What the row shows on its right.
+    fn value(self, setup: &RunSetup) -> String {
+        match self {
+            RunOption::Date => date_label(setup.date),
+            RunOption::Weather => t!(match setup.weather {
+                WeatherChoice::Dynamic => "run-weather-dynamic",
+                WeatherChoice::Fixed(_) => "run-weather-fixed",
+            }),
+            RunOption::Preset => match setup.weather {
+                WeatherChoice::Fixed(preset) => t!(preset_key(preset)),
+                WeatherChoice::Dynamic => t!("common-none"),
+            },
+        }
+    }
+}
+
+/// One step of ← (`dir` −1) or → (`dir` +1) on a run option.
+fn change_run(option: RunOption, dir: i32, setup: &mut RunSetup) {
+    match option {
+        RunOption::Date => setup.date = setup.date.shifted(i64::from(dir)),
+        // Switching to a named weather starts at the one the generated day would be
+        // closest to in spirit: a clear day, which is also what the eye reads as "none".
+        RunOption::Weather => {
+            setup.weather = match setup.weather {
+                WeatherChoice::Dynamic => WeatherChoice::Fixed(Preset::Clear),
+                WeatherChoice::Fixed(_) => WeatherChoice::Dynamic,
+            }
+        }
+        RunOption::Preset => {
+            if let WeatherChoice::Fixed(preset) = setup.weather {
+                let all = Preset::ALL;
+                let at = all.iter().position(|p| *p == preset).unwrap_or(0);
+                let next = (at as i32 + dir).rem_euclid(all.len() as i32) as usize;
+                setup.weather = WeatherChoice::Fixed(all[next]);
+            }
+        }
+    }
+}
+
+/// The message key a named weather is shown under — the same names the vehicle editor and
+/// the scenario format use.
+fn preset_key(preset: Preset) -> &'static str {
+    match preset {
+        Preset::Clear => "weather-clear",
+        Preset::Cloudy => "weather-cloudy",
+        Preset::Overcast => "weather-overcast",
+        Preset::Fog => "weather-fog",
+        Preset::Drizzle => "weather-drizzle",
+        Preset::Rain => "weather-rain",
+        Preset::Storm => "weather-storm",
+        Preset::Thunderstorm => "weather-thunderstorm",
+        Preset::Sleet => "weather-sleet",
+        Preset::Snow => "weather-snow",
+        Preset::Blizzard => "weather-blizzard",
+        Preset::Hail => "weather-hail",
+        Preset::Frost => "weather-frost",
+    }
+}
+
+/// A date as the run picker prints it: 15.08.2026, machine output down to the dots.
+fn date_label(date: Date) -> String {
+    format!("{:02}.{:02}.{}", date.day, date.month, date.year)
+}
+
+/// A time of day out of seconds since midnight, for a timetable row: 08:12.
+fn clock_label(seconds: f64) -> String {
+    let minutes = (seconds / 60.0).round() as i64;
+    let minutes = minutes.rem_euclid(24 * 60);
+    format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
 /// How a setting is operated — which is also how it is drawn, so nothing on the page
@@ -617,8 +738,23 @@ pub fn spawn_menu(
     fonts: Res<Fonts>,
     wallpaper: Res<Wallpaper>,
     start: Option<Res<StartPage>>,
+    mut selection: ResMut<Selection>,
     menu: ResMut<MenuState>,
 ) {
+    // `--menu run` is a screenshot of a page that only exists once a service has been
+    // picked. A screenshot cannot pick one, so it is given the first of the built-in day
+    // — the same reason `StartPage` exists at all.
+    if start.as_deref().map(|start| start.0.as_str()) == Some("run") && selection.service.is_none()
+    {
+        let day = content::musterbahn_day();
+        if let Some((index, _)) = day.playable().next() {
+            selection.service = Some(ServiceRef {
+                day: BUILTIN_DAY.into(),
+                index,
+            });
+            selection.setup = Some(day.setup());
+        }
+    }
     spawn(commands, &fonts, &wallpaper, start.as_deref(), menu, false);
 }
 
@@ -1012,6 +1148,7 @@ pub fn menu(
             menu.page,
             overlay,
             &mods.0,
+            &selection,
             &graphics,
             &audio,
             &gameplay,
@@ -1067,9 +1204,27 @@ pub fn menu(
                     change(setting, dir, &mut graphics, &mut audio, &mut gameplay);
                 }
             }
+        } else if menu.page == Page::Run && selection.service.is_none() {
+            // Nothing to set up: the page is the second half of picking a run, and the
+            // first half has not happened.
+            go(&mut menu, Page::Scenario);
+        } else if menu.page == Page::Run {
+            // ← / → dial the value, Enter starts — this is a step of the drive flow, and
+            // in that flow Enter has meant "on you go" since the first page.
+            if dial != 0
+                && let Some(option) = entry.and_then(|e| e.run)
+            {
+                let mut setup = selection.setup.unwrap_or_default();
+                change_run(option, dial, &mut setup);
+                selection.setup = Some(setup);
+            }
+            if confirmed {
+                next.set(GameState::Driving);
+            }
         } else if confirmed && let Some(entry) = entry {
             let id = entry.id.clone();
             let label = entry.label.clone();
+            let service = entry.service.clone();
             match menu.page {
                 // The title screen: a verb opens its page, or leaves.
                 Page::Root => match VERBS.get(menu.selected).and_then(|(_, page)| *page) {
@@ -1103,9 +1258,30 @@ pub fn menu(
                     go(&mut menu, Page::Scenario);
                 }
                 Page::Scenario => {
-                    selection.scenario_id = id;
-                    next.set(GameState::Driving);
+                    menu.chosen[2] = label;
+                    match service {
+                        // A service is set up before it is driven: the date and the
+                        // weather are the player's, and the plan's own are what they
+                        // start from.
+                        Some(reference) => {
+                            selection.setup =
+                                resolve_day(&mods.0, &reference.day).map(|day| day.setup());
+                            selection.scenario_id = None;
+                            selection.service = Some(reference);
+                            go(&mut menu, Page::Run);
+                        }
+                        // A scenario brings its own hour and its own sky, and starts.
+                        None => {
+                            selection.scenario_id = id;
+                            selection.service = None;
+                            selection.setup = None;
+                            next.set(GameState::Driving);
+                        }
+                    }
                 }
+                // Handled above, before the confirm: the page has no rows that lead
+                // anywhere, only values that are dialled.
+                Page::Run => {}
                 Page::Mods => {
                     mods_ui::toggle(&mut mods.0, menu.selected, &mut manager);
                     // Reload right away, so the selection lists show what is enabled now.
@@ -1141,6 +1317,7 @@ pub fn menu(
         page,
         overlay,
         &mods.0,
+        &selection,
         &graphics,
         &audio,
         &gameplay,
@@ -1165,6 +1342,7 @@ pub fn menu(
             page,
             items.get(menu.selected),
             &mods.0,
+            &selection,
             menu.variant,
         );
         build_hints(&mut commands, &fonts, hints, page, variants);
@@ -1375,11 +1553,7 @@ fn scroll_into_view(
 
 /// The three steps of the drive section, in order: their titles, and which of them the
 /// player has already answered.
-const STEPS: [&str; 3] = [
-    "menu-select-line",
-    "menu-select-loco",
-    "menu-select-scenario",
-];
+const STEPS: [&str; 3] = ["menu-select-line", "menu-select-loco", "menu-select-run"];
 
 /// The numbered rail across the top of the flow: which of the three steps this is, and
 /// what has been answered for the ones behind it. Breadcrumb, progress bar and the reason
@@ -1389,7 +1563,7 @@ fn build_steps(
     fonts: &Fonts,
     steps: Option<Entity>,
     page: Page,
-    chosen: &[String; 2],
+    chosen: &[String; 3],
 ) {
     let Some(steps) = steps else { return };
     commands.entity(steps).despawn_related::<Children>();
@@ -1914,6 +2088,9 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
     if page == Page::Settings {
         keys.push(("←/→", "menu-hint-change"));
         keys.push(("Enter", "menu-hint-next"));
+    } else if page == Page::Run {
+        keys.push(("←/→", "menu-hint-change"));
+        keys.push(("Enter", "menu-hint-start"));
     } else {
         // Only where there is something to dial: a vehicle that comes in one dress
         // would be offering a key that does nothing.
@@ -1923,7 +2100,7 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
         keys.push((
             "Enter",
             match page {
-                Page::Scenario => "menu-hint-start",
+                Page::Scenario => "menu-hint-confirm",
                 Page::Mods => "menu-hint-toggle",
                 Page::Root | Page::Pause => "menu-hint-open",
                 _ => "menu-hint-confirm",
@@ -1987,10 +2164,12 @@ fn build_detail(
     page: Page,
     entry: Option<&Entry>,
     runtime: &mod_runtime::ModRuntime,
+    selection: &Selection,
     variant: usize,
 ) {
     commands.entity(detail).despawn_related::<Children>();
-    let Some(facts) = entry.and_then(|entry| facts(page, entry, runtime, variant)) else {
+    let Some(facts) = entry.and_then(|entry| facts(page, entry, runtime, selection, variant))
+    else {
         commands.entity(detail).insert(detail_node(false));
         commands.entity(list).insert(list_node(LIST_WIDTH_WIDE));
         return;
@@ -2113,7 +2292,7 @@ fn build_detail(
     commands.spawn((
         text(
             fonts,
-            t!(if page == Page::Scenario {
+            t!(if matches!(page, Page::Scenario | Page::Run) {
                 "menu-action-start"
             } else {
                 "menu-action-next"
@@ -2135,7 +2314,8 @@ fn title(page: Page) -> String {
         Page::Root | Page::Pause => String::new(),
         Page::Line => t!("menu-select-line"),
         Page::Loco => t!("menu-select-loco"),
-        Page::Scenario => t!("menu-select-scenario"),
+        Page::Scenario => t!("menu-select-run"),
+        Page::Run => t!("menu-run-setup"),
         Page::Mods => t!("mods-title"),
         Page::Settings => t!("menu-settings"),
         Page::Controls => t!("ctl-title"),
@@ -2152,7 +2332,19 @@ fn caption(page: Page, runtime: &mod_runtime::ModRuntime, manager: &ModManager) 
         Page::Mods => mods_ui::details(runtime, manager, true),
         Page::Line => t!("menu-select-line-hint"),
         Page::Loco => t!("menu-select-loco-hint"),
-        Page::Scenario => t!("menu-select-scenario-hint"),
+        Page::Scenario => t!("menu-select-run-hint"),
+        Page::Run => t!("menu-run-setup-hint"),
+    }
+}
+
+/// What stands in the slot beside a service: its category, which is already the two
+/// letters a monogram wants — "RB", not the "R" the initials of one word come to.
+fn category_mark(service: &sim_core::day::Service) -> String {
+    let category: String = service.category.chars().take(2).collect();
+    if category.is_empty() {
+        monogram(&service.number)
+    } else {
+        category.to_uppercase()
     }
 }
 
@@ -2170,6 +2362,24 @@ fn monogram(name: &str) -> String {
     }
 }
 
+/// Every operating day the run picker offers, the built-in one first.
+///
+/// A plan that belongs to another line is left out: its stops and origins are indices
+/// into that line's track graph, and offering them here would be offering a run that
+/// starts somewhere else entirely.
+fn days(runtime: &mod_runtime::ModRuntime, line: Option<&str>) -> Vec<(String, OperatingDay)> {
+    std::iter::once((BUILTIN_DAY.to_string(), content::musterbahn_day()))
+        .chain(
+            runtime
+                .mods
+                .days
+                .iter()
+                .map(|(id, day)| (id.clone(), day.clone())),
+        )
+        .filter(|(_, day)| day.line.is_none() || day.line.as_deref() == line)
+        .collect()
+}
+
 /// The mod an id belongs to (`example:modul_ost` → `example`).
 fn origin(id: &str) -> String {
     id.split_once(':').map_or(id, |(m, _)| m).to_string()
@@ -2184,6 +2394,7 @@ fn entries(
     page: Page,
     overlay: bool,
     runtime: &mod_runtime::ModRuntime,
+    selection: &Selection,
     graphics: &Graphics,
     audio: &Audio,
     gameplay: &Gameplay,
@@ -2240,15 +2451,76 @@ fn entries(
                 .map(|(id, spec)| named(id, &spec.name, vehicle_meta(spec))),
         )
         .collect(),
-        Page::Scenario => std::iter::once(builtin("menu-scenario-none", String::new()))
-            .chain(mods.scenarios.iter().map(|(id, scenario)| {
-                named(
-                    id,
-                    &scenario.name,
-                    format!("{:02}:{:02}", scenario.start.hour, scenario.start.minute),
-                )
-            }))
-            .collect(),
+        // Two kinds of run under one question: a scenario, which brings its own hour and
+        // its own task, and a service out of an operating day, which is one working of a
+        // timetable that runs all day and starts over at midnight (plan ch. 11).
+        Page::Scenario => {
+            let mut rows: Vec<Entry> =
+                std::iter::once(builtin("menu-scenario-none", String::new()))
+                    .chain(mods.scenarios.iter().map(|(id, scenario)| {
+                        named(
+                            id,
+                            &scenario.name,
+                            format!("{:02}:{:02}", scenario.start.hour, scenario.start.minute),
+                        )
+                    }))
+                    .collect();
+            for (id, day) in days(runtime, selection.line_ref.as_deref()) {
+                if day.playable().next().is_none() {
+                    continue;
+                }
+                rows.push(Entry {
+                    label: t!("menu-day-heading", name = day.name.clone()),
+                    heading: true,
+                    ..default()
+                });
+                for (index, service) in day.playable() {
+                    let (from, to) = service.route();
+                    rows.push(Entry {
+                        label: t!("menu-service", from = from, to = to),
+                        meta: format!(
+                            "{}  {} – {}",
+                            service.number,
+                            clock_label(service.departure()),
+                            clock_label(service.arrival())
+                        ),
+                        monogram: category_mark(service),
+                        chip: if id == BUILTIN_DAY {
+                            t!("menu-chip-builtin")
+                        } else {
+                            origin(&id)
+                        },
+                        hint: service.description.clone(),
+                        service: Some(ServiceRef {
+                            day: id.clone(),
+                            index,
+                        }),
+                        ..default()
+                    });
+                }
+            }
+            rows
+        }
+        // The one step a scenario never walks: what day the service runs on and what the
+        // weather does over it. The preset row is only there while a weather is named —
+        // a row that says "none" and cannot be dialled is a dead control.
+        Page::Run => {
+            let setup = selection.setup.unwrap_or_default();
+            RUN_OPTIONS
+                .into_iter()
+                .filter(|option| {
+                    *option != RunOption::Preset || matches!(setup.weather, WeatherChoice::Fixed(_))
+                })
+                .map(|option| Entry {
+                    label: t!(option.key()),
+                    hint: t!(&format!("{}-hint", option.key())),
+                    value: option.value(&setup),
+                    run: Some(option),
+                    control: Some(Control::Choice),
+                    ..default()
+                })
+                .collect()
+        }
         // A row for the hint keeps the page from being blank; toggling it is a no-op.
         Page::Mods if mods.manifests.is_empty() => vec![Entry {
             label: t!("mods-none"),
@@ -2512,6 +2784,7 @@ fn facts(
     page: Page,
     entry: &Entry,
     runtime: &mod_runtime::ModRuntime,
+    selection: &Selection,
     variant: usize,
 ) -> Option<Facts> {
     let mods = &runtime.mods;
@@ -2640,6 +2913,35 @@ fn facts(
                 ..base(Vec::new())
             })
         }
+        // The pane on the setup page describes the service being set up, not the row —
+        // the rows are its date and its weather, and they say what they are themselves.
+        Page::Run => {
+            let reference = selection.service.as_ref()?;
+            let day = resolve_day(runtime, &reference.day)?;
+            let service = day.services.get(reference.index)?;
+            let setup = selection.setup.unwrap_or_else(|| day.setup());
+            let (from, to) = service.route();
+            Some(Facts {
+                title: t!("menu-service", from = from, to = to),
+                monogram: category_mark(service),
+                body: service.description.clone(),
+                rows: vec![
+                    (t!("menu-fact-train"), service.number.clone()),
+                    (t!("menu-fact-departure"), clock_label(service.departure())),
+                    (t!("menu-fact-arrival"), clock_label(service.arrival())),
+                    (t!("menu-fact-stops"), service.stops.len().to_string()),
+                    (t!("run-date"), date_label(setup.date)),
+                    (
+                        t!("run-weather"),
+                        match setup.weather {
+                            WeatherChoice::Dynamic => t!("run-weather-dynamic"),
+                            WeatherChoice::Fixed(preset) => t!(preset_key(preset)),
+                        },
+                    ),
+                ],
+                thumbnail: String::new(),
+            })
+        }
         Page::Root | Page::Pause | Page::Mods | Page::Settings | Page::Controls => None,
     }
 }
@@ -2734,6 +3036,7 @@ mod tests {
                 page,
                 false,
                 &runtime,
+                &Selection::default(),
                 &graphics,
                 &audio,
                 &gameplay,
@@ -2748,6 +3051,7 @@ mod tests {
                 page,
                 false,
                 &runtime,
+                &Selection::default(),
                 &graphics,
                 &audio,
                 &gameplay,
@@ -2769,6 +3073,7 @@ mod tests {
                 page,
                 false,
                 &runtime,
+                &Selection::default(),
                 &graphics,
                 &audio,
                 &gameplay,
@@ -2794,13 +3099,15 @@ mod tests {
             Page::Line,
             false,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
             &Binds::default(),
             None,
         );
-        let line = facts(Page::Line, &lines[0], &runtime, 0).expect("the built-in line has facts");
+        let line = facts(Page::Line, &lines[0], &runtime, &Selection::default(), 0)
+            .expect("the built-in line has facts");
         assert!(!line.rows.is_empty());
         assert!(
             line_length(&musterbahn()) > 1000.0,
@@ -2811,26 +3118,38 @@ mod tests {
             Page::Loco,
             false,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
             &Binds::default(),
             None,
         );
-        let loco = facts(Page::Loco, &locos[0], &runtime, 0).expect("the BR 101 has facts");
+        let loco = facts(Page::Loco, &locos[0], &runtime, &Selection::default(), 0)
+            .expect("the BR 101 has facts");
         assert_eq!(loco.rows.len(), 5);
         // Mods and settings have nothing to show beside the list.
         let settings = entries(
             Page::Settings,
             false,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
             &Binds::default(),
             None,
         );
-        assert!(facts(Page::Settings, &settings[1], &runtime, 0).is_none());
+        assert!(
+            facts(
+                Page::Settings,
+                &settings[1],
+                &runtime,
+                &Selection::default(),
+                0
+            )
+            .is_none()
+        );
     }
 
     /// The whole flow without a window: the title screen opens the first step, three
@@ -2868,6 +3187,108 @@ mod tests {
         let selection = app.world().resource::<Selection>();
         assert!(selection.line_ref.is_none(), "the built-in line was picked");
         assert!(selection.scenario_id.is_none(), "no scenario was picked");
+    }
+
+    /// Picking a service out of an operating day does not start the run: it opens the
+    /// one step a scenario never walks, where the date and the weather are set.
+    #[test]
+    fn a_timetable_run_is_set_up_before_it_starts() {
+        let mut app = app();
+        for _ in 0..3 {
+            key(&mut app, KeyCode::Enter);
+        }
+        assert_eq!(page(&app), Page::Scenario);
+
+        // Walk down to the first service — past the free run, the mods' scenarios and
+        // the heading over the day's services, which the cursor never lands on.
+        let runtime = mod_runtime::ModRuntime::load("../../mods");
+        let items = entries(
+            Page::Scenario,
+            false,
+            &runtime,
+            &Selection::default(),
+            &default(),
+            &default(),
+            &default(),
+            &Binds::default(),
+            None,
+        );
+        let first = items
+            .iter()
+            .position(|entry| entry.service.is_some())
+            .expect("the built-in operating day offers services");
+        assert!(items[first - 1].heading, "under a heading of its own");
+        for _ in 0..first {
+            key(&mut app, KeyCode::ArrowDown);
+        }
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Run, "a service is set up, not started");
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Menu
+        );
+
+        // The defaults are the plan's own, and ← / → move them.
+        let setup = app.world().resource::<Selection>().setup.expect("a setup");
+        assert_eq!(setup, content::musterbahn_day().setup());
+        key(&mut app, KeyCode::ArrowRight);
+        let moved = app.world().resource::<Selection>().setup.expect("a setup");
+        assert_eq!(
+            moved.date,
+            setup.date.shifted(1),
+            "the date dialled a day on"
+        );
+
+        // The weather row: dynamic by default, and overriding it opens the row that says
+        // which weather — a row that is not there while the day makes its own.
+        key(&mut app, KeyCode::ArrowDown);
+        assert_eq!(rows(&app).len(), 2, "no preset row under a dynamic sky");
+        key(&mut app, KeyCode::ArrowRight);
+        let fixed = app.world().resource::<Selection>().setup.expect("a setup");
+        assert!(matches!(fixed.weather, WeatherChoice::Fixed(Preset::Clear)));
+        assert_eq!(rows(&app).len(), 3, "and now it can be named");
+        key(&mut app, KeyCode::ArrowDown);
+        key(&mut app, KeyCode::ArrowRight);
+        let named = app.world().resource::<Selection>().setup.expect("a setup");
+        assert!(matches!(
+            named.weather,
+            WeatherChoice::Fixed(Preset::Cloudy)
+        ));
+
+        // Esc goes back to the run list, which opens at the top again …
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(page(&app), Page::Scenario);
+        // … so the service has to be walked to a second time. Enter on the setup page
+        // starts the run — that is what the button in the pane says as well.
+        for _ in 0..first {
+            key(&mut app, KeyCode::ArrowDown);
+        }
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Run);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Driving
+        );
+        let selection = app.world().resource::<Selection>();
+        let service = selection.service.as_ref().expect("a service was taken");
+        assert_eq!(service.day, BUILTIN_DAY);
+        assert!(selection.scenario_id.is_none(), "and no scenario with it");
+    }
+
+    /// The rows the run picker's setup page is showing right now.
+    fn rows(app: &App) -> Vec<Entry> {
+        entries(
+            Page::Run,
+            false,
+            &app.world().resource::<Mods>().0,
+            app.world().resource::<Selection>(),
+            &default(),
+            &default(),
+            &default(),
+            &Binds::default(),
+            None,
+        )
     }
 
     /// Every verb of the title screen leads somewhere, and Esc from anywhere leads back
@@ -2955,6 +3376,7 @@ mod tests {
             Page::Settings,
             false,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
@@ -2965,6 +3387,7 @@ mod tests {
             Page::Settings,
             true,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
@@ -3052,6 +3475,7 @@ mod tests {
             Page::Controls,
             false,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
@@ -3115,6 +3539,7 @@ mod tests {
             Page::Settings,
             false,
             &app.world().resource::<Mods>().0,
+            app.world().resource::<Selection>(),
             app.world().resource::<Graphics>(),
             app.world().resource::<Audio>(),
             app.world().resource::<Gameplay>(),
@@ -3214,6 +3639,7 @@ mod tests {
             Page::Loco,
             false,
             &runtime,
+            &Selection::default(),
             &graphics,
             &audio,
             &gameplay,
@@ -3221,11 +3647,13 @@ mod tests {
             None,
         );
         for entry in &locos {
-            let facts = facts(Page::Loco, entry, &runtime, 0).expect("a vehicle has facts");
+            let facts = facts(Page::Loco, entry, &runtime, &Selection::default(), 0)
+                .expect("a vehicle has facts");
             assert!(!facts.monogram.is_empty(), "{}", entry.label);
         }
         // A vehicle that ships no image says so, rather than an empty path into `mods/`.
-        let builtin = facts(Page::Loco, &locos[0], &runtime, 0).expect("the BR 101 has facts");
+        let builtin = facts(Page::Loco, &locos[0], &runtime, &Selection::default(), 0)
+            .expect("the BR 101 has facts");
         assert!(builtin.thumbnail.is_empty());
     }
 

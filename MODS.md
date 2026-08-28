@@ -22,6 +22,7 @@ mods/<id>/mod.ron           manifest
          /compositions/*.ron Composition — modules chained into one line
          /scenarios/*.ron   Scenario
          /timetable/*.ron   Timetable — referenced by a scenario for stop scoring
+         /days/*.ron        OperatingDay — a whole day of services, looping every 24 h
          /signals/*.ron     SignalType
          /signal_models/*.ron SignalModel — glTF parts on mount points, lamp bindings
          /blocks/*.ron      block presets for the vehicle editor's palette
@@ -95,7 +96,7 @@ editor, and adding one can never change how a run behaves.
 | `davis` | running resistance `R = a + b·v + c·v²` [N], `v` in m/s |
 | `brake` | control valve, friction pairing, default brake position, braked weight [t], forces, pressures, reservoir volumes, additional brakes |
 | `traction` | `Curve` / `TapChanger` / `Converter` / `Diesel` — or `None`; see below |
-| `coupler` | slack, stiffnesses, damping, breaking force |
+| `coupler` | `kind` plus slack, stiffnesses, damping, breaking force — see below |
 | `adhesive_mass_fraction` | share of the mass on driven axles (loco 1.0, coach 0.0) |
 | `slip_protection` | `None` / `SlipBrake` / `TractionCutback` / `CreepControl` |
 | `gauge` | track gauge [m], standard gauge 1.435 |
@@ -114,6 +115,13 @@ editor, and adding one can never change how a run behaves.
 | `script` | optional behaviour hook `"<mod>:<name>"` |
 | `graph` | optional block diagram of drive, brake and equipment — when present it is authoritative over the fields it bakes, see below |
 | `model` | glTF file, levels of detail, moving parts — see below |
+
+`coupler.kind` is what a shunter can do with the vehicle, as against how the coupler
+behaves once it is made. `Screw` is the European standard (screw coupling and side
+buffers), `CenterBuffer` the automatic head of a multiple unit, and `Bar` a bar inside a
+fixed unit. **Only like couples to like**, and a bar is undone in the works: a railcar
+cannot be put in front of a rake of freight wagons, and a unit cannot be split between two
+coaches that are barred together. Left out, a vehicle carries a screw coupling.
 
 `safety` and `doors` are the **equipment** of the vehicle, so a train carries what its
 vehicles carry — the leading vehicle determines the door control. Anything left out means
@@ -1423,6 +1431,85 @@ Haus.gltf
 └── fenster_NIGHT    the emissive one, shown after dusk
 ```
 
+### Stabling roads and portals
+
+A line that is only driven along needs nothing here; a line that is **shunted** needs
+somewhere to shunt to. `yards:` names the places stock lives — a mark on the track like a
+device, with the direction a standing train faces and the length of the road behind it:
+
+```ron
+yards: [
+    (name: "Portal West", kind: Portal, edge: 0, s: 300.0, facing: Forward, length: 300.0),
+    (name: "Portal Ost", kind: Portal, edge: 1, s: 300.0, facing: Backward, length: 300.0),
+    (name: "Abstellgleis 1", kind: Stabling, edge: 2, s: 20.0, facing: Backward, length: 280.0),
+],
+```
+
+Two kinds, and the difference is what may happen there:
+
+* **`Stabling`** is a siding on the modelled line. A unit left on one stands where it can
+  be seen and occupies its road like any other train — this is what an operating day puts
+  its stock on between two workings.
+* **`Portal`** is the *edge* of the modelled line: the fiddle yard past the last signal,
+  the junction to the railway you did not build. **Trains appear and disappear at portals
+  and nowhere else.** The rule check refuses a portal whose track does not run out to a
+  buffer stop or a module boundary — a train appearing on a running road is not a train,
+  it is a collision.
+
+`name` is content, not translated: it is a place on this line, like a station name, and it
+is what a shunt job addresses. `edge`/`s` is where the **head** of a standing train comes
+to; `facing` is the way it looks (into the line at a portal, out of the siding on a
+stabling road), so the body of the consist lies on the other side of the mark. `length` is
+what fits on the road — `0` means "not stated", and then nothing is refused for being
+long. Two roads of the same name is a finding, because a job that names it would always
+get the first one.
+
+Yards follow their track exactly as devices and objects do: splitting an edge carries them
+onto the right half, deleting one takes its roads with it, and a composition shifts every
+`edge` by the module's offset — so a module names its own roads and the composed line has
+them all. The example line
+(`mods/example/lines/beispielstrecke.ron`) has a turnout at km 4.0, a stabling siding off
+its diverging leg and a portal at each end.
+
+The simulation reads them as `sim_core::yard::Yard`: `Sim::place_at(train, "Abstellgleis 1")`
+puts a consist on the road (refusing one that is too long, a road that is occupied, or a
+mark the track behind runs out on), and `Sim::withdraw(train, "Portal Ost")` takes a train
+off the line at a portal it is actually standing at. A withdrawn train keeps its slot and
+its vehicles — it is out of service, not deleted — so the same unit comes back out later.
+
+### Shunt jobs for the AI
+
+A driver can be given a **shunt job** instead of, or after, a timetable — a list of moves
+worked off in order. It is an `ai_driver::ShuntJob` and reads and writes as RON exactly
+like a timetable does, but there is no `jobs/` directory yet: for now a job is handed to a
+driver where the world is built, not loaded from a mod. The format below is what a loader
+will read when it arrives, so a job written today keeps working.
+
+```ron
+(
+    name: "Rangierfahrt Musterstadt",
+    moves: [
+        SetBack(Yard("Abstellgleis 1")),
+        Couple,
+        DrawUp(At(edge: EdgeId(0), s: 900.0)),
+        Uncouple(0),
+        Stand,
+    ],
+)
+```
+
+`DrawUp` runs forward until the **head** is at the target, `SetBack` reverses until the
+**rear** is — that is what "set back onto a road" means, the road takes the rear first.
+Either move ends early when the buffers are met, whatever the mark said, because that is
+what the shunter's arm is for. A target is either a point on the graph (`At(edge:, s:)`,
+with an optional `module:` resolved against a composition like a timetable stop) or a road
+by name (`Yard("…")`). `Couple` joins the train to whatever it stands up against;
+`Uncouple(n)` parts it behind vehicle `n`; `Stand` finishes.
+
+The job is driven at the German shunting speed, 25 km/h, creeping over the last few metres.
+A target the line does not have, or a coupling that cannot be made, stops the train instead
+of running it on to nowhere.
+
 ### Vegetation
 
 Trees are ordinary track objects — an `objects/*.ron` with a tree glTF is all a tree mod
@@ -1689,6 +1776,26 @@ module-local references (`cargo run -p app -- --scenario example:modulfahrt`).
 `scenarios/*.ron` is a `Scenario` — triggers and actions, see the README section on scenarios.
 Start one with `--scenario example:probefahrt`.
 
+**A scenario says what stands on the line.** Its `consists:` list is the same one an
+operating day has (see *Operating days* below), and its order is the order the train
+indices run in: `player_train` picks which of them the player drives, and every event's
+`train:` addresses the same list. `mods/example/scenarios/rangierfahrt.ron` is a complete
+one — a light engine standing in the siding and three machines to collect from the platform
+— and shows both spawn point shapes:
+
+```ron
+consists: [
+    (number: "Lokzug 77401", vehicles: [(vehicle: "example:br101_afb", count: 3)],
+     at: At(edge: EdgeId(0), s: 3800.0, dir: 1)),
+    (number: "Lz 77400", vehicles: [(vehicle: "example:br101_afb", count: 1)],
+     at: Yard("Abstellgleis 1")),
+],
+player_train: 1,
+```
+
+Leave `consists:` out and the old shape still holds: the run builds the player's train from
+the vehicle picked in the menu, and the scenario brings no traffic of its own.
+
 A scenario gets stop scoring by referencing a timetable: `timetable: Some("<mod>:<name>")`
 points at a `timetable/*.ron` of the mod (train number, category, stops with position,
 arrival and departure — `mods/example/timetable/probefahrt.ron` is a complete one). With it
@@ -1709,6 +1816,196 @@ from UT in hours (Germany: 1 in winter, 2 in summer). It drives the sun and moon
 the georeferenced line and anchors `Daily` timetables; `Scenario` timetables and event
 triggers stay relative to the start of the run. Without the field, a run begins at
 midsummer noon.
+
+### Operating days (`days/*.ron`)
+
+A scenario is one prepared run. An **operating day** is the other way a line is used: the
+whole timetable of a day, looping every 24 hours, out of which the player picks one
+service and drives it. `mods/example/days/beispieltag.ron` is a complete one; start it
+without the menu with
+
+```
+cargo run -p app -- --line example:beispielstrecke --day example:beispieltag --service 0
+```
+
+The file names the line it belongs to, the date the day plays on by default, and its
+services:
+
+```ron
+(
+    name: "Beispieltag",
+    line: Some("example:beispielstrecke"),
+    date: (year: 2026, month: 8, day: 15),
+    utc_offset: 2.0,
+    weather: Dynamic,                       // or Fixed(Rain)
+    services: [
+        (
+            number: "RB 30001",
+            category: "RB",
+            description: "Frühzug nach Beispielstadt",
+            vehicle: Some("example:br101_afb"),   // None = what the player picked
+            cars: 3,
+            origin: At(edge: EdgeId(0), s: 200.0, dir: 1),   // or Yard("Portal Ost")
+            stable_at: Some("Abstellgleis 1"),    // where its stock goes afterwards
+            stable_way: DrawUp,                   // or SetBack, the default
+            playable: true,                       // false = AI only, for the traffic
+            stops: [ /* ScheduledStop, times in seconds since local midnight */ ],
+        ),
+    ],
+)
+```
+
+A service's `stops` are the same `ScheduledStop`s a `timetable/*.ron` holds, and they are
+read as a `Daily` timetable: seconds since local midnight, wrapping at 24 h. A service that
+leaves at 23:50 and arrives at 00:12 needs nothing said about days — write 85 800 and 720.
+
+`origin` is a **spawn point**, and it has two shapes:
+
+```ron
+origin: At(edge: EdgeId(0), s: 200.0, dir: 1),   // a place on the line
+origin: Yard("Portal Ost"),                      // a road of it, by name
+```
+
+`At` is where the head of the train stands and which way it faces (`dir: 1` = towards
+rising `s`); that is also what decides which way round the consist is put on the track.
+`Yard` names one of the line's `yards:` — a stabling road, or a **portal**. A service
+whose stock comes out of a portal is a working that started on a piece of railway nobody
+has built: it appears there, runs in, and is on the line like any other train.
+
+**The other services run too.** As each one's hour comes the simulator puts its train on
+the line and the AI drives it; when it is over the unit is put away and the next service
+that needs the same stock takes it rather than a new one. Over a looping day that keeps the
+train count at the size of the busiest minute. Which services are out is a pure function of
+the clock, so a dedicated server and every client put the same trains on the line without
+sending anything about it; only the driving is the server's.
+
+`stable_at` names where a working leaves its stock — one of the line's `yards:` (see
+*Shunting*). A **stabling road** holds the unit in its siding, standing on the track with
+its brakes applied where everyone can see it; a **portal** is the edge of the module and
+swallows it altogether, which is how a working that carries on over unbuilt railway leaves
+the scene. Leave the field out and the unit simply goes out of service where it terminated,
+which is right for a plan whose workings are paired — the unit that arrives at ten past
+forms the one that leaves at half past.
+
+The unit is **driven** there: a service with a road is given a shunt move on top of its
+timetable, worked once the last stop has been made, and `stable_way` says which way it runs
+(`SetBack`, the default, or `DrawUp` for a road that lies ahead of where the working ends).
+Its window stays open ten minutes instead of three to give it time. Whatever the driver
+managed, the unit is **placed** on the road when that window closes — that placement is the
+backstop, and it is what keeps the dispatching a function of the clock, because a driven
+move is not one and a client and the server would otherwise end up with different trains on
+the line. Getting `stable_way` wrong therefore costs the look of the move, not the plan.
+
+**Stock that is simply there.** Both a day and a scenario may declare `consists:` — trains
+that stand on the line from the first minute, whatever the plan does later:
+
+```ron
+consists: [
+    (
+        number: "Wagengruppe 4",
+        vehicles: [(vehicle: "example:br101_afb", count: 1)],
+        at: At(edge: EdgeId(1), s: 550.0, dir: -1),
+        prepared: true,                  // false = a cold engine to wake up
+        timetable: Some("example:probefahrt"),   // None = it just stands there
+    ),
+],
+```
+
+A consist names its vehicles one by one, head first — "a locomotive and n coaches" is only
+the commonest case of it, and a rake of vans behind a shunter is a train too. `at:` is the
+same spawn point as a service's `origin`. With a `timetable` the AI drives it to that
+timetable; without one it stands where it was put with its brakes applied, which is what
+stock in a siding does all day.
+
+A consist may also carry a **shunt job of its own**, with or without a timetable:
+
+```ron
+shunt: Some((
+    name: "62701 ins Bw",
+    moves: [DrawUp(Yard("Portal Ost")), Stand],
+)),
+```
+
+The moves are worked in order: `DrawUp(target)` and `SetBack(target)` drive one end of the
+train onto a place on the line or a road by name, `Couple` couples to whatever the train
+stands up against, `Uncouple(n)` parts it behind vehicle `n`, and `Stand` finishes at a
+stand. With no timetable beside it the consist is a pilot and nothing else — a movement
+that exists to move stock about. With one, the job is worked after the last stop has been
+made, which is what a service that puts its own unit away comes to.
+
+### Shunting: signals and routes
+
+German practice draws a hard line between a **Zugfahrt** and a **Rangierfahrt**, and
+almost everything about how a movement is signalled hangs off which side of it the
+movement is on (Ril 408 / 301):
+
+|  | Zugfahrt | Rangierfahrt |
+|---|---|---|
+| Signalled by | the main signals (Hp 1 / Hp 2) | **Sh 1** and nothing else |
+| Track ahead | proved clear before the signal clears | may be **occupied** |
+| Speed | the line speed | 25 km/h, on sight |
+| 2000 Hz magnet | live at a signal at stop | switched off by Sh 1 |
+
+**A movement changes kind by passing a signal.** Under Sh 1 it becomes a shunting
+movement; under a main proceed aspect it becomes a train. That is exactly how a shunt
+draws up to the starting signal, is given a train route, and leaves as a train — nothing
+switches a mode, the signal does it.
+
+A **Sperrsignal** is a signal of kind `Shunting`. It shows Sh 0 / Sh 1 and no main aspect
+at all, and Sh 0 is "Halt! Fahrverbot" — it stops a train movement as dead as a shunting
+one. `mods/example/signals/sperrsignal.ron` is the signal type; the aspect rules read
+`shunting: Some(true)`, which the interlocking sets while a shunting route is locked there:
+
+```ron
+(kind: Signal, edge: 2, s: 20.0, facing: Backward, payload: "(signal:Some(2))"),
+…
+(kind: Shunting, system: Ks, device: 6, requires_route: true, signal_type: Some("example:sperrsignal")),
+```
+
+A **Rangierstraße** is a route with `kind: Shunt`. It locks the points and clears Sh 1 at
+its entry signal, it leaves the main signal at stop, and — unlike a Zugstraße — it may be
+set into an occupied track, which is what collecting a rake that is standing there needs.
+It has no overlap: a shunting movement is driven on sight, so there is nothing to run past.
+
+```ron
+routes: [
+    (entry: 2, exit: 0, kind: Shunt, switches: [(1, Diverging)], sections: [0]),
+],
+```
+
+The route **belongs to the movement that ran over it**: passing the signal under Sh 1
+makes it that movement's, and it is given back when *that* train has cleared it. A second
+shunt running past the same signal takes nothing away from the first, and a route over a
+road that was occupied to begin with is still released — the track clear detection records
+which trains are on a section, not merely that something is. A route set for a movement that
+never came is given back after five minutes, the Zeitverschluss of a Rangierfahrstraße. The
+route editor writes the kind in the route form (*Kind*: Train route / Shunting route).
+
+**The signalman answers by himself.** A movement standing in front of a Sperrsignal is
+given the first free shunting route out of it, which is how a unit gets out of a siding
+without anybody scripting it. Train routes are not set this way: which route a train takes
+is a decision, not a reflex.
+
+**The player may change trains.** In a timetable run the driver can walk out of the door —
+the AI takes the working on from the stop that is actually next — walk along the platform
+into another train, and take that one over at its desk (`Tab`, or whatever it is rebound
+to). What they take is what they are scored against from then on. A train with nothing in it
+that pulls, one that is out of service, or one somebody else is driving is refused with a
+reason on screen. A **scenario** is not part of this: its events, its scoring and its ending
+all name one train, so that is the one it is driven in.
+
+**The player sets the date and the weather.** Picking a service in the run list opens one
+more step: the day it runs on — the plan's `date` to begin with, dialled with ← / → — and
+the weather, either *dynamic* (the day makes its own out of the date and the plan's name:
+fronts move in, the rain stops and the sun comes back, all as a function of the clock, so
+a whole 24-hour day has weather in it rather than one weather) or *set by hand*, where the
+player names one of the thirteen presets and it is placed at the start and held. A mod
+picks the default with `weather: Dynamic` or `weather: Fixed(Snow)`; a scenario is not
+asked, because it brings its own sky.
+
+A day whose `line` names a line other than the one picked is not offered — its stops are
+indices into that line's track graph. Leave `line` out and it is offered everywhere, which
+is what the built-in Musterbahn day does.
 
 #### Seasons
 

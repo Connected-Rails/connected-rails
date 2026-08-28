@@ -1,0 +1,54 @@
+// A shunting scenario, and the shortest way to see what `consists:` is for: the scenario
+// says what stands on the line and which of those trains is the player's, instead of the
+// run building one out of whatever was picked in the menu.
+//
+// The order of the list is the order the train indices run in — `player_train` and every
+// event's `train:` address it — and a consist names its vehicles one by one, head first.
+// `at:` is a place on the line or, as here, a road of it by name (`yards:` in the line
+// file); `Yard("Portal Ost")` would be the edge of the modelled railway.
+//
+// Run it with:
+//   cargo run -p app -- --scenario example:rangierfahrt
+(
+    name: "Rangierfahrt",
+    description: "Lok aus dem Abstellgleis holen, an die abgestellten Maschinen in Beispielstadt kuppeln und den Lokzug nach Beispielbach bringen.",
+    start: (year: 2026, month: 8, day: 15, hour: 7, minute: 10, utc_offset: 2.0),
+    weather: Cloudy,
+    consists: [
+        (
+            // 0 — three stabled machines waiting to be collected. No timetable, so they
+            // stand where they were put with the brakes applied.
+            number: "Lokzug 77401",
+            vehicles: [(vehicle: "example:br101_afb", count: 3)],
+            at: At(edge: EdgeId(0), s: 3800.0, dir: 1),
+        ),
+        (
+            // 1 — the player's light engine, standing in the siding behind km 4.0.
+            number: "Lz 77400",
+            vehicles: [(vehicle: "example:br101_afb", count: 1)],
+            at: Yard("Abstellgleis 1"),
+        ),
+    ],
+    player_train: 1,
+    events: [
+        (
+            name: "auftrag",
+            trigger: Time(2.0),
+            actions: [Message("Lz 77400: aus dem Abstellgleis ziehen, in Beispielstadt an den Lokzug kuppeln (Einf) und nach Beispielbach bringen.")],
+        ),
+        (
+            name: "am_lokzug",
+            trigger: TrainStopped(train: 1, edge: EdgeId(0), s: 3800.0, radius: 60.0),
+            actions: [Message("Am Lokzug. Kuppeln mit Einf, dann zurück nach Beispielbach.")],
+        ),
+        (
+            name: "ziel",
+            trigger: TrainStopped(train: 1, edge: EdgeId(0), s: 200.0, radius: 60.0),
+            actions: [
+                Score(points: 30, reason: "Lokzug in Beispielbach"),
+                Finish(success: true, reason: "Rangierfahrt beendet"),
+            ],
+        ),
+    ],
+    line: Some("example:beispielstrecke"),
+)

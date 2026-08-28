@@ -47,7 +47,7 @@ pub const DEFAULT_PORT: u16 = 27_015;
 
 /// Netcode protocol id. Bump it whenever the wire format changes — an old client is then
 /// turned away at the door instead of desynchronising ten minutes into the run.
-const PROTOCOL_ID: u64 = 0x7261_696c_0001;
+const PROTOCOL_ID: u64 = 0x7261_696c_0002;
 
 /// How often the server sends corrections [s].
 const SYNC_INTERVAL: f64 = 0.1;
@@ -138,6 +138,18 @@ pub struct Setpoints {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct DriverInput(pub CabInputs);
 
+/// Client → server: the player has walked into another train and wants its levers
+/// (`crate::crew`). The server answers with a [`Welcome`] naming the train it actually
+/// grants — which is the one they already had when it says no.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct TakeOver(pub u16);
+
+/// The same wish inside the client's own app, before it goes on the wire. `crew` writes
+/// it and [`client_send`] posts it, so nothing outside this module has to know a socket
+/// exists.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct TakeOverRequest(pub u16);
+
 /// Ordered and reliable: everything that is an event and must not be lost — a lever
 /// movement, a joining client.
 struct Control;
@@ -152,6 +164,8 @@ fn protocol(app: &mut App) {
     app.register_message::<Join>()
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<DriverInput>()
+        .add_direction(NetworkDirection::ClientToServer);
+    app.register_message::<TakeOver>()
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<Welcome>()
         .add_direction(NetworkDirection::ServerToClient);
@@ -307,7 +321,10 @@ fn connect(
     Ok(())
 }
 
-/// Asks for a train once, then sends the levers whenever they move.
+/// Asks for a train once, then sends the levers whenever they move — and passes on the
+/// wish to take another train over when the player walks into one.
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
+#[allow(clippy::too_many_arguments)]
 fn client_send(
     sim: Res<SimResource>,
     player: Res<PlayerTrain>,
@@ -315,6 +332,8 @@ fn client_send(
     mut session: ResMut<Session>,
     mut join: Query<&mut MessageSender<Join>, (With<Client>, With<Connected>)>,
     mut input: Query<&mut MessageSender<DriverInput>, (With<Client>, With<Connected>)>,
+    mut wishes: MessageReader<TakeOverRequest>,
+    mut takeover: Query<&mut MessageSender<TakeOver>, (With<Client>, With<Connected>)>,
 ) {
     // Not connected, or not any more: ask again when the link comes back.
     if join.is_empty() {
@@ -322,6 +341,11 @@ fn client_send(
         session.joined = false;
         session.sent = None;
         return;
+    }
+    for wish in wishes.read() {
+        for mut tx in &mut takeover {
+            tx.send::<Control>(TakeOver(wish.0));
+        }
     }
     if !session.asked {
         for mut tx in &mut join {
@@ -355,6 +379,7 @@ fn client_receive(
     mut sim: ResMut<SimResource>,
     mut session: ResMut<Session>,
     mut player: ResMut<PlayerTrain>,
+    mut duty: ResMut<crate::crew::Duty>,
     mut drivers: ResMut<AiDrivers>,
     world: Res<WorldId>,
     link: Query<&Link, With<Client>>,
@@ -378,6 +403,9 @@ fn client_receive(
                 );
             }
             player.0 = greeting.train as usize;
+            // The server has spoken: this is the train we drive, whether we asked to join
+            // in it or walked into it (`crate::crew`).
+            duty.0 = Some(greeting.train as usize);
             // Every other train is driven by the server from here on; a second AI running
             // locally would fight the setpoints coming in.
             drivers.0.clear();
@@ -530,6 +558,12 @@ impl Host {
     pub fn is_player_driven(&self, train: usize) -> bool {
         self.assigned.values().any(|assigned| *assigned == train)
     }
+
+    /// Every train a client is driving — what the operating day's dispatcher must not
+    /// stable out from under them (`crate::services::dispatch`).
+    pub fn driven(&self) -> impl Iterator<Item = usize> + '_ {
+        self.assigned.values().copied()
+    }
 }
 
 /// Runs the dedicated server: the same simulation, without a window, a renderer or a
@@ -555,8 +589,17 @@ pub fn run_dedicated(address: &str) {
     for warning in mods.log() {
         warn!("mod: {warning}");
     }
-    let world = crate::world::build(&mut mods, &Selection::default());
+    let mut world = crate::world::build(&mut mods, &Selection::default());
     let id = crate::world::fingerprint(&world.line.name, &world.sim);
+    if let Some(run) = world.day.take() {
+        info!(
+            "operating day {}: {} services, driving {}",
+            run.id,
+            run.day.services.len(),
+            run.day.services[run.service].number
+        );
+        app.insert_resource(run);
+    }
     info!(
         "world {id:016x}: {} trains on {}",
         world.sim.trains.len(),
@@ -568,8 +611,12 @@ pub fn run_dedicated(address: &str) {
         .insert_resource(PlayerTrain(world.player))
         .insert_resource(AiDrivers(world.drivers))
         .insert_resource(crate::Mods(mods))
+        .insert_resource(world.dispatch)
         .insert_resource(SimResource(world.sim))
         .init_resource::<Host>()
+        // Nobody stands in a cab on a dedicated server; the clients' trains are protected
+        // through `Host::driven` instead.
+        .init_resource::<crate::crew::Duty>()
         .add_systems(Startup, move |mut commands: Commands| {
             let server = commands
                 .spawn((
@@ -590,6 +637,9 @@ pub fn run_dedicated(address: &str) {
             (
                 server_join,
                 server_receive,
+                // The operating day keeps putting trains on the line while the server
+                // runs; it draws none of them, and it owns every driver.
+                crate::dispatch_services,
                 crate::drive_ai,
                 crate::step_simulation,
                 crate::run_mod_scripts,
@@ -604,17 +654,23 @@ pub fn run_dedicated(address: &str) {
 type Connections<'w, 's, D> = Query<'w, 's, (Entity, D), With<ClientOf>>;
 
 /// Hands a train to every client that asked for one, and forgets the ones that left.
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
+#[allow(clippy::too_many_arguments)]
 fn server_join(
     mut host: ResMut<Host>,
-    sim: Res<SimResource>,
+    mut sim: ResMut<SimResource>,
+    mut drivers: ResMut<AiDrivers>,
+    dispatch: Res<crate::services::Dispatch>,
+    run: Option<Res<crate::services::DayRun>>,
     world: Res<WorldId>,
     mut clients: Connections<(
         &'static mut MessageReceiver<Join>,
+        &'static mut MessageReceiver<TakeOver>,
         &'static mut MessageSender<Welcome>,
     )>,
 ) {
     let mut live = HashSet::new();
-    for (entity, (mut rx, mut tx)) in &mut clients {
+    for (entity, (mut rx, mut wishes, mut tx)) in &mut clients {
         live.insert(entity);
         for request in rx.receive() {
             if request.world != world.0 {
@@ -639,10 +695,48 @@ fn server_join(
             });
             info!("client {entity} drives train {train}");
         }
+        // Walking into another train's cab (`crate::crew`). The server owns the world, so
+        // it is a wish, not a fact: it is granted while that train is free and in service,
+        // and refused by answering with the train the client already had.
+        for wish in wishes.receive() {
+            let held = host.assigned.get(&entity).copied().unwrap_or(0);
+            let wanted = wish.0 as usize;
+            let free = sim
+                .0
+                .trains
+                .get(wanted)
+                .is_some_and(|consist| !consist.stabled && !consist.vehicles.is_empty())
+                && host
+                    .assigned
+                    .iter()
+                    .all(|(other, train)| *other == entity || *train != wanted);
+            let train = if free { wanted } else { held };
+            if train != held {
+                info!("client {entity} takes train {train} over");
+            }
+            host.assigned.insert(entity, train);
+            tx.send::<Control>(Welcome {
+                train: train as u16,
+                world: world.0,
+            });
+        }
     }
-    // A client that dropped gives its train back to the AI.
+    // A client that dropped gives its train back to the AI — and it is *handed* back
+    // rather than merely let go of: the driver is seeded to the stop that is actually next
+    // (`crew::hand_over`), because a client may have driven for twenty minutes, and a
+    // train with no working at all is secured where it stands rather than run away with.
+    let dropped: Vec<usize> = host
+        .assigned
+        .iter()
+        .filter(|(entity, _)| !live.contains(*entity))
+        .map(|(_, train)| *train)
+        .collect();
     host.assigned.retain(|entity, _| live.contains(entity));
     host.known.retain(|entity, _| live.contains(entity));
+    for train in dropped {
+        info!("train {train} handed back to the AI");
+        crate::crew::hand_over(&mut sim.0, &mut drivers, run.as_deref(), &dispatch, train);
+    }
 }
 
 /// Takes the driver's levers of every client into the simulation.

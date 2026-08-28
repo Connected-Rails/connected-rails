@@ -5,6 +5,7 @@
 //! It is evaluated in every simulation step, after physics and interlocking.
 
 use crate::Sim;
+use crate::consist::ConsistSource;
 use crate::interlock::{RouteId, SignalId};
 use crate::train::RailCondition;
 use crate::weather::Preset;
@@ -153,7 +154,15 @@ pub struct Scenario {
     /// begins in the rain begins on a wet rail (plan 14.1).
     #[serde(default)]
     pub weather: Preset,
-    /// The train the player drives.
+    /// The trains the scenario puts on the line, head of the list first. Their order is
+    /// the order their indices run in, so it is what [`player_train`](Self::player_train)
+    /// and an event's `train:` address (plan ch. 11).
+    ///
+    /// Empty is the old shape and still works: the run then builds the player's train out
+    /// of the vehicle picked in the menu, and the scenario has no traffic of its own.
+    #[serde(default)]
+    pub consists: Vec<ConsistSource>,
+    /// Which of the `consists` the player drives.
     #[serde(default)]
     pub player_train: usize,
     #[serde(default)]
@@ -314,10 +323,12 @@ pub fn fire(sim: &mut Sim, name: &str) -> bool {
 fn evaluate(trigger: &Trigger, sim: &Sim) -> bool {
     match trigger {
         Trigger::Time(t) => sim.time >= *t,
+        // A train with no vehicles is nowhere, so no position trigger ever fires for it.
         Trigger::TrainPast { train, edge, s } => sim
             .trains
             .get(*train)
-            .map(|t| t.vehicles[0].pos)
+            .and_then(|t| t.vehicles.first())
+            .map(|v| v.pos)
             .is_some_and(|p| p.edge == *edge && (p.s - *s) * p.dir as f64 >= 0.0),
         Trigger::TrainStopped {
             train,
@@ -325,8 +336,10 @@ fn evaluate(trigger: &Trigger, sim: &Sim) -> bool {
             s,
             radius,
         } => sim.trains.get(*train).is_some_and(|t| {
-            let p = t.vehicles[0].pos;
-            t.speed_kmh().abs() < 0.5 && p.edge == *edge && (p.s - *s).abs() <= *radius
+            t.vehicles.first().is_some_and(|v| {
+                let p = v.pos;
+                t.speed_kmh().abs() < 0.5 && p.edge == *edge && (p.s - *s).abs() <= *radius
+            })
         }),
         Trigger::SpeedAbove { train, kmh } => sim
             .trains

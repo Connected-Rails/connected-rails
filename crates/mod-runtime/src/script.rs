@@ -330,7 +330,11 @@ impl ModRuntime {
         for i in 0..self.world.len() {
             let script = self.world[i].clone();
             let player = sim.scenario.scenario.player_train;
-            let head = sim.trains.get(player).map(|t| t.vehicles[0].pos);
+            let head = sim
+                .trains
+                .get(player)
+                .and_then(|t| t.vehicles.first())
+                .map(|v| v.pos);
             let ctx = self.scripts.context();
             let _ = ctx.set("dt", dt);
             let _ = ctx.set("time", sim.time);

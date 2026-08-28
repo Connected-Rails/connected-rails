@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and fmt clean.
+As of 2026-08-28 · `cargo test --workspace`: **764 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -208,15 +208,160 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
   none starts there; without a model the app draws the shoe itself in the aspect colour
   rather than a mast. `mods/example/signals/gleissperre.ron` is the two-rule table.
 - **AI (ch. 11):** look-ahead across the track graph, braking curve with reaction and
-  response distance, timetable stops, operates Sifa and PZB itself.
+  response distance, timetable stops, operates Sifa and PZB itself. A driver can also be
+  given a **shunt job** instead of, or after, its timetable (see *Shunting* below).
+- **Shunting (ch. 11 "train formation"):** trains are made up and taken apart in the run.
+  `Sim::uncouple` splits a consist at a coupler; the rear part becomes a train of its own
+  with its own runtime and cab, and **the brake pipe parts there** — the part that keeps
+  the driver keeps its air (the shunter closed its cock), the other part's hose is left
+  hanging, so its pipe vents, its control valves apply and it stands. None of that is new
+  physics: only the cocks are set, and `sim_core::brakes` does what it already did for a
+  train that parts by accident. `Sim::couple` joins two consists that stand buffer to
+  buffer, and refuses rather than surprising anyone: both at a stand and not closing faster
+  than 0.3 m/s, the two ends within a metre of each other **along the track graph**
+  (measured with `TrackPosition::distance_to`, so a turnout lying the other way puts them
+  out of reach however near they are through the air) and pointing at each other rather
+  than merely being close, and the coupling gear matching — `CouplerKind` is new on
+  `CouplerSpec`, only like couples to like, and a `Bar` between two vehicles of one fixed
+  unit is undone in the works, not on the ground. **Nothing is ever removed from
+  `Sim::trains`, `runtime` or `controls`**: a consist that has been coupled away keeps its
+  slot as an empty `stabled` train, which is what lets the AI drivers, `TrainSync.train`,
+  `VehicleView.train` and the score keeper go on addressing trains by index. Every place
+  that read `vehicles[0]` was audited and now tolerates an empty consist — `Train::head`
+  is the new checked accessor, `head_position` answers "nowhere", and the step, the score,
+  the scenario triggers, the AI, the HUD, the cameras, the origin rebase and the mod
+  script hooks all hear it (pinned by a test that steps a `Sim` holding an empty stabled
+  train). **The driver's side is a setpoint** (`CabInputs::shunt`), so it travels like
+  every other lever: a client sends the order, the server applies it, and every peer works
+  out the same consists from the same command and the same geometry. A refused order stays
+  on the ground for ten seconds and is retried every step, so the peer that was twenty
+  centimetres short couples a moment later instead of ending up with a different world.
+  `Insert`/`Home` are the player's two buttons, and the shunter's answer — coupled,
+  uncoupled, or which condition was not met — comes back on the HUD line the train
+  protection interrupts on.
+  **Setting back works at all now**: the reverser used to zero the traction in back gear
+  (`throttle * reverser.max(0)`), so a train could only ever be driven forwards. The drive
+  models compute the magnitude of the effort and the new `TractionState::back_gear` puts
+  the sign on at the rail (`physics::transmit_traction`), with the adhesion, the slip and
+  the wheel slip protection untouched in either gear.
+- **Somewhere to shunt to (ch. 11 "v1 trains spawn/despawn at fiddle yards"):**
+  `LineSource::yards` is line content next to the devices and objects — a `(edge, s,
+  facing, length)` mark with a name. Two kinds: a **stabling road** is a siding on the
+  modelled line, a **portal** is its edge, and **trains appear and disappear at portals and
+  nowhere else** (the rule check refuses a portal whose track does not run out to a buffer
+  stop or a module boundary). `Sim::place_at` puts a consist on a road — refusing one too
+  short, one already occupied, and a mark the track behind runs out on — and
+  `Sim::withdraw` takes a train off the line at a portal it is actually standing at; it
+  keeps its slot and its vehicles, so the same unit comes back out later. Yards follow
+  their edge through splits and deletions like devices, and a composition shifts them by
+  the module's offset. The example line has a turnout at km 4.0, a stabling siding and a
+  portal at each end; the Musterbahn has its two portals.
+- **Shunt jobs (`ai-driver::shunt`):** a list of moves worked off in order — draw forward
+  to a point, set back onto a road (measured from the *rear*, which is the end that leads a
+  reversing move), couple to what stands there, uncouple at a coupler, finish at a stand. A
+  target is a point on the graph or a road by name. The driver writes nothing but
+  `CabInputs`, holds itself to the 25 km/h Rangiergeschwindigkeit and creeps the last few
+  metres; a move ends when the buffers are met, whatever the mark said, and only at the end
+  that leads — the rake left behind by an uncoupling sits against the other one. A target
+  the line does not have, or a coupling that cannot be made, stops the train instead of
+  running it on to nowhere.
 - **Scenarios (ch. 11.4):** RON events with triggers (time, train position, stop, speed,
   signal aspect, emergency brake application, chaining with delay, `All`/`Any`)
   and actions (message, announcement, switch, route, weather, points, scenario end).
+- **Operating days (ch. 11):** the second way a line is driven, beside the scenarios. An
+  `OperatingDay` (`sim_core::day`, `days/*.ron` in a mod, plus a built-in one for the
+  Musterbahn) is a whole day of **services** with wall-clock times that loop every 24 hours;
+  the run picker lists every playable one under a heading of its own, and the run starts two
+  minutes before the service departs. The rest of the plan runs around it: a service claims a
+  train `LEAD` before it leaves and gives it back `TAIL` after its last arrival, and between
+  two workings the unit is **stabled** — not driven, not drawn, and skipped by the occupancy
+  detection, so it is genuinely off the line. The next service that needs the same stock takes
+  that unit rather than a new one, which is what keeps a looping day at the train count of its
+  busiest minute. Which services are out is a pure function of the clock and they claim in
+  departure order, so a dedicated server and every client build the same train list at the same
+  indices without a message about it; the AI drivers stay the server's. A service may name the
+  **road it leaves its stock on** (`stable_at`, a `yards:` entry of the line): a stabling road
+  holds the unit where it can be seen, occupying its siding like any other train and left with
+  its brakes applied, and a portal swallows it off the module altogether. A plan that names
+  none leaves its stock at the terminus, which is what it means when it says nothing. The AI
+  **drives** the unit there — the working is given a shunt move on top of its timetable, worked
+  once its last stop has been made, and its window stays open ten minutes instead of three to
+  let it — and the placement at the end of the window is the backstop that keeps the whole
+  thing a function of the clock.
+- **Spawn points and standing stock (ch. 11, `sim_core::consist`):** where a train comes from
+  is now a value of its own. A `Spawn` is either a place on the graph (`At`) or one of the
+  line's roads by name (`Yard`), and naming a **portal** is what makes a train come out of, or
+  disappear into, a piece of railway nobody built. On top of that both a scenario and an
+  operating day may declare `consists:` — trains that stand on the line from the first minute,
+  each naming its vehicles one by one head first, prepared or cold, driven to a timetable
+  where they name one and left with the brakes applied where they do not. For a **scenario**
+  that list closes a hole that had been open since the format existed: an event could name a
+  train by index but nothing could put one there, so a scenario had exactly the one train the
+  menu built. Its order is the order the indices run in, and `player_train` picks the player's.
+  `mods/example/scenarios/rangierfahrt.ron` is a shunting scenario made of nothing else.
+- **Zugfahrt and Rangierfahrt (ch. 10/11, Ril 408 / 301):** which of the two a train is
+  making is a value on it (`shunt::Movement`), and almost everything about how it is
+  signalled hangs off it. A **train movement** reads the main aspects, is only let onto
+  proved track and runs at the line speed; a **shunting movement** is let past by **Sh 1**
+  and by nothing else — Hp 1 says nothing to it, and a main signal that carries no shunting
+  signal stops it dead — may be let into an occupied track, and is held to 25 km/h on sight
+  throughout the look-ahead. A **Sperrsignal** (`SignalKind::Shunting`) shows Sh 0 / Sh 1
+  and no main aspect at all, and its Sh 0 is "Halt! Fahrverbot" for every movement. A
+  **Rangierstraße** (`RouteKind::Shunt`) locks the points and clears Sh 1 while leaving the
+  main signal at stop; it may be set into an occupied section, has no overlap, and is
+  released by **the movement it belongs to**: passing the signal under Sh 1 makes the route
+  that movement's (`Route::owner`), and it is given back when *that* train has cleared its
+  sections — which the track clear detection can now answer, because a section records which
+  trains are on it and not merely that something is. That is what lets a second shunt run
+  past the same signal without taking the first one's route away, and what lets a route over
+  a road that was occupied to begin with be released at all. A route set for a movement that
+  never came is given back after `SHUNT_HOLD` (five minutes) — the Zeitverschluss of a
+  Rangierfahrstraße, without which the points under it would stay locked for the rest of the
+  day. The 2000 Hz magnet
+  of a signal showing Sh 1 is switched off — otherwise every shunting movement past a signal
+  at stop would be tripped, which is what the real interlocking does for the same reason.
+  **A movement changes kind by passing a signal**: under Sh 1 it becomes a shunt, under a
+  main proceed aspect a train, so a shunt drawing up to the starting signal and being given
+  a train route leaves as a train with nothing switching a mode. A movement standing in
+  front of a Sperrsignal is given the first free shunting route out of it by the interlocking
+  itself — a pure function of the world inside the fixed step, so every peer sets the same
+  route without a message. Shunt jobs are content: a scenario's or a day's consist may carry
+  one (`ConsistSource::shunt`) with or without a timetable beside it, so a pilot that exists
+  only to move stock about is a plain entry in a file.
+- **Changing trains (ch. 11, `app::crew`):** the player is responsible for one train at a time
+  or for none, and that — not `PlayerTrain`, which only says where they are standing — is what
+  decides who is on the levers. The AI drives every train it has a driver for **except** that
+  one, and the cab keys move the levers of that one only, so the two can never be on a lever
+  together. **Getting out hands the working over**: the AI takes it on from the stop that is
+  actually next rather than from the first, and a train with no working at all is secured
+  where it stands instead of being driven away. **Walking into another train** boards it — a
+  door within reach is searched across every train on the line now, not only the player's —
+  and being aboard makes them a passenger; **the take-over key** (`Tab`) at the desk makes them
+  its driver, and gives the train back. Every refusal is said out loud: not from the platform,
+  not a train that is out of service, not a rake with nothing that pulls, not somebody else's,
+  and in a scenario not any train but the scenario's own. The **run follows the driver** — the
+  scoring is re-pointed at the working actually taken. Over the network the take-over is a
+  wish (`net::TakeOver`) the server grants by answering with the `Welcome` that already exists
+  for joining, and refuses by naming the train the client already had; the dispatcher is told
+  which trains are somebody's so a unit is never stabled out from under its driver.
+- **Date and weather of a run (ch. 11, 14.1):** picking a service opens one more step of the run
+  picker. The **date** is the plan's own to begin with and is dialled a day at a time (a proper
+  civil calendar, so month and year ends and leap days roll over) — it decides the season and
+  where the sun stands at the service's hour. The **weather** is either `Fixed(preset)`, placed
+  at the start with the wet or snowed-on ground it implies and held, or `Dynamic`: a day that
+  makes its own weather out of `(seed, clock)`. Two octaves of value noise give a severity, and
+  that severity is read off a ladder of presets — clear, cloudy, overcast, and on into what
+  falls out of it — with the month choosing the ladder, so the front that rains in June snows in
+  January. Nothing of it is state: no seed to replicate, no keyframes to sync, and the seed
+  itself comes out of the content (the plan's name and the date) rather than a clock reading at
+  start-up, so the same service on the same date brings the same sky on every machine. A
+  scenario's `SetWeather` takes the sky over from the generator and switches it off.
 - **Scoring (ch. 11):** timetable adherence, stopping accuracy, emergency brake applications,
   speed limit violations and traction energy → itemised score. A timetable is either
   `Scenario` (times from the start of the run, runs once) or `Daily` (seconds since
   midnight, wrapping around every 24 h — delay, departure and the AI's stop list wrap
-  with it).
+  with it). A service of an operating day is a `Daily` timetable, so the HUD's ribbon and the
+  delay read wall clock throughout.
 - **Alignment (ch. 15):** design elements are reconstructed from the point sequence —
   section separation, radius averaging over the whole curve (Kåsa), rounding to standard radii
   with tolerance, transition curves and cant per the rulebook (`c = 11.8·v²/R` minus
@@ -903,6 +1048,42 @@ As of 2026-08-19 · `cargo test --workspace`: **524 tests green** · clippy and 
 
 Every simplification is marked with a `ponytail:` comment at the code site, with an upgrade path:
 
+- **A shunt move that does not finish is placed instead.** A working with a road to go to is
+  given the move on top of its timetable and ten minutes of window to drive it, and whatever
+  the driver managed the unit is *placed* on the road when that window closes. That backstop
+  is deliberate — the dispatching has to stay a pure function of the clock, and a driven move
+  is not one — but it means a plan whose road is unreachable, or whose `stable_way` runs the
+  wrong way, looks like a teleport rather than an error. A driver who has given up is not
+  reported anywhere either; `ShuntPhase` knows, and nothing asks it.
+- **Shunting has no editor and no file of its own yet.** A line's stabling roads and
+  portals are written by hand in the `yards:` list, the way the interlocking tables were
+  before they became forms — the route editor's rule check finds a bad one and jumps to its
+  track, but there is no yard tool that drops one on the map. A **shunt job** is an
+  `ai_driver::ShuntJob` that serialises to RON like a timetable, but the mod runtime loads
+  no `jobs/` directory: a job reaches a driver where the world is built (`world::build`),
+  not out of a file. Both are one `read_ron` call and one panel away, and neither changes
+  the format.
+- **A coupler kind belongs to the vehicle, not to its two ends.** `CouplerSpec::kind` is one
+  value per vehicle, so a driving trailer with a bar at its inner end and a screw coupling
+  at its outer one cannot be stated. The rules work around it — a bar only refuses where
+  *both* neighbours carry one, which is what a bar inside a fixed unit means — but a vehicle
+  with genuinely different gear at its two ends needs the field split in two.
+- **`Sim::couple` takes the first consist it finds** within reach of either end, in train
+  index order. Two vehicles up against both ends of the same train at once is a real
+  situation (a loco between two rakes) and the order is then arbitrary; naming the end, or
+  the train, is what `Sim::couple_to` is for.
+- **Nothing offers the player the next working.** Their train is theirs for as long as they
+  stay in it, and they may hand it over and take another one at any platform (`app::crew`) —
+  but the plan never says "your service ends here, the 17:42 leaves from platform 2". Which
+  working is due next is one `OperatingDay::active` call away; what it needs is somewhere on
+  screen to say it, and that is a decision about the HUD rather than about the model.
+- **An operating day is offered only on its own line.** A plan whose `line` names another module
+  is left out of the picker, because its stops are indices into that line's track graph; a plan
+  without a `line` is offered everywhere and is the mod author's own risk. Started against the
+  wrong line anyway (`--day` with a mismatched `--line`), a service whose origin is off the end
+  of the graph is a warning and a start at the beginning of the line — not a crash. What is not
+  checked is the *stops*: one on an edge that does not exist is simply never reached, and the
+  loader should say so instead of the AI driving past it forever.
 - **Brake pipe model** is a node/diffusion model, not a pressure wave.
 - **Slip per vehicle**, not per wheelset.
 - **Friction coefficients as a family of two closed curves per pairing** instead of Karwatzki's

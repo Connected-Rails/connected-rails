@@ -1,0 +1,30 @@
+// Sperrsignal (Lichtsperrsignal) — the shunting signal, Sh 0 / Sh 1 (Ril 301).
+//
+// It has no main aspect at all: Sh 0 is "Halt! Fahrverbot" and forbids *every* movement,
+// train or shunt, and Sh 1 is "Fahrverbot aufgehoben", which lets a shunting movement past
+// on sight at 25 km/h. Hp 1 is never shown here, and a main signal's Hp 1 says nothing to a
+// shunting movement either — that is the whole difference between the two kinds of
+// movement, and it is why a shunt needs a Rangierstraße rather than a Zugstraße.
+//
+// The interlocking sets `shunting` when a shunting route is locked at this signal; the
+// `lamps` strings are what the model shows and are entirely the mod's own.
+(
+    // The presentation system decides nothing here — a Sperrsignal is in no aspect
+    // catalogue of its own — but a signal type has to name one.
+    system: Ks,
+    rules: [
+        // Sh 1: two white lights diagonally. A shunting route is set over it.
+        (
+            when: (shunting: Some(true)),
+            show: (shunt: Some(Proceed)),
+            lamps: ["sh1"],
+        ),
+        // Sh 0: the resting state. Two red lights side by side.
+        (
+            when: (),
+            show: (shunt: Some(Stop)),
+            lamps: ["sh0"],
+        ),
+    ],
+    tags: ["shunting", "sperrsignal"],
+)

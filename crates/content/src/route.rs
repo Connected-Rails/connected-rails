@@ -6,11 +6,12 @@ use sim_core::interlock::{
     SignalKind, SignalSystem,
 };
 use sim_core::safety::de::{MagnetFrequency, MagnetPayload};
+use sim_core::yard::{Yard, YardKind};
 use track_model::{
     DeviceKind, EdgeId, Facing, NodeId, NodeKind, Segment, StepProfile, Switch, SwitchPosition,
     TrackEdge, TrackNetwork, TrackObject, TrackType, TracksideDevice,
 };
-use track_model::{EdgeEnd, EdgeSide};
+use track_model::{EdgeEnd, EdgeSide, TrackPosition};
 use world_coords::geo::to_ecef_deg;
 
 /// Georeferenced start of the line.
@@ -129,6 +130,55 @@ pub struct ObjectSource {
     /// the object stands on, in the editor as in the run.
     #[serde(default)]
     pub snap_to_terrain: bool,
+}
+
+/// A place for stock: a stabling road on the line, or a portal at the edge of it
+/// (plan ch. 11, "v1 trains spawn/despawn at fiddle yards").
+///
+/// Shunting needs somewhere to shunt *to*, and an operating day needs somewhere to
+/// leave a unit between two workings. A yard is a mark on the track like a device: an
+/// `(edge, s)` with the direction a train standing here faces, and the length of the
+/// road behind it. The simulation reads it as [`sim_core::yard::Yard`] — the AI's shunt
+/// jobs address one by name, [`sim_core::Sim::place_at`] puts a train on it, and
+/// [`sim_core::Sim::withdraw`] takes one off the line at a portal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct YardSource {
+    /// What a shunt job, a timetable or an operating day calls it. Content, not
+    /// translated — it is a place on this line, like a station name.
+    pub name: String,
+    #[serde(default)]
+    pub kind: YardKind,
+    /// Where the head of a standing train comes to.
+    pub edge: u32,
+    pub s: f64,
+    /// The way the train faces: `Forward` along increasing arc length, `Backward`
+    /// against it — the same two directions a device is read in.
+    #[serde(default)]
+    pub facing: Facing,
+    /// Usable length [m] — what fits on the road. `0` = not stated, and then nothing is
+    /// refused for being long.
+    #[serde(default)]
+    pub length: f64,
+}
+
+impl YardSource {
+    /// The mark on the track graph, as the simulation holds it.
+    pub fn compile(&self) -> Yard {
+        Yard {
+            name: self.name.clone(),
+            kind: self.kind,
+            at: TrackPosition::new(
+                EdgeId(self.edge),
+                self.s,
+                if self.facing == Facing::Backward {
+                    -1
+                } else {
+                    1
+                },
+            ),
+            length: self.length,
+        }
+    }
 }
 
 /// A single tree — geo-positioned, standing on the terrain (plan ch. 14
@@ -460,6 +510,10 @@ pub struct BoundarySource {
 pub struct RouteSource {
     pub entry: u32,
     pub exit: u32,
+    /// Train route or shunting route (Ril 408 / 301). A shunting route clears **Sh 1** at
+    /// its entry signal instead of the main aspect and may be set into an occupied track.
+    #[serde(default)]
+    pub kind: sim_core::interlock::RouteKind,
     #[serde(default)]
     pub switches: Vec<(u32, SwitchPosition)>,
     #[serde(default)]
@@ -511,6 +565,11 @@ pub struct LineSource {
     /// them — they are the line's furniture.
     #[serde(default)]
     pub objects: Vec<ObjectSource>,
+    /// Stabling roads and portals — where stock may be put, and where trains appear and
+    /// disappear (see [`YardSource`]). A line without them can be driven but not
+    /// shunted, because there is nowhere to shunt to.
+    #[serde(default)]
+    pub yards: Vec<YardSource>,
     /// Trees (geo-positioned, height from the terrain) — placed one by one, or
     /// baked in rows of thousands by the editor's forest brush and forest
     /// import. Every tree is an ordinary entry, so every tree can be moved or
@@ -574,6 +633,7 @@ impl Default for LineSource {
             edges: Vec::new(),
             devices: Vec::new(),
             objects: Vec::new(),
+            yards: Vec::new(),
             trees: Vec::new(),
             markers: Vec::new(),
             terrain: Vec::new(),
@@ -700,6 +760,9 @@ fn segments_cross(a1: glam::DVec2, a2: glam::DVec2, b1: glam::DVec2, b2: glam::D
 pub struct CompiledLine {
     pub net: TrackNetwork,
     pub interlock: Interlock,
+    /// Stabling roads and portals of the line, resolved onto the graph (plan ch. 11).
+    /// Goes into [`sim_core::Sim::yards`] when the world is built.
+    pub yards: Vec<Yard>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -741,6 +804,15 @@ pub enum RuleIssue {
     AreaUnknownTrackType { area: u32 },
     /// Edge uses an LZB track type, but the line places no line conductor.
     LzbTypeWithoutConductor { edge: u32 },
+    /// Stabling road or portal outside its track (bad edge index or `s` beyond the
+    /// length).
+    YardOffEdge { yard: u32 },
+    /// A portal that is not at the edge of the line: the track behind it does not run
+    /// straight out to a buffer stop or a module boundary, so a train appearing there
+    /// would appear in the middle of the railway (plan ch. 11).
+    PortalNotAtTheEdge { yard: u32 },
+    /// Two yards of the same name — a shunt job that names it would always get the first.
+    DuplicateYardName { yard: u32 },
     /// Scenery object outside its track (bad edge index or `s` beyond the length).
     ObjectOffEdge { object: u32 },
     /// Scenery object names an `objects/*.ron` no installed mod has.
@@ -992,6 +1064,11 @@ impl LineSource {
         self.objects.retain(|o| edge_map(o.edge).is_some());
         for o in &mut self.objects {
             o.edge = edge_map(o.edge).expect("kept objects sit on kept edges");
+        }
+        // A road whose track is gone is gone with it; the rest follow their edge.
+        self.yards.retain(|y| edge_map(y.edge).is_some());
+        for y in &mut self.yards {
+            y.edge = edge_map(y.edge).expect("kept yards sit on kept edges");
         }
         let removed_signals: Vec<u32> = self
             .signals
@@ -1617,6 +1694,10 @@ impl LineSource {
                 return Some(RouteSource {
                     entry,
                     exit,
+                    // *Find routes* looks for train routes; a shunting route is a
+                    // decision about how a place is worked, not something to be found on
+                    // the track, and the editor writes it by hand.
+                    kind: sim_core::interlock::RouteKind::Train,
                     diverging,
                     switches,
                     sections,
@@ -1716,6 +1797,12 @@ impl LineSource {
             if o.edge as usize == index && o.s >= s {
                 o.edge = new_index;
                 o.s -= s;
+            }
+        }
+        for y in &mut self.yards {
+            if y.edge as usize == index && y.s >= s {
+                y.edge = new_index;
+                y.s -= s;
             }
         }
         // A switch leg attached to the old end now hangs on the second half.
@@ -1867,6 +1954,25 @@ impl LineSource {
             }
             if !objects.contains_key(&o.object) {
                 issues.push(RuleIssue::UnknownObject { object });
+            }
+        }
+
+        // Stabling roads and portals: on their track, uniquely named, and — for a portal —
+        // at the edge of the line, which is where trains are allowed to appear from.
+        for (i, y) in self.yards.iter().enumerate() {
+            let yard = i as u32;
+            match lengths_of(y.edge) {
+                Some(len) if (0.0..=len).contains(&y.s) => {}
+                _ => {
+                    issues.push(RuleIssue::YardOffEdge { yard });
+                    continue;
+                }
+            }
+            if self.yards[..i].iter().any(|other| other.name == y.name) {
+                issues.push(RuleIssue::DuplicateYardName { yard });
+            }
+            if y.kind == YardKind::Portal && !self.portal_reaches_the_edge(y) {
+                issues.push(RuleIssue::PortalNotAtTheEdge { yard });
             }
         }
 
@@ -2205,6 +2311,18 @@ impl LineSource {
             }
         }
 
+        // Stabling roads and portals: marks on the graph, read by the simulation rather
+        // than drawn. The edge ids run in source order, so a yard resolves straight.
+        let mut yards = Vec::new();
+        for y in &self.yards {
+            let edge = *edge_ids
+                .get(y.edge as usize)
+                .ok_or(CompileError::UnknownEdge(y.edge))?;
+            let mut yard = y.compile();
+            yard.at.edge = edge;
+            yards.push(yard);
+        }
+
         // Trackside devices.
         let mut device_ids = Vec::new();
         for d in &self.devices {
@@ -2253,6 +2371,7 @@ impl LineSource {
         }
         for r in &self.routes {
             let mut route = IlRoute::new(RouteId(0), SignalId(r.entry), SignalId(r.exit));
+            route.kind = r.kind;
             route.switches = r
                 .switches
                 .iter()
@@ -2290,7 +2409,44 @@ impl LineSource {
             interlock.add_route(route);
         }
 
-        Ok(CompiledLine { net, interlock })
+        Ok(CompiledLine {
+            net,
+            interlock,
+            yards,
+        })
+    }
+
+    /// Does the track *behind* a portal run out to the edge of the line?
+    ///
+    /// A train standing at a portal has its head on the mark, facing into the line, so its
+    /// body lies towards the other end of the edge. That end has to be a buffer stop or a
+    /// module boundary — the edge of the modelled world. A portal in the middle of a plain
+    /// line would put a train on the running road out of nothing.
+    fn portal_reaches_the_edge(&self, yard: &YardSource) -> bool {
+        let Some(edge) = self.edges.get(yard.edge as usize) else {
+            return false;
+        };
+        let outer = if yard.facing == Facing::Backward {
+            edge.to
+        } else {
+            edge.from
+        };
+        matches!(self.nodes.get(outer as usize), Some(NodeSource::Buffer))
+            || self.boundaries.iter().any(|b| b.node == outer)
+    }
+
+    /// The line's stabling roads and portals on the track graph, without compiling the
+    /// rest of it.
+    ///
+    /// The run builds the network and the yards in one go ([`LineSource::compile`]); this
+    /// is for the callers that hold the source and want only the marks — the app filling
+    /// [`sim_core::Sim::yards`] after the world is built, and the editor drawing them.
+    pub fn compiled_yards(&self) -> Vec<Yard> {
+        self.yards
+            .iter()
+            .filter(|y| (y.edge as usize) < self.edges.len())
+            .map(YardSource::compile)
+            .collect()
     }
 }
 
@@ -2694,6 +2850,7 @@ mod tests {
 
         // A guard that names a node which is no switch is a finding.
         line.routes.push(RouteSource {
+            kind: sim_core::interlock::RouteKind::Train,
             entry,
             exit,
             switches: vec![],
@@ -2916,6 +3073,99 @@ mod tests {
         assert!(line.split_edge(0, 0.5).is_none());
         assert!(line.split_edge(0, 2999.5).is_none());
         assert!(line.split_edge(7, 10.0).is_none());
+    }
+
+    /// Stabling roads and portals follow their edge through splits and removals the way
+    /// devices and objects do, and compile onto the graph facing the way the file says.
+    #[test]
+    fn yards_follow_split_and_removal() {
+        let mut line = musterbahn();
+        line.yards.push(YardSource {
+            name: "Ausweichgleis".into(),
+            kind: YardKind::Stabling,
+            edge: 1,
+            s: 100.0,
+            facing: Facing::Backward,
+            length: 200.0,
+        });
+        let compiled = line.compile().expect("compiles");
+        assert_eq!(compiled.yards.len(), 3);
+        assert_eq!(
+            compiled.yards[0].at,
+            TrackPosition::new(EdgeId(0), 300.0, 1)
+        );
+        assert_eq!(compiled.yards[1].at.dir, -1, "facing back into the line");
+
+        // The west portal sits before the cut and stays; the east one is on another edge.
+        line.split_edge(0, 200.0).expect("splits");
+        assert_eq!(line.yards[0].edge, 3, "beyond the cut, on the new half");
+        assert!((line.yards[0].s - 100.0).abs() < 1e-9);
+        assert_eq!(line.yards[1].edge, 2);
+
+        // Removing the curve takes the road on it along and remaps the rest.
+        line.remove_edge(1);
+        assert_eq!(line.yards.len(), 2);
+        assert!(line.yards.iter().all(|y| y.name.starts_with("Portal")));
+        line.compile().expect("still compiles");
+    }
+
+    /// The check knows a road off its track, a portal that is not at the edge of the
+    /// line, and two roads of the same name.
+    #[test]
+    fn check_flags_a_portal_in_the_middle_of_the_line() {
+        let types = std::collections::BTreeMap::new();
+        let objects = std::collections::BTreeMap::new();
+        let mut line = musterbahn();
+        assert!(line.check(&types, &objects).is_empty());
+
+        // A portal on the middle edge has a joint behind it, not the edge of the world.
+        line.yards.push(YardSource {
+            name: "Portal Mitte".into(),
+            kind: YardKind::Portal,
+            edge: 1,
+            s: 100.0,
+            facing: Facing::Forward,
+            length: 0.0,
+        });
+        // A second "Portal West" would shadow the first one for every shunt job.
+        line.yards.push(YardSource {
+            name: "Portal West".into(),
+            kind: YardKind::Stabling,
+            edge: 0,
+            s: 9_999.0,
+            facing: Facing::Forward,
+            length: 0.0,
+        });
+        let issues = line.check(&types, &objects);
+        assert!(issues.contains(&RuleIssue::PortalNotAtTheEdge { yard: 2 }));
+        assert!(issues.contains(&RuleIssue::YardOffEdge { yard: 3 }));
+        // A road that is off its track is reported once, not twice.
+        assert!(!issues.contains(&RuleIssue::DuplicateYardName { yard: 3 }));
+
+        // A portal on a module boundary is at the edge of the line just as a buffer is.
+        line.yards.truncate(2);
+        line.yards.push(YardSource {
+            name: "Portal Übergang".into(),
+            kind: YardKind::Portal,
+            edge: 2,
+            s: 100.0,
+            facing: Facing::Forward,
+            length: 0.0,
+        });
+        assert!(
+            line.check(&types, &objects)
+                .contains(&RuleIssue::PortalNotAtTheEdge { yard: 2 })
+        );
+        line.boundaries.push(BoundarySource {
+            name: "nach_osten".into(),
+            node: 2,
+        });
+        assert!(
+            !line
+                .check(&types, &objects)
+                .iter()
+                .any(|i| matches!(i, RuleIssue::PortalNotAtTheEdge { .. }))
+        );
     }
 
     /// The example line is wired correctly; removing its 1000 Hz magnet is the

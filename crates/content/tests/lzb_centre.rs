@@ -133,7 +133,7 @@ fn a_signal_at_stop_ends_the_authority() {
     let mut line = source.compile().expect("line compiles");
     // The section the main signal at km 2.0 guards is occupied, so it goes to stop.
     line.interlock.sections[1].occupied = true;
-    line.interlock.update(&mut line.net);
+    line.interlock.update(&mut line.net, 0.05);
 
     let head = TrackPosition::new(EdgeId(0), 0.0, 1);
     let t = lzb::authority(&line.net, &line.interlock, head, &section());

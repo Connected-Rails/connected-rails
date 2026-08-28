@@ -11,6 +11,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use sim_core::brakes::DriverBrakeValve;
+use sim_core::shunt::ShuntCommand;
 
 /// Camera of the player.
 #[derive(Component)]
@@ -57,12 +58,19 @@ pub fn player_input(
     input: Input,
     mut sim: ResMut<SimResource>,
     player: Res<PlayerTrain>,
+    duty: Res<crate::crew::Duty>,
     time: Res<Time>,
     camera: Res<CameraState>,
 ) {
     // Away from the seat WASD walks; the cab keys only answer to the driver sitting
     // at the desk.
     if camera.mode == CameraMode::Walk {
+        return;
+    }
+    // And only to the one who is actually in charge of this train. Riding in somebody
+    // else's cab moves nothing — the AI is driving, and two hands on one lever is the
+    // one thing the arbitration exists to prevent (`crate::crew`).
+    if duty.0 != Some(player.0) {
         return;
     }
     let dt = time.delta_secs_f64();
@@ -77,7 +85,21 @@ pub fn player_input(
             .filter(|v| *v > 0.0)
             .unwrap_or(160.0)
     };
+    // Where the shunter would part the train: behind the vehicle the driver sits in,
+    // which is a locomotive running round its train.
+    let seat = sim.0.trains[index].cab as u16;
     let cab = &mut sim.0.controls[index];
+
+    // Shunting (plan ch. 11): the order to the shunter on the ground. It is held down
+    // while he works — the simulation fires on the rising edge and keeps trying until the
+    // conditions are met or it gives up, so letting go early calls him back in.
+    cab.shunt = if input.pressed(Action::Couple) {
+        ShuntCommand::Couple
+    } else if input.pressed(Action::Uncouple) {
+        ShuntCommand::Uncouple(seat)
+    } else {
+        ShuntCommand::None
+    };
 
     // Power controller, including electric brake in the negative range.
     if input.pressed(Action::ThrottleUp) {
@@ -342,7 +364,12 @@ pub fn camera_control(
         return;
     };
     let train = &sim.0.trains[player.0];
-    let pose = train.vehicles[0].pos.pose(&sim.0.net);
+    // A consist that was coupled away has nothing to hang a camera on; it keeps its slot
+    // and stands nowhere (`sim_core::shunt`), so the view simply stays where it was.
+    let Some(front) = train.vehicles.first() else {
+        return;
+    };
+    let pose = front.pos.pose(&sim.0.net);
     let pos = origin.0.to_render(pose.pos);
     let up = origin.0.dir_to_render(pose.up);
     let forward = origin.0.dir_to_render(pose.tangent);
@@ -368,7 +395,7 @@ pub fn camera_control(
             let seat = aboard
                 .and_then(|v| train.vehicles.get(v))
                 .or_else(|| train.vehicles.get(train.cab))
-                .unwrap_or(&train.vehicles[0]);
+                .unwrap_or(front);
             let eye = match seat.spec.model.as_ref().and_then(|m| m.cab.as_ref()) {
                 Some(cab) => {
                     let pose = seat.pos.pose(&sim.0.net);
@@ -417,16 +444,23 @@ pub fn grab_cursor(
     mut flip: Local<bool>,
 ) {
     let walking = state.mode == CameraMode::Walk && *game.get() == crate::GameState::Driving;
+    // Wayland lets the pointer be *locked* — pinned where it is, delivering nothing but
+    // relative motion — and refuses to have a merely confined one moved: asking anyway is
+    // one error line per frame for as long as the walk lasts. A locked pointer also needs
+    // no re-centring, because it does not move. X11 cannot lock at all, so there the
+    // pointer is confined and pushed back to the middle every frame, which is what keeps
+    // it off the window edge.
+    let lockable = std::env::var_os("WAYLAND_DISPLAY").is_some();
     for (mut window, mut cursor) in windows.iter_mut() {
         if cursor.visible == walking {
             cursor.visible = !walking;
-            cursor.grab_mode = if walking {
-                CursorGrabMode::Confined
-            } else {
-                CursorGrabMode::None
+            cursor.grab_mode = match (walking, lockable) {
+                (false, _) => CursorGrabMode::None,
+                (true, true) => CursorGrabMode::Locked,
+                (true, false) => CursorGrabMode::Confined,
             };
         }
-        if walking {
+        if walking && !lockable {
             // ponytail: Bevy passes the position on to the window only when it differs
             // from the cache of the last frame — the half pixel keeps it different.
             *flip = !*flip;

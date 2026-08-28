@@ -85,7 +85,7 @@ pub fn walk_player(
     input: Input,
     time: Res<Time>,
     sim: Res<SimResource>,
-    player: Res<PlayerTrain>,
+    mut player: ResMut<PlayerTrain>,
     origin: Res<Origin>,
     mut state: ResMut<CameraState>,
     mut walker: ResMut<Walker>,
@@ -193,9 +193,13 @@ pub fn walk_player(
             place = Place::Outside {
                 eye: origin.0.from_render(feet + Vec3::Y * EYE_HEIGHT),
             };
+            // The door of any train standing there, not only of the one he got out of:
+            // walking from one train into another is how a driver changes trains at all
+            // (`crate::crew`). Being aboard makes him a passenger; taking the levers is
+            // a separate act.
             if door
-                && let Some((vehicle, local, ahead)) =
-                    door_within_reach(&sim.0, train, &origin.0, feet + Vec3::Y * EYE_HEIGHT)
+                && let Some((boarded, vehicle, local, ahead)) =
+                    door_within_reach(&sim.0, &origin.0, feet + Vec3::Y * EYE_HEIGHT)
             {
                 state.yaw -= heading(ahead);
                 place = Place::Aboard {
@@ -203,6 +207,7 @@ pub fn walk_player(
                     eye: local,
                 };
                 walker.fall = 0.0;
+                player.0 = boarded;
             }
         }
     }
@@ -431,30 +436,40 @@ fn door_usable(train: &Train, vehicle: &Vehicle, x: f32) -> bool {
     side.phase == DoorPhase::Open || vehicle.spec.model.as_ref().is_some_and(|m| m.cab.is_some())
 }
 
-/// The vehicle of the player's train whose door the walker stands at, with the eye point
-/// inside it and that vehicle's direction of travel.
+/// The train and vehicle whose door the walker stands at, with the eye point inside it
+/// and that vehicle's direction of travel.
+///
+/// Every train standing there is searched, not only the one he came out of: a train left
+/// in a platform by its own driver is a train he can walk into. One that is out of service
+/// is not there to be boarded at all.
 fn door_within_reach(
     sim: &sim_core::Sim,
-    train: &Train,
     origin: &RenderOrigin,
     here: Vec3,
-) -> Option<(usize, Vec3, Vec3)> {
-    train.vehicles.iter().enumerate().find_map(|(i, vehicle)| {
-        let frame = frame(sim, vehicle, origin);
-        let local = to_model(frame, here);
-        (local.x.abs() <= DOOR_REACH
-            && local.z.abs() <= vehicle.spec.length as f32 / 2.0
-            && local.y.abs() <= 3.0
-            && door_usable(train, vehicle, local.x))
-        .then(|| {
-            let eye = eye_point(vehicle);
-            (
-                i,
-                Vec3::new(if local.x >= 0.0 { AISLE } else { -AISLE }, eye.y, local.z),
-                frame.3,
-            )
+) -> Option<(usize, usize, Vec3, Vec3)> {
+    sim.trains
+        .iter()
+        .enumerate()
+        .filter(|(_, train)| !train.stabled)
+        .find_map(|(t, train)| {
+            train.vehicles.iter().enumerate().find_map(|(i, vehicle)| {
+                let frame = frame(sim, vehicle, origin);
+                let local = to_model(frame, here);
+                (local.x.abs() <= DOOR_REACH
+                    && local.z.abs() <= vehicle.spec.length as f32 / 2.0
+                    && local.y.abs() <= 3.0
+                    && door_usable(train, vehicle, local.x))
+                .then(|| {
+                    let eye = eye_point(vehicle);
+                    (
+                        t,
+                        i,
+                        Vec3::new(if local.x >= 0.0 { AISLE } else { -AISLE }, eye.y, local.z),
+                        frame.3,
+                    )
+                })
+            })
         })
-    })
 }
 
 /// Height of the ground below a point, from the meshes drawn there.

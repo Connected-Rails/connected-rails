@@ -96,6 +96,11 @@ pub enum Action {
     DoorLeft,
     DoorRight,
     DoorClose,
+    // Shunting.
+    Couple,
+    Uncouple,
+    /// Take the train over from the AI, or hand it back to it (`crate::crew`).
+    TakeOver,
     // View and overlays.
     ViewCab,
     ViewOutside,
@@ -128,7 +133,7 @@ pub enum Action {
 /// sixteen buttons, so the ones that get one are the ones a hand reaches for while the
 /// train is moving. The rest are there to be bound by whoever wants them.
 type Row = (Action, &'static str, KeyCode, Option<GamepadButton>);
-pub const ACTIONS: [(&str, &[Row]); 6] = [
+pub const ACTIONS: [(&str, &[Row]); 7] = [
     (
         "ctl-group-driving",
         &[
@@ -265,6 +270,22 @@ pub const ACTIONS: [(&str, &[Row]); 6] = [
             (Action::DoorLeft, "door-left", KeyCode::KeyJ, None),
             (Action::DoorRight, "door-right", KeyCode::KeyK, None),
             (Action::DoorClose, "door-close", KeyCode::KeyI, None),
+        ],
+    ),
+    (
+        "ctl-group-shunting",
+        &[
+            // Held down while the shunter works: the order goes on the rising edge and
+            // stays on until he answers or gives up (plan ch. 11).
+            (Action::Couple, "couple", KeyCode::Insert, None),
+            (Action::Uncouple, "uncouple", KeyCode::Home, None),
+            // Sitting down at a strange desk, and getting up from your own.
+            (
+                Action::TakeOver,
+                "take-over",
+                KeyCode::Tab,
+                Some(GamepadButton::North),
+            ),
         ],
     ),
     (

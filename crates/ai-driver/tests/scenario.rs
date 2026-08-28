@@ -216,6 +216,7 @@ fn switch_and_route_actions_are_wired() {
     let (mut sim, _t) = scenario_sim(TrackPosition::new(EdgeId(0), 100.0, 1));
     sim.set_scenario(
         Scenario {
+            consists: Vec::new(),
             name: "Stellwerkstest".into(),
             description: String::new(),
             start: Default::default(),

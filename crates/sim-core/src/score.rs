@@ -122,8 +122,11 @@ impl ScoreKeeper {
         }
         self.prev_action = action;
 
-        // Overspeed with respect to the permitted speed.
-        let limit = train.vehicles[0].pos.speed_limit(&sim.net);
+        // Overspeed with respect to the permitted speed. An empty consist stands nowhere
+        // and therefore under no speed limit (see `crate::shunt`).
+        let Some(limit) = train.vehicles.first().map(|v| v.pos.speed_limit(&sim.net)) else {
+            return;
+        };
         if v_kmh > limit + 3.0 {
             self.overspeed_seconds += dt;
             self.max_overspeed = self.max_overspeed.max(v_kmh - limit);
@@ -141,7 +144,9 @@ impl ScoreKeeper {
         let Some(stop) = self.timetable.stops.get(self.next_stop) else {
             return;
         };
-        let head = sim.trains[self.train].vehicles[0].pos;
+        let Some(head) = sim.trains[self.train].vehicles.first().map(|v| v.pos) else {
+            return;
+        };
         if head.edge != stop.edge {
             return;
         }

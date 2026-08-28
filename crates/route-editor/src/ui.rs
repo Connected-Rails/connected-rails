@@ -15,7 +15,7 @@ use content::route::{
 use editor_ui::{colors, space};
 use i18n::t;
 use imagery::ZoomMode;
-use sim_core::interlock::{BlockMarkerPayload, SignalKind, SignalSystem};
+use sim_core::interlock::{BlockMarkerPayload, RouteKind, SignalKind, SignalSystem};
 use sim_core::safety::de::{LzbSection, MagnetFrequency, MagnetPayload};
 use std::path::{Path, PathBuf};
 use track_model::{DeviceKind, Facing, SwitchPosition};
@@ -974,6 +974,7 @@ pub(crate) fn new_line(
         edges: vec![],
         devices: vec![],
         objects: vec![],
+        yards: vec![],
         trees: vec![],
         markers: vec![],
         terrain: vec![],
@@ -3267,6 +3268,22 @@ fn interlock_section(
                 row(ui, "route-exit", |ui| {
                     signal_combo(ui, ("route-exit", i), &mut route.exit, &labels);
                 });
+                // Train route or shunting route: a shunting route clears Sh 1 at its
+                // entry signal instead of the main aspect, and may be set into an
+                // occupied track (Ril 408 / 301).
+                row(ui, "route-kind", |ui| {
+                    let name = |kind: RouteKind| match kind {
+                        RouteKind::Train => t!("route-kind-train"),
+                        RouteKind::Shunt => t!("route-kind-shunt"),
+                    };
+                    egui::ComboBox::from_id_salt(("route-kind", i))
+                        .selected_text(name(route.kind))
+                        .show_ui(ui, |ui| {
+                            for kind in [RouteKind::Train, RouteKind::Shunt] {
+                                ui.selectable_value(&mut route.kind, kind, name(kind));
+                            }
+                        });
+                });
                 row(ui, "route-diverging", |ui| {
                     ui.checkbox(&mut route.diverging, "");
                 });
@@ -3314,6 +3331,7 @@ fn interlock_section(
         line.source.routes.push(RouteSource {
             entry: 0,
             exit: 1,
+            kind: RouteKind::Train,
             switches: Vec::new(),
             sections: Vec::new(),
             overlap: Vec::new(),
@@ -3837,6 +3855,18 @@ fn issue_target(line: &Line, issue: &RuleIssue, focus: &Focus) -> (Option<EcefPo
                 .and_then(|o| tools::object_pos(&line.net, o)),
             Selection::Object(*object as usize),
         ),
+        // A stabling road or portal is a mark on the track; the edge it names is where
+        // looking at it starts. It has no selection of its own yet — the roads are
+        // written by hand, like the interlocking tables were.
+        RuleIssue::YardOffEdge { yard }
+        | RuleIssue::PortalNotAtTheEdge { yard }
+        | RuleIssue::DuplicateYardName { yard } => (
+            line.source.yards.get(*yard as usize).and_then(|y| {
+                let edge = line.net.edges().get(y.edge as usize)?;
+                Some(edge.eval(y.s.clamp(0.0, edge.length())).pos)
+            }),
+            Selection::None,
+        ),
         // The first corner of the envelope: the boundary is what has to move,
         // and this is where looking at it starts.
         RuleIssue::OutsideEnvelope { .. } | RuleIssue::EnvelopeSelfIntersects => (
@@ -3873,6 +3903,9 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::ObjectOffEdge { object } => t!("check-object-off-edge", object = object),
         RuleIssue::UnknownObject { object } => t!("check-unknown-object", object = object),
         RuleIssue::FlankGuardInvalid { route } => t!("check-flank-guard", route = route),
+        RuleIssue::YardOffEdge { yard } => t!("check-yard-off-edge", yard = yard),
+        RuleIssue::PortalNotAtTheEdge { yard } => t!("check-portal-inside", yard = yard),
+        RuleIssue::DuplicateYardName { yard } => t!("check-yard-name-twice", yard = yard),
         RuleIssue::EnvelopeSelfIntersects => t!("check-envelope-crossed"),
         RuleIssue::OutsideEnvelope {
             trees,

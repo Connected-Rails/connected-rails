@@ -24,9 +24,51 @@ impl Davis {
     }
 }
 
+/// What kind of coupling gear a vehicle carries — what decides whether two vehicles can
+/// be coupled to each other at all (plan ch. 11).
+///
+/// The physical parameters below say how a coupler *behaves* once it is made; this says
+/// whether a shunter can make it. A screw coupling and a Scharfenberg head do not meet,
+/// however alike their draw gear is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CouplerKind {
+    /// Screw coupling with side buffers (UIC 520) — the European standard.
+    #[default]
+    Screw,
+    /// Automatic centre buffer coupler of a multiple unit (Scharfenberg and its
+    /// relatives). It couples itself, and only ever to its own kind.
+    CenterBuffer,
+    /// A bar inside a fixed unit. Not a coupler a shunter works: it is undone in the
+    /// works, not on the ground, so neither [`crate::Sim::couple`] nor
+    /// [`crate::Sim::uncouple`] will touch it.
+    Bar,
+}
+
+impl CouplerKind {
+    /// Whether a shunter can join these two ends.
+    ///
+    /// Only like to like, and never a bar — which is the whole rule, and the reason a
+    /// railcar cannot be put in front of a rake of freight wagons.
+    pub fn couples_to(self, other: Self) -> bool {
+        self == other && self != CouplerKind::Bar
+    }
+
+    /// Message key of the kind's name.
+    pub fn key(self) -> &'static str {
+        match self {
+            CouplerKind::Screw => "coupler-screw",
+            CouplerKind::CenterBuffer => "coupler-center-buffer",
+            CouplerKind::Bar => "coupler-bar",
+        }
+    }
+}
+
 /// Coupler parameters. Screw coupler: draw gear and buffers separate, slack in between.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CouplerSpec {
+    /// What gear the vehicle carries — see [`CouplerKind`].
+    #[serde(default)]
+    pub kind: CouplerKind,
     /// Total slack between draw gear and buffing gear [m] (screw coupler ~ 0.06–0.10 m).
     pub slack: f64,
     /// Stiffness of the draw gear [N/m].
@@ -43,6 +85,7 @@ impl CouplerSpec {
     /// Common screw coupler (UIC 520) with side buffers.
     pub fn screw() -> Self {
         Self {
+            kind: CouplerKind::Screw,
             slack: 0.08,
             draw_stiffness: 3.0e6,
             buffer_stiffness: 8.0e6,
@@ -54,11 +97,21 @@ impl CouplerSpec {
     /// Centre buffer coupler (multiple unit): stiffer, practically free of slack.
     pub fn center_buffer() -> Self {
         Self {
+            kind: CouplerKind::CenterBuffer,
             slack: 0.005,
             draw_stiffness: 2.0e7,
             buffer_stiffness: 2.0e7,
             damping: 4.0e5,
             breaking_force: 1.5e6,
+        }
+    }
+
+    /// A bar inside a fixed unit: like a centre buffer coupler to the physics, but no
+    /// shunter takes it apart.
+    pub fn bar() -> Self {
+        Self {
+            kind: CouplerKind::Bar,
+            ..Self::center_buffer()
         }
     }
 }
@@ -844,6 +897,44 @@ pub struct CouplerState {
     pub broken: bool,
 }
 
+/// One end of a consist — the two places a coupling can be made.
+///
+/// `Head` is the end the first vehicle shows, `Tail` the one the last vehicle shows. It
+/// has nothing to do with which way the train is running: a train that sets back is
+/// running out of its tail, and its head is still its head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConsistEnd {
+    Head,
+    Tail,
+}
+
+impl ConsistEnd {
+    /// The other end.
+    pub fn opposite(self) -> Self {
+        match self {
+            ConsistEnd::Head => ConsistEnd::Tail,
+            ConsistEnd::Tail => ConsistEnd::Head,
+        }
+    }
+
+    /// `+1` at the head, `−1` at the tail: the sign that turns the train's own direction
+    /// of travel into the direction that points *out of* the consist at this end.
+    pub fn outward(self) -> f64 {
+        match self {
+            ConsistEnd::Head => 1.0,
+            ConsistEnd::Tail => -1.0,
+        }
+    }
+
+    /// Message key of the end's name.
+    pub fn key(self) -> &'static str {
+        match self {
+            ConsistEnd::Head => "shunt-end-head",
+            ConsistEnd::Tail => "shunt-end-tail",
+        }
+    }
+}
+
 /// A train consist.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Train {
@@ -860,6 +951,22 @@ pub struct Train {
     /// Door control of the train (TB0/TAV/UIC-WTB).
     #[serde(default)]
     pub doors: DoorControl,
+    /// Train movement or shunting movement — which signals bind it, how fast it may run,
+    /// and whether it may be let into an occupied track (plan ch. 11).
+    ///
+    /// It is not set by hand: passing a signal sets it from that signal's aspect, so a
+    /// shunt that is given a train route leaves the starting signal as a train.
+    #[serde(default)]
+    pub movement: crate::shunt::Movement,
+    /// Out of service: the train belongs to no working at the moment, is not driven, is
+    /// not drawn, and does not occupy the track (plan ch. 11).
+    ///
+    /// An operating day reuses its trains — the unit that arrives at ten past forms the
+    /// service that leaves at half past, and between the two it stands in the sidings.
+    /// Stabling it rather than deleting it is what keeps the train indices stable, which
+    /// is what everything from the AI driver to the network protocol addresses trains by.
+    #[serde(default)]
+    pub stabled: bool,
 }
 
 impl Train {
@@ -891,6 +998,8 @@ impl Train {
             rail: RailCondition::Dry,
             number: String::new(),
             doors,
+            movement: crate::shunt::Movement::default(),
+            stabled: false,
         };
         train.couple_brake_pipe();
         train
@@ -940,10 +1049,47 @@ impl Train {
         self.speed() * 3.6
     }
 
+    /// Position of the head of the train, or `None` when the consist is empty.
+    ///
+    /// A train that has been coupled away keeps its slot in [`crate::Sim::trains`] and
+    /// becomes an empty consist (plan ch. 11) — it stands nowhere, and everything that
+    /// needs a place on the line has to be able to hear that.
+    pub fn head(&self) -> Option<TrackPosition> {
+        let front = self.vehicles.first()?;
+        Some(front.pos.offset_by_unchecked(front.spec.length / 2.0))
+    }
+
     /// Position of the head of the train.
+    ///
+    /// An empty consist answers with the start of the first edge: it is nowhere, and this
+    /// is the nowhere the track graph has. Callers that can act on "nowhere" take
+    /// [`Train::head`] instead.
     pub fn head_position(&self) -> TrackPosition {
-        let front = &self.vehicles[0];
-        front.pos.offset_by_unchecked(front.spec.length / 2.0)
+        self.head()
+            .unwrap_or_else(|| TrackPosition::new(track_model::EdgeId(0), 0.0, 1))
+    }
+
+    /// Position of one end of the consist, walked along the graph rather than along the
+    /// current edge alone — a train standing over a joint has one end on each edge.
+    ///
+    /// The direction of the returned position is always the train's own direction of
+    /// travel, so at the head it points away from the consist and at the tail into it.
+    /// `None` for an empty consist, or where the walk runs into something it cannot pass.
+    pub fn end_position(
+        &self,
+        net: &track_model::TrackNetwork,
+        end: ConsistEnd,
+    ) -> Option<TrackPosition> {
+        match end {
+            ConsistEnd::Head => {
+                let front = self.vehicles.first()?;
+                front.pos.offset_by(net, front.spec.length / 2.0)
+            }
+            ConsistEnd::Tail => {
+                let rear = self.vehicles.last()?;
+                rear.pos.offset_by(net, -rear.spec.length / 2.0)
+            }
+        }
     }
 
     /// Braked weight percentage of the train: sum of braked weights / sum of masses · 100.

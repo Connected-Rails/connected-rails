@@ -133,6 +133,10 @@ const HOT_MOTOR: f64 = 140.0;
 const MESSAGES: usize = 3;
 const MESSAGE_LIFE: f64 = 24.0;
 
+/// How long the shunter's answer stands [s] — long enough to read from the window,
+/// short enough that "coupled" is not still on the screen at the next station.
+const SHUNT_ANSWER_LIFE: f64 = 8.0;
+
 /// How far the look-ahead reads down the line [m].
 const LOOKAHEAD: f64 = 4000.0;
 
@@ -457,6 +461,8 @@ const HELP: [(&str, &[HelpLine]); 5] = [
                 &[Action::DoorLeft, Action::DoorRight, Action::DoorClose],
                 "hud-key-doors",
             ),
+            (&[Action::Couple, Action::Uncouple], "hud-key-shunt"),
+            (&[Action::TakeOver], "hud-key-take-over"),
         ],
     ),
     (
@@ -2383,7 +2389,7 @@ pub fn update_hud(
         return;
     }
     let perf = Perf::read(&diagnostics);
-    let frame = Frame::read(
+    let Some(frame) = Frame::read(
         &sim.0,
         player.0,
         mode,
@@ -2395,7 +2401,9 @@ pub fn update_hud(
         &view,
         session.as_deref(),
         &perf,
-    );
+    ) else {
+        return;
+    };
 
     for (readout, mut content, mut color) in nodes.readouts.iter_mut() {
         let (value, tone) = frame.readout(*readout);
@@ -2538,11 +2546,19 @@ impl<'a> Frame<'a> {
         view: &ViewDistance,
         session: Option<&crate::net::Session>,
         perf: &Perf,
-    ) -> Self {
+    ) -> Option<Self> {
         let train = &sim.trains[player];
-        let loco = &train.vehicles[0];
+        // A consist that was coupled away has no leading vehicle to read (plan ch. 11);
+        // there is nothing to display and nothing to display it for.
+        let loco = train.vehicles.first()?;
         let runtime = &sim.runtime[player];
-        let scan = sim_core::lookahead::scan(&sim.net, &sim.interlock, loco.pos, LOOKAHEAD);
+        let scan = sim_core::lookahead::scan(
+            &sim.net,
+            &sim.interlock,
+            loco.pos,
+            LOOKAHEAD,
+            train.movement,
+        );
         let limit = loco.pos.speed_limit(&sim.net);
         // Only a restriction that actually restricts is news — the line's own steps back
         // up to line speed are nothing to brake for.
@@ -2595,7 +2611,7 @@ impl<'a> Frame<'a> {
         if overlays.diagnostics {
             frame.diagnostics = Some(frame.diagnose(terrain, streamer, view, session, perf));
         }
-        frame
+        Some(frame)
     }
 
     // -----------------------------------------------------------------------------
@@ -2756,7 +2772,28 @@ impl<'a> Frame<'a> {
             ProtectionAction::EmergencyBrake => Some(t!("hud-alert-emergency")),
             ProtectionAction::ForcedServiceBrake => Some(t!("hud-alert-forced")),
             ProtectionAction::TractionCutOff => Some(t!("hud-alert-cut-off")),
-            ProtectionAction::None => self.runtime.blocked.then(|| t!("hud-alert-blocked")),
+            ProtectionAction::None => self
+                .runtime
+                .blocked
+                .then(|| t!("hud-alert-blocked"))
+                .or_else(|| self.shunt()),
+        }
+    }
+
+    /// What the shunter on the ground last answered (plan ch. 11), for as long as it is
+    /// news. It shares the line the train protection interrupts on, because it is the
+    /// same kind of thing: something happened that the driver did not do himself.
+    fn shunt(&self) -> Option<String> {
+        use sim_core::shunt::ShuntReport;
+        if self.time - self.runtime.shunt_request.answered > SHUNT_ANSWER_LIFE {
+            return None;
+        }
+        match self.runtime.shunt {
+            ShuntReport::Idle => None,
+            ShuntReport::Waiting(why) => Some(t!("hud-shunt-waiting", reason = t!(why.key()))),
+            ShuntReport::Coupled { .. } => Some(t!("hud-shunt-coupled")),
+            ShuntReport::Uncoupled { .. } => Some(t!("hud-shunt-uncoupled")),
+            ShuntReport::Refused(why) => Some(t!("hud-shunt-refused", reason = t!(why.key()))),
         }
     }
 
@@ -2887,12 +2924,21 @@ impl<'a> Frame<'a> {
                 };
                 let service = service.trim();
                 let name = &self.sim.scenario.scenario.name;
+                // A shunting movement carries no train number at all in real operation, so
+                // saying which kind of movement this is *replaces* the number rather than
+                // standing beside it: "Rangierfahrt · Rangierfahrt" would be the plan's
+                // name twice over (Ril 301).
+                let movement = self.train.movement;
+                let head = match movement {
+                    sim_core::shunt::Movement::Shunt => t!(movement.key()),
+                    sim_core::shunt::Movement::Train => service.to_string(),
+                };
                 (
-                    match (service.is_empty(), name.is_empty()) {
+                    match (head.is_empty(), name.is_empty()) {
                         (true, true) => t!("hud-free-run"),
                         (true, false) => name.clone(),
-                        (false, true) => service.to_string(),
-                        (false, false) => format!("{service}  ·  {name}"),
+                        (false, true) => head,
+                        (false, false) => format!("{head}  ·  {name}"),
                     },
                     TEXT_MID,
                 )

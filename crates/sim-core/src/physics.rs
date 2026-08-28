@@ -242,7 +242,13 @@ pub fn step(train: &mut Train, net: &TrackNetwork, dt: f64) -> StepReport {
 /// differ in — the slip brake takes the one spinning wheelset down, the cutback throttles
 /// the whole drive because it has only one handle to throttle, and creep control holds
 /// every axle at the maximum of its own adhesion curve.
+///
+/// **Back gear** turns the finished effort round: the drive works out how hard the machine
+/// pulls, the reverser which way, and this is where the two meet the rail. Everything in
+/// between — adhesion, slip, the protection — is the same in either gear, which is why the
+/// sign goes on at the end and nowhere else.
 fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
+    let gear = if veh.traction.back_gear { -1.0 } else { 1.0 };
     let protection = veh.spec.slip_protection;
     let mu = vehicle_adhesion(veh, rail) * protection.adhesion_bonus();
     let cleaning = rail_cleaning(&veh.axles);
@@ -324,7 +330,7 @@ fn transmit_traction(veh: &mut Vehicle, rail: RailCondition, dt: f64) -> f64 {
         total += transmitted;
     }
     veh.slip = peak_slip(&veh.axles);
-    total
+    gear * total
 }
 
 /// Brake force limited by adhesion, axle by axle, including blending with the dynamic

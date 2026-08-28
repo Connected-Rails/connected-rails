@@ -282,3 +282,53 @@ fn save_load_roundtrip_preserves_state() {
     }
     assert_eq!(restored.state_hash(), sim.state_hash());
 }
+
+/// Back gear moves the train the other way. The drive works out how hard the machine
+/// pulls, the reverser which way — without that there is no setting back, and without
+/// setting back there is no shunting (plan ch. 11).
+#[test]
+fn back_gear_drives_the_train_backwards() {
+    let mut sim = new_sim();
+    let head = TrackPosition::new(EdgeId(0), 600.0, 1);
+    let train = Train::assemble(vec![Vehicle::new(br101_unfitted(), head)], head, &sim.net);
+    let t = sim.add_train(train);
+    power_up(&mut sim, t);
+    let start = sim.trains[t].vehicles[0].pos.s;
+
+    sim.controls[t].reverser = -1;
+    sim.controls[t].throttle = 0.4;
+    sim.controls[t].brake_valve = DriverBrakeValve::Release;
+    for _ in 0..3_000 {
+        hold_sifa(&mut sim, t, true);
+        sim.step(Sim::DT);
+        assert!(
+            sim.trains[t].speed() <= 0.01,
+            "it never runs forwards in back gear"
+        );
+    }
+    let moved = start - sim.trains[t].vehicles[0].pos.s;
+    assert!(
+        moved > 20.0,
+        "back gear moved the loco {moved:.1} m backwards"
+    );
+    assert!(
+        sim.trains[t].speed() < 0.0,
+        "and it is still going that way"
+    );
+
+    // The reverser in neutral is no traction at all, in either direction.
+    sim.controls[t].reverser = 0;
+    sim.controls[t].brake_valve = DriverBrakeValve::Service(1.5);
+    for _ in 0..8_000 {
+        hold_sifa(&mut sim, t, true);
+        sim.step(Sim::DT);
+    }
+    assert!(sim.trains[t].speed_kmh().abs() < 0.5, "it came to a stand");
+    let standing = sim.trains[t].vehicles[0].pos.s;
+    sim.controls[t].throttle = 1.0;
+    for _ in 0..4_000 {
+        hold_sifa(&mut sim, t, true);
+        sim.step(Sim::DT);
+    }
+    assert!((sim.trains[t].vehicles[0].pos.s - standing).abs() < 0.5);
+}

@@ -1,0 +1,208 @@
+// An operating day: the whole timetable of a line, looping every 24 hours. The run
+// picker offers every playable service in it, and the player sets the date and the
+// weather before the run starts.
+//
+// Its times are wall clock — seconds since local midnight — so a service is at the same
+// hour whenever it is taken, and midnight is simply where the plan starts over. Services
+// that are not playable still run: the AI drives them so the line is not empty.
+//
+// Run it with:
+//   cargo run -p app -- --line example:beispielstrecke --day example:beispieltag --service 0
+(
+    name: "Beispieltag",
+    description: "Ein Betriebstag auf der Beispielstrecke: stündlich hin und zurück.",
+    // The line it belongs to — `--line` on the command line wins, as everywhere.
+    line: Some("example:beispielstrecke"),
+    // The date the day plays on unless the player moves it in the run picker. It decides
+    // the season the ground wears and where the sun stands.
+    date: (year: 2026, month: 8, day: 15),
+    utc_offset: 2.0,
+    // How the weather is decided unless the player overrides it: `Dynamic` lets the day
+    // make its own out of the date, `Fixed(Rain)` names one and holds it.
+    weather: Dynamic,
+    // Stock that stands on the line from the first minute, whatever the plan does later.
+    // A consist names its vehicles one by one, head first — "a locomotive and n coaches"
+    // is only the commonest case of it — and without a `timetable` it simply stands where
+    // it was put, with its brakes applied.
+    consists: [
+        (
+            // A shunt job on its own: no timetable, no train number that means anything to
+            // a signalman — a movement that exists only to move stock about. The AI works
+            // the moves in order and stands when it is done, and everything about how it
+            // is driven follows from that: 25 km/h, on sight, Sh 1 and nothing else.
+            number: "Übergabe 62701",
+            vehicles: [
+                (vehicle: "example:br101_afb", count: 1),
+            ],
+            // On the running road east of the turnout, facing the portal.
+            at: At(edge: EdgeId(1), s: 550.0, dir: -1),
+            shunt: Some((
+                name: "62701 ins Bw",
+                moves: [
+                    DrawUp(Yard("Portal Ost")),
+                    Stand,
+                ],
+            )),
+        ),
+    ],
+    services: [
+        (
+            number: "RB 30001",
+            category: "RB",
+            description: "Frühzug nach Beispielstadt",
+            // The vehicle at the head; without one the service takes what the player
+            // picked in the menu.
+            vehicle: Some("example:br101_afb"),
+            cars: 3,
+            // Where its stock stands before it leaves: a place on the line …
+            origin: At(edge: EdgeId(0), s: 200.0, dir: 1),
+            stops: [
+                (
+                    name: "Beispielbach",
+                    edge: EdgeId(0),
+                    s: 200.0,
+                    // 06:15, and it leaves as it arrives — this is where it starts.
+                    arrival: 22500.0,
+                    departure: 22500.0,
+                    platform: "1",
+                ),
+                (
+                    name: "Beispielstadt",
+                    edge: EdgeId(0),
+                    s: 3800.0,
+                    // 06:23.
+                    arrival: 22980.0,
+                    departure: 23040.0,
+                    platform: "2",
+                ),
+            ],
+        ),
+        (
+            number: "RB 30002",
+            category: "RB",
+            description: "Zurück nach Beispielbach",
+            vehicle: Some("example:br101_afb"),
+            cars: 3,
+            origin: At(edge: EdgeId(0), s: 3800.0, dir: -1),
+            stops: [
+                (
+                    name: "Beispielstadt",
+                    edge: EdgeId(0),
+                    s: 3800.0,
+                    // 06:45.
+                    arrival: 24300.0,
+                    departure: 24300.0,
+                    platform: "2",
+                ),
+                (
+                    name: "Beispielbach",
+                    edge: EdgeId(0),
+                    s: 200.0,
+                    arrival: 24780.0,
+                    departure: 24840.0,
+                    platform: "1",
+                ),
+            ],
+        ),
+        (
+            number: "RB 30015",
+            category: "RB",
+            description: "Abendzug nach Beispielstadt",
+            vehicle: Some("example:br101_afb"),
+            cars: 3,
+            origin: At(edge: EdgeId(0), s: 200.0, dir: 1),
+            // The last passenger working of the day puts its unit away: `stable_at` names
+            // a road of the line (`yards:` in the line file) and `stable_way` says which
+            // way the move runs. A stabling road holds the train where it can be seen and
+            // where it occupies the track like any other; the siding here lies ahead
+            // through the turnout, so the unit draws forward onto it.
+            stable_at: Some("Abstellgleis 1"),
+            stable_way: DrawUp,
+            stops: [
+                (
+                    name: "Beispielbach",
+                    edge: EdgeId(0),
+                    s: 200.0,
+                    // 21:15 — the same run after dark, which is a different job.
+                    arrival: 76500.0,
+                    departure: 76500.0,
+                    platform: "1",
+                ),
+                (
+                    name: "Beispielstadt",
+                    edge: EdgeId(0),
+                    s: 3800.0,
+                    arrival: 76980.0,
+                    departure: 77040.0,
+                    platform: "2",
+                ),
+            ],
+        ),
+        (
+            // A light engine that leaves the module: it draws forward through the turnout
+            // into the east portal and is gone — which is how a working that carries on
+            // over a stretch of railway nobody has built is simulated.
+            number: "Lt 30099",
+            category: "Lt",
+            description: "Leerfahrt ins Bw",
+            vehicle: Some("example:br101_afb"),
+            cars: 0,
+            origin: At(edge: EdgeId(0), s: 200.0, dir: 1),
+            stable_at: Some("Portal Ost"),
+            stable_way: DrawUp,
+            playable: false,
+            stops: [
+                (
+                    name: "Beispielbach",
+                    edge: EdgeId(0),
+                    s: 200.0,
+                    // 05:30.
+                    arrival: 19800.0,
+                    departure: 19800.0,
+                    platform: "1",
+                ),
+                (
+                    name: "Beispielstadt",
+                    edge: EdgeId(0),
+                    s: 3800.0,
+                    arrival: 20280.0,
+                    departure: 20340.0,
+                    platform: "2",
+                ),
+            ],
+        ),
+        (
+            // … and a service that comes *out* of a portal: its stock appears at the edge
+            // of the modelled railway, runs in, and terminates on the line.
+            number: "Gz 51230",
+            category: "Gz",
+            description: "Nachtgüterzug",
+            vehicle: Some("example:br101_afb"),
+            cars: 6,
+            origin: Yard("Portal Ost"),
+            // Not offered in the run picker — it is there so the line is not empty at
+            // night, and the AI drives it.
+            playable: false,
+            stops: [
+                (
+                    name: "Beispielstadt",
+                    edge: EdgeId(0),
+                    s: 3800.0,
+                    // 23:50.
+                    arrival: 85800.0,
+                    departure: 85800.0,
+                    platform: "2",
+                ),
+                (
+                    name: "Beispielbach",
+                    edge: EdgeId(0),
+                    s: 200.0,
+                    // 00:05 of the next day.
+                    arrival: 300.0,
+                    departure: 360.0,
+                    platform: "1",
+                ),
+            ],
+        ),
+    ],
+)

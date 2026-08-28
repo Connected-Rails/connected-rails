@@ -6,6 +6,8 @@
 pub mod blocks;
 pub mod brakes;
 pub mod cab;
+pub mod consist;
+pub mod day;
 pub mod doors;
 pub mod drive;
 pub mod electric;
@@ -16,6 +18,7 @@ pub mod rng;
 pub mod safety;
 pub mod scenario;
 pub mod score;
+pub mod shunt;
 pub mod signal;
 pub mod sound;
 pub mod steam;
@@ -23,6 +26,7 @@ pub mod synth;
 pub mod timetable;
 pub mod train;
 pub mod weather;
+pub mod yard;
 
 /// Gravitational acceleration [m/s²].
 pub const G: f64 = 9.806_65;
@@ -55,7 +59,20 @@ pub struct TrainRuntime {
     /// Line conductor section the train is running in, and how far it transmits.
     pub lzb_section: Option<safety::de::LzbSection>,
     pub lzb_until_odo: f64,
+    /// The shunting order the driver has given and how long it is still tried for
+    /// (plan ch. 11). Derived from `CabInputs::shunt`, which is what travels.
+    #[serde(default)]
+    pub shunt_request: shunt::ShuntRequest,
+    /// What became of it — the shunter's answer, for the HUD. Local, like every other
+    /// result in here.
+    #[serde(default = "shunt::default_report")]
+    pub shunt: shunt::ShuntReport,
 }
+
+/// How far ahead a shunting movement looks for the signal that is holding it, when it asks
+/// for a route out of it [m] — far enough to have the points move while it is still
+/// rolling up, short enough that it is asking about the signal it is actually at.
+const SHUNT_ROUTE_REACH: f64 = 400.0;
 
 /// The whole simulation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +83,11 @@ pub struct Sim {
     pub runtime: Vec<TrainRuntime>,
     /// Cabs: one set of inputs per train (AI or player write into it).
     pub controls: Vec<CabInputs>,
+    /// Stabling roads and portals of the line — where stock may be put and where trains
+    /// appear and disappear (plan ch. 11). Line content, filled in when the world is
+    /// built; a run without them simply has none.
+    #[serde(default)]
+    pub yards: Vec<yard::Yard>,
     /// Simulation time [s since the start of the run].
     pub time: f64,
     /// Wall clock at `time == 0` — date and time of day (plan ch. 14).
@@ -82,6 +104,11 @@ pub struct Sim {
     /// actions, read by the renderer, the sound and the rail condition.
     #[serde(default)]
     pub weather: weather::Timeline,
+    /// Fixed steps taken since the start of the run — what the once-a-second jobs of
+    /// [`step`](Self::step) are paced by. A count rather than the clock, because the clock
+    /// is a sum of floats and a modulo of it drifts.
+    #[serde(default)]
+    steps: u64,
     accumulator: f64,
 }
 
@@ -98,12 +125,14 @@ impl Sim {
             trains: Vec::new(),
             runtime: Vec::new(),
             controls: Vec::new(),
+            yards: Vec::new(),
             time: 0.0,
             start: scenario::StartTime::default(),
             rng: rng::Rng::new(seed),
             scenario: scenario::ScenarioRuntime::default(),
             score: score::ScoreKeeper::default(),
             weather: weather::Timeline::default(),
+            steps: 0,
             accumulator: 0.0,
         }
     }
@@ -142,20 +171,34 @@ impl Sim {
     pub fn step(&mut self, dt: f64) {
         // The weather first: it moves the sky on and decides what the wheels find
         // on the rail this step (plan 14.1).
-        self.weather.step(self.time, dt);
+        self.weather.step(self.time, self.clock(), dt);
         let rail = self.weather.rail();
         for train in &mut self.trains {
             train.rail = rail;
         }
 
         for i in 0..self.trains.len() {
+            // A stabled train is out of service: no physics, and no place on the line
+            // (see `Train::stabled`).
+            if self.trains[i].stabled {
+                continue;
+            }
+            // The shunter first: a coupling made this step is one consist by the time the
+            // couplers are worked out below (plan ch. 11). The loop's bound was taken
+            // before it started, so the rear part of an uncoupling is not stepped until
+            // the next one — five milliseconds at a stand, which is what an uncoupling is.
+            shunt::step(self, i, dt);
+            if self.trains[i].stabled || self.trains[i].vehicles.is_empty() {
+                continue;
+            }
             self.step_train(i, dt);
         }
 
         // Interlocking: track clear detection, routes, signals, switch movements.
         let occupied = self.occupied_edges();
         self.interlock.update_occupancy(&occupied);
-        self.interlock.update(&mut self.net);
+        self.set_shunt_routes();
+        self.interlock.update(&mut self.net, dt);
         self.net.update_switches(dt);
 
         // Scoring and scenario last — they see the finished state of the step.
@@ -167,12 +210,80 @@ impl Sim {
         self.time += dt;
     }
 
-    fn occupied_edges(&self) -> Vec<EdgeId> {
+    /// Automatic shunting-route setting (plan ch. 10).
+    ///
+    /// A shunting movement that has drawn up to a signal showing Sh 0 is given the first
+    /// shunting route out of that signal whose path is free — which is what the signalman
+    /// does when a shunt is standing in front of him waiting. Train routes are not set
+    /// this way: a train movement is timetabled, and which route it takes is a decision,
+    /// not a reflex.
+    ///
+    /// It is a pure function of the world and runs inside the fixed step, so every peer
+    /// sets the same route in the same step without a message about it (CLAUDE.md ch. 20).
+    fn set_shunt_routes(&mut self) {
+        // Once a second, and only for what is standing: a movement that is rolling is not
+        // waiting in front of a signal, and looking 400 m up the track two hundred times a
+        // second for every train on the line is a scan nobody asked for.
+        self.steps = self.steps.wrapping_add(1);
+        if !self.steps.is_multiple_of((1.0 / Self::DT) as u64) {
+            return;
+        }
+        for i in 0..self.trains.len() {
+            let train = &self.trains[i];
+            if train.stabled || train.vehicles.is_empty() || train.speed().abs() > 1.0 {
+                continue;
+            }
+            // The end that leads: a move setting back is stopped by the signal behind it.
+            let end = if self.controls[i].reverser < 0 {
+                train::ConsistEnd::Tail
+            } else {
+                train::ConsistEnd::Head
+            };
+            let scanning = train.movement;
+            let Some(mut from) = train.end_position(&self.net, end) else {
+                continue;
+            };
+            if end == train::ConsistEnd::Tail {
+                from.dir = -from.dir;
+            }
+            let view = lookahead::scan(
+                &self.net,
+                &self.interlock,
+                from,
+                SHUNT_ROUTE_REACH,
+                scanning,
+            );
+            let Some(entry) = view.next_stop().and_then(|stop| stop.signal) else {
+                continue;
+            };
+            // Who is asked for: a movement that is already shunting, and anything at all
+            // that is held by a **Sperrsignal** — a signal that authorises nothing but
+            // shunting, so whatever is standing in front of it is about to shunt, whether
+            // it has been told so yet or not. That is how a unit stabled in a siding gets
+            // out of it: it is let past by Sh 1, and passing Sh 1 is what makes it a
+            // shunting movement in the first place.
+            let sperrsignal = self.interlock.signal(entry).kind == interlock::SignalKind::Shunting;
+            if self.trains[i].movement != shunt::Movement::Shunt && !sperrsignal {
+                continue;
+            }
+            let mut interlock = std::mem::take(&mut self.interlock);
+            interlock.request_shunt_route(entry, &mut self.net);
+            self.interlock = interlock;
+        }
+    }
+
+    /// What the track clear detection sees: every edge a train stands on, and which train
+    /// it is. *Which* matters to a shunting route, which may run over a road that was
+    /// occupied before it started (`interlock::Route::owner`).
+    fn occupied_edges(&self) -> Vec<(usize, EdgeId)> {
         let mut edges = Vec::new();
-        for t in &self.trains {
+        for (index, t) in self.trains.iter().enumerate() {
+            if t.stabled {
+                continue;
+            }
             for v in &t.vehicles {
-                if !edges.contains(&v.pos.edge) {
-                    edges.push(v.pos.edge);
+                if !edges.contains(&(index, v.pos.edge)) {
+                    edges.push((index, v.pos.edge));
                 }
             }
         }
@@ -180,6 +291,11 @@ impl Sim {
     }
 
     fn step_train(&mut self, index: usize, dt: f64) {
+        // An empty consist has nothing to drive: a train that was coupled away keeps its
+        // slot (see `crate::shunt`), and everything below reads its leading vehicle.
+        if self.trains[index].vehicles.is_empty() {
+            return;
+        }
         let mut cab = self.controls[index];
         let action = self.runtime[index].protection.action;
 
@@ -242,12 +358,22 @@ impl Sim {
                 };
                 veh.traction.line_system = system;
                 veh.traction.line_voltage = system.map_or(0.0, |s| s.voltage());
+                // The power controller says how hard the machine pulls, the reverser
+                // which way — in neutral it does not pull at all. A dynamic brake works
+                // on the direction of travel, so in back gear it is the air brake's job
+                // and the notch never goes negative there.
                 veh.traction.notch = if traction_allowed {
-                    cab.throttle * cab.reverser.max(0) as f64
+                    let notch = if cab.reverser == 0 { 0.0 } else { cab.throttle };
+                    if cab.reverser < 0 {
+                        notch.max(0.0)
+                    } else {
+                        notch
+                    }
                 } else {
                     // On forced braking: traction off, dynamic brake stays allowed.
                     cab.throttle.min(0.0)
                 };
+                veh.traction.back_gear = cab.reverser < 0;
                 veh.sanding = cab.sanding;
                 // The range selector goes to the drive, which only lets it take at a stand.
                 veh.traction.road_gear = cab.road_gear;
@@ -363,7 +489,34 @@ impl Sim {
         report: &physics::StepReport,
     ) -> Vec<TracksideEvent> {
         let mut events = Vec::new();
+        let dir = self.trains[index].vehicles[0].pos.dir;
         for (vehicle, passed) in &report.passed {
+            // Passing a signal says what kind of movement this is from here on: Sh 1
+            // makes it a shunting movement, a main proceed aspect makes it a train. That
+            // is how a shunt draws up to the starting signal, is given a train route, and
+            // leaves as a train (`shunt::Movement`). It is read before the antenna check —
+            // a movement is a movement whether the vehicle carries train protection or not.
+            let (kind, facing, device_id) = {
+                let device = self.net.device(passed.device);
+                (device.kind.clone(), device.facing, device.id)
+            };
+            if kind == DeviceKind::Signal
+                && facing.applies(dir)
+                && let Some(signal) = self.interlock.signal_at_device(device_id)
+            {
+                let (aspect, id) = (signal.aspect, signal.id);
+                if aspect.permits_shunting() {
+                    self.trains[index].movement = shunt::Movement::Shunt;
+                } else if aspect.main.is_some_and(|main| !main.is_stop()) {
+                    self.trains[index].movement = shunt::Movement::Train;
+                }
+                // And the shunting route it was let past by is *this* movement's from
+                // here on: it is released when this train has cleared it, not when the
+                // next thing runs past the signal (`Interlock::entered`).
+                if aspect.permits_shunting() {
+                    self.interlock.entered(id, index);
+                }
+            }
             // Only vehicles carrying an antenna read trackside devices.
             if matches!(
                 self.trains[index].vehicles[*vehicle].safety,
@@ -404,8 +557,8 @@ impl Sim {
         let rt = &self.runtime[index];
         if rt.odometer < rt.lzb_until_odo
             && let Some(section) = rt.lzb_section
+            && let Some(head) = self.trains[index].head()
         {
-            let head = self.trains[index].head_position();
             let telegram = safety::de::lzb::authority(&self.net, &self.interlock, head, &section);
             events.push(TracksideEvent {
                 device: DeviceKind::LineConductor,

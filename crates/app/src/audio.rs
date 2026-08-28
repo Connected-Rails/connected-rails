@@ -243,6 +243,15 @@ impl Audio {
     /// the loops on it with it — the same tear-down `setup_audio` does before it builds
     /// the next run's, only this time nothing is built afterwards.
     pub fn silence(&mut self) {
+        // Dropping a handle does not stop a sound — kira plays it to its end, and a loop
+        // has none. Every voice has to be told, and the cab track is not tied to any
+        // entity that a teardown could take with it.
+        for running in &mut self.loops {
+            running.handle.stop(STEAL);
+        }
+        for shot in self.shots.values_mut() {
+            shot.stop(STEAL);
+        }
         self.loops.clear();
         self.emitters.clear();
         self.previous.clear();
@@ -399,6 +408,7 @@ pub fn setup_audio(
 
 /// Follows the curves of every loop, moves the mixer with the train and fires the triggered
 /// entries.
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn update_audio(
     audio: Option<ResMut<Audio>>,
@@ -406,6 +416,7 @@ pub fn update_audio(
     player: Res<PlayerTrain>,
     time: Res<Time>,
     camera_state: Res<ui::CameraState>,
+    walker: Res<crate::walk::Walker>,
     camera: Query<&GlobalTransform, With<ui::CabCamera>>,
     views: Query<(&VehicleView, &GlobalTransform)>,
 ) {
@@ -426,9 +437,23 @@ pub fn update_audio(
         [rotation.x, rotation.y, rotation.z, rotation.w],
         Tween::default(),
     );
-    let in_cab = camera_state.mode.inside();
+    let in_cab = inside_a_vehicle(camera_state.mode, walker.place);
+    // The cab track carries what is heard *at the desk* and has no place in the world, so
+    // distance cannot quieten it: it is faded out by hand when the listener leaves.
+    audio.cab.set_volume(
+        if in_cab {
+            Decibels::IDENTITY
+        } else {
+            Decibels::SILENCE
+        },
+        FADE,
+    );
     let listener_velocity = match camera_state.mode {
         ui::CameraMode::Wayside => Vec3::ZERO,
+        // On foot on the ground the listener stands still like a wayside camera does: the
+        // train running past him is a pass-by and has to sound like one, which it cannot
+        // if he is credited with its own speed.
+        ui::CameraMode::Walk if !in_cab => Vec3::ZERO,
         // Cab and orbit both ride on the player train, so it shifts nothing against itself.
         _ => train_velocity(sim, player.0, &views),
     };
@@ -574,6 +599,22 @@ pub fn update_audio(
     audio.previous = states;
 }
 
+/// Is the listener inside a vehicle?
+///
+/// Not the same question as "is the camera the cab camera": the driver who has got up and
+/// walked out of the door is standing on the ballast with the cab behind him, and the walk
+/// is the same camera either way. Two things hang on the answer — the wall the spatial
+/// emitters are heard through, and whether the cab track, which has no place in the world
+/// and so cannot be quietened by distance, is heard at all.
+fn inside_a_vehicle(mode: ui::CameraMode, place: Option<crate::walk::Place>) -> bool {
+    match mode {
+        ui::CameraMode::Cab => true,
+        // `None` is the seat itself: he never got up.
+        ui::CameraMode::Walk => !matches!(place, Some(crate::walk::Place::Outside { .. })),
+        ui::CameraMode::Outside | ui::CameraMode::Wayside => false,
+    }
+}
+
 /// A source that repeats for as long as it plays.
 fn looping(samples: Vec<f32>, rate: u32) -> StaticSoundData {
     StaticSoundData {
@@ -654,6 +695,7 @@ fn train_velocity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::walk::Place;
 
     /// A linear factor of 1 must not change the volume, and 0 must be silent rather than
     /// merely quiet — a muted loop that still leaks is audible under a dozen others.
@@ -716,5 +758,29 @@ mod tests {
         assert!(data.settings.loop_region.is_some(), "loops");
         // Mono into both channels, or the source would only come out of one ear.
         assert_eq!(data.frames[0].left, data.frames[0].right);
+    }
+
+    /// What the driver hears follows where the driver *is*, not which camera is drawing.
+    /// Getting this wrong is what made the cab sounds follow a player who had walked out
+    /// onto the platform: the cab track has no position in the world, so nothing else
+    /// quietens it.
+    #[test]
+    fn the_cab_is_only_heard_from_inside_the_vehicle() {
+        let aboard = Some(Place::Aboard {
+            vehicle: 0,
+            eye: Vec3::ZERO,
+        });
+        let outside = Some(Place::Outside {
+            eye: world_coords::EcefPos::default(),
+        });
+
+        // At the desk, and on the way down the aisle.
+        assert!(inside_a_vehicle(ui::CameraMode::Cab, None));
+        assert!(inside_a_vehicle(ui::CameraMode::Walk, None));
+        assert!(inside_a_vehicle(ui::CameraMode::Walk, aboard));
+        // Out of the door, and on the cameras that never were inside.
+        assert!(!inside_a_vehicle(ui::CameraMode::Walk, outside));
+        assert!(!inside_a_vehicle(ui::CameraMode::Outside, aboard));
+        assert!(!inside_a_vehicle(ui::CameraMode::Wayside, None));
     }
 }

@@ -126,6 +126,7 @@ impl Composition {
             edges: Vec::new(),
             devices: Vec::new(),
             objects: Vec::new(),
+            yards: Vec::new(),
             trees: Vec::new(),
             markers: Vec::new(),
             terrain: Vec::new(),
@@ -360,6 +361,14 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
     }
     // Trees are geo-positioned — the georeference is the connection, so a
     // plain append composes them.
+    // Stabling roads and portals sit on an edge like a device; their names stay as they
+    // are, because a composition is one line and a shunt job names the road, not the
+    // module it came from.
+    for y in &module.yards {
+        let mut y = y.clone();
+        y.edge += off.edges;
+        merged.yards.push(y);
+    }
     merged.trees.extend(module.trees.iter().cloned());
     // The same for reference markers — geo-positioned, and their layer name is
     // the same string in every module.
@@ -598,6 +607,47 @@ mod tests {
         assert!(gap < 0.01, "gap {gap} m");
     }
 
+    /// Everything that names an edge follows its module's offset — the scenery objects
+    /// and the stabling roads as much as the devices. A list forgotten in `merge_module`
+    /// is lost silently, which is the one failure a composed line cannot show by itself.
+    #[test]
+    fn objects_and_yards_survive_the_composition() {
+        use crate::route::{ObjectSource, YardSource};
+        use sim_core::yard::YardKind;
+
+        let (composition, mut lines) = two_modules();
+        for (name, line) in &mut lines {
+            line.objects.push(ObjectSource {
+                object: "test:mast".into(),
+                edge: 0,
+                s: 500.0,
+                lateral_offset: -3.5,
+                yaw_deg: 0.0,
+                height: 0.0,
+                snap_to_terrain: false,
+            });
+            line.yards.push(YardSource {
+                name: format!("Portal {name}"),
+                kind: YardKind::Portal,
+                edge: 0,
+                s: 100.0,
+                facing: Default::default(),
+                length: 200.0,
+            });
+        }
+        let Composed { line: merged, .. } = composition.compose(&lines).expect("composes");
+        assert_eq!(merged.objects.len(), 2);
+        assert_eq!(merged.objects[1].edge, 1);
+        assert_eq!(merged.yards.len(), 2);
+        assert_eq!(
+            merged.yards[1].edge, 1,
+            "the second module's road moved with it"
+        );
+        let compiled = merged.compile().expect("composed line compiles");
+        assert_eq!(compiled.yards.len(), 2);
+        assert_eq!(compiled.yards[1].at.edge, track_model::EdgeId(1));
+    }
+
     #[test]
     fn indices_and_payloads_shift_with_the_module() {
         let (composition, lines) = two_modules();
@@ -757,8 +807,8 @@ mod tests {
         let compiled = composed.line.compile().expect("compiles");
         let mut il = compiled.interlock;
         let mut net = compiled.net;
-        il.update_occupancy(&[EdgeId(1)]);
-        il.update(&mut net);
+        il.update_occupancy(&[(0, EdgeId(1))]);
+        il.update(&mut net, 0.05);
         assert_eq!(
             il.signals[0].aspect.distant,
             Some(sim_core::interlock::DistantAspect::ExpectStop)

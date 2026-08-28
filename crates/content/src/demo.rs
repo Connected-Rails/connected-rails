@@ -4,11 +4,12 @@
 
 use crate::route::{
     DeviceSource, EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource, SectionSource,
-    SignalSource, TreeSource,
+    SignalSource, TreeSource, YardSource,
 };
 use sim_core::interlock::BlockMarkerPayload;
 use sim_core::interlock::{SignalKind, SignalSystem};
 use sim_core::safety::de::{LzbSection, MagnetPayload};
+use sim_core::yard::YardKind;
 use track_model::{DeviceKind, Facing, Segment};
 
 /// Start point of the Musterbahn (Lower Saxony, UTM zone 32).
@@ -221,6 +222,27 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         objects: vec![],
+        // Where trains appear and disappear (plan ch. 11). The Musterbahn is a plain
+        // line with a buffer stop at each end, so it has two portals and no siding —
+        // the example mod's line carries the stabling road.
+        yards: vec![
+            YardSource {
+                name: "Portal West".into(),
+                kind: YardKind::Portal,
+                edge: 0,
+                s: 300.0,
+                facing: Facing::Forward,
+                length: 300.0,
+            },
+            YardSource {
+                name: "Portal Ost".into(),
+                kind: YardKind::Portal,
+                edge: 2,
+                s: 2700.0,
+                facing: Facing::Backward,
+                length: 300.0,
+            },
+        ],
         // Placeholder vegetation (no mod objects named): two woods baked the
         // same way the editor's forest brush bakes them, plus two single trees
         // near the start — the demo shows trees, and streaming/instancing and

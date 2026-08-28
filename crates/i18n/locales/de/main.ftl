@@ -925,6 +925,9 @@ obj-height-hint = Über der Schienenoberkante — bei „Auf Gelände setzen" st
 obj-snap = Auf Gelände setzen
 obj-snap-hint = Setzt den Fußpunkt des Objekts auf die Geländeoberfläche statt auf die Schienenebene; aufgelöst in der App, die die Höhendaten hat
 check-object-off-edge = Objekt { $object } liegt außerhalb seines Gleises
+check-yard-off-edge = Gleis { $yard } liegt außerhalb seines Gleises
+check-portal-inside = Portal { $yard } liegt nicht am Rand der Strecke — das Gleis dahinter muss auf einen Prellbock oder eine Modulgrenze auslaufen
+check-yard-name-twice = Gleis { $yard } trägt einen Namen, den ein anderes schon hat
 check-unknown-object = Objekt { $object }: nennt ein Objekt, das kein installierter Mod hat
 check-flank-guard = Fahrstraße { $route }: Flankenschutz nennt einen Knoten, der keine Weiche ist, oder ein Signal, das es nicht mehr gibt
 obj-repeat = Wiederholung
@@ -998,6 +1001,9 @@ view-panel = Eigenschaften-Panel
 il-route-row = Fahrstraße { $index }
 route-entry = Startsignal
 route-exit = Zielsignal
+route-kind = Art
+route-kind-train = Zugstraße
+route-kind-shunt = Rangierstraße
 route-diverging = Ablenkende Fahrstraße
 route-diverging-hint = Die Fahrstraße läuft über das Zweiggleis — das Startsignal zeigt den langsamen Begriff
 route-sections = Abschnitte
@@ -1167,6 +1173,11 @@ hud-late = +{ $minutes } min
 hud-early = −{ $minutes } min
 hud-on-time = pünktlich
 hud-free-run = Freie Fahrt
+# Welche Fahrt der Spieler macht (Ril 301): eine Zugfahrt führt eine Zugnummer und
+# wird von den Hauptsignalen signalisiert, eine Rangierfahrt führt keine und wird
+# allein durch Sh 1 zugelassen.
+movement-train = Zugfahrt
+movement-shunt = Rangierfahrt
 hud-score = Wertung
 hud-scenario-passed = bestanden
 hud-scenario-failed = gescheitert
@@ -1242,6 +1253,13 @@ hud-alert-cut-off = ABSCHALTUNG DER ZUGKRAFT
 hud-alert-blocked = FAHRWEG NICHT EINGESTELLT
 hud-control = { $name }: { $value } %
 
+# Was der Rangierer am Boden meldet, auf derselben Zeile, auf der auch die
+# Zugbeeinflussung dazwischenredet (Plan Kap. 11).
+hud-shunt-coupled = GEKUPPELT
+hud-shunt-uncoupled = ABGEKUPPELT
+hud-shunt-waiting = RANGIERER WARTET — { $reason }
+hud-shunt-refused = NICHT MÖGLICH — { $reason }
+
 # Die Tastenhilfe, F5.
 hud-help = Tastatur
 hud-help-close = F5 schließt · F6 zeigt die Diagnose
@@ -1279,6 +1297,8 @@ hud-key-lamps = Spitzensignal · Führerraumlicht
 hud-key-dimmer = Instrumentenlicht
 hud-key-wipers = Scheibenwischer
 hud-key-doors = Freigabe links · rechts · schließen
+hud-key-shunt = Kuppeln · abkuppeln
+hud-key-take-over = Übernehmen · abgeben
 hud-key-cameras = Führerstand · außen · Strecke · gehen
 hud-key-look = Umsehen
 hud-key-zoom = Kameraabstand
@@ -1307,7 +1327,7 @@ hud-network-connecting = verbinde …
 
 menu-tagline = Deutsche Eisenbahnsimulation
 menu-drive = Fahren
-menu-drive-hint = Modul, Fahrzeug und Szenario
+menu-drive-hint = Modul, Fahrzeug und Fahrt
 menu-mods = Mods
 menu-mods-hint = Inhalte ein- und ausschalten
 menu-settings = Einstellungen
@@ -1325,8 +1345,8 @@ menu-select-line = Modul auswählen
 menu-select-line-hint = Wo die Fahrt stattfindet.
 menu-select-loco = Fahrzeug auswählen
 menu-select-loco-hint = Was an der Spitze des Zuges läuft.
-menu-select-scenario = Szenario auswählen
-menu-select-scenario-hint = Ein Fahrplan mit Aufgabe — oder freie Hand.
+menu-select-run = Fahrt auswählen
+menu-select-run-hint = Ein Szenario, eine Leistung aus dem Fahrplan des Tages — oder freie Hand.
 # Die eingebauten Inhalte, auf die der Simulator zurückfällt, wenn nichts gewählt wird.
 # Das Fähnchen an der Zeile sagt das, der Name selbst muss es nicht mehr.
 menu-chip-builtin = Integriert
@@ -1365,6 +1385,50 @@ menu-fact-km = { $value } km
 menu-fact-m = { $value } m
 menu-fact-t = { $value } t
 menu-fact-kmh = { $value } km/h
+
+## Fahrplanfahrten
+#
+# Neben den Szenarien lässt sich eine Strecke aus ihrem Betriebstag fahren: der
+# ganze Fahrplan eines Tages, der alle 24 Stunden von vorn beginnt und aus dem
+# der Spieler eine Leistung übernimmt. Ein Szenario bringt seine Stunde und
+# seinen Himmel mit; eine Leistung liegt jedes Mal zur selben Stunde auf
+# derselben Strecke — deshalb werden Datum und Wetter hier eingestellt, auf dem
+# Schritt zwischen Auswahl und Start.
+
+# Die Überschrift über den Leistungen eines Betriebstags in der Fahrtauswahl.
+menu-day-heading = Fahrplan · { $name }
+# Eine Leistung darin: wo sie beginnt und wo sie endet.
+menu-service = { $from } – { $to }
+menu-run-setup = Fahrt einrichten
+menu-run-setup-hint = An welchem Tag sie fährt, und was das Wetter darüber macht.
+menu-fact-train = Zug
+menu-fact-departure = Abfahrt
+menu-fact-arrival = Ankunft
+menu-fact-stops = Halte
+run-date = Datum
+run-date-hint = Entscheidet über Jahreszeit und Sonnenstand.
+run-weather = Wetter
+run-weather-hint = Vom Tag selbst gemacht — oder vorgegeben und gehalten.
+run-weather-dynamic = Dynamisch
+run-weather-fixed = Selbst gewählt
+run-preset = Welches Wetter
+run-preset-hint = Gilt von der ersten bis zur letzten Minute.
+
+## Zugwechsel
+#
+# Ein Triebfahrzeugführer ist für einen Zug zuständig — oder für keinen. Wer
+# aussteigt, übergibt die Leistung an die KI; wer in einen anderen Zug geht und
+# sich an dessen Pult setzt, übernimmt diesen. Jede Ablehnung wird angezeigt und
+# nicht verschluckt.
+
+crew-took-over = { $train } übernommen.
+crew-handed-over = { $train } übergeben — die KI fährt.
+crew-secured = { $train } gesichert abgestellt.
+crew-not-aboard = Nicht vom Bahnsteig aus: erst in den Führerstand.
+crew-out-of-service = Dieser Zug ist außer Dienst.
+crew-nothing-to-drive = In diesem Zug zieht nichts.
+crew-scenario-train = Ein Szenario wird im eigenen Zug gefahren.
+crew-another-driver = Diesen Zug fährt jemand anderes.
 
 ## Einstellungen
 #
@@ -1461,6 +1525,7 @@ ctl-group-driving = Fahren
 ctl-group-brakes = Bremsen
 ctl-group-safety = Zugbeeinflussung
 ctl-group-vehicle = Fahrzeug
+ctl-group-shunting = Rangieren
 ctl-group-view = Sicht und Einblendungen
 ctl-group-walk = Zu Fuß
 
@@ -1510,7 +1575,9 @@ ctl-wipers = Scheibenwischer
 ctl-door-left = Türfreigabe links
 ctl-door-right = Türfreigabe rechts
 ctl-door-close = Türen schließen
-
+ctl-couple = An das kuppeln, was davor steht
+ctl-uncouple = Hinter dem besetzten Fahrzeug abkuppeln
+ctl-take-over = Zug übernehmen
 ctl-view-cab = Führerstandssicht
 ctl-view-outside = Außensicht
 ctl-view-wayside = Streckensicht
@@ -2334,3 +2401,38 @@ status-outside-envelope = Außerhalb der Hüllkurve — dieser Boden gehört dem
 status-forest-baked-clipped = { $count } Bäume gesetzt, { $dropped } außerhalb der Hüllkurve verworfen
 status-forest-imported-clipped = { $count } Bäume aus { $areas } Flächen, { $dropped } außerhalb der Hüllkurve verworfen
 action-cancel = Abbrechen
+
+## Rangieren
+
+# Warum der Rangierer das Kuppeln oder Abkuppeln abgelehnt hat. Jeder Grund ist
+# eine Bedingung, die nicht erfüllt war; sie stehen im HUD hinter „nicht möglich“.
+shunt-refused-no-train = kein Zug vorhanden
+shunt-refused-no-coupler = der Zugverband hat diese Kupplung nicht
+shunt-refused-couplers = die Kupplungen passen nicht zueinander
+shunt-refused-moving = noch in Bewegung
+shunt-refused-too-fast = zu schnell aufeinander zu
+shunt-refused-nothing-in-reach = nichts in Reichweite
+shunt-refused-same-train = das ist dieser Zug
+
+# Die beiden Enden eines Zugverbands.
+shunt-end-head = Spitze
+shunt-end-tail = Schluss
+
+# Welche Kupplung ein Fahrzeug trägt.
+coupler-screw = Schraubenkupplung
+coupler-center-buffer = Mittelpufferkupplung
+coupler-bar = Kurzkupplungsstange
+
+# Wo Fahrzeuge stehen: ein Gleis auf der Strecke oder ihr Rand.
+yard-kind-stabling = Abstellgleis
+yard-kind-portal = Portal
+
+# Warum ein Zug nicht aufs Gleis gestellt oder von der Strecke genommen werden konnte.
+yard-refused-no-yard = die Strecke hat kein Gleis dieses Namens
+yard-refused-no-train = kein Zug vorhanden
+yard-refused-too-long = länger als das Gleis
+yard-refused-occupied = das Gleis ist besetzt
+yard-refused-off-the-graph = das Gleis hinter der Marke reicht nicht
+yard-refused-not-a-portal = nur ein Portal nimmt einen Zug von der Strecke
+yard-refused-not-there = der Zug steht nicht an diesem Portal
+yard-refused-moving = noch in Bewegung

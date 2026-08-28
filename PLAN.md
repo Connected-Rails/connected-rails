@@ -348,9 +348,49 @@ cycle per vehicle). Vehicles take part when `VehicleSpec::passenger_doors` is se
   (the AI "sees" signals/temporary speed restrictions ahead via the track graph), stopping at the platform
   (stop board position), departure per timetable + departure signal, operation of Sifa/PZB (acknowledging),
   incident = simply come to a stand + radio message (v1).
-- **Train formation:** shunting v2; v1 trains spawn/despawn at fiddle yards (portals at the edge of the line).
+- **Train formation** (`sim-core::shunt`, `sim-core::yard`): trains are made up and taken apart in the
+  run. **Uncoupling** splits a consist at a coupler; the rear part becomes a train of its own and the
+  brake pipe parts at that coupler — the part that keeps the driver keeps its air, the other part's hose
+  hangs open, its pipe drops and its control valves apply, all of it out of the brake model that was
+  already there. **Coupling** joins two consists that stand buffer to buffer: both at a stand, the two
+  ends within reach of the gear *along the track graph* (a turnout the other way puts them out of reach
+  however near they are through the air), and the coupling kinds matching. Nothing is ever removed from
+  `Sim::trains`/`runtime`/`controls` — the AI drivers, the network protocol, the render components and
+  the score keeper address trains by index — so a consist coupled away keeps its slot as an empty
+  `stabled` train. The driver's side is a **setpoint in `CabInputs`**, so it travels like every other
+  lever and needs no message of its own; a refused order waits on the ground for a few seconds and is
+  tried again, which is what keeps two peers from ending up with different consists over a few
+  centimetres of position error. **Where to shunt to** is line content (`LineSource::yards`): stabling
+  roads on the line, and **portals at its edge**, which is where trains appear and disappear and
+  nowhere else. The **AI** takes a shunt job instead of, or after, a timetable — draw up, set back,
+  couple, uncouple, stand — at the 25 km/h Rangiergeschwindigkeit, writing nothing but `CabInputs`,
+  and a job is content (`ConsistSource::shunt`) rather than something only code can hand out.
+  **Signalling and the interlocking know the difference** (Ril 408 / 301): a `Movement` is a Zugfahrt
+  or a Rangierfahrt, the second is let past by **Sh 1** alone, may be let into an occupied track and is
+  held to shunting speed; a **Sperrsignal** shows Sh 0/Sh 1 and no main aspect; a **Rangierstraße** clears
+  Sh 1 while the main signal stays at stop, has no overlap, belongs to the movement that ran over it and
+  is released when that one has cleared it (the track clear detection records *which* trains are on a
+  section), with a Zeitverschluss for a route nobody takes; the 2000 Hz magnet under a signal showing Sh 1 is switched off. A movement changes kind by
+  passing a signal, which is how a shunt becomes a train at the starting signal.
+- **Spawn points and standing stock** (`sim-core::consist`): where a train comes from is a value of its
+  own — a place on the graph, or one of the line's roads by name. A **portal** is the edge of the
+  modelled railway: a train comes out of one when its working started on a piece of line nobody built,
+  and disappears into one when it carries on over the same. Both a scenario and an operating day declare
+  the trains that stand on the line before anything moves (`consists:`), each naming its vehicles head
+  first; for a scenario that list is what its events address by index, and `player_train` picks the
+  player's out of it.
 - **Scenario/event system:** triggers (time, train position, state) → actions (signal/switch, announcement,
   weather change, scoring, message). RON-based, equivalent to MaSzyna's event system.
+- **Operating day** (`sim-core::day`, `days/*.ron`): the second way a line is driven — the whole timetable
+  of a day, wall-clock times looping every 24 h, out of which the player takes one service and the AI
+  drives the rest. Services claim and release trains off the clock alone (a train between two workings is
+  *stabled*: not driven, not drawn, not occupying the track, and taken to the stabling road its service
+  names — the AI drives the move, and the placement at the end of the working's window is the backstop
+  that keeps the dispatching a function of the clock), so every peer dispatches the same trains without
+  a message. The player may hand their working
+  over and take another train — the AI drives everything they are not on the levers of (`app::crew`). The player sets the **date** (the plan's own by default) and the **weather** —
+  generated for that day out of a content seed, or one preset named and held — on a step of the run
+  picker of its own.
 - **Scoring:** timetable adherence, stopping accuracy, prohibited forced brake applications, energy
   consumption → log + score.
 
@@ -691,7 +731,7 @@ camera distance and drives the bound parts from the simulation state.
 | **M5** | LZB 80 + AFB, MFA displays, tap-changer loco (BR 110) as a 2nd traction type | LZB guidance incl. end/failure procedures; transition LZB→PZB |
 | **M6** | 3D cab fully interactive (mouse), start-up procedure, full audio, weather + night | "Cold loco" through to a line run entirely by mouse in the cab |
 | **M7** | Pilot line (~30 km real, imported from OSM/DGM, across no less than one UTM zone boundary if feasible), scenario system, scoring, save/load | A playable 45-minute scenario with scoring |
-| v2+ | ETCS, ZBS, GNT, detailed diesel models, shunting, dispatcher mode, multiplayer, RailDriver | — |
+| v2+ | ETCS, ZBS, dispatcher mode, RailDriver — GNT, the detailed diesel models, shunting and multiplayer are in | — |
 
 Rationale for the order: coordinates first (foundation, cannot be retrofitted), physics before train protection
 (forced braking needs a real brake), editor before content, LZB after the interlocking (needs block data).

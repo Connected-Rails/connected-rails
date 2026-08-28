@@ -140,7 +140,14 @@ pub fn authority(
     head: TrackPosition,
     section: &LzbSection,
 ) -> LzbTelegram {
-    let ahead = lookahead::scan(net, interlock, head, AUTHORITY_RANGE);
+    // The LZB supervises train movements; a shunting movement is not in its area at all.
+    let ahead = lookahead::scan(
+        net,
+        interlock,
+        head,
+        AUTHORITY_RANGE,
+        crate::shunt::Movement::Train,
+    );
 
     // A block boundary whose section is occupied ends the authority. A marker naming a
     // section that does not exist counts as occupied.
@@ -156,6 +163,7 @@ pub fn authority(
         .map(|b| Restriction {
             distance: b.distance,
             speed: 0.0,
+            signal: None,
         });
 
     // ponytail: the centre picks the governing target with the reference deceleration — the

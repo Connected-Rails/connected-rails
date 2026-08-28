@@ -3,9 +3,11 @@
 //! The AI drives the same vehicle simulation as the player — no cheating: it only
 //! sets [`CabInputs`], nothing else.
 
+pub mod shunt;
 pub mod timetable;
 
 use serde::{Deserialize, Serialize};
+pub use shunt::{ShuntJob, ShuntMove, ShuntPhase, ShuntState, ShuntTarget};
 use sim_core::Sim;
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::cab::CabInputs;
@@ -52,6 +54,8 @@ pub enum DriverState {
     WaitingAtSignal,
     /// Run finished (terminus reached).
     Finished,
+    /// Working a shunt job — drawing up, setting back, coupling (plan ch. 11).
+    Shunting,
 }
 
 /// An AI train driver.
@@ -60,6 +64,10 @@ pub struct AiDriver {
     pub timetable: Timetable,
     pub style: DrivingStyle,
     pub state: DriverState,
+    /// A shunt job, driven instead of the timetable when there are no stops, and after it
+    /// once the last one has been worked (plan ch. 11). `None` = an ordinary driver.
+    #[serde(default)]
+    pub shunt: Option<ShuntState>,
     /// Index of the next stop in the timetable.
     pub next_stop: usize,
     /// Sifa pedal rhythm [s].
@@ -77,6 +85,7 @@ impl AiDriver {
             timetable,
             style: DrivingStyle::default(),
             state: DriverState::Driving,
+            shunt: None,
             next_stop: 0,
             sifa_timer: 0.0,
             sifa_pressed: false,
@@ -85,11 +94,51 @@ impl AiDriver {
         }
     }
 
+    /// A driver who does nothing but shunt — a job instead of a timetable.
+    pub fn shunting(job: ShuntJob) -> Self {
+        let mut driver = Self::new(Timetable::default());
+        driver.shunt = Some(ShuntState::new(job));
+        driver
+    }
+
+    /// Hangs a shunt job on a driver who already has a timetable; it is worked once the
+    /// last stop has been made.
+    pub fn with_shunt(mut self, job: ShuntJob) -> Self {
+        self.shunt = Some(ShuntState::new(job));
+        self
+    }
+
     /// One driver step: reads the simulation and writes the cab inputs.
     pub fn drive(&mut self, sim: &mut Sim, train: usize, dt: f64) {
-        let head = sim.trains[train].vehicles[0].pos;
+        // A train that has been coupled away is nobody's to drive.
+        let Some(head) = sim.trains[train].vehicles.first().map(|v| v.pos) else {
+            return;
+        };
+        // Shunting takes over where the timetable has nothing left — or has nothing at
+        // all, which is a driver who was only ever given a job.
+        let shunting = self.timetable.stops.is_empty() || self.state == DriverState::Finished;
+        if shunting && let Some(job) = &mut self.shunt {
+            if job.active() {
+                self.state = DriverState::Shunting;
+                job.drive(sim, train);
+                self.operate_sifa(sim, train, dt);
+                return;
+            }
+            // The job is worked. A driver who was given one stands where it left him
+            // rather than setting off down the line again.
+            self.state = DriverState::Finished;
+            shunt::hold(sim, train);
+            self.operate_sifa(sim, train, dt);
+            return;
+        }
         let v_kmh = sim.trains[train].speed_kmh();
-        let view = lookahead::scan(&sim.net, &sim.interlock, head, self.style.lookahead);
+        let view = lookahead::scan(
+            &sim.net,
+            &sim.interlock,
+            head,
+            self.style.lookahead,
+            sim.trains[train].movement,
+        );
 
         let mut target = self.target_speed(sim, &view, head, v_kmh);
 
@@ -103,6 +152,17 @@ impl AiDriver {
         cab.reverser = 1;
         Self::apply_speed_control(cab, v_kmh, target);
 
+        self.operate_sifa(sim, train, dt);
+
+        // Always confirm the LZB takeover.
+        sim.controls[train].lzb_takeover = sim.runtime[train].protection.target_distance.is_some();
+        self.update_state(sim, train, v_kmh, &view);
+    }
+
+    /// The pedal and the acknowledge button — the same rhythm whether the driver is
+    /// running to a timetable or shunting.
+    fn operate_sifa(&mut self, sim: &mut Sim, train: usize, dt: f64) {
+        let v_kmh = sim.trains[train].speed_kmh();
         // Operate the Sifa every 20 s (short pedal press) — but at least every 800 m, so a
         // time-distance or RZM Sifa is served in time at speed as well.
         let interval = 20.0_f64.min(800.0 / (v_kmh.abs() / 3.6).max(1.0));
@@ -114,7 +174,7 @@ impl AiDriver {
                 self.sifa_timer = 0.0;
             }
         }
-        cab.sifa = self.sifa_pressed;
+        sim.controls[train].sifa = self.sifa_pressed;
 
         // Acknowledge the PZB as soon as the train protection demands it.
         if sim.runtime[train].protection.alert {
@@ -122,14 +182,10 @@ impl AiDriver {
         }
         if self.acknowledge_timer > 0.0 {
             self.acknowledge_timer -= dt;
-            cab.pzb_acknowledge = self.acknowledge_timer > 0.3;
+            sim.controls[train].pzb_acknowledge = self.acknowledge_timer > 0.3;
         } else {
-            cab.pzb_acknowledge = false;
+            sim.controls[train].pzb_acknowledge = false;
         }
-
-        // Always confirm the LZB takeover.
-        cab.lzb_takeover = sim.runtime[train].protection.target_distance.is_some();
-        self.update_state(sim, train, v_kmh, &view);
     }
 
     /// Target speed from the line profile, signals and the timetable stop.
@@ -159,7 +215,11 @@ impl AiDriver {
     }
 
     /// Simple speed controller acting on throttle and driver's brake valve.
-    fn apply_speed_control(cab: &mut CabInputs, v_kmh: f64, target: f64) {
+    ///
+    /// `v_kmh` is the speed the target is compared against. Which way the train runs is
+    /// the reverser's business, so a move that sets back hands in the magnitude and the
+    /// controller works exactly as it does going forwards.
+    pub(crate) fn apply_speed_control(cab: &mut CabInputs, v_kmh: f64, target: f64) {
         let err = target - v_kmh;
         if err > 2.0 {
             cab.throttle = (err / 15.0).clamp(0.1, 1.0);
@@ -184,7 +244,9 @@ impl AiDriver {
             DriverState::Driving => {
                 if v_kmh < 0.5 {
                     if let Some(stop) = self.timetable.stops.get(self.next_stop) {
-                        let head = sim.trains[train].vehicles[0].pos;
+                        let Some(head) = sim.trains[train].vehicles.first().map(|v| v.pos) else {
+                            return;
+                        };
                         if stop
                             .distance_from(&sim.net, head, 200.0)
                             .is_some_and(|d| d < 50.0)
@@ -223,7 +285,7 @@ impl AiDriver {
                     self.state = DriverState::Driving;
                 }
             }
-            DriverState::Finished => {}
+            DriverState::Finished | DriverState::Shunting => {}
         }
     }
 }

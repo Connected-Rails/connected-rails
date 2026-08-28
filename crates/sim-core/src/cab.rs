@@ -111,6 +111,14 @@ pub struct CabInputs {
     /// Softkeys next to the cab displays, read by the `display(ctx)` script hook.
     #[serde(default)]
     pub display_buttons: [bool; 8],
+    /// What the driver has asked the shunter on the ground to do (plan ch. 11).
+    ///
+    /// A command, not a result: the coupling itself happens in [`crate::shunt`] on every
+    /// peer out of this one value, so a shunting move is networked by being here and
+    /// needs nothing else. Like every button it is read as "currently asked for" — the
+    /// rising edge is what fires, so holding it down couples once.
+    #[serde(default)]
+    pub shunt: crate::shunt::ShuntCommand,
 }
 
 fn on() -> bool {
@@ -151,6 +159,7 @@ impl Default for CabInputs {
             cab_light: false,
             instrument_light: 0.0,
             display_buttons: [false; 8],
+            shunt: crate::shunt::ShuntCommand::None,
         }
     }
 }
@@ -936,6 +945,8 @@ mod tests {
             rail: RailCondition::Dry,
             number: String::new(),
             doors: Default::default(),
+            movement: Default::default(),
+            stabled: false,
         }
     }
 

@@ -3,6 +3,7 @@
 //! Used by the AI driver and by the LZB centre, which builds its movement authority from it.
 
 use crate::interlock::{BlockMarkerPayload, Interlock};
+use crate::shunt::Movement;
 use track_model::{DeviceKind, EdgeSide, TrackNetwork, TrackPosition};
 
 /// A speed restriction lying ahead.
@@ -12,6 +13,11 @@ pub struct Restriction {
     pub distance: f64,
     /// Speed permitted from there on [km/h] (0 = stop).
     pub speed: f64,
+    /// The signal it comes from, where it comes from one — a speed step of the line
+    /// carries none. It is what says *which* signal is holding a movement, which is what
+    /// the automatic shunting-route setting asks for
+    /// ([`Sim::step`](crate::Sim::step)).
+    pub signal: Option<crate::interlock::SignalId>,
 }
 
 /// A block boundary lying ahead.
@@ -52,22 +58,33 @@ impl Lookahead {
 
     /// Distance to the next stop [m], if one lies ahead.
     pub fn distance_to_stop(&self) -> Option<f64> {
-        self.restrictions
-            .iter()
-            .find(|r| r.speed <= 0.1)
-            .map(|r| r.distance)
+        self.next_stop().map(|r| r.distance)
+    }
+
+    /// The next thing that stops the movement, whatever it is.
+    pub fn next_stop(&self) -> Option<&Restriction> {
+        self.restrictions.iter().find(|r| r.speed <= 0.1)
     }
 }
 
 /// Looks `distance` metres ahead and collects the speed profile and signal aspects.
+///
+/// `movement` decides which signals bind: a train movement reads the main aspects and runs
+/// at the line speed, a shunting movement reads Sh 1 and nothing else and is held to
+/// shunting speed throughout (`sim_core::shunt::Movement`).
 pub fn scan(
     net: &TrackNetwork,
     interlock: &Interlock,
     from: TrackPosition,
     distance: f64,
+    movement: Movement,
 ) -> Lookahead {
+    let line = from.speed_limit(net);
     let mut out = Lookahead {
-        current: from.speed_limit(net),
+        current: match movement.speed_limit() {
+            Some(shunting) => line.min(shunting),
+            None => line,
+        },
         ..Default::default()
     };
 
@@ -84,8 +101,11 @@ pub fn scan(
         let remaining = distance - travelled;
         let span = (hi - lo).min(remaining);
 
-        // Speed steps of this edge.
+        // Speed steps of this edge. A shunting movement is held to shunting speed over
+        // all of them — the line speed is a train's, and a shunt is driven on sight.
+        let cap = movement.speed_limit().unwrap_or(f64::INFINITY);
         for (s, v) in edge.speed.steps().iter().copied() {
+            let v = v.min(cap);
             if s < lo || s > hi {
                 continue;
             }
@@ -96,6 +116,7 @@ pub fn scan(
             out.restrictions.push(Restriction {
                 distance: travelled + d,
                 speed: v,
+                signal: None,
             });
         }
 
@@ -117,10 +138,11 @@ pub fn scan(
                     let Some(signal) = interlock.signal_at_device(device.id) else {
                         continue;
                     };
-                    if let Some(speed) = interlock.signal_speed(signal.id) {
+                    if let Some(speed) = interlock.signal_speed(signal.id, movement) {
                         out.restrictions.push(Restriction {
                             distance: travelled + d,
                             speed,
+                            signal: Some(signal.id),
                         });
                     }
                 }
@@ -158,6 +180,7 @@ pub fn scan(
             out.restrictions.push(Restriction {
                 distance: travelled,
                 speed: 0.0,
+                signal: None,
             });
             break;
         };

@@ -6,6 +6,7 @@
 mod audio;
 mod bindings;
 mod cab;
+mod crew;
 mod displays;
 mod glyphs;
 mod hud;
@@ -14,6 +15,7 @@ mod models;
 mod mods_ui;
 mod net;
 mod render;
+mod services;
 mod settings;
 mod signals;
 mod streaming;
@@ -274,6 +276,9 @@ fn main() {
     } else {
         GameState::Menu
     })
+    // The wish to take a train over. It is written in single player too and read only by
+    // the network layer, so the type has to exist whether a socket does or not.
+    .add_message::<net::TakeOverRequest>()
     .add_systems(Startup, log_mods)
     // The world the last run built goes first — otherwise the next `setup` would put a
     // second one on top of it.
@@ -315,10 +320,18 @@ fn main() {
     .add_systems(
         Update,
         (
-            ui::player_input,
-            cab::apply_mouse,
-            drive_ai,
-            step_simulation,
+            // The simulation, in the order one step of it happens: the levers, who is on
+            // them, what the plan puts on the line, the AI, and then the step itself.
+            // A group of its own because Bevy's tuples end at twenty.
+            (
+                ui::player_input,
+                cab::apply_mouse,
+                crew::crew_change,
+                dispatch_services,
+                drive_ai,
+                step_simulation,
+            )
+                .chain(),
             run_mod_scripts,
             displays::update_displays,
             rebase_origin,
@@ -533,7 +546,8 @@ fn log_mods(mods: Res<Mods>) {
         warn!("mod: {warning}");
     }
     info!(
-        "Mods: {} of {} enabled ({} vehicles, {} lines, {} compositions, {} scenarios, {} timetables, {} signal types, {} scripts)",
+        "Mods: {} of {} enabled ({} vehicles, {} lines, {} compositions, {} scenarios, \
+         {} timetables, {} operating days, {} signal types, {} scripts)",
         mods.mods.manifests.iter().filter(|m| m.enabled).count(),
         mods.mods.manifests.len(),
         mods.mods.vehicles.len(),
@@ -541,6 +555,7 @@ fn log_mods(mods: Res<Mods>) {
         mods.mods.compositions.len(),
         mods.mods.scenarios.len(),
         mods.mods.timetables.len(),
+        mods.mods.days.len(),
         mods.mods.signal_types.len(),
         mods.mods.scripts.len()
     );
@@ -592,6 +607,8 @@ fn setup(
         player,
         drivers,
         line: line_source,
+        day,
+        dispatch,
     } = world::build(mods, &selection);
     // `--time 21:40` and `--date 2026-10-03` move the run's wall clock, the way
     // `--hud` moves the display: a screenshot cannot open the scenario file, and
@@ -602,13 +619,10 @@ fn setup(
         sim.start.hour = hour;
         sim.start.minute = minute;
     }
-    if let Some(date) = arg("--date") {
-        let parts: Vec<_> = date.split('-').filter_map(|p| p.parse().ok()).collect();
-        if let [year, month, day] = parts[..] {
-            sim.start.year = year as i32;
-            sim.start.month = month;
-            sim.start.day = day;
-        }
+    if let Some(date) = world::date_arg() {
+        sim.start.year = date.year;
+        sim.start.month = date.month;
+        sim.start.day = date.day;
     }
     // `--wipers 2` starts with the wipers running: they are a cab control, and a
     // screenshot has no hands.
@@ -639,8 +653,18 @@ fn setup(
     // is what says so on joining (`net.rs`).
     let fingerprint = world::fingerprint(&line_source.name, &sim);
 
-    // Render origin at the head of the train.
-    let start = sim.trains[player].vehicles[0].pos.pose(&sim.net).pos;
+    // Render origin at the head of the train. A consist with no vehicles stands nowhere,
+    // so the origin starts at the line's own anchor instead (`sim_core::shunt`).
+    let start = sim.trains[player]
+        .vehicles
+        .first()
+        .map(|v| v.pos.pose(&sim.net).pos)
+        .unwrap_or_else(|| {
+            sim.net
+                .edges()
+                .first()
+                .map_or_else(world_coords::EcefPos::default, |e| e.eval(0.0).pos)
+        });
     let origin = RenderOrigin::new(start);
 
     // Ground, scenery and foliage wear the season of the scenario's start date
@@ -780,115 +804,39 @@ fn setup(
     );
 
     // Vehicles as simple bodies — the 3D cab comes in M6.
-    let body = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.70, 0.12, 0.14),
-        perceptual_roughness: 0.6,
-        ..default()
-    });
-    let coach = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.80, 0.80, 0.84),
-        perceptual_roughness: 0.6,
-        ..default()
-    });
-    // Zg 101: two red lamps on the current rear end (`update_headlights`).
-    // ponytail: emissive spheres at the placeholder body's face — modelled
-    // vehicles get real lenses once their glTF carries them as content.
-    let tail_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.25, 0.02, 0.02),
-        emissive: LinearRgba::rgb(6.0, 0.08, 0.08),
-        ..default()
-    });
-    let tail_mesh = meshes.add(Sphere::new(0.09));
+    let kit = VehicleKit {
+        body: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.70, 0.12, 0.14),
+            perceptual_roughness: 0.6,
+            ..default()
+        }),
+        coach: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.80, 0.80, 0.84),
+            perceptual_roughness: 0.6,
+            ..default()
+        }),
+        // Zg 101: two red lamps on the current rear end (`update_headlights`).
+        // ponytail: emissive spheres at the placeholder body's face — modelled
+        // vehicles get real lenses once their glTF carries them as content.
+        tail_material: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.25, 0.02, 0.02),
+            emissive: LinearRgba::rgb(6.0, 0.08, 0.08),
+            ..default()
+        }),
+        tail_mesh: meshes.add(Sphere::new(0.09)),
+    };
     for train in std::iter::once(player).chain(drivers.iter().map(|(t, _)| *t)) {
-        let last = sim.trains[train].vehicles.len() - 1;
-        for (i, v) in sim.trains[train].vehicles.iter().enumerate() {
-            let view = VehicleView { train, vehicle: i };
-            // A vehicle with a model gets its glTF; everything else stays a body
-            // (plan ch. 15.3).
-            // Through `model_file`, so a variant's own livery is the one that loads.
-            let entity = if let Some(file) = v.spec.model_file(v.variant).filter(|f| !f.is_empty())
-            {
-                let file = file.to_string();
-                let entity = commands
-                    .spawn((Transform::default(), Visibility::default(), view))
-                    .id();
-                models::spawn(&mut commands, &assets, entity, &view, &file);
-                entity
-            } else {
-                let mesh = meshes.add(
-                    Mesh::from(Cuboid::new(3.0, 3.8, v.spec.length as f32))
-                        .translated_by(Vec3::Y * 2.2),
-                );
-                commands
-                    .spawn((
-                        Mesh3d(mesh),
-                        MeshMaterial3d(if v.is_powered() {
-                            body.clone()
-                        } else {
-                            coach.clone()
-                        }),
-                        Transform::default(),
-                        view,
-                    ))
-                    .id()
-            };
-            // Headlight cones and red tail lamps (Zg 101) at both ends of the
-            // train; `update_headlights` lights the cones on the end facing the
-            // direction of travel and the tail lamps on the other one.
-            let mut cones = Vec::new();
-            if i == 0 {
-                cones.push((-(v.spec.length as f32) / 2.0, false));
-            }
-            if i == last {
-                cones.push(((v.spec.length as f32) / 2.0, true));
-            }
-            for (end, reverse) in cones {
-                let dir = if reverse { 1.0 } else { -1.0 };
-                commands.entity(entity).with_children(|parent| {
-                    parent.spawn((
-                        Headlight { train, reverse },
-                        SpotLight {
-                            color: Color::srgb(1.0, 0.95, 0.85),
-                            intensity: 0.0,
-                            range: 300.0,
-                            inner_angle: 0.18,
-                            outer_angle: 0.32,
-                            ..default()
-                        },
-                        // Buffer height above the rail, at the end of the vehicle,
-                        // aimed a touch onto the track.
-                        Transform::from_xyz(0.0, 1.6, end)
-                            .looking_to(Vec3::new(0.0, -0.06, dir).normalize(), Vec3::Y),
-                    ));
-                    for x in [-1.0, 1.0] {
-                        parent.spawn((
-                            TailLamp { train, reverse },
-                            Mesh3d(tail_mesh.clone()),
-                            MeshMaterial3d(tail_material.clone()),
-                            Transform::from_xyz(x, 1.6, end),
-                            Visibility::Hidden,
-                        ));
-                    }
-                });
-            }
-            // Cab light behind the front window of the player's leading vehicle.
-            if train == player && i == 0 {
-                commands.entity(entity).with_children(|parent| {
-                    parent.spawn((
-                        CabLamp,
-                        PointLight {
-                            color: Color::srgb(1.0, 0.9, 0.75),
-                            intensity: 0.0,
-                            range: 4.0,
-                            ..default()
-                        },
-                        Transform::from_xyz(0.0, 2.6, -(v.spec.length as f32) / 2.0 + 1.8),
-                    ));
-                });
-            }
-        }
+        spawn_vehicle_views(
+            &mut commands,
+            &assets,
+            &mut meshes,
+            &kit,
+            &sim,
+            train,
+            player,
+        );
     }
-
+    commands.insert_resource(kit);
     // Atmosphere, sun, moon and stars — all of them off the scenario clock and
     // the georeferenced place (`feed_sky`).
     sky::spawn(
@@ -1029,8 +977,17 @@ fn setup(
     commands.insert_resource(Origin(origin));
     commands.insert_resource(net::WorldId(fingerprint));
     commands.insert_resource(PlayerTrain(player));
+    // The run begins with the player at the desk of the train it put them in.
+    commands.insert_resource(crew::Duty(Some(player)));
     commands.insert_resource(AiDrivers(drivers));
     commands.insert_resource(SimResource(sim));
+    // A timetable run keeps dispatching after the world is built (`dispatch_services`);
+    // a scenario and a free run have nothing left to put on the line.
+    commands.insert_resource(dispatch);
+    match day {
+        Some(run) => commands.insert_resource(run),
+        None => commands.remove_resource::<services::DayRun>(),
+    }
 }
 
 /// UTM zone of the DGM data from `--epsg`, default 32 (western Germany).
@@ -1108,27 +1065,251 @@ pub(crate) fn spawn_train(
     coaches: usize,
     loco: VehicleSpec,
 ) -> usize {
-    let mut vehicles = vec![Vehicle::new(loco, head)];
-    for _ in 0..coaches {
-        vehicles.push(Vehicle::new(passenger_coach(), head));
-    }
+    let mut vehicles = vec![loco];
+    vehicles.extend(std::iter::repeat_n(passenger_coach(), coaches));
+    spawn_consist(sim, head, vehicles, true)
+}
+
+/// A train of exactly these vehicles, head first, standing at `head`.
+///
+/// What a scenario's or an operating day's `consists:` list comes to
+/// (`sim_core::consist::ConsistSource`): the vehicles are named there one by one instead
+/// of "a locomotive and n coaches", because a rake of vans behind a shunter is a train
+/// too. `prepared` is battery on, pantograph up and main switch in — a cold engine the
+/// driver has to wake up is a scenario of its own (M6).
+pub(crate) fn spawn_consist(
+    sim: &mut Sim,
+    head: TrackPosition,
+    vehicles: Vec<VehicleSpec>,
+    prepared: bool,
+) -> usize {
+    let vehicles = vehicles
+        .into_iter()
+        .map(|spec| Vehicle::new(spec, head))
+        .collect();
     let index = sim.add_train(Train::assemble(vehicles, head, &sim.net));
-    // Vehicles start prepared — the "cold locomotive" is a scenario of its own (M6).
-    for v in &mut sim.trains[index].vehicles {
-        if v.is_powered() {
-            v.traction.battery = true;
-            v.traction.pantograph_command = true;
-            v.traction.main_switch_command = true;
-            v.traction.pantograph = 1.0;
-            v.traction.compressor = true;
+    if prepared {
+        for v in &mut sim.trains[index].vehicles {
+            if v.is_powered() {
+                v.traction.battery = true;
+                v.traction.pantograph_command = true;
+                v.traction.main_switch_command = true;
+                v.traction.pantograph = 1.0;
+                v.traction.compressor = true;
+            }
         }
     }
     index
 }
 
+/// The materials and the mesh every placeholder vehicle is drawn with.
+///
+/// A resource rather than four locals in `setup`, because a train is no longer only put
+/// on the line before the first frame: an operating day dispatches its services as their
+/// hour comes (`dispatch_services`), and what they are drawn with has to outlive the
+/// frame the world was built in.
+#[derive(Resource, Clone)]
+pub(crate) struct VehicleKit {
+    body: Handle<StandardMaterial>,
+    coach: Handle<StandardMaterial>,
+    tail_material: Handle<StandardMaterial>,
+    tail_mesh: Handle<Mesh>,
+}
+
+/// Everything one train is drawn with: a body or its glTF per vehicle, the headlight
+/// cones and tail lamps at both ends, and the cab lamp in the player's leading vehicle.
+pub(crate) fn spawn_vehicle_views(
+    commands: &mut Commands,
+    assets: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    kit: &VehicleKit,
+    sim: &Sim,
+    train: usize,
+    player: usize,
+) {
+    let (body, coach) = (&kit.body, &kit.coach);
+    let (tail_material, tail_mesh) = (&kit.tail_material, &kit.tail_mesh);
+    let last = sim.trains[train].vehicles.len().saturating_sub(1);
+    for (i, v) in sim.trains[train].vehicles.iter().enumerate() {
+        let view = VehicleView { train, vehicle: i };
+        // A vehicle with a model gets its glTF; everything else stays a body
+        // (plan ch. 15.3).
+        // Through `model_file`, so a variant's own livery is the one that loads.
+        let entity = if let Some(file) = v.spec.model_file(v.variant).filter(|f| !f.is_empty()) {
+            let file = file.to_string();
+            let entity = commands
+                .spawn((Transform::default(), Visibility::default(), view))
+                .id();
+            models::spawn(commands, assets, entity, &view, &file);
+            entity
+        } else {
+            let mesh = meshes.add(
+                Mesh::from(Cuboid::new(3.0, 3.8, v.spec.length as f32))
+                    .translated_by(Vec3::Y * 2.2),
+            );
+            commands
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(if v.is_powered() {
+                        body.clone()
+                    } else {
+                        coach.clone()
+                    }),
+                    Transform::default(),
+                    view,
+                ))
+                .id()
+        };
+        // Headlight cones and red tail lamps (Zg 101) at both ends of the
+        // train; `update_headlights` lights the cones on the end facing the
+        // direction of travel and the tail lamps on the other one.
+        let mut cones = Vec::new();
+        if i == 0 {
+            cones.push((-(v.spec.length as f32) / 2.0, false));
+        }
+        if i == last {
+            cones.push(((v.spec.length as f32) / 2.0, true));
+        }
+        for (end, reverse) in cones {
+            let dir = if reverse { 1.0 } else { -1.0 };
+            commands.entity(entity).with_children(|parent| {
+                parent.spawn((
+                    Headlight { train, reverse },
+                    SpotLight {
+                        color: Color::srgb(1.0, 0.95, 0.85),
+                        intensity: 0.0,
+                        range: 300.0,
+                        inner_angle: 0.18,
+                        outer_angle: 0.32,
+                        ..default()
+                    },
+                    // Buffer height above the rail, at the end of the vehicle,
+                    // aimed a touch onto the track.
+                    Transform::from_xyz(0.0, 1.6, end)
+                        .looking_to(Vec3::new(0.0, -0.06, dir).normalize(), Vec3::Y),
+                ));
+                for x in [-1.0, 1.0] {
+                    parent.spawn((
+                        TailLamp { train, reverse },
+                        Mesh3d(tail_mesh.clone()),
+                        MeshMaterial3d(tail_material.clone()),
+                        Transform::from_xyz(x, 1.6, end),
+                        Visibility::Hidden,
+                    ));
+                }
+            });
+        }
+        // Cab light behind the front window of the player's leading vehicle.
+        if train == player && i == 0 {
+            commands.entity(entity).with_children(|parent| {
+                parent.spawn((
+                    CabLamp,
+                    PointLight {
+                        color: Color::srgb(1.0, 0.9, 0.75),
+                        intensity: 0.0,
+                        range: 4.0,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 2.6, -(v.spec.length as f32) / 2.0 + 1.8),
+                ));
+            });
+        }
+    }
+}
+
+/// The operating day's dispatcher: puts its services on the line as their hour comes and
+/// stables them again when it is over (plan ch. 11).
+///
+/// Every peer runs it. Which services are out is a pure function of the clock, so the
+/// train list stays the same on all of them without a message about it; what stays the
+/// server's is the *driving*, which is why a client is given the trains but not the
+/// drivers (`services`, CLAUDE.md ch. 20).
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dispatch_services(
+    mut commands: Commands,
+    mut sim: ResMut<SimResource>,
+    mut dispatch: ResMut<services::Dispatch>,
+    mut drivers: ResMut<AiDrivers>,
+    // The three that draw a train are optional: the dedicated server runs this system on
+    // `MinimalPlugins`, where there is no asset plugin and nothing to draw with.
+    mut meshes: Option<ResMut<Assets<Mesh>>>,
+    mut fallback: Local<Option<sim_core::train::VehicleSpec>>,
+    run: Option<Res<services::DayRun>>,
+    kit: Option<Res<VehicleKit>>,
+    assets: Option<Res<AssetServer>>,
+    player: Res<PlayerTrain>,
+    duty: Res<crew::Duty>,
+    host: Option<Res<net::Host>>,
+    mods: Res<Mods>,
+    role: Option<Res<net::Role>>,
+) {
+    let Some(run) = run else { return };
+    // A service that names no vehicle of its own gets the built-in one rather than
+    // whatever the player picked in the menu: two clients would otherwise put different
+    // trains on the line for the same working.
+    let fallback = fallback.get_or_insert_with(content::vehicles::br101);
+    // Nobody's train is stabled out from under them: the player's own, and on a server
+    // every train a client has taken over.
+    let mut driven: Vec<usize> = duty.0.into_iter().collect();
+    if let Some(host) = host.as_deref() {
+        driven.extend(host.driven());
+    }
+    let changes = services::dispatch(
+        &mut sim.0,
+        &run,
+        &mut dispatch,
+        &driven,
+        &mods.0.mods.vehicles,
+        fallback,
+    );
+    let client = role.is_some_and(|role| *role == net::Role::Client);
+    // A working that is over has nobody in the cab any more. Its driver has to go with it,
+    // or the AI would keep driving a unit that has just been put in a siding.
+    for train in &changes.released {
+        drivers.0.retain(|(driven, _)| driven != train);
+    }
+    let clock = sim.0.clock();
+    for service in changes.started {
+        // A unit that has been out before is already drawn; one that has just been built
+        // is not. The dedicated server draws nothing at all.
+        if service.fresh
+            && let (Some(kit), Some(assets), Some(meshes)) =
+                (kit.as_deref(), assets.as_deref(), meshes.as_deref_mut())
+        {
+            spawn_vehicle_views(
+                &mut commands,
+                assets,
+                meshes,
+                kit,
+                &sim.0,
+                service.train,
+                player.0,
+            );
+        }
+        info!(
+            "{} on the line as train {}",
+            run.day.services[service.service].number, service.train
+        );
+        if client {
+            continue;
+        }
+        let ai = services::driver_for(&run.day.services[service.service], clock);
+        match drivers
+            .0
+            .iter_mut()
+            .find(|(train, _)| *train == service.train)
+        {
+            Some(slot) => slot.1 = ai,
+            None => drivers.0.push((service.train, ai)),
+        }
+    }
+}
+
 pub(crate) fn drive_ai(
     mut sim: ResMut<SimResource>,
     mut drivers: ResMut<AiDrivers>,
+    duty: Res<crew::Duty>,
     time: Res<Time>,
     host: Option<Res<net::Host>>,
     role: Option<Res<net::Role>>,
@@ -1140,10 +1321,14 @@ pub(crate) fn drive_ai(
     }
     let dt = time.delta_secs_f64().min(0.25);
     for (train, ai) in drivers.0.iter_mut() {
-        // A train a client has taken over drives itself.
-        if host
-            .as_ref()
-            .is_some_and(|host| host.is_player_driven(*train))
+        // The train the player is in charge of drives itself, as does one a client has
+        // taken over; one that is stabled between two workings has nobody in the cab at
+        // all. This is the whole of the arbitration (`crate::crew`).
+        if sim.0.trains.get(*train).is_none_or(|t| t.stabled)
+            || duty.0 == Some(*train)
+            || host
+                .as_ref()
+                .is_some_and(|host| host.is_player_driven(*train))
         {
             continue;
         }
@@ -1172,7 +1357,14 @@ fn rebase_origin(
     mut origin: ResMut<Origin>,
     mut anchored: Query<(&WorldAnchored, &mut Transform)>,
 ) {
-    let head = sim.0.trains[player.0].vehicles[0].pos.pose(&sim.0.net).pos;
+    // An empty consist has no head to follow; the origin stays where it is.
+    let Some(head) = sim.0.trains[player.0]
+        .vehicles
+        .first()
+        .map(|v| v.pos.pose(&sim.0.net).pos)
+    else {
+        return;
+    };
     if origin.0.rebase_if_needed(head) {
         render::resync_anchored(&origin.0, &mut anchored);
     }
@@ -1187,12 +1379,22 @@ fn rebase_origin(
 fn sync_vehicles(
     sim: Res<SimResource>,
     origin: Res<Origin>,
-    mut query: Query<(&VehicleView, &mut Transform)>,
+    mut query: Query<(&VehicleView, &mut Transform, &mut Visibility)>,
 ) {
-    for (view, mut transform) in query.iter_mut() {
+    for (view, mut transform, mut visibility) in query.iter_mut() {
         let Some(train) = sim.0.trains.get(view.train) else {
             continue;
         };
+        // A stabled train is out of service and off the line — nothing of it is drawn,
+        // its lamps and its cab light included, which the hierarchy takes care of.
+        let wanted = if train.stabled {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *visibility != wanted {
+            *visibility = wanted;
+        }
         let Some(vehicle) = train.vehicles.get(view.vehicle) else {
             continue;
         };
@@ -1408,7 +1610,9 @@ fn update_precipitation(
     let Ok(cam) = camera.single() else {
         return;
     };
-    let vehicle = &sim.0.trains[player.0].vehicles[0];
+    let Some(vehicle) = sim.0.trains[player.0].vehicles.first() else {
+        return;
+    };
     let vel = origin.0.dir_to_render(vehicle.pos.pose(&sim.0.net).tangent) * vehicle.v as f32;
     let weather = sim.0.weather.now;
     // Nothing falls on a train in a tunnel: the track type already says where one
@@ -1480,6 +1684,60 @@ fn update_precipitation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dedicated server has no asset plugin and nothing to draw with, and still has to
+    /// keep putting the day's services on the line — `dispatch_services` is the one system
+    /// that runs on both sides, so its rendering half has to be optional.
+    #[test]
+    fn services_are_dispatched_without_anything_to_draw_with() {
+        let mut mods = ModRuntime::load("../../mods");
+        let day = content::musterbahn_day();
+        // The 05:12 out of Musterbach; the next working leaves at 05:42.
+        let index = day
+            .services
+            .iter()
+            .position(|service| service.departure() == 5.0 * 3_600.0 + 720.0)
+            .expect("the plan has an 05:12");
+        let built = world::build(
+            &mut mods,
+            &menu::Selection {
+                service: Some(world::ServiceRef {
+                    day: world::BUILTIN_DAY.into(),
+                    index,
+                }),
+                ..default()
+            },
+        );
+        let run = built.day.expect("a timetable run carries its plan");
+        let player = built.player;
+
+        let mut app = App::new();
+        // `MinimalPlugins` is exactly what `net::run_dedicated` builds on: no assets, no
+        // renderer, no window.
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(PlayerTrain(player))
+            .insert_resource(crew::Duty(Some(player)))
+            .insert_resource(AiDrivers(built.drivers))
+            .insert_resource(built.dispatch)
+            .insert_resource(Mods(mods))
+            .insert_resource(net::Role::Server)
+            .insert_resource(run)
+            .insert_resource(SimResource(built.sim))
+            .add_systems(Update, dispatch_services);
+
+        let before = app.world().resource::<SimResource>().0.trains.len();
+        assert_eq!(before, 1, "the plan runs one train at a time");
+        // Half an hour on, the next working is due.
+        app.world_mut().resource_mut::<SimResource>().0.time = 30.0 * 60.0;
+        app.update();
+
+        let trains = app.world().resource::<SimResource>().0.trains.len();
+        assert_eq!(trains, before + 1, "no service was put on the line");
+        // … and the server drives it, because the server owns every AI.
+        let drivers = &app.world().resource::<AiDrivers>().0;
+        assert_eq!(drivers.len(), 1);
+        assert_ne!(drivers[0].0, player, "not the player's train");
+    }
 
     /// Leaving a run for the title screen has to take the world with it and nothing else
     /// — the window, the picking pointers and the cloud dome are all older than the run

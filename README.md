@@ -24,6 +24,7 @@ cargo run -p app -- --screenshot night.png --time 22:30 --date 2026-01-15  # …
 
 cargo run -p app -- --line example:beispielstrecke --loco example:br101_afb   # from a mod
 cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
+cargo run -p app -- --line example:beispielstrecke --day example:beispieltag --service 0  # a service out of a 24 h timetable
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 cargo run -p app -- --loco example:br101_afb --camera walk      # start on foot (F4) instead of on the seat
 cargo run -p app -- --camera walk --character example/models/driver.glb   # with a body (seen from F2/F3)
@@ -33,16 +34,21 @@ cargo run -p app -- --connect 127.0.0.1:27015            # join one
 ```
 
 Without arguments the simulator opens on a title screen: wordmark over the backdrop, and four
-verbs — **Drive**, **Mods**, **Settings**, **Quit**. Drive walks line → vehicle → scenario in
+verbs — **Drive**, **Mods**, **Settings**, **Quit**. Drive walks line → vehicle → run in
 three steps, shown as a numbered rail across the top with what was picked under each. Beside
 the list a detail pane reads the highlighted entry out of the loaded content: length, permitted
 speed and signals of a line; mass, running-gear limit, drive and brake of a vehicle; start time,
-timetable and events of a scenario. `↑`/`↓` or the mouse select, `Enter` or a left click
+timetable and events of a scenario. The third step offers **two kinds of run**: a scenario, and
+under a heading of its own every playable **service of an operating day** — a whole 24-hour
+timetable that starts over at midnight (see *Timetable runs* below). Picking a service opens
+one more page, where the **date** and the **weather** are set before the run starts.
+`↑`/`↓` or the mouse select, `Enter` or a left click
 confirms, `←`/`→` dial a setting, `Esc` goes one step back and leaves at the title screen; `F9`
-opens the mod manager in-game. Any run flag (`--line`, `--loco`, `--scenario`, `--frames`,
-`--screenshot`, …) skips the menu entirely, so the invocations above stay non-interactive —
-`--menu` puts it back in front, optionally on a named page (`--menu settings`, also `root`,
-`line`, `loco`, `scenario`, `mods`), which is the only way to photograph the menu itself.
+opens the mod manager in-game. Any run flag (`--line`, `--loco`, `--scenario`, `--day`,
+`--frames`, `--screenshot`, …) skips the menu entirely, so the invocations above stay
+non-interactive — `--menu` puts it back in front, optionally on a named page
+(`--menu settings`, also `root`, `line`, `loco`, `scenario`, `run`, `mods`), which is the only
+way to photograph the menu itself.
 
 The picture behind the menu lives in `crates/app/images/` and is compiled into the binary. The
 one checked in today is a **placeholder that is not ours to distribute** — see the README there.
@@ -82,9 +88,13 @@ the world, opens a UDP socket and runs the simulation without a window, a render
 card; `--connect <host:port>` joins one. Without either flag nothing of it runs — single
 player never opens a socket.
 
-Both sides have to build the same world, so start them with the same `--line`/`--scenario`;
+Both sides have to build the same world, so start them with the same
+`--line`/`--scenario`, or the same `--day`/`--service` for a timetable run;
 a fingerprint over line name and consists is exchanged on joining and complained about in the
-log when it differs. On joining, a client asks for the train its own scenario put it in and
+log when it differs. An operating day needs nothing beyond that: which of its services are out
+is a pure function of the clock and they claim their units in departure order, so server and
+client keep dispatching the same trains at the same indices for as long as the run lasts,
+without a message about any of it. The AI that drives them stays the server's. On joining, a client asks for the train its own scenario put it in and
 gets it while it is still free — otherwise the first train nobody has taken. A train a player
 has taken over is no longer driven by the AI, and goes back to it when that player leaves.
 
@@ -412,6 +422,7 @@ The table below is what everything ships with.
 | `P` / `O` | Parking brake / pre-controlled (ep) brake on-off |
 | `G` | Sanding |
 | `J` / `K` / `I` | Door release left / right, close the doors |
+| `Insert` / `Home` | Couple to what stands ahead / uncouple behind the occupied vehicle |
 | `Space` | Sifa (driver's safety device) |
 | `Page Down` / `End` / `Delete` | PZB acknowledge / release / override |
 | `N` / `M` / `B` | LZB takeover / end / function test |
@@ -439,7 +450,12 @@ The table below is what everything ships with.
 `content::musterbahn()` — 7 km: 3 km straight (160 km/h), 1 km curve R = 1200 m with cant
 ramp (130 km/h), 3 km at 8 ‰ gradient. Block signal at km 2.0 with distant signal,
 1000/500/2000 Hz magnets, and over the last 4 km an LZB loop cable with block markers of its
-own, so the LZB area runs in full block mode.
+own, so the LZB area runs in full block mode. A portal at each end says where trains come
+from and where they go.
+
+`mods/example/lines/beispielstrecke.ron` is the hand-written one, and the one to shunt on:
+4 km of running road with a Ks main signal and a semaphore, then a turnout at km 4.0 into a
+stabling siding, with a portal at each end of the line.
 
 ## Terrain
 
@@ -886,6 +902,140 @@ sets the rail by hand — leaves and sanded rail have no weather to come from �
 until the weather next changes. From the driver's seat the rain is on the glass too: a
 vehicle names its panes in `cab: (windscreen: [...])`, and the wiper clears the strip its
 blade has just crossed.
+
+## Timetable runs
+
+Besides the scenarios a line can be driven out of its **operating day**: the whole timetable
+of a day, looping every 24 hours, out of which the player takes one service.
+
+```ron
+(
+    name: "Beispieltag",
+    line: Some("example:beispielstrecke"),
+    date: (year: 2026, month: 8, day: 15),
+    weather: Dynamic,                              // or Fixed(Rain)
+    services: [
+        (
+            number: "RB 30001", category: "RB",
+            vehicle: Some("example:br101_afb"), cars: 3,
+            origin: At(edge: EdgeId(0), s: 200.0, dir: 1),  // or Yard("Portal Ost")
+            stable_at: Some("Abstellgleis 1"),             // where its stock goes after
+            stops: [ /* times in seconds since local midnight */ ],
+        ),
+    ],
+)
+```
+
+The times are wall clock and wrap at midnight — a service leaving at 23:50 and arriving at
+00:12 needs nothing said about days. The run starts two minutes before the service departs,
+and the whole plan runs around it: as each other service's hour comes the simulator puts its
+train on the line and the AI drives it, and when it is over the unit is put away — onto the
+**stabling road** the service names (`stable_at`, one of the line's `yards:`) where it stands
+braked in its siding, out through a **portal** where that is what the road is, or simply out
+of service at the terminus where the plan names none. The AI *drives* it there: a working
+with a road gets a shunt move on top of its timetable, and its window stays open ten minutes
+instead of three to give it time. Whatever the driver managed, the unit is placed on the road
+when that window closes — the driven move is for the look of it, the placement is the
+guarantee, and it is what keeps the whole thing a function of the clock so that a dedicated
+server and every client put the same trains on the line without sending anything about it.
+The next service that needs the same stock takes that unit rather than a new one.
+
+**Where trains come from.** A spawn point is either a place on the line
+(`At(edge: …, s: …, dir: …)`) or one of its roads by name (`Yard("Portal Ost")`). A
+**portal** is the edge of the modelled railway: a service whose stock comes out of one
+started on a piece of line nobody has built, and one that ends at a portal carries on over
+it and is gone. Both a timetable and a **scenario** may also declare `consists:` — trains
+that simply stand there from the first minute, each naming its vehicles head first, driven
+to a timetable where they have one and left braked where they have not. For a scenario that
+list is also what its events address: its order is the order the train indices run in, and
+`player_train` picks which of them is the player's.
+`mods/example/scenarios/rangierfahrt.ron` is a shunting scenario built out of exactly that —
+a light engine in the siding, three machines to collect from the platform, and `Insert` to
+couple.
+
+**Zugfahrt and Rangierfahrt are two different movements**, and the simulator draws the
+line where German practice draws it (Ril 408 / 301). A train movement carries a number, is
+signalled by the main signals, is only let onto track that has been proved clear, and runs
+at the line speed. A shunting movement carries none, is let past by **Sh 1** and by nothing
+else — Hp 1 has said nothing to it — may be let into an **occupied** track, which is the
+whole point of shunting, and runs on sight at 25 km/h; the 2000 Hz magnet of a signal
+showing Sh 1 is switched off, because otherwise every shunting movement past a signal at
+stop would be tripped. A **Rangierstraße** locks the points and clears Sh 1 while leaving
+the main signal at stop, and it belongs to the movement that ran over it: it is given back
+when *that* train has cleared it, so a second shunt past the same signal takes nothing away
+from the first, and a route over a road that was occupied to begin with is released all the
+same.
+
+**A movement changes kind by passing a signal.** Under Sh 1 it becomes a shunting movement,
+under a main proceed aspect a train — so a shunt draws up to the starting signal, is given
+a train route, and leaves as a train, with nothing switching a mode anywhere. A movement
+standing in front of a Sperrsignal is given the first free shunting route out of it by
+itself, which is how a unit gets out of a siding without a script.
+
+**You can get out.** A driver is responsible for one train at a time, or for none — and that,
+not where they happen to be standing, is what decides who is on the levers: the AI drives
+every train it has a driver for *except* that one. Walk out of the door and the working is
+handed over — the AI takes it on from the stop that is actually next, and a train with no
+working at all is secured where it stands rather than driven away. Walk along the platform,
+through the door of another train, and sit down at its desk: `Tab` takes it over, and `Tab`
+again gives it back. The refusals are said out loud rather than swallowed — not from the
+platform, not a train that is out of service, not a rake with nothing in it that pulls, not
+one somebody else is driving, and in a scenario not any train but the scenario's own, because
+its events and its ending name that one. Whatever working is taken is the one that is scored
+from then on. Over the network it is a wish the server grants or refuses; nobody takes a train
+from under another driver.
+
+Two things are the player's, and they are the reason picking a service opens one more page:
+
+* **The date.** The plan's own to begin with, dialled a day at a time. It decides the season
+  the ground and the trees wear and where the sun stands at the hour the service leaves — the
+  same 06:15 out of Beispielbach is a summer morning in August and a night run in January.
+* **The weather.** Either **dynamic**, where the day makes its own out of the date and the
+  plan's name — two octaves of noise walk a ladder of presets, so fronts move in, the rain
+  stops and the sky clears again over the hours, and a 24-hour timetable has weather in it
+  rather than one weather — or **set by hand**, where one of the thirteen presets is named,
+  placed at the start with its wet or snowed-on ground, and held. The generated day is a pure
+  function of `(seed, clock)`, seeded out of the content, so the same service on the same date
+  brings the same sky on every machine.
+
+`--day <mod>:<name> --service <n>` takes a service without the menu, `--date` moves the date
+with it, and `--weather` still overrides the sky for a screenshot. `MODS.md` documents the
+file format; `mods/example/days/beispieltag.ron` is a complete one, and the built-in Musterbahn
+ships an hourly day of its own so the picker has something to offer with no mods installed.
+
+## Shunting
+
+A train is not only driven, it is made up. `Insert` calls the shunter to **couple** to
+whatever the train stands up against; `Home` **uncouples** behind the vehicle the driver
+sits in, which is a locomotive running round its train. Both are held down while he works:
+the order goes on the lever, and the answer — coupled, uncoupled, or which condition was
+not met — comes back on the line the train protection interrupts on.
+
+The refusals are the point. Nothing is ever half done: both parts have to be standing
+still, the two ends have to be within reach of the gear **along the track** (a turnout
+lying the other way puts them out of reach however near they are through the air), and the
+coupling gear has to match — a Scharfenberg head does not meet a screw coupling, and a bar
+inside a fixed unit is undone in the works, not on the ground. What parts is the brake pipe
+too: the part that keeps the driver keeps its air, the other part's hose is left hanging,
+its pipe drops and its control valves apply. Nobody rolls away.
+
+**Somewhere to shunt to** is line content. A line names its **stabling roads** — sidings a
+unit can be left on — and its **portals**, the edge of the modelled world where trains
+appear and disappear (a fiddle yard, a junction beyond the last signal). The route editor's
+rule check refuses a portal that is not actually at the edge of the line, because a train
+appearing in the middle of a running road is not a train, it is a collision. `MODS.md`
+documents the format; `mods/example/lines/beispielstrecke.ron` has a turnout, a stabling
+siding and a portal at each end.
+
+**The AI shunts too.** A driver can be given a *shunt job* instead of, or after, a
+timetable: draw forward to a point, set back onto a road, couple to what stands there,
+uncouple at a coupler, finish at a stand. It is the same driver as ever — it writes the cab
+controls and nothing else — and it holds itself to the German shunting speed of 25 km/h,
+creeping the last few metres onto the buffers. A move ends when the buffers are met,
+whatever the mark said.
+
+Over the network none of this needs a message of its own: the order is a setpoint in the
+cab like every other lever, and every peer works out the same consists from it.
 
 ## Contributing
 

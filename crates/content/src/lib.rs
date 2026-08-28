@@ -14,7 +14,7 @@ pub use compose::Composition;
 pub use demo::musterbahn;
 pub use import::{ImportOptions, ImportReport, import_line};
 pub use route::{CompiledLine, LineSource, TreeSource};
-pub use scenarios::{re_4711, to_musterstadt};
+pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{
     Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,
     TerrainTile, TileKey, Tree, Vegetation,

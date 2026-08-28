@@ -266,6 +266,15 @@ pub struct TractionState {
     /// Shared power controller: −1 … +1 (negative = dynamic brake). Commands every chain
     /// with `throttle == 0`; chains with their own handle read `DriveState::notch`.
     pub notch: f64,
+    /// The machine stands in back gear: its effort pushes the train against its own
+    /// direction of travel.
+    ///
+    /// The drive models only ever work out *how hard* the machine pulls — that is the
+    /// same number in either gear. Which way it pulls is the reverser's business, and
+    /// [`crate::physics`] puts the sign on at the rail. Without it a train could not set
+    /// back, and setting back is half of shunting (plan ch. 11).
+    #[serde(default)]
+    pub back_gear: bool,
     /// Air compressor switched on.
     pub compressor: bool,
     /// Charge left in the battery, 0…1.
@@ -301,6 +310,7 @@ impl Default for TractionState {
             line_voltage: 0.0,
             line_system: None,
             notch: 0.0,
+            back_gear: false,
             road_gear: true,
             compressor: false,
             // A vehicle is put into service with a charged battery.

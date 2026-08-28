@@ -414,14 +414,32 @@ gusts (`Weather::gust`) while the deck above drifts smoothly, which is right for
 1.8 km but leaves gusts a ground-level effect only.
 
 **Clouds.** A ground-based camera never enters a cloud, and that one fact buys the whole
-performance argument. The clouds are raymarched — Perlin-Worley shape noise (64³) with a
-curl-perturbed detail octave (32³), coverage and type from the weather state, and the Nubis
-model's lighting: Beer-Powder attenuation, a dual-lobe Henyey-Greenstein phase for the silver
-lining, and four octaves of *multiple* scattering, without which a cloud renders as a dark
-smudge whatever the sun does. But **not per screen pixel**: the march writes a 2048 × 1024
-equirectangular panorama through an offscreen camera, and a sky dome samples it. One layer
-with a height profile that runs from fair-weather cumulus to a closed deck; a cirrus sheet
-above it is the next step.
+performance argument. The clouds are raymarched — gradient-Perlin-Worley shape noise (128³)
+carved by a Worley detail volume (64³) that erodes wisps at the base and billows above it,
+coverage and type from the weather state, a height profile applied *before* the coverage
+threshold so a cumulus narrows into a dome instead of fading into a lid, and the Nubis
+model's lighting: Beer attenuation, a dual-lobe Henyey-Greenstein phase for the silver
+lining, a powder term weighted to front-lit views only (on a back-lit edge it would darken
+the silver lining itself), and four octaves of *multiple* scattering, without which a cloud
+renders as a dark smudge whatever the sun does. But **not per screen pixel**: the march
+writes a 2048 × 1024 equirectangular panorama through an offscreen camera, and a sky dome
+samples it. One layer with a height profile that runs from fair-weather cumulus to a closed
+deck; a cirrus sheet above it is the next step.
+
+**The sky lights the clouds, not a constant.** Bevy's atmosphere writes its sky-view table
+into a cubemap every frame for its own image-based lighting, and the march binds that
+cubemap: nine taps of it are the irradiance on a cloud's top. A far cloud is made
+transparent by the share of the air's optical depth (Bevy's earth medium plus the weather's
+haze, integrated up to the cloud's height) that lies in front of it, so the sky the
+atmosphere renders behind it — not a copy of it, which under a fog differs by a shade —
+supplies the in-scatter. The shaded side of a cumulus is therefore blue at noon and warm at
+dusk, and a cumulus at the horizon goes pale into the haze the way the trees under it do,
+with no second atmosphere model saying so. What the sky cannot say is lit by estimate: the ground's bounce
+into a cloud base (an albedo from the surface — fields, wet fields, snow — times sun and
+sky), and the light *inside* a thick cloud, where the scattering octaves give out a few
+hundred metres in. That last one is a two-stream diffuse transmittance, `1 / (1 + k·τ)`, of
+the sun and sky through the column the sample's body density says stands above it, and it is
+the whole difference between an overcast that is a grey sky and one that is a black slab.
 
 Two things make that resolution affordable, and both matter more than the march itself.
 **The panorama is amortised**: one texel in sixteen is rewritten each frame on a 4 × 4 Bayer
@@ -486,8 +504,9 @@ is blue at dusk and bright around the sun because it is the same integral the sk
 numbers follow the weather: `AtmosphereSettings::aerial_view_lut_max_distance` (six
 visibilities, clamped to 2 … 32 km — left at its default of 32 km over 32 slices, a 300 m fog
 sits inside the first slice and is never integrated at all), and the extinction the cloud
-dome fades itself with, or a fog would close the view to 300 m and still show crisp cumulus
-overhead.
+march folds into its own aerial perspective — the same Koschmieder term, integrated up to
+each cloud's height along with the clear air's Rayleigh and Mie — or a fog would close the
+view to 300 m and still show crisp cumulus overhead.
 
 What the medium cannot do is the *near* field: its look-up tables are cut for a planet, and
 below about 3 km of sight they do not resolve the first few hundred metres — the fog thins out

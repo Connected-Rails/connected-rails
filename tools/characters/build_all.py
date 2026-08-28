@@ -61,7 +61,7 @@ def main() -> int:
     parser.add_argument("--skip-export", action="store_true", help="reuse the raw exports in --raw")
     parser.add_argument("--body-atlas", default="2048x1024")
     parser.add_argument("--cutout-atlas", default="1024x512")
-    parser.add_argument("--lods", default="14000,5000,1600,500")
+    parser.add_argument("--lods", default="30000,6000,1600,500")
     args = parser.parse_args()
 
     roster = json.loads(args.roster.read_text(encoding="utf-8"))

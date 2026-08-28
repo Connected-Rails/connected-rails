@@ -31,7 +31,7 @@ bricht es mit „cannot open shared object file" ab.
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
 | `--height M` | Nur Moduleditor: Starthöhe des Blickpunkts über der Strecke in Metern (Vorgabe 900). 60 zeigt Bäume und Objekte, 900 das Modul. |
 | `--drawer [kategorie]` | Nur Moduleditor: Inhalte-Schublade offen aufnehmen — sonst nur per `Ctrl`+`Space` erreichbar. Kategorie optional: `objects` (Vorgabe), `signal-types`, `signal-models`, `track-types`. |
-| `--tool <name>` | Nur Moduleditor: mit diesem Werkzeug in der Hand starten — der Werkzeug-Abschnitt zeigt nur die Optionen des aktiven. Namen wie die i18n-Keys ohne Präfix: `select`, `draw`, `split`, `join`, `offset`, `crossover`, `gradient`, `area`, `device`, `object`, `marker`, `tree`, `forest`, `brush`, `terrain-raise`, `terrain-lower`, `terrain-level`, `terrain-rail`, `tile`, `envelope`. |
+| `--tool <name>` | Nur Moduleditor: mit diesem Werkzeug in der Hand starten — der Werkzeug-Abschnitt zeigt nur die Optionen des aktiven. Namen wie die i18n-Keys ohne Präfix: `select`, `draw`, `split`, `join`, `offset`, `crossover`, `gradient`, `area`, `device`, `object`, `marker`, `tree`, `forest`, `brush`, `terrain-raise`, `terrain-lower`, `terrain-level`, `terrain-rail`, `tile`, `walk-path`, `walk-area`, `envelope`. |
 
 `--frames` ist der einzige Hebel auf den Zeitpunkt: mehr Frames = mehr Simulationszeit vor dem
 Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für geladenes Overlay,

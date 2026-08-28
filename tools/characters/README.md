@@ -17,7 +17,11 @@ roster.json ──mh2_export.py──▶ raw .glb + .meta.json ──build_chara
    height the person is meant to have; the Height modifier was calibrated against it
    (MakeHuman's height macro depends on gender, age and proportions, so the modifier
    alone says little — measure the export, not the slider). Mind the age macro when
-   adding people: 0.5 is 25 years, 0.25 is a child of 14.
+   adding people: 0.5 is 25 years, 0.25 is a child of 14. The eyebrow textures are not
+   labelled by gender: `eyebrow002`, `003`, `006` and `007` are thin and arched (women),
+   `005` and `008`–`012` are full (men), `001` and `004` go either way; the eyelash assets
+   read as make-up, so men carry none. A hat wearer goes without hair — the hair meshes
+   are not fitted to the hats and poke through the crown.
 2. **`mh2_export.py`** drives MakeHuman 2 headlessly: it imports the program's own
    modules, runs Qt on the `offscreen` platform, stubs the OpenGL window away, loads each
    character as a MakeHuman model file, attaches the `game_engine` rig (53 joints) and
@@ -28,13 +32,21 @@ roster.json ──mh2_export.py──▶ raw .glb + .meta.json ──build_chara
 3. **`build_character.py`** makes the game file out of that: one texture atlas each for
    the opaque parts (skin, clothes, shoes — JPEG) and the cut-out parts (hair, eyebrows,
    eyelashes, eyes — PNG with alpha), four levels of detail out of `meshoptimizer`
-   (`char_LOD0` … `char_LOD3`, about 14 000 / 5 000 / 1 600 / 500 triangles) skinned to
+   (`char_LOD0` … `char_LOD3`, about 30 000 / 6 000 / 1 600 / 500 triangles; the garments
+   are Loop-subdivided twice before the finest level, because MakeHuman's suits are a
+   handful of flat facets over the bust) skinned to
    the same skeleton, the clips re-grounded (the MakeHuman exporter leaves them floating
    when it scales to metres), the `sit` clip replaced by a chair pose built out of the
    rest pose (MakeHuman's `sit01` sits on the floor with the legs stretched out — no
-   use in a coach), and the whole thing turned to face −Z with its feet on y = 0 — the
-   frame every model in the game uses. `--check` re-reads the result and verifies all
-   of that, the seat height and knee position of the chair pose included.
+   use in a coach), the `walk` clip replaced by a procedural in-place cycle (one second,
+   two steps, about 1.5 m/s: hip swing ±28°, knees bent in the swing, level feet, the
+   thighs turned in from MakeHuman's wide A-pose stance so the feet walk 0.15 m apart,
+   arms hanging by the body with a small swing — MakeHuman's own walk comes out
+   narrow-kneed and hunched on the game rig), the arms of the standing clips replaced
+   by the same relaxed hang (MakeHuman holds them out and bent), and the whole thing
+   turned to face −Z with its feet on
+   y = 0 — the frame every model in the game uses. `--check` re-reads the result and
+   verifies all of that, the seat height and knee position of the chair pose included.
 
 ## Running it
 

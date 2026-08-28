@@ -35,6 +35,82 @@ pub struct EnvelopePoint {
     pub lon: f64,
 }
 
+/// A vertex of a walkway — a footpath or a place people wander about on (plan
+/// ch. 12). Degrees like every other geo-positioned entry; the height is the
+/// terrain's, plus what the walkway itself adds.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WalkPoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// A footpath people walk along: a polyline over the ground, walked up and down
+/// by a handful of people at a time. A footbridge, the way from the forecourt to
+/// the platform, the platform's own length where no platform model carries a
+/// way of its own (see MODS.md, *People*).
+///
+/// Who walks where is never stored: the people are a function of the line, the
+/// scenario clock and a seed, so every client of a run and every restart shows
+/// the same people in the same places.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WalkPathSource {
+    /// Free label for the editor and the rule check.
+    #[serde(default)]
+    pub name: String,
+    /// The vertices in walking order — two at least.
+    pub points: Vec<WalkPoint>,
+    /// Width of the way [m]; the people spread across it.
+    #[serde(default = "default_walk_width")]
+    pub width: f64,
+    /// How many people are on the way at a time.
+    #[serde(default = "default_walk_people")]
+    pub people: u32,
+    /// Height of the way above the terrain [m] — a footbridge, a modelled platform.
+    #[serde(default)]
+    pub height: f64,
+    /// Free-form tags, lower-case kebab like everywhere else.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// A place people are about on: a polygon over the ground, some of its people
+/// wandering between random spots inside it, the rest standing. A forecourt, a
+/// waiting area, a platform.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WalkAreaSource {
+    #[serde(default)]
+    pub name: String,
+    /// The corners in either winding — three at least.
+    pub polygon: Vec<WalkPoint>,
+    /// How many people are in the area.
+    #[serde(default = "default_area_people")]
+    pub people: u32,
+    /// Share of them that wander instead of standing, 0 … 1.
+    #[serde(default = "default_walking_share")]
+    pub walking_share: f64,
+    /// Height of the area above the terrain [m].
+    #[serde(default)]
+    pub height: f64,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_walk_width() -> f64 {
+    2.0
+}
+
+fn default_walk_people() -> u32 {
+    4
+}
+
+fn default_area_people() -> u32 {
+    6
+}
+
+fn default_walking_share() -> f64 {
+    0.5
+}
+
 /// Node of the source file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum NodeSource {
@@ -576,6 +652,13 @@ pub struct LineSource {
     /// deleted on its own.
     #[serde(default)]
     pub trees: Vec<TreeSource>,
+    /// Footpaths people walk along (see [`WalkPathSource`]) — geo-positioned like
+    /// the trees, height from the terrain.
+    #[serde(default)]
+    pub walk_paths: Vec<WalkPathSource>,
+    /// Places people are about on (see [`WalkAreaSource`]).
+    #[serde(default)]
+    pub walk_areas: Vec<WalkAreaSource>,
     /// Reference markers — editor aids in named layers, ignored by everything
     /// that drives a train (see [`MarkerSource`]).
     #[serde(default)]
@@ -635,6 +718,8 @@ impl Default for LineSource {
             objects: Vec::new(),
             yards: Vec::new(),
             trees: Vec::new(),
+            walk_paths: Vec::new(),
+            walk_areas: Vec::new(),
             markers: Vec::new(),
             terrain: Vec::new(),
             heights: Vec::new(),
@@ -820,6 +905,10 @@ pub enum RuleIssue {
     /// Flank protection of a route names a node that is no switch, or a
     /// signal that does not exist.
     FlankGuardInvalid { route: u32 },
+    /// A footpath with fewer than two vertices — nothing to walk along.
+    WalkPathTooShort { path: u32 },
+    /// A walk area with fewer than three corners — no area at all.
+    WalkAreaTooSmall { area: u32 },
     /// The envelope crosses itself — see [`envelope_self_intersects`].
     EnvelopeSelfIntersects,
     /// Landscape outside the module envelope. Placing it is refused by the
@@ -829,6 +918,9 @@ pub enum RuleIssue {
         trees: u32,
         terrain: u32,
         markers: u32,
+        /// Vertices of footpaths and corners of walk areas — counted one by
+        /// one, so the figure says how much has to move back in.
+        walkways: u32,
     },
 }
 
@@ -1931,12 +2023,36 @@ impl LineSource {
                 .iter()
                 .filter(|m| !self.envelope_contains(m.lat, m.lon))
                 .count() as u32;
-            if trees + terrain + markers > 0 {
+            // Walkways vertex by vertex, not way by way: a corner of the
+            // envelope dragged inwards leaves a path's far end on the
+            // neighbour's ground, and it is the vertices that have to move.
+            let walkways = self
+                .walk_paths
+                .iter()
+                .flat_map(|p| p.points.iter())
+                .chain(self.walk_areas.iter().flat_map(|a| a.polygon.iter()))
+                .filter(|v| !self.envelope_contains(v.lat, v.lon))
+                .count() as u32;
+            if trees + terrain + markers + walkways > 0 {
                 issues.push(RuleIssue::OutsideEnvelope {
                     trees,
                     terrain,
                     markers,
+                    walkways,
                 });
+            }
+        }
+
+        // Walkways: a path needs a start and an end, an area three corners. Nobody on
+        // them is not an error — a way may be laid out before it is peopled.
+        for (i, path) in self.walk_paths.iter().enumerate() {
+            if path.points.len() < 2 {
+                issues.push(RuleIssue::WalkPathTooShort { path: i as u32 });
+            }
+        }
+        for (i, area) in self.walk_areas.iter().enumerate() {
+            if area.polygon.len() < 3 {
+                issues.push(RuleIssue::WalkAreaTooSmall { area: i as u32 });
             }
         }
 
@@ -2453,6 +2569,43 @@ impl LineSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Walkways round-trip through RON with their defaults, and the rule check calls
+    /// out a path without a second point and an area without a third corner.
+    #[test]
+    fn walkways_round_trip_and_are_checked() {
+        let text = r#"(
+            name: "Weg",
+            nodes: [Buffer, Buffer],
+            edges: [],
+            walk_paths: [(points: [(lat: 52.0, lon: 10.0), (lat: 52.0, lon: 10.001)])],
+            walk_areas: [(polygon: [(lat: 52.0, lon: 10.0), (lat: 52.0, lon: 10.001), (lat: 52.001, lon: 10.001)], people: 9)],
+        )"#;
+        let line: LineSource = ron::from_str(text).unwrap();
+        assert_eq!(line.walk_paths[0].width, 2.0);
+        assert_eq!(line.walk_paths[0].people, 4);
+        assert_eq!(line.walk_areas[0].people, 9);
+        assert_eq!(line.walk_areas[0].walking_share, 0.5);
+        let back: LineSource = ron::from_str(&line.to_ron()).unwrap();
+        assert_eq!(back.walk_paths, line.walk_paths);
+        assert_eq!(back.walk_areas, line.walk_areas);
+        let types = std::collections::BTreeMap::new();
+        let objects = std::collections::BTreeMap::new();
+        assert!(line.check(&types, &objects).is_empty());
+
+        let mut broken = line.clone();
+        broken.walk_paths[0].points.pop();
+        broken.walk_areas[0].polygon.pop();
+        let issues = broken.check(&types, &objects);
+        assert!(
+            issues.contains(&RuleIssue::WalkPathTooShort { path: 0 }),
+            "{issues:?}"
+        );
+        assert!(
+            issues.contains(&RuleIssue::WalkAreaTooSmall { area: 0 }),
+            "{issues:?}"
+        );
+    }
     use crate::musterbahn;
 
     /// Removing the curve must not move the climb behind it: the follower is
@@ -3368,6 +3521,50 @@ mod tests {
                     scale: 1.0,
                 },
             ],
+            // A footpath with two of its three vertices past the boundary, and
+            // an area wholly inside: the count is of vertices, not of ways.
+            walk_paths: vec![WalkPathSource {
+                name: String::new(),
+                points: vec![
+                    WalkPoint {
+                        lat: 52.0,
+                        lon: 10.0,
+                    },
+                    WalkPoint {
+                        lat: 52.5,
+                        lon: 10.0,
+                    },
+                    WalkPoint {
+                        lat: 52.5,
+                        lon: 10.1,
+                    },
+                ],
+                width: 2.0,
+                people: 4,
+                height: 0.0,
+                tags: Vec::new(),
+            }],
+            walk_areas: vec![WalkAreaSource {
+                name: String::new(),
+                polygon: vec![
+                    WalkPoint {
+                        lat: 52.0,
+                        lon: 10.0,
+                    },
+                    WalkPoint {
+                        lat: 52.0,
+                        lon: 10.001,
+                    },
+                    WalkPoint {
+                        lat: 52.001,
+                        lon: 10.001,
+                    },
+                ],
+                people: 6,
+                walking_share: 0.5,
+                height: 0.0,
+                tags: Vec::new(),
+            }],
             ..Default::default()
         };
         let types = std::collections::BTreeMap::new();
@@ -3378,6 +3575,7 @@ mod tests {
                     trees: 1,
                     terrain: 0,
                     markers: 0,
+                    walkways: 2,
                 })
         );
         // Without an envelope there is nothing to be outside of.

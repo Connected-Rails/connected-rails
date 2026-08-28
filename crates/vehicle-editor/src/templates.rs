@@ -45,17 +45,21 @@ const GROUPS: &[(&str, &[Template])] = &[
 
 /// The vehicle a template starts the user off with.
 ///
-/// Only the name is touched, because nothing else in the reference vehicles
-/// belongs to the prototype: none of them carries a model, a script, a sound
-/// table or a diagram, and their data sheet entries are empty
-/// (`templates_bring_nothing_of_the_prototype_along`). The name does belong to
-/// it — saved unchanged it would put a second "BR 101" into the vehicle
-/// browser. It keeps the designation instead of falling back to the blank
-/// spec's name because the status line names the template through this field,
-/// and the suffix is what tells the user which field is theirs to fill in.
+/// The data is handed over as it is; what belongs to the prototype is stripped
+/// (`templates_bring_nothing_of_the_prototype_along`): the BR 101 wears the
+/// example mod's glTF, cab, displays and sound table, and a template that
+/// drags a foreign model path along is a broken preview on the first frame.
+/// None of the reference vehicles carries a script or a diagram, and their
+/// data sheet entries are empty. The name does belong to the prototype too —
+/// saved unchanged it would put a second "BR 101" into the vehicle browser.
+/// It keeps the designation instead of falling back to the blank spec's name
+/// because the status line names the template through this field, and the
+/// suffix is what tells the user which field is theirs to fill in.
 fn spec(&(name, _, make): &Template) -> VehicleSpec {
     VehicleSpec {
         name: t!("tpl-name", base = name),
+        model: None,
+        sounds: Vec::new(),
         ..make()
     }
 }

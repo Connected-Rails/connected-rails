@@ -741,6 +741,9 @@ be laid, which never touches one already lying there.
 | `4` Flatten | Pulls the circle to the ground height under the click — the plateau gesture |
 | `5` Level to rail | Pulls the ground to the height of the nearest rail — forecourts, depots, level yards |
 | `6` DGM tiles | Shows the elevation tile grid and picks single tiles for the height import; without a pick the whole corridor is imported |
+| **People** | |
+| `2` Footpath | Clicks draw a way people walk up and down; Enter or right-click finishes, Esc cancels. On a drawn way: drag a vertex, click a side of the selected one to add a vertex there, `Delete` removes the held vertex (or the way) |
+| `3` Walk area | The same for a polygon people are about on — some wander between spots inside it, the rest stand. The panel sets how many, the share that walks, and the height above the ground |
 | **Module** | |
 | `2` Envelope | Reshapes the module boundary: drag a corner, a click on a side adds one there, `Delete` removes the selected one. Everything the module owns has to lie inside it — the landscape strictly, the track up to the boundary itself |
 

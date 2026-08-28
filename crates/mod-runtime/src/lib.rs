@@ -620,9 +620,11 @@ mod tests {
         assert!(mods.vehicles.contains_key("example:br101_afb"));
         assert!(mods.signal_types.contains_key("example:ks_main"));
         assert!(mods.objects.contains_key("example:mast"));
-        // The example line places that object; the check knows the registry.
+        // The example line places that object (and the platform); the check knows the
+        // registry.
         let line = &mods.lines["example:beispielstrecke"];
-        assert_eq!(line.objects.len(), 2);
+        assert_eq!(line.objects.len(), 3);
+        assert!(mods.objects.contains_key("example:platform"));
         assert!(
             line.check(&mods.track_types, &mods.objects).is_empty(),
             "{:?}",
@@ -635,6 +637,31 @@ mod tests {
         let timetable = &mods.timetables[name];
         assert!(!timetable.stops.is_empty());
         assert!(mods.compositions.contains_key("example:gesamtstrecke"));
+    }
+
+    /// The example line and its modules are wired for the BR 101 on every edge: an edge
+    /// that states no `electrification` carries no wire, and an electric loco under no
+    /// wire reads 0 kV at the pantograph and never closes its main switch.
+    #[test]
+    fn the_example_lines_are_wired_for_the_br101() {
+        use track_model::{EdgeId, PowerSystem};
+        let mods = example_mods();
+        for key in [
+            "example:beispielstrecke",
+            "example:modul_ost",
+            "example:modul_west",
+        ] {
+            let compiled = mods.lines[key].compile().expect("line compiles");
+            for (i, edge) in compiled.net.edges().iter().enumerate() {
+                for s in [0.0, edge.length() / 2.0, edge.length()] {
+                    assert_eq!(
+                        compiled.net.electrification_at(EdgeId(i as u32), s),
+                        Some(PowerSystem::Ac15kv),
+                        "{key} edge {i} at {s} m"
+                    );
+                }
+            }
+        }
     }
 
     /// The `people` mod is the generated roster (tools/characters/): every entry names a

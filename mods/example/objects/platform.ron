@@ -1,0 +1,16 @@
+// A platform as a track object: 210 m, 6 m wide, 0.76 m above the rail head, generated
+// by tools/gen_platform.py. Its origin is the track-side edge at the platform's start,
+// the body extends away from the track — so the default offset puts the edge 1.65 m
+// from the track axis, on the left of increasing arc length.
+//
+// The model carries its own walkways (MODS.md, People): `wp_edge_*` is a footpath
+// along the platform, `wa_middle_*` the waiting area behind the tactile strip. The
+// people on them come with the object wherever a line places it.
+(
+    name: "Bahnsteig",
+    model: "example/assets/platform.gltf",
+    lateral_offset: -1.65,
+    yaw_deg: 0.0,
+    height: 0.0,
+    tags: ["platform", "station"],
+)

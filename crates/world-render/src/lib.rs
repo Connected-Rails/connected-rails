@@ -37,8 +37,10 @@ pub mod weather;
 pub mod windscreen;
 
 pub use people::{
-    CharacterAssets, CharacterGraphs, Dressed, PASSENGER_CULL, PERSON_CULL, Passengers, Person,
-    person_bundle, spawn_seated,
+    CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
+    PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
+    WalkwayHost, WalkwaysBound, bind_walkways, gait, move_strollers, person_bundle, play_gait,
+    spawn_seated, spawn_strollers,
 };
 pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, WorldCatalog,
@@ -58,6 +60,7 @@ impl Plugin for WorldRenderPlugin {
             .init_resource::<TreeModels>()
             .init_resource::<people::CharacterGraphs>()
             .init_resource::<people::PeopleTextures>()
+            .init_resource::<people::PeopleClock>()
             .add_plugins((
                 sky::plugin,
                 clouds::plugin,
@@ -71,7 +74,14 @@ impl Plugin for WorldRenderPlugin {
                 (
                     switch_night_nodes,
                     materialise_trees,
-                    (people::dress_people, people::mip_people_textures).chain(),
+                    // A walker dressed this frame gets its gait the same frame.
+                    (
+                        people::dress_people,
+                        people::move_strollers,
+                        people::mip_people_textures,
+                    )
+                        .chain(),
+                    people::bind_walkways,
                 ),
             );
     }
@@ -487,9 +497,9 @@ fn colored(mut mesh: Mesh, color: [f32; 4]) -> Mesh {
 }
 
 /// Spawns a single terrain tile from [`content::terrain`] (streaming, plan 4.3)
-/// with its trees, scenery objects and people as children — they stream in
-/// and out with the tile. The caller adds what it needs on top (the simulator its view
-/// distance, the editor its own marker).
+/// with its trees, scenery objects, people and walkers as children — they
+/// stream in and out with the tile. The caller adds what it needs on top (the
+/// simulator its view distance, the editor its own marker).
 pub fn spawn_terrain_tile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -512,6 +522,7 @@ pub fn spawn_terrain_tile(
         tile.trees.clone(),
         &tile.objects,
         &tile.people,
+        &tile.walkways,
         catalog,
     );
     entity.id()
@@ -520,7 +531,8 @@ pub fn spawn_terrain_tile(
 /// Places the trees, objects and people of a standing tile anew — the editor
 /// moved one, and the ground under them is the same. `old` is what the tile
 /// carried so far (its [`Scattered`] children); the new set is spawned the
-/// way [`spawn_terrain_tile`] did it.
+/// way [`spawn_terrain_tile`] did it, less the walkers: the editor, which is
+/// who does this, shows no crowd and builds no ways.
 pub fn respawn_scatter(
     commands: &mut Commands,
     tile: Entity,
@@ -540,7 +552,7 @@ pub fn respawn_scatter(
     let Ok(mut entity) = commands.get_entity(tile) else {
         return;
     };
-    scatter::spawn_scatter(&mut entity, trees, objects, people, catalog);
+    scatter::spawn_scatter(&mut entity, trees, objects, people, &[], catalog);
 }
 
 /// Track gauge [m].

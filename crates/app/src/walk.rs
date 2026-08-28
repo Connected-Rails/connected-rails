@@ -16,15 +16,13 @@
 //! between two frames is his pace, and the pace picks and speeds the walk cycle.
 
 use crate::bindings::{Action, Input};
-use bevy::animation::RepeatAnimation;
 use bevy::animation::transition::AnimationTransitions;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 use sim_core::doors::DoorPhase;
 use sim_core::train::{Train, Vehicle};
-use std::time::Duration;
 use world_coords::{EcefPos, RenderOrigin};
-use world_render::{CharacterGraphs, Dressed, Person};
+use world_render::{CharacterGraphs, Dressed, Gait, Person, gait, play_gait};
 
 use crate::ui::{CameraMode, CameraState};
 use crate::{Origin, PlayerTrain, Precipitation, SimResource};
@@ -60,20 +58,9 @@ const STANDSTILL: f32 = 0.2;
 /// Half the width of the inside of a vehicle [m] — the bound for interiors that carry no
 /// walls of their own to run a ray against.
 const BODY_HALF_WIDTH: f32 = 1.4;
-/// Above this pace the model walks rather than stands [m/s] — a fifth of the walk, so
-/// a frame of standing still with a rounding error in it does not start the cycle.
-const WALKING_ABOVE: f32 = 0.3;
-/// The pace the walk cycle was made for [m/s] (`content::characters`): at it the
-/// clip runs at its own speed, at the run it is sped up.
-const CYCLE_PACE: f32 = 1.5;
-/// The walk cycle's playback speed is kept in this band — slower is a moonwalk,
-/// faster a cartoon.
-const CYCLE_RATE: (f32, f32) = (0.6, 3.0);
 /// A step longer than this between two frames is not a walk but a teleport (a door,
 /// a stand-up out of the seat) and is not measured [m].
 const JUMP: f32 = 5.0;
-/// How long the model takes to cross-fade between standing and walking [s].
-const GAIT_FADE: f32 = 0.2;
 
 /// The walker: where he is and how fast he is falling. `place` is `None` while he sits at
 /// the desk — F4 stands him up, F1 puts him back.
@@ -277,38 +264,6 @@ pub fn place_character(
     }
 }
 
-/// What the model does: standing, or walking at a rate of its cycle.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum Gait {
-    #[default]
-    Idle,
-    Walk {
-        /// Playback speed of the walk cycle.
-        rate: f32,
-    },
-}
-
-impl Gait {
-    fn clip(self) -> &'static str {
-        match self {
-            Gait::Idle => "idle",
-            Gait::Walk { .. } => "walk",
-        }
-    }
-}
-
-/// The gait for a pace [m/s]: standing below [`WALKING_ABOVE`], otherwise the walk
-/// cycle at the pace over the one it was made for, clamped to [`CYCLE_RATE`].
-pub fn gait(pace: f32) -> Gait {
-    if pace < WALKING_ABOVE {
-        Gait::Idle
-    } else {
-        Gait::Walk {
-            rate: (pace / CYCLE_PACE).clamp(CYCLE_RATE.0, CYCLE_RATE.1),
-        }
-    }
-}
-
 /// How far the walker moved over the ground between two frames [m], measured in the
 /// frame he is kept in — aboard in the vehicle's model space, so a train under way
 /// does not read as a walk, outside in world coordinates through the current origin,
@@ -350,8 +305,10 @@ pub struct WalkerGait {
 }
 
 /// Plays the character model's clips off the walker's pace: `idle` at a stand, `walk`
-/// on the move, cross-faded, the cycle sped up with the pace. A model without those
-/// clips (or without any) simply stands as `dress_people` left it.
+/// on the move, cross-faded, the cycle sped up with the pace — the same gaits the
+/// crowd's walkers play (`world_render::people`), driven here by a measured pace
+/// instead of a clock. A model without those clips (or without any) simply stands as
+/// `dress_people` left it.
 pub fn animate_walker(
     walker: Res<Walker>,
     origin: Res<Origin>,
@@ -382,29 +339,10 @@ pub fn animate_walker(
     else {
         return;
     };
-    let Some((node, _)) = graph.clip(wanted.clip()) else {
-        return;
-    };
-    match (state.gait, wanted) {
-        // Walking on: only the rate follows the pace.
-        (Gait::Walk { .. }, Gait::Walk { rate }) => {
-            if let Some(active) = player.animation_mut(node) {
-                active.set_speed(rate);
-            }
-        }
-        (Gait::Idle, Gait::Idle) => {}
-        (_, Gait::Walk { rate }) => {
-            transitions
-                .play(&mut player, node, Duration::from_secs_f32(GAIT_FADE))
-                .set_repeat(RepeatAnimation::Forever)
-                .set_speed(rate);
-            info!("walker: walk at {rate:.2}x");
-        }
-        (_, Gait::Idle) => {
-            transitions
-                .play(&mut player, node, Duration::from_secs_f32(GAIT_FADE))
-                .set_repeat(RepeatAnimation::Forever);
-            info!("walker: idle");
+    if play_gait(&mut transitions, &mut player, graph, state.gait, wanted) {
+        match wanted {
+            Gait::Walk { rate } => info!("walker: walk at {rate:.2}x"),
+            Gait::Idle => info!("walker: idle"),
         }
     }
     state.gait = wanted;

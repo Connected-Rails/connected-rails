@@ -19,7 +19,7 @@
 //! driving (plan 4.3).
 
 use crate::import::dgm::{HeightTile, TerrainSource};
-use crate::people::{Crowd, PersonInstance, scatter_people};
+use crate::people::{Crowd, PersonInstance, Walkway, scatter_people, scatter_walkways};
 use crate::route::{LineSource, ObjectSource, TerrainEdit, TerrainEditSource, TreeSource};
 use glam::{DQuat, DVec2, DVec3};
 use std::collections::HashMap;
@@ -135,6 +135,10 @@ pub struct TerrainTile {
     /// with the tile like the objects, and derived like the trees of a forest:
     /// nothing about them is stored in the line.
     pub people: Vec<PersonInstance>,
+    /// The ways people walk on this tile, in the tile's frame with their
+    /// agents on them (plan ch. 12) — a walker's place at any moment is
+    /// [`crate::people::stroll_pose`] of these, the seed and the clock.
+    pub walkways: Vec<Walkway>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
@@ -868,7 +872,10 @@ impl TerrainBuilder {
 
     /// The trees, objects and people of a tile, placed on its ground anew —
     /// for a tile whose ground has not changed under an edited line. Takes the
-    /// tile's own height grid, so it costs the scatter and nothing else.
+    /// tile's own height grid, so it costs the scatter and nothing else. The
+    /// people include the standing share of the tile's walk areas; the ways
+    /// themselves are not handed back — the editor, which is who asks, shows
+    /// no crowd and has none to hand back.
     pub fn rescatter(
         &self,
         tile: &TerrainTile,
@@ -885,10 +892,12 @@ impl TerrainBuilder {
             step: tile.step,
             n,
         };
+        let mut people = scatter_people(k, &grid, &frame, &self.crowd);
+        people.extend(scatter_walkways(k, &grid, &frame, &self.crowd).1);
         (
             scatter_trees(k, &grid, &frame, &self.options, &self.vegetation),
             scatter_objects(k, &grid, &frame, &self.scenery),
-            scatter_people(k, &grid, &frame, &self.crowd),
+            people,
         )
     }
 
@@ -1165,7 +1174,11 @@ fn build_tile(
     };
     let trees = scatter_trees(k, &grid, &frame, options, vegetation);
     let objects = scatter_objects(k, &grid, &frame, scenery);
-    let people = scatter_people(k, &grid, &frame, crowd);
+    let mut people = scatter_people(k, &grid, &frame, crowd);
+    // The ways of the tile, and the people who stand about on its areas
+    // rather than walk them — ordinary people of the tile from here on.
+    let (walkways, standing) = scatter_walkways(k, &grid, &frame, crowd);
+    people.extend(standing);
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
@@ -1196,6 +1209,7 @@ fn build_tile(
         trees,
         objects,
         people,
+        walkways,
         step,
         lod,
         radius,

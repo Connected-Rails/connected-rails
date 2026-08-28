@@ -10,7 +10,9 @@
 //! [`AnimationGraph`] (one per glTF, cached), the chosen clip is started at its
 //! phase, and the texture atlases get the mip chain the pipeline does not
 //! ship. [`dress_people`] does that once per instance; nothing here runs per
-//! frame on a person that is finished.
+//! frame on a person that is finished — except the walkers: a [`Stroller`]
+//! is put where the scenario clock says every frame ([`move_strollers`]),
+//! and its clips follow, `walk` on the move and `idle` at a stop.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -21,15 +23,19 @@ use bevy::animation::graph::AnimationNodeIndex;
 use bevy::animation::transition::AnimationTransitions;
 use bevy::asset::LoadState;
 use bevy::camera::visibility::VisibilityRange;
-use bevy::gltf::{Gltf, GltfAssetLabel};
+use bevy::gltf::{Gltf, GltfAssetLabel, GltfExtras};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::{TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldAsset;
 use content::CharacterSpec;
-use content::people::Pose;
+use content::people::{
+    Pose, StrollAgent, StrollPose, Walkway, WalkwayNode, embedded_walkways, parse_walkway_node,
+    stroll_pose,
+};
 use sim_core::train::{SeatSpec, lod_level};
 
+use crate::scatter::SceneryIndex;
 use crate::{asset_path, with_mipmaps};
 
 /// Past this distance nobody on a platform is drawn [m] — at half a kilometre
@@ -40,7 +46,7 @@ pub const PERSON_CULL: f32 = 500.0;
 /// platform, so the seats go before the crowd does.
 pub const PASSENGER_CULL: f32 = 300.0;
 /// Where one level of detail of a character hands over to the next [m]:
-/// `_LOD0` (about 14 000 triangles) up to the first, `_LOD1` (5 000) up to the
+/// `_LOD0` (about 30 000 triangles) up to the first, `_LOD1` (6 000) up to the
 /// second, `_LOD2` (1 600) up to the third, `_LOD3` (500) on to the cull
 /// distance. A character with fewer levels runs its last one to the end.
 pub const PERSON_LOD_BANDS: [f32; 3] = [30.0, 80.0, 200.0];
@@ -81,9 +87,11 @@ impl CharacterAssets {
 /// The passenger characters a world is drawn with, in the order the crowd
 /// indexes them ([`content::PersonInstance::character`]). A slot is `None`
 /// where the name resolved to no installed character — that person is not
-/// drawn rather than drawn as something else.
+/// drawn rather than drawn as something else. Shared behind an `Arc`: every
+/// scenery object carries the roster for the walkways its model may bring,
+/// and a clone has to cost a pointer, not a list of handles.
 #[derive(Clone, Default)]
-pub struct Passengers(Vec<Option<CharacterAssets>>);
+pub struct Passengers(Arc<Vec<Option<CharacterAssets>>>);
 
 impl Passengers {
     /// Resolves the names against the installed mods' `characters/*.ron`,
@@ -93,7 +101,7 @@ impl Passengers {
         registry: &BTreeMap<String, CharacterSpec>,
         assets: &AssetServer,
     ) -> Self {
-        Self(
+        Self(Arc::new(
             names
                 .iter()
                 .map(|name| match registry.get(name) {
@@ -104,7 +112,7 @@ impl Passengers {
                     }
                 })
                 .collect(),
-        )
+        ))
     }
 
     pub fn get(&self, index: u16) -> Option<&CharacterAssets> {
@@ -161,6 +169,343 @@ pub fn person_bundle(
 #[derive(Component)]
 pub struct Dressed {
     pub player: Option<Entity>,
+}
+
+/// The clock the walkers move on [s]: the simulator writes the scenario clock
+/// into it every frame (`Sim::clock`), so the crowd stands still while the
+/// run is paused, and every client — the clock is what the server keeps in
+/// step — computes the same people in the same places. The editor has no
+/// simulation and leaves it at zero; it spawns no walkers either.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct PeopleClock(pub f64);
+
+/// The pace the walk cycle was made for [m/s] (`content::characters`): at it
+/// the clip runs at its own speed, faster it is sped up.
+pub const CYCLE_PACE: f32 = 1.5;
+/// The walk cycle's playback speed is kept in this band — slower is a
+/// moonwalk, faster a cartoon.
+pub const CYCLE_RATE: (f32, f32) = (0.6, 3.0);
+/// Above this pace a model walks rather than stands [m/s] — a fifth of the
+/// walk, so a frame of standing still with a rounding error in it does not
+/// start the cycle.
+pub const WALKING_ABOVE: f32 = 0.3;
+/// How long a model takes to cross-fade between standing and walking [s].
+pub const GAIT_FADE: f32 = 0.2;
+
+/// What a walking model does: standing, or walking at a rate of its cycle.
+/// The player's walker and the crowd's walkers are moved by different things
+/// — a pace measured over the ground, a pose out of the clock — and end up
+/// here, where the clips are the same.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Gait {
+    #[default]
+    Idle,
+    Walk {
+        /// Playback speed of the walk cycle.
+        rate: f32,
+    },
+}
+
+impl Gait {
+    pub fn clip(self) -> &'static str {
+        match self {
+            Gait::Idle => "idle",
+            Gait::Walk { .. } => "walk",
+        }
+    }
+}
+
+/// The gait for a pace [m/s]: standing below [`WALKING_ABOVE`], otherwise the
+/// walk cycle at the pace over the one it was made for, clamped to
+/// [`CYCLE_RATE`].
+pub fn gait(pace: f32) -> Gait {
+    if pace < WALKING_ABOVE {
+        Gait::Idle
+    } else {
+        Gait::Walk {
+            rate: (pace / CYCLE_PACE).clamp(CYCLE_RATE.0, CYCLE_RATE.1),
+        }
+    }
+}
+
+/// Puts a dressed model into a gait, cross-faded from the one it is in: `walk`
+/// at its rate, else `idle`. Walking on only follows the rate, standing on
+/// changes nothing. `true` when a clip was started — the caller logs that in
+/// its own words. A model without the clip is left doing what it does.
+pub fn play_gait(
+    transitions: &mut AnimationTransitions,
+    player: &mut AnimationPlayer,
+    graph: &CharacterGraph,
+    from: Gait,
+    to: Gait,
+) -> bool {
+    let Some((node, _)) = graph.clip(to.clip()) else {
+        return false;
+    };
+    match (from, to) {
+        (Gait::Walk { .. }, Gait::Walk { rate }) => {
+            if let Some(active) = player.animation_mut(node) {
+                active.set_speed(rate);
+            }
+            false
+        }
+        (Gait::Idle, Gait::Idle) => false,
+        (_, Gait::Walk { rate }) => {
+            transitions
+                .play(player, node, Duration::from_secs_f32(GAIT_FADE))
+                .set_repeat(RepeatAnimation::Forever)
+                .set_speed(rate);
+            true
+        }
+        (_, Gait::Idle) => {
+            transitions
+                .play(player, node, Duration::from_secs_f32(GAIT_FADE))
+                .set_repeat(RepeatAnimation::Forever);
+            true
+        }
+    }
+}
+
+/// A person walking a walkway: which one, and which of its agents. The
+/// transform is set from the clock every frame by [`move_strollers`], in the
+/// frame the walkway is in — the parent's, which is the tile or the object the
+/// way came out of. The person itself is dressed like everybody else.
+#[derive(Component)]
+pub struct Stroller {
+    pub walkway: Arc<Walkway>,
+    pub agent: u16,
+    /// What the model was last told to do — the player is touched on a change
+    /// only. Standing to begin with: that is the clip `dress_people` starts.
+    gait: Gait,
+}
+
+impl Stroller {
+    pub fn new(walkway: Arc<Walkway>, agent: u16) -> Self {
+        Self {
+            walkway,
+            agent,
+            gait: Gait::Idle,
+        }
+    }
+
+    fn agent(&self) -> Option<&StrollAgent> {
+        self.walkway.agents.get(usize::from(self.agent))
+    }
+}
+
+/// A walker's transform for a pose: the feet at the position, the face the
+/// way it goes.
+pub fn stroll_transform(pose: &StrollPose) -> Transform {
+    Transform::from_translation(Vec3::from(pose.position))
+        .with_rotation(Quat::from_rotation_y(pose.yaw))
+}
+
+/// Spawns the walkers of a walkway as children of `parent` — one person per
+/// agent whose character is installed, where it is at clock second `now`,
+/// with `marker` on each — and says how many.
+pub fn spawn_strollers(
+    parent: &mut ChildSpawnerCommands,
+    walkway: Arc<Walkway>,
+    people: &Passengers,
+    now: f64,
+    marker: impl Bundle + Clone,
+) -> usize {
+    let mut spawned = 0;
+    for (index, agent) in walkway.agents.iter().enumerate() {
+        let Some(character) = people.get(agent.character) else {
+            continue;
+        };
+        let pose = stroll_pose(&walkway, agent, now);
+        parent.spawn((
+            person_bundle(character, Pose::Idle, agent.phase, PERSON_CULL),
+            stroll_transform(&pose),
+            Stroller::new(walkway.clone(), index as u16),
+            marker.clone(),
+        ));
+        spawned += 1;
+    }
+    spawned
+}
+
+/// Puts every walker where the clock says and has its clips follow: `walk`
+/// at the agent's pace on the move, `idle` at a stop, cross-faded, and the
+/// player touched only when that changes. A walker nobody can see — further
+/// from every camera than its cull distance — keeps its transform up to date
+/// and its clips alone: the meshes are not drawn, and a transition on them
+/// is work for nothing.
+pub fn move_strollers(
+    clock: Res<PeopleClock>,
+    graphs: Res<CharacterGraphs>,
+    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    mut strollers: Query<(
+        &mut Stroller,
+        &mut Transform,
+        &GlobalTransform,
+        &Person,
+        Option<&Dressed>,
+    )>,
+    mut players: Query<(&mut AnimationTransitions, &mut AnimationPlayer)>,
+    mut eyes: Local<Vec<Vec3>>,
+) {
+    eyes.clear();
+    eyes.extend(cameras.iter().map(GlobalTransform::translation));
+    let now = clock.0;
+    for (mut stroller, mut transform, global, person, dressed) in &mut strollers {
+        let Some(agent) = stroller.agent() else {
+            continue;
+        };
+        let pose = stroll_pose(&stroller.walkway, agent, now);
+        let wanted = stroll_transform(&pose);
+        transform.translation = wanted.translation;
+        transform.rotation = wanted.rotation;
+        let Some(player) = dressed.and_then(|d| d.player) else {
+            continue;
+        };
+        let here = global.translation();
+        let seen = eyes
+            .iter()
+            .any(|eye| eye.distance_squared(here) <= person.cull * person.cull);
+        if !seen {
+            continue;
+        }
+        let gait = if pose.moving {
+            gait(agent.speed)
+        } else {
+            Gait::Idle
+        };
+        if gait == stroller.gait {
+            continue;
+        }
+        let Some(graph) = graphs.get(person.gltf.id()) else {
+            continue;
+        };
+        let Ok((mut transitions, mut player)) = players.get_mut(player) else {
+            continue;
+        };
+        if play_gait(&mut transitions, &mut player, graph, stroller.gait, gait) {
+            debug!(
+                "stroller {}#{}: {}",
+                stroller.walkway.name,
+                stroller.agent,
+                match gait {
+                    Gait::Walk { rate } => format!("walk at {rate:.2}x"),
+                    Gait::Idle => "idle".to_string(),
+                }
+            );
+        }
+        stroller.gait = gait;
+    }
+}
+
+/// Put on a scenery object's root by [`crate::scatter::spawn_scatter`]: the
+/// roster its model's own walkways draw their people from. The editor's
+/// roster is empty, so its objects are marked done without a look.
+#[derive(Component, Clone)]
+pub struct WalkwayHost {
+    pub people: Passengers,
+}
+
+/// The root's model has been read for `wp_*` / `wa_*` nodes.
+#[derive(Component)]
+pub struct WalkwaysBound;
+
+/// Peoples the walkways a scenery object's model carries (MODS.md, *Track
+/// objects*), once its scene has spawned: the hierarchy is walked one time
+/// for `wp_<name>_<i>` / `wa_<name>_<i>` nodes, the ways are built in the
+/// object's own frame, and their walkers and standers are spawned as children
+/// of the root, so they go wherever the object goes and with it. A model
+/// without such nodes costs the one walk and is marked done.
+pub fn bind_walkways(
+    mut commands: Commands,
+    hosts: Query<(Entity, &SceneryIndex, &WorldAssetRoot, &WalkwayHost), Without<WalkwaysBound>>,
+    children: Query<&Children>,
+    nodes: Query<(&Transform, Option<&Name>, Option<&GltfExtras>)>,
+    assets: Res<AssetServer>,
+    clock: Res<PeopleClock>,
+    mut found: Local<Vec<WalkwayNode>>,
+) {
+    for (root, index, scene, host) in &hosts {
+        if host.people.is_empty() {
+            commands.entity(root).insert(WalkwaysBound);
+            continue;
+        }
+        // The scene spawns some frames after the entity; a scene that will
+        // never come is done with as it is.
+        if children.get(root).is_err() {
+            if matches!(
+                assets.get_load_state(scene.0.id()),
+                Some(LoadState::Failed(_))
+            ) {
+                commands.entity(root).insert(WalkwaysBound);
+            }
+            continue;
+        }
+        found.clear();
+        collect_walkway_nodes(root, &children, &nodes, &mut found);
+        let walkways = embedded_walkways(&found, index.0, host.people.len() as u16);
+        let (mut ways, mut people) = (0, 0);
+        commands
+            .entity(root)
+            .insert(WalkwaysBound)
+            .with_children(|parent| {
+                for (walkway, standing) in walkways {
+                    ways += 1;
+                    for person in &standing {
+                        let Some(character) = host.people.get(person.character) else {
+                            continue;
+                        };
+                        parent.spawn((
+                            person_bundle(character, person.pose, person.phase, PERSON_CULL),
+                            Transform::from_translation(Vec3::from(person.pos))
+                                .with_rotation(Quat::from_array(person.rotation)),
+                        ));
+                        people += 1;
+                    }
+                    people += spawn_strollers(parent, Arc::new(walkway), &host.people, clock.0, ());
+                }
+            });
+        if ways > 0 {
+            info!("object {}: {ways} walkways, {people} people", index.0);
+        }
+    }
+}
+
+/// Walks a spawned model once for its `wp_*` / `wa_*` nodes, each with its
+/// origin in the root's frame — the parents' transforms accumulated, so a
+/// nested empty is where the modeller sees it. The root's own transform is
+/// the placement and stays out of it.
+pub fn collect_walkway_nodes(
+    root: Entity,
+    children: &Query<&Children>,
+    nodes: &Query<(&Transform, Option<&Name>, Option<&GltfExtras>)>,
+    out: &mut Vec<WalkwayNode>,
+) {
+    let Ok(kids) = children.get(root) else {
+        return;
+    };
+    let mut stack: Vec<(Entity, Transform)> =
+        kids.iter().map(|e| (e, Transform::IDENTITY)).collect();
+    while let Some((entity, parent)) = stack.pop() {
+        let transform = match nodes.get(entity) {
+            Ok((local, name, extras)) => {
+                let transform = parent * *local;
+                if let Some(name) = name
+                    && parse_walkway_node(name.as_str()).is_some()
+                {
+                    out.push(WalkwayNode {
+                        name: name.to_string(),
+                        position: transform.translation.to_array(),
+                        extras: extras.map(|e| e.value.clone()),
+                    });
+                }
+                transform
+            }
+            Err(_) => parent,
+        };
+        if let Ok(kids) = children.get(entity) {
+            stack.extend(kids.iter().map(|e| (e, transform)));
+        }
+    }
 }
 
 /// The animation graph of one character glTF: every clip as a node under the
@@ -736,5 +1081,177 @@ mod tests {
         );
         assert!(!build_mip_chain(&mut float));
         assert_eq!(float.texture_descriptor.mip_level_count, 1);
+    }
+
+    /// Standing below a fifth of the walk, the cycle at its own speed at the
+    /// walk, three times it at the run — and never outside its band.
+    #[test]
+    fn the_gait_follows_the_pace() {
+        assert_eq!(gait(0.0), Gait::Idle);
+        assert_eq!(gait(0.2), Gait::Idle);
+        assert_eq!(gait(CYCLE_PACE), Gait::Walk { rate: 1.0 });
+        assert_eq!(gait(5.0), Gait::Walk { rate: 3.0 });
+        assert_eq!(gait(0.4), Gait::Walk { rate: 0.6 });
+        assert_eq!(Gait::Idle.clip(), "idle");
+        assert_eq!(gait(CYCLE_PACE).clip(), "walk");
+    }
+
+    /// The walkway nodes of a spawned model are read out of its hierarchy with
+    /// their origins in the root's frame: a nested node carries its parent's
+    /// offset, the root's own placement is left out, meshes are passed over,
+    /// and the extras come along.
+    #[test]
+    fn walkway_nodes_are_read_out_of_the_hierarchy() {
+        use bevy::ecs::system::SystemState;
+        let mut world = World::new();
+        let root = world.spawn(Transform::from_xyz(500.0, 20.0, -300.0)).id();
+        let scene = world.spawn((Transform::IDENTITY, ChildOf(root))).id();
+        world.spawn((
+            Name::new("platform"),
+            Transform::from_xyz(1.0, 1.0, 1.0),
+            ChildOf(scene),
+        ));
+        world.spawn((
+            Name::new("wp_edge_0"),
+            Transform::from_xyz(-2.0, 0.76, 5.0),
+            GltfExtras {
+                value: r#"{"people": 6, "width": 1.6}"#.into(),
+            },
+            ChildOf(scene),
+        ));
+        // The second vertex hangs under a group that is moved and turned.
+        let group = world
+            .spawn((
+                Name::new("far_end"),
+                Transform::from_xyz(0.0, 0.0, 100.0)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+                ChildOf(scene),
+            ))
+            .id();
+        world.spawn((
+            Name::new("wp_edge_1"),
+            Transform::from_xyz(5.0, 0.76, 0.0),
+            ChildOf(group),
+        ));
+        for (i, (x, z)) in [(-1.6, 8.0), (-5.0, 8.0), (-5.0, 100.0)]
+            .into_iter()
+            .enumerate()
+        {
+            world.spawn((
+                Name::new(format!("wa_middle_{i}")),
+                Transform::from_xyz(x, 0.76, z),
+                ChildOf(scene),
+            ));
+        }
+        type Nodes<'a> = (&'a Transform, Option<&'a Name>, Option<&'a GltfExtras>);
+        let mut state = SystemState::<(Query<&Children>, Query<Nodes>)>::new(&mut world);
+        let (children, nodes) = state.get(&world).unwrap();
+        let mut found = Vec::new();
+        collect_walkway_nodes(root, &children, &nodes, &mut found);
+        found.sort_by(|a, b| a.name.cmp(&b.name));
+        let names: Vec<&str> = found.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "wa_middle_0",
+                "wa_middle_1",
+                "wa_middle_2",
+                "wp_edge_0",
+                "wp_edge_1"
+            ]
+        );
+        let first = &found[3];
+        assert_eq!(first.position, [-2.0, 0.76, 5.0]);
+        assert_eq!(
+            first.extras.as_deref(),
+            Some(r#"{"people": 6, "width": 1.6}"#)
+        );
+        // Turned a quarter left about Y, the group's +X points down −Z.
+        let nested = Vec3::from(found[4].position);
+        assert!(
+            (nested - Vec3::new(0.0, 0.76, 95.0)).length() < 1e-4,
+            "{nested:?}"
+        );
+        assert_eq!(found[4].extras, None);
+        // The walkways built out of it: a path of two, an area of three.
+        let built = embedded_walkways(&found, 7, 3);
+        assert_eq!(built.len(), 2);
+        assert_eq!(built[0].0.points.len(), 2);
+        assert_eq!(built[0].0.len(), 6);
+        assert_eq!(built[1].0.points.len(), 3);
+        // No root, no nodes.
+        let mut nothing = Vec::new();
+        collect_walkway_nodes(group, &children, &nodes, &mut nothing);
+        assert_eq!(nothing.len(), 1, "the nested vertex alone");
+    }
+
+    /// A walker is put where the clock says, faces the way it goes, and does
+    /// not move while the clock stands still.
+    #[test]
+    fn strollers_follow_the_clock() {
+        let mut app = App::new();
+        app.init_resource::<CharacterGraphs>()
+            .init_resource::<PeopleClock>()
+            .add_systems(Update, move_strollers);
+        let walkway = Arc::new(Walkway::path(
+            "test",
+            vec![[0.0, 0.0, 0.0], [40.0, 0.0, 0.0]],
+            2.0,
+            1,
+            1,
+            3,
+        ));
+        let walker = app
+            .world_mut()
+            .spawn((
+                Person {
+                    gltf: Handle::default(),
+                    pose: Pose::Idle,
+                    phase: 0.0,
+                    cull: PERSON_CULL,
+                },
+                Stroller::new(walkway.clone(), 0),
+                Transform::default(),
+                GlobalTransform::default(),
+            ))
+            .id();
+        app.update();
+        let at_zero = *app.world().get::<Transform>(walker).unwrap();
+        let expected = stroll_transform(&walkway.pose(0, 0.0).unwrap());
+        assert_eq!(at_zero.translation, expected.translation);
+        assert_eq!(at_zero.rotation, expected.rotation);
+        // The clock stands: so does the walker.
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(walker).unwrap().translation,
+            at_zero.translation
+        );
+        // Ten seconds on, the walker is somewhere else on the way.
+        app.world_mut().resource_mut::<PeopleClock>().0 = 10.0;
+        app.update();
+        let later = *app.world().get::<Transform>(walker).unwrap();
+        assert!(later.translation.distance(at_zero.translation) > 1.0);
+        assert!(later.translation.x >= -1.0 && later.translation.x <= 41.0);
+        assert!(later.translation.z.abs() <= 1.0, "on the way");
+        // A walker whose agent does not exist is left alone.
+        let stray = app
+            .world_mut()
+            .spawn((
+                Person {
+                    gltf: Handle::default(),
+                    pose: Pose::Idle,
+                    phase: 0.0,
+                    cull: PERSON_CULL,
+                },
+                Stroller::new(walkway, 5),
+                Transform::from_xyz(1.0, 2.0, 3.0),
+                GlobalTransform::default(),
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Transform>(stray).unwrap().translation,
+            Vec3::new(1.0, 2.0, 3.0)
+        );
     }
 }

@@ -72,7 +72,8 @@ ATLAS_SHRINK = 0.92  # scale applied to all regions when they do not fit
 UV_OUTSIDE_WARN = 0.01  # share of UVs outside [0, 1] worth a warning
 SHOES_BELOW = 0.35  # a garment whose top stays below this share of the height is footwear
 
-CUTOUT_MIN_SHARE = 0.08  # of every triangle budget, so the hair outlives the body
+CUTOUT_MIN_SHARE = 0.12  # of every triangle budget, so the hair outlives the body
+SMALL_GROUP_SHARE = 0.25  # a group below this share of the budget is kept whole
 SLOPPY_ABOVE = 1.15  # retry with the sloppy simplifier when over target by this factor
 PRUNE_FROM_LOD = 2
 PRUNE_OPTION = getattr(meshoptimizer, "SIMPLIFY_PRUNE", 0)  # older wrappers lack the flag
@@ -478,6 +479,251 @@ def synthesize_sit(gltf, binary, skeleton):
     return binary
 
 
+# MakeHuman's walk cycles come out narrow and hunched on the game rig — knees together,
+# short shuffling steps. The `walk` clip is therefore made here too: a plain in-place
+# cycle out of the rest pose, one second long (two steps, the pace `CYCLE_PACE` of the
+# game), so the feet cover the ground the person moves over. Angles in degrees; the
+# signs are found per joint like the chair pose finds them.
+WALK_CLIP = "walk"
+WALK_FRAMES = 24
+WALK_SECONDS = 1.0
+WALK_HIP = 28.0  # thigh swing amplitude, forward and back
+WALK_KNEE = 42.0  # knee flexion at the middle of the swing
+WALK_KNEE_STANCE = 5.0  # a knee is never locked straight
+WALK_ARM = 8.0  # upper arm swing, opposite to the leg on its side
+WALK_ELBOW = 5.0  # constant elbow bend
+# A relaxed arm hangs this far from the vertical, sideways and forwards [deg]; the
+# rest pose's A-pose arms are turned in and back by whatever it takes to get there.
+ARM_HANG_OUT = 6.0
+ARM_HANG_FORWARD = 4.0
+# The MakeHuman standing clips hold the arms out and bent; they get the relaxed arms
+# of the rest pose instead, frame by frame, so hands hang beside the thighs.
+RELAXED_ARM_CLIPS = ("idle", "idle2", "stand", "stand2", "stand3")
+# The feet walk this far apart sideways [m]; the thighs are turned in or out from the
+# rest pose's stance (MakeHuman's A-pose stands 0.3–0.4 m wide) to get there.
+WALK_STEP_WIDTH = 0.15
+WALK_LEAN = 3.0  # forward lean of the lower spine
+WALK_BOB = 0.02  # vertical bob of the body [m], twice per cycle
+# Sign probes per joint and world axis: the joint whose position moves the way named
+# when the angle is positive — the rig's own axes are whatever MakeHuman made them.
+WALK_PROBES = {
+    ("thigh_l", "x"): ("calf_l", "z", "max"),  # knee forward
+    ("thigh_r", "x"): ("calf_r", "z", "max"),
+    ("calf_l", "x"): ("foot_l", "z", "min"),  # heel back: knee flexion
+    ("calf_r", "x"): ("foot_r", "z", "min"),
+    ("foot_l", "x"): ("ball_l", "y", "max"),  # toes up
+    ("foot_r", "x"): ("ball_r", "y", "max"),
+    ("thigh_l", "z"): ("calf_l", "|x|", "max"),  # knee outward
+    ("thigh_r", "z"): ("calf_r", "|x|", "max"),
+    ("upperarm_l", "x"): ("hand_l", "z", "max"),  # hand forward
+    ("upperarm_r", "x"): ("hand_r", "z", "max"),
+    ("lowerarm_l", "x"): ("hand_l", "z", "max"),  # elbow flexion brings the hand forward
+    ("lowerarm_r", "x"): ("hand_r", "z", "max"),
+    ("upperarm_l", "z"): ("hand_l", "|x|", "min"),  # arm in, towards the body
+    ("upperarm_r", "z"): ("hand_r", "|x|", "min"),
+    ("spine_01", "x"): ("head", "z", "max"),  # lean forward
+}
+
+
+def arm_hang(gltf, skeleton):
+    """Per upper arm, the turns [deg] about the world Z (sideways, positive = in) and X
+    (positive = forward) axes that let the rest pose's arm hang `ARM_HANG_OUT` from the
+    vertical sideways and `ARM_HANG_FORWARD` forwards, measured shoulder to hand."""
+    nodes = gltf["nodes"]
+    by_name = {nodes[j].get("name"): j for j in skeleton.joints}
+    world = glb.global_matrices(gltf, skeleton.parents, {})
+    turns = {}
+    for side in ("l", "r"):
+        shoulder = world[by_name[f"upperarm_{side}"]][:3, 3]
+        hand = world[by_name[f"hand_{side}"]][:3, 3]
+        v = hand - shoulder
+        down = max(-v[1], 1e-6)
+        out = np.degrees(np.arctan2(abs(v[0]), down))
+        forward = np.degrees(np.arctan2(v[2], down))  # the exporter's frame: +Z is the front
+        turns[side] = (out - ARM_HANG_OUT, ARM_HANG_FORWARD - forward)
+    return turns
+
+
+def probe_signs(gltf, skeleton):
+    """The sign that turns each joint of `WALK_PROBES` the named way, or `None` if a
+    joint is missing from the rig."""
+    nodes = gltf["nodes"]
+    by_name = {nodes[j].get("name"): j for j in skeleton.joints}
+    signs = {}
+    for (joint, axis), (probe, coordinate, extreme) in WALK_PROBES.items():
+        if joint not in by_name or probe not in by_name:
+            return None
+        index = by_name[joint]
+        rest = glb.global_matrices(gltf, skeleton.parents, {})
+        parent = skeleton.parents.get(index)
+        above = matrix_to_quat(rest[parent]) if parent is not None else np.array(glb.IDENTITY_QUATERNION, dtype=np.float64)
+        local = glb.node_trs(nodes[index])[1]
+        best = None
+        for sign in (1.0, -1.0):
+            turn = quat_from_axis_angle(WORLD_AXES[axis], sign * 20.0)
+            rotated = glb.quat_multiply(quat_conjugate(above), glb.quat_multiply(turn, glb.quat_multiply(above, local)))
+            position = glb.global_matrices(gltf, skeleton.parents, {index: {"rotation": rotated}})[by_name[probe]][:3, 3]
+            value = position["xyz".index(coordinate.strip("|"))]
+            if coordinate.startswith("|"):
+                value = abs(value)
+            score = value if extreme == "max" else -value
+            if best is None or score > best[0]:
+                best = (score, sign)
+        signs[(joint, axis)] = best[1]
+    return signs
+
+
+def walk_spread(gltf, skeleton):
+    """Thigh abduction [deg] that brings the feet to `WALK_STEP_WIDTH` apart: the rest
+    stance measured between the ankle joints, the change per degree from the leg's length."""
+    nodes = gltf["nodes"]
+    by_name = {nodes[j].get("name"): j for j in skeleton.joints}
+    world = glb.global_matrices(gltf, skeleton.parents, {})
+    at = lambda name: world[by_name[name]][:3, 3]
+    stance = abs(at("foot_l")[0] - at("foot_r")[0])
+    leg = np.linalg.norm(at("foot_l") - at("thigh_l"))
+    if leg < 1e-3:
+        return 0.0
+    return float(np.degrees(np.arcsin(np.clip((WALK_STEP_WIDTH - stance) / (2.0 * leg), -0.5, 0.5))))
+
+
+def walk_angles(phase, spread, hang):
+    """Joint turns [deg] of the walk at `phase` (0 … 2π), keyed like `WALK_PROBES`;
+    `spread` is the thigh abduction of `walk_spread`, `hang` the arm turns of `arm_hang`."""
+    s, c = np.sin(phase), np.cos(phase)
+    # Left leg: forward at phase π/2, back at 3π/2; the knee bends while the leg swings
+    # forward (around phase 0) and stays a touch bent in stance.
+    knee_l = WALK_KNEE_STANCE + WALK_KNEE * max(0.0, c) ** 1.5
+    knee_r = WALK_KNEE_STANCE + WALK_KNEE * max(0.0, -c) ** 1.5
+    hip_l, hip_r = WALK_HIP * s, -WALK_HIP * s
+    return {
+        ("thigh_l", "x"): hip_l,
+        ("thigh_r", "x"): hip_r,
+        ("calf_l", "x"): knee_l,
+        ("calf_r", "x"): knee_r,
+        # A level foot: undo the thigh and shin turns, plus a little toe lift in the swing.
+        ("foot_l", "x"): -(hip_l - knee_l) + 6.0 * max(0.0, c),
+        ("foot_r", "x"): -(hip_r - knee_r) + 6.0 * max(0.0, -c),
+        ("thigh_l", "z"): spread,
+        ("thigh_r", "z"): spread,
+        ("upperarm_l", "x"): hang["l"][1] - WALK_ARM * s,
+        ("upperarm_r", "x"): hang["r"][1] + WALK_ARM * s,
+        ("upperarm_l", "z"): hang["l"][0],
+        ("upperarm_r", "z"): hang["r"][0],
+        ("lowerarm_l", "x"): WALK_ELBOW,
+        ("lowerarm_r", "x"): WALK_ELBOW,
+        ("spine_01", "x"): WALK_LEAN,
+    }
+
+
+def turned_pose(gltf, skeleton, signs, angles, base=None):
+    """Rotation overrides of a pose: the turns in `angles` (keyed like `WALK_PROBES`)
+    applied about world axes in hierarchy order on top of `base` (a pose's overrides,
+    the rest pose by default), each on the joints already turned."""
+    nodes = gltf["nodes"]
+    by_name = {nodes[j].get("name"): j for j in skeleton.joints}
+    overrides = {k: dict(v) for k, v in (base or {}).items()}
+    # Parents before children, so a child's world turn sits on its parent's new frame.
+    order = ["spine_01", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r",
+             "upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r"]
+    for joint in order:
+        for axis in ("z", "x"):
+            key = (joint, axis)
+            if key not in angles:
+                continue
+            index = by_name[joint]
+            world = glb.global_matrices(gltf, skeleton.parents, overrides)
+            parent = skeleton.parents.get(index)
+            above = matrix_to_quat(world[parent]) if parent is not None else np.array(glb.IDENTITY_QUATERNION, dtype=np.float64)
+            local = overrides.get(index, {}).get("rotation", glb.node_trs(nodes[index])[1])
+            turn = quat_from_axis_angle(WORLD_AXES[axis], signs[key] * angles[key])
+            rotated = glb.quat_multiply(quat_conjugate(above), glb.quat_multiply(turn, glb.quat_multiply(above, local)))
+            overrides[index] = {**overrides.get(index, {}), "rotation": rotated}
+    return overrides
+
+
+def walk_frame(gltf, skeleton, signs, phase, spread, hang):
+    """Rotation overrides of one walk frame out of the rest pose."""
+    return turned_pose(gltf, skeleton, signs, walk_angles(phase, spread, hang))
+
+
+def relax_arms(gltf, binary, skeleton, signs):
+    """Give the MakeHuman standing clips the relaxed arms of the rest pose: in every
+    frame the arm joints take the rest pose's local rotations turned by `arm_hang`,
+    so the hands hang beside the thighs however the torso sways. Returns the binary
+    with the rewritten channels appended."""
+    hang = arm_hang(gltf, skeleton)
+    angles = {
+        ("upperarm_l", "z"): hang["l"][0],
+        ("upperarm_r", "z"): hang["r"][0],
+        ("upperarm_l", "x"): hang["l"][1],
+        ("upperarm_r", "x"): hang["r"][1],
+        ("lowerarm_l", "x"): WALK_ELBOW,
+        ("lowerarm_r", "x"): WALK_ELBOW,
+    }
+    relaxed = turned_pose(gltf, skeleton, signs, angles)
+    nodes = gltf["nodes"]
+    by_name = {nodes[j].get("name"): j for j in skeleton.joints}
+    arm_joints = [by_name[n] for n in ("upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r") if n in by_name]
+    for animation in gltf.get("animations", []):
+        if animation.get("name") not in RELAXED_ARM_CLIPS:
+            continue
+        for channel in animation["channels"]:
+            target = channel["target"]
+            node = target.get("node")
+            if node not in arm_joints or target["path"] != "rotation":
+                continue
+            sampler = animation["samplers"][channel["sampler"]]
+            count = gltf["accessors"][sampler["output"]]["count"]
+            rotation = np.asarray(relaxed[node]["rotation"], dtype=np.float32)
+            binary, output = append_accessor(gltf, binary, np.tile(rotation, (count, 1)), "VEC4")
+            sampler["output"] = output
+    return binary
+
+
+def synthesize_walk(gltf, binary, skeleton):
+    """Replace (or add) the `walk` clip by the procedural cycle; returns the binary."""
+    signs = probe_signs(gltf, skeleton)
+    if signs is None:
+        warn("walk cycle: joints missing from the rig, MakeHuman's walk kept")
+        return binary
+    binary = relax_arms(gltf, binary, skeleton, signs)
+    frames = WALK_FRAMES + 1  # the last keyframe repeats the first, so the loop is seamless
+    times = np.arange(frames, dtype=np.float32) * (WALK_SECONDS / WALK_FRAMES)
+    binary, time_accessor = append_accessor(gltf, binary, times, "SCALAR", bounds=True)
+    spread = walk_spread(gltf, skeleton)
+    hang = arm_hang(gltf, skeleton)
+    poses = [
+        walk_frame(gltf, skeleton, signs, 2.0 * np.pi * (f % WALK_FRAMES) / WALK_FRAMES, spread, hang)
+        for f in range(frames)
+    ]
+    samplers, channels = [], []
+    for joint in skeleton.joints:
+        translation, rest_rotation, _ = glb.node_trs(gltf["nodes"][joint])
+        rotations = np.array([p.get(joint, {}).get("rotation", rest_rotation) for p in poses], dtype=np.float64)
+        # Keep neighbouring quaternions in one hemisphere, or the loop flips.
+        for k in range(1, frames):
+            if np.dot(rotations[k], rotations[k - 1]) < 0:
+                rotations[k] = -rotations[k]
+        translations = np.tile(np.asarray(translation, dtype=np.float64), (frames, 1))
+        if joint == skeleton.root:
+            bob = WALK_BOB * 0.5 * (np.cos(2.0 * 2.0 * np.pi * np.arange(frames) / WALK_FRAMES) - 1.0)
+            translations[:, 1] += bob
+        for path, values in (("translation", translations), ("rotation", rotations)):
+            binary, output = append_accessor(gltf, binary, values, "VEC3" if path == "translation" else "VEC4")
+            samplers.append({"input": time_accessor, "interpolation": "LINEAR", "output": output})
+            channels.append({"sampler": len(samplers) - 1, "target": {"node": joint, "path": path}})
+    clip = {"name": WALK_CLIP, "samplers": samplers, "channels": channels}
+    animations = gltf.setdefault("animations", [])
+    for number, animation in enumerate(animations):
+        if animation.get("name") == WALK_CLIP:
+            animations[number] = clip
+            break
+    else:
+        animations.append(clip)
+    return binary
+
+
 def seated_geometry(gltf, binary, skeleton, baker):
     """Seat height, how far the knees are ahead and the hands' height of the `sit` clip [m], or `None`.
 
@@ -500,6 +746,155 @@ def seated_geometry(gltf, binary, skeleton, baker):
     knees = (at("calf_l") + at("calf_r")) / 2
     hands = (at("hand_l") + at("hand_r")) / 2
     return pelvis[1] - floor, pelvis[2] - knees[2], hands[1] - floor
+
+
+# ---------------------------------------------------------------------------
+# Subdivision of the garments
+# ---------------------------------------------------------------------------
+
+# MakeHuman's clothes are coarse: a suit is two thousand quads, and over the bust that
+# is a handful of flat facets. Loop subdivision rounds them off; the finest level of
+# detail is then simplified back to its budget, which keeps the rounded shape where
+# the curvature is and throws the flat parts away again. Skin, hair, eyes and shoes
+# are dense enough as they are.
+SUBDIVIDE_KINDS = ("clothes", "hat")
+SUBDIVIDE_LEVELS = 2
+# Loop subdivision shrinks a surface a little towards its inside; the garment is pushed
+# out along its normals by this much afterwards so the skin under it stays covered [m].
+SUBDIVIDE_INFLATE = 0.002
+WELD_PRECISION = 5  # decimals of a metre that make two vertices one point
+
+
+def welded_ids(positions):
+    """One id per point in space, so UV seams and hard edges do not split the topology."""
+    _, inverse = np.unique(np.round(positions, WELD_PRECISION), axis=0, return_inverse=True)
+    return inverse.reshape(-1)
+
+
+def blend_skin(joints, weights, a, b):
+    """Skinning of the point halfway between vertices `a` and `b`: the two weight sets
+    added, the four strongest joints kept, renormalised."""
+    count = len(a)
+    bones = int(joints.max()) + 1 if len(joints) else 1
+    dense = np.zeros((count, bones), dtype=np.float64)
+    rows = np.arange(count)
+    for end in (a, b):
+        for k in range(4):
+            np.add.at(dense, (rows, joints[end, k]), weights[end, k] * 0.5)
+    top = np.argsort(-dense, axis=1)[:, :4]
+    picked = np.take_along_axis(dense, top, axis=1)
+    picked /= np.maximum(picked.sum(axis=1, keepdims=True), 1e-12)
+    return top.astype(np.uint8), picked.astype(np.float32)
+
+
+def loop_once(mesh):
+    """One level of Loop subdivision of a SourceMesh, seams closed, borders fixed.
+
+    Positions are smoothed on the welded topology and shared by every copy of a
+    point, so a UV seam stays closed. Border vertices (an edge with one triangle)
+    stay where they are and border edges split at their midpoints, so a neckline
+    or a cuff still meets the skin exactly where the garment's author put it.
+    UVs and skinning are averaged per render vertex; normals are recomputed.
+    """
+    P = mesh.positions.astype(np.float64)
+    I = mesh.indices.reshape(-1, 3).astype(np.int64)
+    n = len(P)
+    weld = welded_ids(P)
+    welded_count = int(weld.max()) + 1
+    Pw = np.zeros((welded_count, 3))
+    Pw[weld] = P  # any copy will do, they coincide
+
+    # Welded edges with their multiplicity and the vertex opposite each occurrence.
+    T = weld[I]
+    sides = np.stack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]], axis=1).reshape(-1, 2)
+    opposite = T[:, [2, 0, 1]].reshape(-1)
+    edges = np.sort(sides, axis=1)
+    unique_edges, edge_of_side, multiplicity = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
+    edge_of_side = edge_of_side.reshape(-1)
+    opposite_sum = np.zeros((len(unique_edges), 3))
+    np.add.at(opposite_sum, edge_of_side, Pw[opposite])
+    border_edge = multiplicity == 1
+    ends = Pw[unique_edges[:, 0]] + Pw[unique_edges[:, 1]]
+    # Loop's edge rule: 3/8 of both ends and 1/8 of both opposite vertices — the
+    # opposite share spread over however many triangles meet at a non-manifold edge.
+    interior = ends * 0.375 + opposite_sum * (0.25 / np.maximum(multiplicity[:, None], 1))
+    edge_point = np.where(border_edge[:, None], ends * 0.5, interior)
+
+    # Vertex smoothing (Loop's beta by valence), border vertices fixed.
+    valence = np.zeros(welded_count)
+    np.add.at(valence, unique_edges[:, 0], 1)
+    np.add.at(valence, unique_edges[:, 1], 1)
+    neighbour_sum = np.zeros((welded_count, 3))
+    np.add.at(neighbour_sum, unique_edges[:, 0], Pw[unique_edges[:, 1]])
+    np.add.at(neighbour_sum, unique_edges[:, 1], Pw[unique_edges[:, 0]])
+    on_border = np.zeros(welded_count, dtype=bool)
+    on_border[unique_edges[border_edge].reshape(-1)] = True
+    k = np.maximum(valence, 3)
+    beta = (0.625 - (0.375 + 0.25 * np.cos(2.0 * np.pi / k)) ** 2) / k
+    smoothed = (1.0 - k * beta)[:, None] * Pw + beta[:, None] * neighbour_sum
+    smoothed[on_border | (valence < 3)] = Pw[on_border | (valence < 3)]
+
+    # Render-level midpoints: one per unordered pair of render vertices, so a seam
+    # keeps two midpoints with their own UVs but one shared position.
+    render_sides = np.stack([I[:, [0, 1]], I[:, [1, 2]], I[:, [2, 0]]], axis=1).reshape(-1, 2)
+    render_edges = np.sort(render_sides, axis=1)
+    unique_render, mid_of_side = np.unique(render_edges, axis=0, return_inverse=True)
+    mid_of_side = mid_of_side.reshape(-1)
+    # Which welded edge each render edge lies on: any side that uses it.
+    first_side = np.zeros(len(unique_render), dtype=np.int64)
+    first_side[mid_of_side[::-1]] = np.arange(len(mid_of_side))[::-1]
+    mid_positions = edge_point[edge_of_side[first_side]]
+    a, b = unique_render[:, 0], unique_render[:, 1]
+    mid_uvs = (mesh.uvs[a].astype(np.float64) + mesh.uvs[b]) * 0.5
+    mid_joints, mid_weights = blend_skin(mesh.joints.astype(np.int64), mesh.weights.astype(np.float64), a, b)
+
+    positions = np.concatenate([smoothed[weld], mid_positions])
+    uvs = np.concatenate([mesh.uvs.astype(np.float64), mid_uvs]).astype(np.float32)
+    joints = np.concatenate([mesh.joints, mid_joints]).astype(np.uint8)
+    weights = np.concatenate([mesh.weights, mid_weights]).astype(np.float32)
+    m = mid_of_side.reshape(-1, 3) + n  # midpoints of sides ab, bc, ca per triangle
+    faces = np.concatenate(
+        [
+            np.stack([I[:, 0], m[:, 0], m[:, 2]], axis=1),
+            np.stack([I[:, 1], m[:, 1], m[:, 0]], axis=1),
+            np.stack([I[:, 2], m[:, 2], m[:, 1]], axis=1),
+            m,
+        ]
+    )
+    mesh.positions = positions.astype(np.float32)
+    mesh.uvs = uvs
+    mesh.joints = joints
+    mesh.weights = weights
+    mesh.indices = faces.reshape(-1).astype(np.uint32)
+    mesh.normals = smooth_normals(mesh.positions, mesh.indices)
+    return mesh
+
+
+def smooth_normals(positions, indices):
+    """Area-weighted vertex normals over the welded topology, one normal per point."""
+    P = positions.astype(np.float64)
+    I = indices.reshape(-1, 3).astype(np.int64)
+    weld = welded_ids(P)
+    face = np.cross(P[I[:, 1]] - P[I[:, 0]], P[I[:, 2]] - P[I[:, 0]])
+    acc = np.zeros((int(weld.max()) + 1, 3))
+    for k in range(3):
+        np.add.at(acc, weld[I[:, k]], face)
+    acc /= np.maximum(np.linalg.norm(acc, axis=1, keepdims=True), 1e-12)
+    return acc[weld].astype(np.float32)
+
+
+def subdivide_garments(meshes, levels, inflate):
+    """Loop-subdivide the garments `levels` times and push them out by `inflate` [m]."""
+    for mesh in meshes:
+        if mesh.kind not in SUBDIVIDE_KINDS or levels <= 0:
+            continue
+        before = len(mesh.indices) // 3
+        for _ in range(levels):
+            loop_once(mesh)
+        if inflate:
+            mesh.positions = (mesh.positions + mesh.normals * inflate).astype(np.float32)
+        mesh.name = mesh.name  # unchanged; the log line below is the only trace
+        print(f"  {mesh.name}: subdivided {before} -> {len(mesh.indices) // 3} triangles")
 
 
 # ---------------------------------------------------------------------------
@@ -769,9 +1164,20 @@ def build_lods(groups, budgets):
         shares[BODY] = 1.0 - CUTOUT_MIN_SHARE
     lods = []
     for level, budget in enumerate(budgets):
+        # A group small against the budget keeps every triangle it has; the others
+        # share what is left by size. The subdivided garments make the body group
+        # huge, and the hair should not pay for that with its strands.
+        whole = [g for g in groups if g.triangles <= budget * SMALL_GROUP_SHARE]
+        targets = {g.name: g.triangles for g in whole}
+        remaining = max(1, budget - sum(targets.values()))
+        rest = [g for g in groups if g not in whole]
+        rest_total = sum(g.triangles for g in rest) or 1
+        for group in rest:
+            share = shares[group.name] if len(rest) == len(groups) else group.triangles / rest_total
+            targets[group.name] = min(group.triangles, max(1, round(remaining * share)))
         primitives = []
         for group in groups:
-            indices = simplify(group, max(1, round(budget * shares[group.name])), level >= PRUNE_FROM_LOD)
+            indices = simplify(group, targets[group.name], level >= PRUNE_FROM_LOD)
             if len(indices) == 0:
                 warn(f"LOD{level}: the {group.name} group simplified away completely")
                 continue
@@ -1085,7 +1491,7 @@ def parse_size(text):
 
 
 def parse_lods(text):
-    """`14000,5000,1600,500` → four non-increasing triangle budgets."""
+    """`30000,6000,1600,500` → four non-increasing triangle budgets."""
     try:
         budgets = [int(v) for v in text.split(",")]
     except ValueError:
@@ -1115,7 +1521,13 @@ def parse_args(argv):
     parser.add_argument("--stats", help="write build statistics to this JSON file")
     parser.add_argument("--body-atlas", type=parse_size, default=(2048, 1024), help="opaque atlas size, default 2048x1024")
     parser.add_argument("--cutout-atlas", type=parse_size, default=(1024, 512), help="alpha atlas size, default 1024x512")
-    parser.add_argument("--lods", type=parse_lods, default=[14000, 5000, 1600, 500], help="triangle budgets per LOD")
+    parser.add_argument("--lods", type=parse_lods, default=[30000, 6000, 1600, 500], help="triangle budgets per LOD")
+    parser.add_argument(
+        "--subdivide",
+        type=int,
+        default=SUBDIVIDE_LEVELS,
+        help=f"Loop subdivision levels of the garments before the finest level of detail, default {SUBDIVIDE_LEVELS}; 0 = off",
+    )
     parser.add_argument(
         "--max-edges", type=parse_max_edges, default={}, help="per-class texture edge overrides, e.g. skin=1024,hair=512"
     )
@@ -1134,6 +1546,7 @@ def build(args):
     if len(skeleton.joints) != JOINT_COUNT:
         warn(f"skeleton has {len(skeleton.joints)} joints, the game rig has {JOINT_COUNT}")
     binary = synthesize_sit(gltf, binary, skeleton)
+    binary = synthesize_walk(gltf, binary, skeleton)
     meshes = load_meshes(gltf, binary, meta)
     source_triangles = sum(len(m.indices) // 3 for m in meshes)
 
@@ -1143,6 +1556,7 @@ def build(args):
     height = float(rest[:, 1].max() - ground)
     classify(meshes, baker, rest, ground, height)
     clip_shifts = ground_shifts(gltf, binary, baker)
+    subdivide_garments(meshes, args.subdivide, SUBDIVIDE_INFLATE)
 
     max_edges = {**CLASS_MAX_EDGE, **args.max_edges}
     decoded = {}

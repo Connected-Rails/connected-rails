@@ -585,14 +585,33 @@ pub struct Marks {
     trees: Vec<f64>,
     markers: Vec<f64>,
     strokes: Vec<f64>,
+    /// Vertex heights of the footpaths and of the walk areas, way by way.
+    walk_paths: Vec<Vec<f64>>,
+    walk_areas: Vec<Vec<f64>>,
     /// What a mark stands at until the terrain has answered for it — the
     /// height the builder itself falls back to where no DGM covers the module.
     fallback: f64,
+    /// The same for a walkway vertex: the module's anchor height — its
+    /// nominal ground, and the height the envelope is drawn at — where the
+    /// module has an anchor, else the builder's fallback like every other mark.
+    walk_fallback: f64,
     /// The terrain version the marks were last sampled against.
     version: Option<u64>,
 }
 
 impl Marks {
+    /// Ground height under vertex `vertex` of walkway `index` of `kind`.
+    pub fn walk_height(&self, kind: crate::walkways::Kind, index: usize, vertex: usize) -> f64 {
+        let ways = match kind {
+            crate::walkways::Kind::Path => &self.walk_paths,
+            crate::walkways::Kind::Area => &self.walk_areas,
+        };
+        ways.get(index)
+            .and_then(|way| way.get(vertex))
+            .copied()
+            .unwrap_or(self.walk_fallback)
+    }
+
     /// Where tree `i` stands.
     pub fn tree(&self, i: usize, tree: &TreeSource) -> EcefPos {
         geo::to_ecef_deg(tree.lat, tree.lon, self.height(&self.trees, i))
@@ -678,6 +697,21 @@ pub fn probe_marks(
         .terrain
         .iter()
         .map(|e| ground(e.lat, e.lon))
+        .collect();
+    marks.walk_fallback = line.source.anchor.map_or(fallback, |anchor| {
+        geo::ellipsoidal_height(anchor.height, line.source.geoid_offset)
+    });
+    marks.walk_paths = line
+        .source
+        .walk_paths
+        .iter()
+        .map(|p| p.points.iter().map(|v| ground(v.lat, v.lon)).collect())
+        .collect();
+    marks.walk_areas = line
+        .source
+        .walk_areas
+        .iter()
+        .map(|a| a.polygon.iter().map(|v| ground(v.lat, v.lon)).collect())
         .collect();
     marks.version = Some(view.version);
 }

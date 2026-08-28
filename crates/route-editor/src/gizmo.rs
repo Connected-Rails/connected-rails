@@ -124,10 +124,13 @@ fn handles(
                 vec![(Axis::East, frame.east), (Axis::North, frame.north)],
             ))
         }
-        // An edge is dragged by its support points, which it already has.
+        // An edge is dragged by its support points, which it already has; a
+        // walkway is reshaped vertex by vertex with its own tool.
         Selection::Edge(_)
         | Selection::TrackArea(_)
         | Selection::EnvelopePoint(_)
+        | Selection::WalkPath(_)
+        | Selection::WalkArea(_)
         | Selection::None => None,
     }
 }
@@ -332,6 +335,8 @@ fn apply(line: &mut Line, selection: Selection, axis: Axis, dir: DVec3, delta: f
         Selection::Edge(_)
         | Selection::TrackArea(_)
         | Selection::EnvelopePoint(_)
+        | Selection::WalkPath(_)
+        | Selection::WalkArea(_)
         | Selection::None => {}
     }
 }

@@ -46,7 +46,7 @@ use world_coords::RenderOrigin;
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
 // `update_daylight`, read by everything that switches with darkness: the
 // headlights here, the mods' `_NIGHT` nodes in `world-render`.
-use world_render::{Daylight, sky};
+use world_render::{Daylight, PeopleClock, sky};
 
 /// Menu first, the world only on starting the run — that is what lets a mod toggled on
 /// the menu apply without restarting the process.
@@ -331,6 +331,7 @@ fn main() {
                 step_simulation,
             )
                 .chain(),
+            feed_people_clock,
             run_mod_scripts,
             displays::update_displays,
             rebase_origin,
@@ -739,8 +740,9 @@ fn setup(
         content::people::line_seed(&line_source.name),
     );
     info!(
-        "people: {} waiting on the platforms, {} passenger characters installed",
+        "people: {} on the platforms and ways ({} of them walking), {} passenger characters installed",
         crowd.len(),
+        crowd.walking(),
         passenger_names.len()
     );
     let passengers =
@@ -1410,6 +1412,17 @@ pub(crate) fn drive_ai(
 
 pub(crate) fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
     sim.0.advance(time.delta_secs_f64());
+}
+
+/// Hands the walkers their clock (`world_render::PeopleClock`): the
+/// simulation's, not the frame's, so they stand still while the run is paused
+/// and every client — the clock is what the server keeps in step — walks them
+/// to the same spots. Nothing about them travels (CLAUDE.md, *Multiplayer*).
+pub(crate) fn feed_people_clock(sim: Res<SimResource>, mut clock: ResMut<PeopleClock>) {
+    let now = sim.0.clock();
+    if clock.0 != now {
+        clock.0 = now;
+    }
 }
 
 /// Behaviour scripts of the mods — signal aspects and cab automation (plan ch. 19).

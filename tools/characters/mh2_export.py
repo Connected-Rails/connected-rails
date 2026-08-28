@@ -135,6 +135,18 @@ def prepare_home(home: Path, assets: Path) -> None:
                 if link.is_symlink() or link.exists():
                     link.unlink()
                 link.symlink_to(entry)
+    # The eye colours: MakeHuman 2's own data carries the eye meshes and one brown
+    # material; the nine colours of the pack live in ``eyes/materials`` and have to be
+    # linked next to it, texture and all, or every person looks out of brown eyes.
+    src = assets / "eyes" / "materials"
+    dst = data / "eyes" / BASE_MESH / "materials"
+    dst.mkdir(parents=True, exist_ok=True)
+    for entry in sorted(src.iterdir()) if src.is_dir() else []:
+        if entry.is_file():
+            link = dst / entry.name
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(entry)
     (data / "models" / BASE_MESH).mkdir(parents=True, exist_ok=True)
     (data / "exports").mkdir(parents=True, exist_ok=True)
 

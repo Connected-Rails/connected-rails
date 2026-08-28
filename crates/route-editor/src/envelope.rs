@@ -11,11 +11,16 @@
 //! The envelope is created with the module ([`crate::new_module`]) as a square
 //! around the anchor, so it is never absent by accident — a module that came
 //! from before envelopes bounds nothing until the panel gives it one.
+//!
+//! The geometry of picking a vertex, hitting a side and putting a vertex on it
+//! is written once, over any polyline of latitude/longitude pairs
+//! ([`LatLon`]): the walkways ([`crate::walkways`]) are reshaped with the same
+//! gestures and share it.
 
-use crate::tools::{EditorState, ScreenPick, Selection, Tool};
+use crate::tools::{EditorState, PICK_PIXELS, ScreenPick, Selection, Tool};
 use crate::{Focus, Line};
 use bevy::prelude::*;
-use content::route::EnvelopePoint;
+use content::route::{EnvelopePoint, WalkPoint};
 use glam::DVec3;
 use world_coords::{EcefPos, RenderOrigin, geo};
 
@@ -41,6 +46,114 @@ pub fn height(line: &Line, focus: &Focus) -> f64 {
     }
 }
 
+/// A vertex that is a latitude/longitude pair. The envelope's corners and the
+/// walkways' vertices both are exactly that, and picking, inserting and
+/// dragging one is the same job for both — so the helpers below take either.
+pub trait LatLon: Copy {
+    fn lat(&self) -> f64;
+    fn lon(&self) -> f64;
+    fn at(lat: f64, lon: f64) -> Self;
+}
+
+impl LatLon for EnvelopePoint {
+    fn lat(&self) -> f64 {
+        self.lat
+    }
+
+    fn lon(&self) -> f64 {
+        self.lon
+    }
+
+    fn at(lat: f64, lon: f64) -> Self {
+        Self { lat, lon }
+    }
+}
+
+impl LatLon for WalkPoint {
+    fn lat(&self) -> f64 {
+        self.lat
+    }
+
+    fn lon(&self) -> f64 {
+        self.lon
+    }
+
+    fn at(lat: f64, lon: f64) -> Self {
+        Self { lat, lon }
+    }
+}
+
+/// The vertex nearest `click` within `radius`, and how near: `(vertex,
+/// distance)`. Measured in whatever space the positions come in — the envelope
+/// and the walkways hand in screen pixels (see [`ScreenPick`]), so a corner at
+/// the horizon is as grabbable as one under the camera.
+pub fn nearest_vertex(
+    positions: impl IntoIterator<Item = (usize, DVec3)>,
+    click: DVec3,
+    radius: f64,
+) -> Option<(usize, f64)> {
+    positions
+        .into_iter()
+        .map(|(i, p)| (i, p.distance(click)))
+        .filter(|(_, distance)| *distance <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// The sides of a polyline as `(side, from, to)`: side `i` runs from vertex
+/// `i` to `i + 1`, and a `closed` ring has one more, from the last vertex back
+/// to the first. A single vertex has no side either way.
+pub fn sides<T: Copy>(points: &[T], closed: bool) -> impl Iterator<Item = (usize, T, T)> + '_ {
+    let count = match (closed, points.len()) {
+        (_, 0 | 1) => 0,
+        (true, n) => n,
+        (false, n) => n - 1,
+    };
+    (0..count).map(move |i| (i, points[i], points[(i + 1) % points.len()]))
+}
+
+/// The side nearest `click` within `radius`, where on it the nearest point
+/// lies (0 … 1), and how near: `(side, t, distance)`. Same space rule as
+/// [`nearest_vertex`]: the envelope measures in metres on its own plane, the
+/// walkways in pixels on the screen.
+pub fn nearest_side(
+    sides: impl IntoIterator<Item = (usize, DVec3, DVec3)>,
+    click: DVec3,
+    radius: f64,
+) -> Option<(usize, f64, f64)> {
+    sides
+        .into_iter()
+        .map(|(i, a, b)| {
+            let along = b - a;
+            let length2 = along.length_squared().max(1e-9);
+            let t = ((click - a).dot(along) / length2).clamp(0.0, 1.0);
+            (i, t, (a + along * t).distance(click))
+        })
+        .filter(|(_, _, distance)| *distance <= radius)
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+}
+
+/// The point `t` of the way along side `side` of `points` — where a vertex
+/// added on that side goes, which is the only place it can go without folding
+/// the polyline over itself. Interpolated in degrees: over the few hundred
+/// metres of a side, the difference to a line on the ellipsoid is far below
+/// the width of the drawn one.
+pub fn point_on_side<P: LatLon>(points: &[P], side: usize, t: f64) -> P {
+    let a = points[side];
+    let b = points[(side + 1) % points.len()];
+    P::at(
+        a.lat() + (b.lat() - a.lat()) * t,
+        a.lon() + (b.lon() - a.lon()) * t,
+    )
+}
+
+/// Puts `point` where the cursor is, on the map. The height is dropped — a
+/// vertex is a place, and the ground (or the envelope's own plane) answers
+/// for its height.
+pub fn move_to<P: LatLon>(point: &mut P, p: EcefPos) {
+    let (lat, lon, _) = geo::from_ecef(p);
+    *point = P::at(lat.to_degrees(), lon.to_degrees());
+}
+
 /// Map position of a corner at the envelope's own [`height`].
 pub fn point_pos(point: &EnvelopePoint, height: f64) -> EcefPos {
     geo::to_ecef_deg(point.lat, point.lon, height)
@@ -49,13 +162,13 @@ pub fn point_pos(point: &EnvelopePoint, height: f64) -> EcefPos {
 /// The corner under the cursor, if one is within grabbing distance.
 pub fn pick_point(line: &Line, pick: &ScreenPick, focus: &Focus) -> Option<usize> {
     let height = height(line, focus);
-    line.source
+    let on_screen = line
+        .source
         .envelope
         .iter()
         .enumerate()
-        .filter_map(|(i, p)| pick.hits(point_pos(p, height)).map(|d| (i, d)))
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(i, _)| i)
+        .filter_map(|(i, p)| Some((i, pick.screen(point_pos(p, height))?)));
+    nearest_vertex(on_screen, pick.cursor(), PICK_PIXELS as f64).map(|(i, _)| i)
 }
 
 /// Which side of the polygon the click landed on, and where on it.
@@ -70,30 +183,12 @@ pub fn pick_side(line: &Line, p: EcefPos, focus: &Focus, radius: f64) -> Option<
     }
     let height = height(line, focus);
     let positions: Vec<DVec3> = corners.iter().map(|c| point_pos(c, height).0).collect();
-    let click = p.0;
-    (0..positions.len())
-        .map(|i| {
-            let a = positions[i];
-            let b = positions[(i + 1) % positions.len()];
-            let along = b - a;
-            let length2 = along.length_squared().max(1e-9);
-            let t = ((click - a).dot(along) / length2).clamp(0.0, 1.0);
-            (i, (a + along * t).distance(click), t)
-        })
-        .filter(|(_, distance, _)| *distance <= radius)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(i, _, t)| (i, t))
+    nearest_side(sides(&positions, true), p.0, radius).map(|(side, t, _)| (side, t))
 }
 
 /// Puts a corner on side `side` at the fraction `t` along it.
 pub fn insert_point(line: &mut Line, side: usize, t: f64) -> usize {
-    let corners = &line.source.envelope;
-    let a = corners[side];
-    let b = corners[(side + 1) % corners.len()];
-    let point = EnvelopePoint {
-        lat: a.lat + (b.lat - a.lat) * t,
-        lon: a.lon + (b.lon - a.lon) * t,
-    };
+    let point = point_on_side(&line.source.envelope, side, t);
     let index = side + 1;
     line.source.envelope.insert(index, point);
     index
@@ -101,12 +196,9 @@ pub fn insert_point(line: &mut Line, side: usize, t: f64) -> usize {
 
 /// Moves corner `index` to the position under the cursor.
 pub fn drag_point(line: &mut Line, index: usize, p: EcefPos) {
-    let Some(corner) = line.source.envelope.get_mut(index) else {
-        return;
-    };
-    let (lat, lon, _) = geo::from_ecef(p);
-    corner.lat = lat.to_degrees();
-    corner.lon = lon.to_degrees();
+    if let Some(corner) = line.source.envelope.get_mut(index) {
+        move_to(corner, p);
+    }
 }
 
 /// Removes corner `index` — never below the three a polygon needs.
@@ -233,5 +325,74 @@ mod tests {
         assert_eq!(line.source.envelope.len(), 3);
         assert!(!remove_point(&mut line, 0));
         assert_eq!(line.source.envelope.len(), 3);
+    }
+
+    /// The closing side exists only for a ring — a footpath has no side from
+    /// its end back to its start, a walk area and the envelope do.
+    #[test]
+    fn sides_wrap_only_for_a_ring() {
+        let points = [DVec3::ZERO, DVec3::X, DVec3::Y];
+        assert_eq!(sides(&points, false).count(), 2);
+        let ring: Vec<_> = sides(&points, true).collect();
+        assert_eq!(ring.len(), 3);
+        assert_eq!(ring[2], (2, DVec3::Y, DVec3::ZERO));
+        // One vertex is no side, closed or not.
+        assert_eq!(sides(&points[..1], true).count(), 0);
+        assert_eq!(sides(&points[..1], false).count(), 0);
+    }
+
+    #[test]
+    fn the_nearest_side_says_where_it_was_hit() {
+        let points = [
+            DVec3::ZERO,
+            DVec3::new(10.0, 0.0, 0.0),
+            DVec3::new(10.0, 10.0, 0.0),
+        ];
+        // A metre below the first side, a quarter of the way along it.
+        let (side, t, distance) =
+            nearest_side(sides(&points, false), DVec3::new(2.5, -1.0, 0.0), 2.0).unwrap();
+        assert_eq!(side, 0);
+        assert!((t - 0.25).abs() < 1e-9);
+        assert!((distance - 1.0).abs() < 1e-9);
+        // Out of reach: nothing.
+        assert!(nearest_side(sides(&points, false), DVec3::new(2.5, -5.0, 0.0), 2.0).is_none());
+        // On the diagonal back to the start — a side only the ring has.
+        let on_diagonal = DVec3::new(5.0, 5.0, 0.0);
+        assert!(nearest_side(sides(&points, false), on_diagonal, 1.0).is_none());
+        assert_eq!(
+            nearest_side(sides(&points, true), on_diagonal, 1.0).map(|hit| hit.0),
+            Some(2)
+        );
+        // The vertex pick answers with the distance, so callers can compare
+        // hits across several polylines.
+        assert_eq!(
+            nearest_vertex(
+                points.iter().copied().enumerate(),
+                DVec3::new(9.5, 0.0, 0.0),
+                1.0
+            ),
+            Some((1, 0.5))
+        );
+    }
+
+    /// The interpolation works on either kind of vertex.
+    #[test]
+    fn a_point_on_a_side_is_interpolated_for_any_vertex_kind() {
+        let path = [
+            WalkPoint {
+                lat: 52.0,
+                lon: 10.0,
+            },
+            WalkPoint {
+                lat: 52.0,
+                lon: 10.002,
+            },
+        ];
+        let mid = point_on_side(&path, 0, 0.5);
+        assert!((mid.lat - 52.0).abs() < 1e-12);
+        assert!((mid.lon - 10.001).abs() < 1e-12);
+        // Side 1 of a two-vertex ring runs back to the first vertex.
+        let back = point_on_side(&path, 1, 0.25);
+        assert!((back.lon - 10.0015).abs() < 1e-12);
     }
 }

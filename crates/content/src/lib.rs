@@ -16,7 +16,10 @@ pub use characters::{CharacterSpec, Gender, Role};
 pub use compose::Composition;
 pub use demo::musterbahn;
 pub use import::{ImportOptions, ImportReport, import_line};
-pub use people::{Crowd, PersonInstance, Pose};
+pub use people::{
+    Crowd, PersonInstance, Pose, StrollAgent, StrollPose, Walkway, WalkwayKind, WalkwayNode,
+    embedded_walkways, stroll_pose,
+};
 pub use route::{CompiledLine, LineSource, TreeSource};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{

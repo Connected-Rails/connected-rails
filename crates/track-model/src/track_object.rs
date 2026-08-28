@@ -20,7 +20,8 @@ pub struct TrackObject {
     #[serde(default)]
     pub lateral_offset: f64,
     /// Default rotation about the up axis [deg], clockwise seen from above;
-    /// 0 = the model's front (+Z) points along increasing arc length.
+    /// 0 = the model's front (−Z, the convention every vehicle and character uses)
+    /// points along increasing arc length.
     #[serde(default)]
     pub yaw_deg: f64,
     /// Default height above the railhead [m].

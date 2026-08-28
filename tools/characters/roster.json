@@ -35,7 +35,7 @@
       },
       "skin": "young_caucasian_male",
       "eyes": "blue",
-      "eyebrows": "eyebrow002",
+      "eyebrows": "eyebrow005",
       "eyelashes": null,
       "hair": "short02",
       "clothes": [
@@ -78,8 +78,8 @@
       },
       "skin": "young_caucasian_male2",
       "eyes": "green",
-      "eyebrows": "eyebrow004",
-      "eyelashes": "eyelashes01",
+      "eyebrows": "eyebrow010",
+      "eyelashes": null,
       "hair": "short04",
       "clothes": [
         "male_casualsuit05",
@@ -214,7 +214,7 @@
       "skin": "young_asian_male",
       "eyes": "brown",
       "eyebrows": "eyebrow005",
-      "eyelashes": "eyelashes01",
+      "eyelashes": null,
       "hair": "short02",
       "clothes": [
         "male_casualsuit04",
@@ -256,7 +256,7 @@
       },
       "skin": "middleage_caucasian_male",
       "eyes": "grey",
-      "eyebrows": "eyebrow001",
+      "eyebrows": "eyebrow004",
       "eyelashes": null,
       "hair": "short01",
       "clothes": [
@@ -344,8 +344,8 @@
       },
       "skin": "middleage_african_male",
       "eyes": "brownlight",
-      "eyebrows": "eyebrow002",
-      "eyelashes": "eyelashes01",
+      "eyebrows": "eyebrow008",
+      "eyelashes": null,
       "hair": "short01",
       "clothes": [
         "male_elegantsuit01",
@@ -541,9 +541,9 @@
       },
       "skin": "old_african_male",
       "eyes": "brown",
-      "eyebrows": "eyebrow005",
+      "eyebrows": "eyebrow001",
       "eyelashes": null,
-      "hair": "short01",
+      "hair": null,
       "clothes": [
         "male_casualsuit01",
         "shoes03",
@@ -735,7 +735,7 @@
       },
       "skin": "young_african_female",
       "eyes": "brown",
-      "eyebrows": "eyebrow010",
+      "eyebrows": "eyebrow007",
       "eyelashes": "eyelashes02",
       "hair": "braid01",
       "clothes": [
@@ -933,7 +933,7 @@
       },
       "skin": "middleage_asian_female",
       "eyes": "brown",
-      "eyebrows": "eyebrow010",
+      "eyebrows": "eyebrow001",
       "eyelashes": "eyelashes03",
       "hair": "bob01",
       "clothes": [

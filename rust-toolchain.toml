@@ -1,0 +1,5 @@
+# The project tracks the latest stable Rust — same as CI (`dtolnay/rust-toolchain@stable`)
+# and the Contributing section of the README. Pin an exact version here only if a toolchain
+# update breaks the build; CI would then need `dtolnay/rust-toolchain@<version>` to match.
+[toolchain]
+channel = "stable"

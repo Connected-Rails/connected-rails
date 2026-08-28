@@ -458,6 +458,14 @@ mod tests {
         ModRuntime::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../../mods"))
     }
 
+    /// Filters out Git LFS warnings which are expected in CI environments.
+    fn non_lfs_log(log: &[String]) -> Vec<String> {
+        log.iter()
+            .filter(|l| !l.contains("Git LFS pointer"))
+            .cloned()
+            .collect()
+    }
+
     /// A runtime whose only world script is the given source.
     fn world_runtime(source: &str) -> ModRuntime {
         ModRuntime {
@@ -514,7 +522,8 @@ mod tests {
     #[test]
     fn example_scripts_load() {
         let rt = runtime();
-        assert!(rt.log().is_empty(), "log: {:?}", rt.log());
+        let log = non_lfs_log(&rt.log());
+        assert!(log.is_empty(), "log: {:?}", log);
     }
 
     #[test]
@@ -661,7 +670,8 @@ mod tests {
             sim.scenario.messages
         );
         rt.post_step(&mut sim, 0.1);
-        assert!(rt.log().is_empty(), "log: {:?}", rt.log());
+        let log = non_lfs_log(&rt.log());
+        assert!(log.is_empty(), "log: {:?}", log);
     }
 
     /// The display hook: draw list parsed, junk skipped, caps enforced.

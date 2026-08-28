@@ -26,6 +26,10 @@ jobs:
             target: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The archives copy `mods/` verbatim: without LFS the character models
+          # would ship as pointer files.
+          lfs: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

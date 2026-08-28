@@ -1052,7 +1052,8 @@ cab like every other lever, and every peer works out the same consists from it.
 
 ## Contributing
 
-Rust stable, edition 2024. Before opening a pull request:
+Rust stable, edition 2024 — `rust-toolchain.toml` pins the toolchain to the latest stable, so a
+rustup-managed install picks it up on its own. Before opening a pull request:
 
 ```bash
 cargo fmt --all

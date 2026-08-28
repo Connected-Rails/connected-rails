@@ -57,7 +57,12 @@ fn spawn(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         FogVolume {
             // The shape of the mist: the same noise the clouds are made of, at a
             // scale where one billow is a field wide.
-            density_texture: Some(images.add(crate::clouds::noise_volume(32, 3.0, 41))),
+            density_texture: Some(images.add(crate::clouds::noise_volume(
+                32,
+                3.0,
+                41,
+                crate::clouds::Shape::Masked,
+            ))),
             density_factor: 0.0,
             scattering: 1.0,
             absorption: 0.02,

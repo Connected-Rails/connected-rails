@@ -14,12 +14,15 @@
 //   * **The lightning.** A strike lasts two frames; put through the panorama it
 //     would light a sixteenth of the sky at a time. It is a term on the coverage
 //     the panorama already carries, so it belongs on this side of the buffer.
+//
+// The air between the camera and the clouds — the weather's fog as much as the
+// clear sky's blue — is the march's business (`aerial` in `clouds.wgsl`): it
+// knows how far away each cloud is, and a weather front moves over minutes,
+// not frames.
 
 #import bevy_pbr::{forward_io::VertexOutput, mesh_view_bindings::view}
 
 struct DomeParams {
-    // x = extinction of the weather's haze [1/m], y = its scale height [m].
-    haze: vec4<f32>,
     // rgb = what a strike puts into the deck this frame, from the inside.
     flash: vec4<f32>,
 }
@@ -89,11 +92,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // cloud far more often than not. It scales with what the ray met, so an open
     // patch of sky stays dark.
     let lit = cloud.rgb + params.flash.rgb * cloud.a;
-    // The air between: a cloud seen through fog is not a cloud. The path through
-    // a layer of scale height h at elevation e is h / sin(e), and what survives
-    // it is Beer's law — the same coefficient the atmosphere's own haze term is
-    // built from (`sky::haze`).
-    let path = params.haze.y / max(dir.y, 0.02);
-    let through = exp(-params.haze.x * path);
-    return vec4(lit * view.exposure * through, cloud.a * through);
+    return vec4(lit * view.exposure, cloud.a);
 }

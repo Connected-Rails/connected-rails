@@ -12,13 +12,23 @@
 //!
 //! What is marched into it depends on the setting:
 //!
-//! * **Volumetric** — Guerrilla's Nubis: a shape noise eroded by a detail noise,
-//!   Beer-Powder attenuation, a forward-scattering phase for the silver lining,
-//!   96 steps along the ray and 6 towards the sun.
+//! * **Volumetric** — Guerrilla's Nubis: a shape noise eroded by a detail noise
+//!   that is wispy at the base and billowy above, a height profile that narrows
+//!   a cumulus towards its top, Beer attenuation, a forward-scattering phase for
+//!   the silver lining, 96 steps along the ray and 6 towards the sun.
 //! * **Layered** — the same shape field and the same scattering, read once where
 //!   the ray crosses the middle of the deck, with the self-shadow walked across
 //!   that height field. Roughly a twentieth of the cost, at the same resolution,
 //!   so the cheap sky is soft and sharp rather than soft and blurred.
+//!
+//! Neither guesses what colour the sky is. Bevy's atmosphere writes its sky-view
+//! table into a cubemap every frame for its own image-based lighting
+//! ([`AtmosphereEnvironmentMapLight`](bevy::light::AtmosphereEnvironmentMapLight)),
+//! and [`update`] hands that cubemap to the march. It is what lights the shaded
+//! side of a cloud — blue at noon, dim and warm at dusk, whatever the weather's
+//! haze has made of it — and it is what a far cloud fades into through the air in
+//! front of it. The one thing the sky cannot say is what the *ground* puts back
+//! up into a cloud base, so that is estimated here from the sun and the surface.
 //!
 //! The dome hangs in the transparent phase, which Bevy runs *after* its
 //! atmosphere (`render_sky`) — so the clouds composite over the finished sky the
@@ -39,6 +49,7 @@ use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::light::GeneratedEnvironmentMapLight;
 use bevy::mesh::{Mesh3d, MeshBuilder, Meshable, SphereKind};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -46,6 +57,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin, MeshMaterial2d};
+use std::f32::consts::PI;
 
 /// Panorama size. 0.18° of sky a texel, against the 0.47° of the 768 × 384 this
 /// replaced — which is about where a cumulus edge stops being a staircase,
@@ -65,6 +77,16 @@ const CLOUD_LAYER: usize = 7;
 /// sorts back to front — draws the stars first and the clouds over them.
 const DOME_RADIUS: f32 = SKY_RADIUS * 0.9;
 
+/// Side of the shape volume, and of the detail volume.
+///
+/// The shape's Worley octaves run up to 32 cells across it; at 64³ that finest
+/// octave had two texels to a cell and was sampled as speckle rather than as
+/// shape, and the detail's ran up to 64 cells over 32 texels, which is noise in
+/// the strict sense — the fine grain the old clouds had in an evening sky. Four
+/// texels to a cell is where a Worley cell still reads as a cell.
+const SHAPE_VOLUME: u32 = 128;
+const DETAIL_VOLUME: u32 = 64;
+
 /// What the wind at the cloud base is against the wind the weather reports.
 ///
 /// [`Weather::wind`](sim_core::weather::Weather::wind) is the ten-metre wind — what a
@@ -76,10 +98,26 @@ const DOME_RADIUS: f32 = SKY_RADIUS * 0.9;
 /// 7 km/h, and a cumulus does not crawl.
 const WIND_ALOFT: f32 = 2.5;
 
-/// The colour the sky puts back into a cloud, and the colour a strike lights one
-/// with. The same tint for both: a flash is the sky lighting the deck from the
-/// inside, only far brighter and for two frames.
+/// The colour of a clear sky's light, for the two places the sky itself cannot
+/// be asked: the share of the ground's light that is skylight, and the floor a
+/// night cloud is lit to. It is also the colour a strike lights the deck with —
+/// a flash is the sky lighting the deck from the inside, only far brighter and
+/// for two frames.
 const SKY_TINT: Vec3 = Vec3::new(0.50, 0.62, 0.85);
+
+/// What the sky's own light on the ground is against the sun's illuminance, and
+/// the least a cloud is ever lit to against the same, as fractions of
+/// [`SUN_ILLUMINANCE`](crate::sky::SUN_ILLUMINANCE). The floor is what keeps a
+/// night cloud a shape against the stars instead of a hole in them.
+const SKY_SHARE: f32 = 0.10;
+const NIGHT_FLOOR: f32 = 0.005;
+
+/// Albedo of what lies under the deck: fields and woods, the same when wet but
+/// darker, and snow. A cloud base over a snowfield is lit nearly as brightly
+/// from below as from above, which is why a winter overcast is so pale.
+const GROUND_ALBEDO: Vec3 = Vec3::new(0.17, 0.19, 0.11);
+const WET_DARKENING: f32 = 0.6;
+const SNOW_ALBEDO: Vec3 = Vec3::new(0.80, 0.82, 0.88);
 
 pub(crate) fn plugin(app: &mut App) {
     embedded_asset!(app, "clouds.wgsl");
@@ -114,15 +152,19 @@ impl Default for Quality {
 pub struct CloudParams {
     /// xyz = direction towards the sun, w = 1 by day, 0 at night.
     pub sun: Vec4,
-    /// rgb = the light that reaches the cloud layer, a = drift time \[s\].
+    /// rgb = the light that reaches the cloud layer \[lx\], a = drift time \[s\].
     pub light: Vec4,
-    /// rgb = the sky's own light on the clouds from every other direction,
+    /// rgb = what the ground puts back up into the base of the deck \[cd/m²\],
     /// a = cover 0 … 1.
-    pub ambient: Vec4,
+    pub ground: Vec4,
+    /// rgb = the least light a cloud is ever lit by; a reserved.
+    pub floor: Vec4,
     /// x = base \[m\], y = thickness \[m\], z/w = wind \[m/s\] in render space.
     pub layer: Vec4,
     /// x = the Bayer slot this frame writes, or −1 for every texel at once;
-    /// y = 1 volumetric, 0 layered.
+    /// y = 1 volumetric, 0 layered; z = extinction of the weather's haze
+    /// \[1/m\], w = its scale height \[m\] — the march fades a far cloud into
+    /// the fog the way it fades one into the blue.
     pub frame: Vec4,
 }
 
@@ -139,6 +181,13 @@ pub struct CloudMaterial {
     #[texture(3, dimension = "3d")]
     #[sampler(4)]
     detail: Handle<Image>,
+    /// The atmosphere's own view of the sky, one texel per direction — Bevy's
+    /// cubemap, once a camera has one. Until then Bevy binds its white 1 × 1
+    /// fallback, which at the sun's scale of illuminance is as good as black
+    /// and leaves the clouds to the sun and the floor.
+    #[texture(5, dimension = "cube")]
+    #[sampler(6)]
+    sky: Option<Handle<Image>>,
 }
 
 impl Material2d for CloudMaterial {
@@ -151,13 +200,9 @@ impl Material2d for CloudMaterial {
     }
 }
 
-/// What the dome is told about the air the clouds hang in.
+/// What the dome is told that the panorama cannot carry.
 #[derive(ShaderType, Debug, Clone, Copy, Default)]
 pub struct DomeParams {
-    /// x = extinction of the weather's haze \[1/m\], y = its scale height \[m\].
-    /// Without this a fog would close the view to 300 m and still show a sky full
-    /// of crisp cumulus.
-    pub haze: Vec4,
     /// rgb = what a lightning strike puts into the deck this frame.
     ///
     /// Here rather than in the march because the panorama takes sixteen frames to
@@ -214,8 +259,11 @@ fn spawn(
     let panorama = images.add(panorama_target());
     let material = clouds.add(CloudMaterial {
         params: CloudParams::default(),
-        shape: images.add(noise_volume(64, 4.0, 7)),
-        detail: images.add(noise_volume(32, 8.0, 23)),
+        shape: images.add(noise_volume(SHAPE_VOLUME, 4.0, 7, Shape::Dense)),
+        // Worley at 4, 8 and 16 cells over the 1.4 km the shader tiles it on: a
+        // 350 m billow down to an 87 m wisp. Only its Worley channels are read.
+        detail: images.add(noise_volume(DETAIL_VOLUME, 2.0, 23, Shape::Dense)),
+        sky: None,
     });
 
     // A camera of its own, on its own layer, rendering one quad — the cheapest
@@ -296,34 +344,72 @@ fn dome_mesh() -> Mesh {
         .expect("uv sphere is indexed")
 }
 
+/// How the red channel of a [`noise_volume`] combines its Perlin with the
+/// coarsest of its Worley octaves.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Shape {
+    /// The Perlin *masked* to the Worley's cells, zero between them: a field of
+    /// separate patches — a ground mist that lies in some hollows and not in
+    /// others.
+    Masked,
+    /// The Perlin *and* the Worley, centred on a half: a field that is somewhere
+    /// on every point, so a threshold on it runs from a few fair-weather cumulus
+    /// all the way to a closed deck. A masked field cannot close — where the
+    /// mask is zero no threshold finds a cloud — which is what left an overcast
+    /// sky full of holes.
+    Dense,
+}
+
 /// A tileable 3D noise volume: `r` is a Perlin-Worley mix, `gba` are Worley
-/// octaves — the four channels a cloud shape needs, in one RGBA8 lookup.
+/// octaves at twice, four and eight times `frequency` — the four channels a
+/// cloud shape needs, in one RGBA8 lookup.
 ///
 /// Generated rather than shipped, like the ground textures: the repository
-/// carries no binary assets. 64³ costs about a quarter of a second at startup.
-pub(crate) fn noise_volume(size: u32, frequency: f32, seed: u64) -> Image {
-    let mut data = vec![0u8; (size * size * size * 4) as usize];
+/// carries no binary assets. Every core takes a slab of the volume, and each
+/// Worley octave lays its feature points out once instead of hashing them again
+/// for every voxel and each of its 27 neighbours — 128³ is a few seconds on one
+/// core and a fraction of one on all of them.
+pub(crate) fn noise_volume(size: u32, frequency: f32, seed: u64, shape: Shape) -> Image {
     let n = size as f32;
-    for z in 0..size {
-        for y in 0..size {
-            for x in 0..size {
-                let p = Vec3::new(x as f32, y as f32, z as f32) / n;
-                let perlin = fbm(p, frequency, seed);
-                // Worley inverted: a cloud is the space *between* the cells.
-                let worley: [f32; 3] = std::array::from_fn(|i| {
-                    1.0 - worley(p, frequency * (2.0f32).powi(i as i32 + 1), seed + i as u64)
-                });
-                // Perlin remapped by the coarsest Worley — Schneider's mix, which
-                // is what gives a cumulus its billows instead of a fog bank.
-                let shape = remap(perlin, 1.0 - worley[0], 1.0, 0.0, 1.0).clamp(0.0, 1.0);
-                let index = (((z * size + y) * size + x) * 4) as usize;
-                data[index] = (shape * 255.0) as u8;
-                for (i, w) in worley.iter().enumerate() {
-                    data[index + 1 + i] = (w.clamp(0.0, 1.0) * 255.0) as u8;
+    let octaves: [WorleyCells; 3] = std::array::from_fn(|i| {
+        WorleyCells::new(frequency * 2.0f32.powi(i as i32 + 1), seed + i as u64)
+    });
+    let slab = (size * size * 4) as usize;
+    let mut data = vec![0u8; slab * size as usize];
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let slabs_per_thread = (size as usize).div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (chunk_index, chunk) in data.chunks_mut(slab * slabs_per_thread).enumerate() {
+            let octaves = &octaves;
+            scope.spawn(move || {
+                for (dz, slice) in chunk.chunks_mut(slab).enumerate() {
+                    let z = (chunk_index * slabs_per_thread + dz) as f32;
+                    for y in 0..size {
+                        for x in 0..size {
+                            let p = Vec3::new(x as f32, y as f32, z) / n;
+                            let perlin = fbm(p, frequency, seed);
+                            // Worley inverted: a cloud is a billow *around* a
+                            // feature point, not the space between them.
+                            let worley: [f32; 3] =
+                                std::array::from_fn(|i| 1.0 - octaves[i].distance(p));
+                            // Either way the Worley's cells are what give a
+                            // cumulus its billows instead of a fog bank.
+                            let mixed = match shape {
+                                Shape::Masked => remap(perlin, 1.0 - worley[0], 1.0, 0.0, 1.0),
+                                Shape::Dense => perlin + worley[0] - 0.5,
+                            }
+                            .clamp(0.0, 1.0);
+                            let index = ((y * size + x) * 4) as usize;
+                            slice[index] = (mixed * 255.0) as u8;
+                            for (i, w) in worley.iter().enumerate() {
+                                slice[index + 1 + i] = (w.clamp(0.0, 1.0) * 255.0) as u8;
+                            }
+                        }
+                    }
                 }
-            }
+            });
         }
-    }
+    });
     let mut image = Image::new(
         Extent3d {
             width: size,
@@ -346,34 +432,45 @@ pub(crate) fn noise_volume(size: u32, frequency: f32, seed: u64) -> Image {
     image
 }
 
-/// Value noise over a wrapping lattice — three octaves is what a cloud shape
-/// needs before the Worley erosion takes over.
+/// Gradient noise over a wrapping lattice, three octaves — the soft masses the
+/// Worley then carves into billows, in 0 … 1.
+///
+/// Gradient rather than value noise on purpose: value noise has its extremes
+/// *on* the lattice points and its slopes between them, and clouds grown from it
+/// come out as evenly spaced lumps with the grid showing through. Perlin's
+/// gradients put the extremes between the points, where nothing lines up.
 fn fbm(p: Vec3, frequency: f32, seed: u64) -> f32 {
     let mut sum = 0.0;
     let mut amplitude = 0.5;
     let mut f = frequency;
     for octave in 0..3 {
-        sum += amplitude * value_noise(p, f, seed + octave);
+        sum += amplitude * perlin(p, f, seed + octave);
         amplitude *= 0.5;
         f *= 2.0;
     }
-    sum
+    // Three octaves of ±1 noise rarely leave ±0.3 in practice; this is what
+    // spreads them over the byte without clipping much of either tail.
+    (0.5 + sum * 1.5).clamp(0.0, 1.0)
 }
 
-fn value_noise(p: Vec3, frequency: f32, seed: u64) -> f32 {
+/// Perlin's gradient noise on a lattice of `frequency` cells that wraps, in
+/// about −1 … 1.
+fn perlin(p: Vec3, frequency: f32, seed: u64) -> f32 {
     let period = frequency.max(1.0) as i64;
     let scaled = p * frequency;
     let cell = scaled.floor();
     let f = scaled - cell;
-    // Smoothstep, so the lattice does not show as a grid of creases.
-    let u = f * f * (Vec3::splat(3.0) - 2.0 * f);
+    // Perlin's quintic fade: no first or second derivative at the lattice, so
+    // nothing creases there.
+    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     let corner = |dx: i64, dy: i64, dz: i64| {
-        hash01(
+        let g = gradient(
             (cell.x as i64 + dx).rem_euclid(period),
             (cell.y as i64 + dy).rem_euclid(period),
             (cell.z as i64 + dz).rem_euclid(period),
             seed,
-        )
+        );
+        g.dot(f - Vec3::new(dx as f32, dy as f32, dz as f32))
     };
     let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
     let x00 = mix(corner(0, 0, 0), corner(1, 0, 0), u.x);
@@ -383,32 +480,72 @@ fn value_noise(p: Vec3, frequency: f32, seed: u64) -> f32 {
     mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z)
 }
 
-/// Distance to the nearest of one point per cell, wrapped — the cellular noise
-/// whose *inverse* looks like a cloud's billows.
-fn worley(p: Vec3, frequency: f32, seed: u64) -> f32 {
-    let period = frequency.max(1.0) as i64;
-    let scaled = p * frequency;
-    let cell = scaled.floor();
-    let mut nearest = f32::MAX;
-    for dz in -1..=1 {
-        for dy in -1..=1 {
-            for dx in -1..=1 {
-                let neighbour = cell + Vec3::new(dx as f32, dy as f32, dz as f32);
-                let wrapped = (
-                    (neighbour.x as i64).rem_euclid(period),
-                    (neighbour.y as i64).rem_euclid(period),
-                    (neighbour.z as i64).rem_euclid(period),
-                );
-                let offset = Vec3::new(
-                    hash01(wrapped.0, wrapped.1, wrapped.2, seed),
-                    hash01(wrapped.0, wrapped.1, wrapped.2, seed + 101),
-                    hash01(wrapped.0, wrapped.1, wrapped.2, seed + 211),
-                );
-                nearest = nearest.min((neighbour + offset - scaled).length());
+/// One of Perlin's twelve edge gradients, picked by the lattice point.
+fn gradient(x: i64, y: i64, z: i64, seed: u64) -> Vec3 {
+    const GRADIENTS: [Vec3; 12] = [
+        Vec3::new(1.0, 1.0, 0.0),
+        Vec3::new(-1.0, 1.0, 0.0),
+        Vec3::new(1.0, -1.0, 0.0),
+        Vec3::new(-1.0, -1.0, 0.0),
+        Vec3::new(1.0, 0.0, 1.0),
+        Vec3::new(-1.0, 0.0, 1.0),
+        Vec3::new(1.0, 0.0, -1.0),
+        Vec3::new(-1.0, 0.0, -1.0),
+        Vec3::new(0.0, 1.0, 1.0),
+        Vec3::new(0.0, -1.0, 1.0),
+        Vec3::new(0.0, 1.0, -1.0),
+        Vec3::new(0.0, -1.0, -1.0),
+    ];
+    GRADIENTS[(hash01(x, y, z, seed) * 12.0) as usize % 12]
+}
+
+/// One feature point per cell of a wrapping lattice, laid out once — the
+/// cellular noise whose *inverse* looks like a cloud's billows.
+struct WorleyCells {
+    period: usize,
+    /// Where in its cell each point sits, 0 … 1 on every axis, `z`-major.
+    points: Vec<Vec3>,
+}
+
+impl WorleyCells {
+    fn new(frequency: f32, seed: u64) -> Self {
+        let period = frequency.max(1.0) as usize;
+        let points = (0..period * period * period)
+            .map(|i| {
+                let x = (i % period) as i64;
+                let y = ((i / period) % period) as i64;
+                let z = (i / (period * period)) as i64;
+                Vec3::new(
+                    hash01(x, y, z, seed),
+                    hash01(x, y, z, seed + 101),
+                    hash01(x, y, z, seed + 211),
+                )
+            })
+            .collect();
+        Self { period, points }
+    }
+
+    /// Distance from `p` (0 … 1 on every axis) to the nearest point, in cells
+    /// and capped at one.
+    fn distance(&self, p: Vec3) -> f32 {
+        let period = self.period as i64;
+        let scaled = p * self.period as f32;
+        let cell = scaled.floor();
+        let wrap = |v: f32| (v as i64).rem_euclid(period) as usize;
+        let mut nearest = f32::MAX;
+        for dz in -1..=1 {
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let neighbour = cell + Vec3::new(dx as f32, dy as f32, dz as f32);
+                    let index = (wrap(neighbour.z) * self.period + wrap(neighbour.y)) * self.period
+                        + wrap(neighbour.x);
+                    let offset = self.points[index];
+                    nearest = nearest.min((neighbour + offset - scaled).length_squared());
+                }
             }
         }
+        nearest.sqrt().min(1.0)
     }
-    nearest.min(1.0)
 }
 
 fn hash01(x: i64, y: i64, z: i64, seed: u64) -> f32 {
@@ -438,6 +575,9 @@ fn update(
     dome_handles: Query<&MeshMaterial3d<DomeMaterial>>,
     sun: Query<&Transform, (With<Sun>, Without<Dome>)>,
     camera: Query<&GlobalTransform, (With<Camera3d>, Without<Dome>)>,
+    // The atmosphere's cubemap: Bevy puts this on every camera that asked for an
+    // `AtmosphereEnvironmentMapLight`, and the handle in it is the sky itself.
+    sky_map: Query<&GeneratedEnvironmentMapLight>,
     mut dome: Query<&mut Transform, (With<Dome>, Without<Sun>)>,
     mut frame: Local<u32>,
 ) {
@@ -465,11 +605,11 @@ fn update(
         // Illuminance, not radiance: the march multiplies it by a phase function
         // that is normalised over the sphere, so the 1/4π lives there.
         light: (sunlight(sun_dir.y) * crate::sky::SUN_ILLUMINANCE).extend(sky.seconds as f32),
-        // What the rest of the sky puts back into a cloud. Blue by day, and never
-        // quite black, or a night cloud would be a hole in the stars. The
-        // lightning is *not* in here — it is on the dome, where every frame runs.
-        ambient: (SKY_TINT * crate::sky::SUN_ILLUMINANCE * 0.10 * (0.05 + 0.95 * daylight))
+        ground: ground_light(sun_dir.y, daylight, weather.cover, sky.wetness, sky.snow)
             .extend(weather.cover),
+        // Never quite black, or a night cloud would be a hole in the stars. The
+        // lightning is *not* in here — it is on the dome, where every frame runs.
+        floor: (SKY_TINT * crate::sky::SUN_ILLUMINANCE * NIGHT_FLOOR).extend(0.0),
         layer: Vec4::new(
             weather.base,
             // A closed deck is a thick one; a fair-weather cumulus is not.
@@ -477,21 +617,29 @@ fn update(
             -weather.bearing.sin() * weather.wind * WIND_ALOFT,
             weather.bearing.cos() * weather.wind * WIND_ALOFT,
         ),
-        frame: Vec4::new(writing, f32::from(u8::from(quality.volumetric)), 0.0, 0.0),
+        frame: Vec4::new(
+            writing,
+            f32::from(u8::from(quality.volumetric)),
+            crate::sky::haze_extinction(weather.visibility),
+            crate::sky::haze_height(weather.fog_depth),
+        ),
     };
+    // The cubemap arrives with the first camera and is a new image with every
+    // run's camera; the march follows whichever one there is.
+    let sky_map = sky_map
+        .iter()
+        .next()
+        .map(|light| light.environment_map.clone());
     for handle in &handles {
         if let Some(mut material) = materials.get_mut(&handle.0) {
             material.params = params;
+            if material.sky != sky_map {
+                material.sky = sky_map.clone();
+            }
         }
     }
 
     let dome_params = DomeParams {
-        haze: Vec4::new(
-            crate::sky::haze_extinction(weather.visibility),
-            crate::sky::haze_height(weather.fog_depth),
-            0.0,
-            0.0,
-        ),
         // A strike lights the whole deck from the inside, which is what a
         // thunderstorm looks like from under it — the channel itself is behind
         // the cloud far more often than not.
@@ -533,6 +681,24 @@ fn sunlight(sin_elevation: f32) -> Vec3 {
     transmittance * smoothstep(-0.08, 0.02, sin_elevation)
 }
 
+/// What the ground puts back up into the base of the deck \[cd/m²\]: its albedo
+/// times what the sun and the sky put down on it, over π.
+///
+/// The sun's share is the direct light on level ground less what the deck
+/// itself takes — the same share `sky::update` takes off the light — and the
+/// sky's share is the estimate the night floor is built on, since the cubemap
+/// cannot be read from here. A snowfield sends most of both back up, which is
+/// why a winter overcast is so much paler than a summer one.
+fn ground_light(sin_elevation: f32, daylight: f32, cover: f32, wetness: f32, snow: f32) -> Vec3 {
+    let albedo = GROUND_ALBEDO
+        .lerp(GROUND_ALBEDO * WET_DARKENING, wetness)
+        .lerp(SNOW_ALBEDO, snow);
+    let under_deck = 1.0 - 0.85 * cover;
+    let sun = sunlight(sin_elevation) * crate::sky::SUN_ILLUMINANCE * sin_elevation.max(0.0) / PI;
+    let sky = SKY_TINT * crate::sky::SUN_ILLUMINANCE * SKY_SHARE * daylight;
+    albedo * (sun + sky) * under_deck
+}
+
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -566,20 +732,54 @@ mod tests {
     #[test]
     fn the_noise_wraps() {
         // A volume that does not tile shows its seams as straight lines in the sky.
+        let cells = WorleyCells::new(4.0, 1);
         for (a, b) in [
             (Vec3::new(0.0, 0.3, 0.7), Vec3::new(1.0, 0.3, 0.7)),
             (Vec3::new(0.2, 0.0, 0.5), Vec3::new(0.2, 1.0, 0.5)),
             (Vec3::new(0.4, 0.6, 0.0), Vec3::new(0.4, 0.6, 1.0)),
         ] {
             assert!(
-                (value_noise(a, 4.0, 1) - value_noise(b, 4.0, 1)).abs() < 1e-5,
-                "value noise seam at {a} / {b}"
+                (perlin(a, 4.0, 1) - perlin(b, 4.0, 1)).abs() < 1e-5,
+                "perlin seam at {a} / {b}"
             );
             assert!(
-                (worley(a, 4.0, 1) - worley(b, 4.0, 1)).abs() < 1e-5,
+                (cells.distance(a) - cells.distance(b)).abs() < 1e-5,
                 "worley seam at {a} / {b}"
             );
         }
+    }
+
+    /// Gradient noise is zero *on* its lattice and swings between; a wrong
+    /// normalisation shows as a shape channel that is all floor or all ceiling.
+    #[test]
+    fn the_noise_fills_its_range_without_living_at_the_ends() {
+        let mut lo = f32::MAX;
+        let mut hi = f32::MIN;
+        let mut sum = 0.0;
+        let mut clipped = 0;
+        let n = 24;
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    let p = Vec3::new(x as f32, y as f32, z as f32) / n as f32;
+                    let v = fbm(p, 4.0, 3);
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                    sum += v;
+                    if v <= 0.0 || v >= 1.0 {
+                        clipped += 1;
+                    }
+                }
+            }
+        }
+        let mean = sum / (n * n * n) as f32;
+        assert!(lo < 0.25 && hi > 0.75, "too narrow: {lo} … {hi}");
+        assert!((mean - 0.5).abs() < 0.08, "off centre: mean {mean}");
+        assert!(
+            clipped < n * n * n / 20,
+            "{clipped} of {} samples pinned to an end",
+            n * n * n
+        );
     }
 
     #[test]
@@ -591,9 +791,26 @@ mod tests {
         assert_eq!(sunlight(-0.2), Vec3::ZERO, "gone once it has set");
     }
 
+    /// Snow turns a cloud base pale, and night turns the ground off.
+    #[test]
+    fn the_ground_lights_a_cloud_base_by_what_lies_on_it() {
+        let summer = ground_light(0.8, 1.0, 0.4, 0.0, 0.0);
+        let winter = ground_light(0.3, 1.0, 0.9, 0.0, 1.0);
+        assert!(
+            winter.z > summer.z,
+            "snow under a low sun outshines fields under a high one: {winter} vs {summer}"
+        );
+        assert!(summer.y > summer.z, "fields are green: {summer}");
+        assert_eq!(
+            ground_light(-0.3, 0.0, 0.4, 0.0, 0.0),
+            Vec3::ZERO,
+            "dark at night"
+        );
+    }
+
     #[test]
     fn the_volume_has_every_channel() {
-        let image = noise_volume(8, 2.0, 5);
+        let image = noise_volume(8, 2.0, 5, Shape::Dense);
         let data = image.data.as_ref().expect("generated in memory");
         assert_eq!(data.len(), 8 * 8 * 8 * 4);
         for channel in 0..4 {
@@ -607,5 +824,18 @@ mod tests {
                 "channel {channel} is flat: {spread:?}"
             );
         }
+    }
+
+    /// The slabs the threads take must tile the volume exactly: a size that does
+    /// not divide by the core count is the common case, not the corner one.
+    #[test]
+    fn the_volume_is_the_same_whoever_builds_it() {
+        let a = noise_volume(13, 2.0, 9, Shape::Masked);
+        let b = noise_volume(13, 2.0, 9, Shape::Masked);
+        assert_eq!(a.data, b.data);
+        let data = a.data.as_ref().expect("generated in memory");
+        // The last slab is the one a miscount would leave blank.
+        let last = &data[12 * 13 * 13 * 4..];
+        assert!(last.iter().any(|&v| v != 0), "last slab never written");
     }
 }

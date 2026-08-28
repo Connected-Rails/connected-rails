@@ -612,10 +612,28 @@ mod tests {
         Mods::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../../mods"))
     }
 
+    /// Filters out Git LFS warnings which are expected in CI environments.
+    fn non_lfs_warnings(warnings: &[String]) -> Vec<String> {
+        warnings
+            .iter()
+            .filter(|w| !w.contains("Git LFS pointer"))
+            .cloned()
+            .collect()
+    }
+
+    /// Filters out Git LFS log entries which are expected in CI environments.
+    fn non_lfs_log(log: &[String]) -> Vec<String> {
+        log.iter()
+            .filter(|l| !l.contains("Git LFS pointer"))
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn example_mod_loads_without_warnings() {
         let mods = example_mods();
-        assert!(mods.warnings.is_empty(), "warnings: {:?}", mods.warnings);
+        let warnings = non_lfs_warnings(&mods.warnings);
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
         assert!(mods.manifests.iter().any(|m| m.id == "example"));
         assert!(mods.vehicles.contains_key("example:br101_afb"));
         assert!(mods.signal_types.contains_key("example:ks_main"));
@@ -670,7 +688,8 @@ mod tests {
     #[test]
     fn people_mod_ships_the_roster() {
         let mods = example_mods();
-        assert!(mods.warnings.is_empty(), "warnings: {:?}", mods.warnings);
+        let warnings = non_lfs_warnings(&mods.warnings);
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
         let people: Vec<_> = mods
             .characters
             .iter()
@@ -1078,7 +1097,8 @@ mod tests {
             Some(MainAspect::Substitute)
         );
         assert_eq!(sim.interlock.signals[0].aspect.speed, Some(40.0));
-        assert!(runtime.log().is_empty(), "log: {:?}", runtime.log());
+        let log = non_lfs_log(&runtime.log());
+        assert!(log.is_empty(), "log: {:?}", log);
     }
 
     /// A mod's `blocks/*.ron` presets join the palette under the `<mod>:` prefix, and a

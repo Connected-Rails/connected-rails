@@ -12,7 +12,7 @@ pub mod profile;
 pub mod track_object;
 pub mod track_type;
 
-pub use device::{DeviceId, DeviceKind, Facing, TracksideDevice};
+pub use device::{DeviceId, DeviceKind, Facing, PlatformPayload, TracksideDevice};
 pub use geometry::Segment;
 pub use network::{
     Blocked, EdgeEnd, EdgeId, EdgeSide, NodeId, NodeKind, Switch, SwitchPosition, TrackEdge,

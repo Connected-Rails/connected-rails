@@ -220,6 +220,25 @@ pub struct VehicleModel {
     /// Screens in the cab, rendered to texture (plan ch. 12).
     #[serde(default)]
     pub displays: Vec<crate::cab::DisplaySpec>,
+    /// Seats a passenger may sit in (plan ch. 12). The app fills a share of them with
+    /// people out of the mods' `characters/`; a vehicle that lists none carries nobody.
+    #[serde(default)]
+    pub seats: Vec<SeatSpec>,
+}
+
+/// A seat in a vehicle: where a seated person is put.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SeatSpec {
+    /// Where the person's origin goes, in model space [m]: X right, Y above the rail
+    /// head, −Z ahead. The origin is the floor point below the pelvis: a seated
+    /// character's seat is about 0.45 m above it, the knees 0.45 m in front of it and
+    /// the feet on the floor below the knees — so `pos` is the floor at the front edge
+    /// of the seat cushion, not the cushion itself.
+    pub pos: [f32; 3],
+    /// Which way the seat faces [deg], clockwise seen from above; 0 = ahead (−Z),
+    /// 180 = backwards.
+    #[serde(default)]
+    pub yaw_deg: f32,
 }
 
 /// One axle of the running gear.

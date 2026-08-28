@@ -613,6 +613,7 @@ fn setup(
             &[],
             &[],
             &Default::default(),
+            default(),
             &assets,
             &mut meshes,
             &mut materials,

@@ -1,0 +1,12 @@
+# Binary assets of the mods go through Git LFS (`git lfs install` once per machine,
+# then a clone fetches them by itself; an existing clone needs `git lfs pull`).
+# Text formats stay ordinary git objects — RON, glTF JSON, Lua and HTML diff and merge.
+mods/**/*.glb filter=lfs diff=lfs merge=lfs -text
+mods/**/*.png filter=lfs diff=lfs merge=lfs -text
+mods/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+mods/**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+mods/**/*.ktx2 filter=lfs diff=lfs merge=lfs -text
+mods/**/*.ogg filter=lfs diff=lfs merge=lfs -text
+mods/**/*.wav filter=lfs diff=lfs merge=lfs -text
+mods/**/*.flac filter=lfs diff=lfs merge=lfs -text
+mods/**/*.mp3 filter=lfs diff=lfs merge=lfs -text

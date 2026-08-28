@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-28 · `cargo test --workspace`: **764 tests green** · clippy and fmt clean.
+As of 2026-08-28 · `cargo test --workspace`: **781 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -773,8 +773,31 @@ As of 2026-08-28 · `cargo test --workspace`: **764 tests green** · clippy and 
   interior holds him on the floor its `eye` implies. Past the end of a vehicle he walks on
   into the next one of the train, and `E` takes him through a door: out of an open
   passenger door or a traction unit's cab door at a stand, and back in at any vehicle
-  beside him. `--character <file>` hangs a model on him, shown from the outside cameras.
+  beside him. He wears one of the mods' people, shown from the outside cameras (see
+  *People* below; `--character` picks another).
   The driving keys rest while he is off the seat; F1 puts him back.
+- **People (ch. 12):** a mod ships characters (`characters/*.ron`), and the `people` mod
+  carries twenty-four of them generated out of MakeHuman 2 by `tools/characters/` (their
+  glTF files are Git LFS objects, like every binary asset below `mods/`) — four
+  levels of detail on one skeleton (about 14 000 / 5 000 / 1 600 / 500 triangles), an
+  opaque and a cut-out atlas each, and the clips `idle`, `idle2`, `walk`, `stand`,
+  `stand2`, `stand3` and `sit`. Every `Platform` device gets a **waiting crowd**
+  (`content::people`): one person per six metres or so, at a random spot along the
+  platform and 2.3–3.5 m beside the track on the platform's side, facing the track give
+  or take, in a mix of the idle and standing clips with staggered starts, placed like the
+  scenery objects — track pose, tile bucket, on the platform's height or on the ground —
+  so they stream with the terrain tiles. The renderer (`world_render::people`) finishes
+  each instance once its scene is there: the `_LOD<n>` nodes become visibility bands
+  (hand-over at 30, 80 and 200 m, culled at 500 m, 300 m aboard a train), the clips one
+  cached animation graph per glTF, and the atlases get the mip chain the pipeline does not
+  ship. A vehicle whose model lists `seats` has about two thirds of them **taken**,
+  decided by a hash of train, vehicle and seat, in the `sit` pose. The **walker** wears
+  the first `Player` character (`--character people:f01_lena` or a file picks another)
+  and is animated off his own pace — `idle` at a stand, `walk` on the move, cross-faded,
+  the cycle sped up with the pace. Nothing of it is replicated: the crowd is a function
+  of the line's name and the device index, the seats of the train's indices, so every
+  client shows the same people; what another player's walker looks like is not sent, and
+  remote walkers are not drawn.
 - **Signal models (ch. 15.3, after the Zusi assembly pattern):** a `SignalModel`
   (`signal_models/*.ron` in a mod) is a list of glTF **parts chained by mount points**
   (empty nodes `mp_*`), so masts, screens and indicators are shared files, plus a binding

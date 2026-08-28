@@ -10,15 +10,21 @@
 //!
 //! Where he stands is kept in the frame that moves him — inside a vehicle in its model
 //! space, so he rides along by himself, outside in world coordinates, which an origin
-//! rebase leaves alone. `--character <file>` hangs a model on him; it is only ever seen
-//! from the outside cameras, because in the walk the eye sits inside its head.
+//! rebase leaves alone. `--character` hangs a model on him (one of the mods' people by
+//! default); it is only ever seen from the outside cameras, because in the walk the eye
+//! sits inside its head. The model is animated off the same place: how far it moved
+//! between two frames is his pace, and the pace picks and speeds the walk cycle.
 
 use crate::bindings::{Action, Input};
+use bevy::animation::RepeatAnimation;
+use bevy::animation::transition::AnimationTransitions;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::prelude::*;
 use sim_core::doors::DoorPhase;
 use sim_core::train::{Train, Vehicle};
+use std::time::Duration;
 use world_coords::{EcefPos, RenderOrigin};
+use world_render::{CharacterGraphs, Dressed, Person};
 
 use crate::ui::{CameraMode, CameraState};
 use crate::{Origin, PlayerTrain, Precipitation, SimResource};
@@ -54,6 +60,20 @@ const STANDSTILL: f32 = 0.2;
 /// Half the width of the inside of a vehicle [m] — the bound for interiors that carry no
 /// walls of their own to run a ray against.
 const BODY_HALF_WIDTH: f32 = 1.4;
+/// Above this pace the model walks rather than stands [m/s] — a fifth of the walk, so
+/// a frame of standing still with a rounding error in it does not start the cycle.
+const WALKING_ABOVE: f32 = 0.3;
+/// The pace the walk cycle was made for [m/s] (`content::characters`): at it the
+/// clip runs at its own speed, at the run it is sped up.
+const CYCLE_PACE: f32 = 1.5;
+/// The walk cycle's playback speed is kept in this band — slower is a moonwalk,
+/// faster a cartoon.
+const CYCLE_RATE: (f32, f32) = (0.6, 3.0);
+/// A step longer than this between two frames is not a walk but a teleport (a door,
+/// a stand-up out of the seat) and is not measured [m].
+const JUMP: f32 = 5.0;
+/// How long the model takes to cross-fade between standing and walking [s].
+const GAIT_FADE: f32 = 0.2;
 
 /// The walker: where he is and how fast he is falling. `place` is `None` while he sits at
 /// the desk — F4 stands him up, F1 puts him back.
@@ -255,6 +275,139 @@ pub fn place_character(
         }
         None => *visibility = Visibility::Hidden,
     }
+}
+
+/// What the model does: standing, or walking at a rate of its cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Gait {
+    #[default]
+    Idle,
+    Walk {
+        /// Playback speed of the walk cycle.
+        rate: f32,
+    },
+}
+
+impl Gait {
+    fn clip(self) -> &'static str {
+        match self {
+            Gait::Idle => "idle",
+            Gait::Walk { .. } => "walk",
+        }
+    }
+}
+
+/// The gait for a pace [m/s]: standing below [`WALKING_ABOVE`], otherwise the walk
+/// cycle at the pace over the one it was made for, clamped to [`CYCLE_RATE`].
+pub fn gait(pace: f32) -> Gait {
+    if pace < WALKING_ABOVE {
+        Gait::Idle
+    } else {
+        Gait::Walk {
+            rate: (pace / CYCLE_PACE).clamp(CYCLE_RATE.0, CYCLE_RATE.1),
+        }
+    }
+}
+
+/// How far the walker moved over the ground between two frames [m], measured in the
+/// frame he is kept in — aboard in the vehicle's model space, so a train under way
+/// does not read as a walk, outside in world coordinates through the current origin,
+/// so a rebase does not either. `None` where the two places are not comparable
+/// (boarding, alighting, sitting down) or the step is a jump.
+pub fn horizontal_step(
+    previous: Option<Place>,
+    current: Option<Place>,
+    origin: &RenderOrigin,
+) -> Option<f32> {
+    let step = match (previous?, current?) {
+        (
+            Place::Aboard {
+                vehicle: a,
+                eye: from,
+            },
+            Place::Aboard {
+                vehicle: b,
+                eye: to,
+            },
+        ) if a == b => to - from,
+        (Place::Outside { eye: from }, Place::Outside { eye: to }) => {
+            origin.to_render(to) - origin.to_render(from)
+        }
+        _ => return None,
+    };
+    let distance = Vec2::new(step.x, step.z).length();
+    (distance <= JUMP).then_some(distance)
+}
+
+/// What the walker's model was doing last frame.
+#[derive(Default)]
+pub struct WalkerGait {
+    previous: Option<Place>,
+    gait: Gait,
+    /// The player the gait was last set on — a new run dresses a new model, which
+    /// starts out standing whatever the old one was doing.
+    player: Option<Entity>,
+}
+
+/// Plays the character model's clips off the walker's pace: `idle` at a stand, `walk`
+/// on the move, cross-faded, the cycle sped up with the pace. A model without those
+/// clips (or without any) simply stands as `dress_people` left it.
+pub fn animate_walker(
+    walker: Res<Walker>,
+    origin: Res<Origin>,
+    time: Res<Time>,
+    graphs: Res<CharacterGraphs>,
+    model: Query<(&Person, &Dressed), With<CharacterModel>>,
+    mut players: Query<(&mut AnimationTransitions, &mut AnimationPlayer)>,
+    mut state: Local<WalkerGait>,
+) {
+    let Ok((person, dressed)) = model.single() else {
+        return;
+    };
+    if state.player != dressed.player {
+        state.player = dressed.player;
+        state.gait = Gait::Idle;
+    }
+    let step = horizontal_step(state.previous, walker.place, &origin.0);
+    state.previous = walker.place;
+    let dt = time.delta_secs();
+    let Some(pace) = step.filter(|_| dt > 0.0).map(|d| d / dt) else {
+        return;
+    };
+    let wanted = gait(pace);
+    let Some(graph) = graphs.get(person.gltf.id()) else {
+        return;
+    };
+    let Some((mut transitions, mut player)) = dressed.player.and_then(|e| players.get_mut(e).ok())
+    else {
+        return;
+    };
+    let Some((node, _)) = graph.clip(wanted.clip()) else {
+        return;
+    };
+    match (state.gait, wanted) {
+        // Walking on: only the rate follows the pace.
+        (Gait::Walk { .. }, Gait::Walk { rate }) => {
+            if let Some(active) = player.animation_mut(node) {
+                active.set_speed(rate);
+            }
+        }
+        (Gait::Idle, Gait::Idle) => {}
+        (_, Gait::Walk { rate }) => {
+            transitions
+                .play(&mut player, node, Duration::from_secs_f32(GAIT_FADE))
+                .set_repeat(RepeatAnimation::Forever)
+                .set_speed(rate);
+            info!("walker: walk at {rate:.2}x");
+        }
+        (_, Gait::Idle) => {
+            transitions
+                .play(&mut player, node, Duration::from_secs_f32(GAIT_FADE))
+                .set_repeat(RepeatAnimation::Forever);
+            info!("walker: idle");
+        }
+    }
+    state.gait = wanted;
 }
 
 /// One step over the ground: stopped by what stands at chest height and by ground that
@@ -539,6 +692,65 @@ mod tests {
         assert!((local.z - here).abs() < 1e-4, "{local:?}");
         // In the middle of a vehicle nothing happens at all.
         assert_eq!(gangway(train, 1, Vec3::ZERO), (1, Vec3::ZERO));
+    }
+
+    /// Standing below a fifth of the walk, the cycle at its own speed at the walk,
+    /// three times it at the run — and never outside its band.
+    #[test]
+    fn the_gait_follows_the_pace() {
+        assert_eq!(gait(0.0), Gait::Idle);
+        assert_eq!(gait(0.2), Gait::Idle);
+        assert_eq!(gait(WALK), Gait::Walk { rate: 1.0 });
+        assert_eq!(gait(RUN), Gait::Walk { rate: 3.0 });
+        assert_eq!(gait(0.4), Gait::Walk { rate: 0.6 });
+        assert_eq!(Gait::Idle.clip(), "idle");
+        assert_eq!(gait(WALK).clip(), "walk");
+    }
+
+    /// The pace is read off the place the walker is kept in: aboard in the vehicle's
+    /// own space (so the train's speed is not his), outside on the earth (so an
+    /// origin rebase is not a step); a change of frame or a jump is not measured.
+    #[test]
+    fn the_step_is_measured_in_the_walkers_own_frame() {
+        let origin = RenderOrigin::new(world_coords::geo::to_ecef_deg(52.0, 10.0, 100.0));
+        let aboard = |vehicle, x: f32, z: f32| Place::Aboard {
+            vehicle,
+            eye: Vec3::new(x, EYE_HEIGHT, z),
+        };
+        let step = horizontal_step(
+            Some(aboard(1, 0.0, 0.0)),
+            Some(aboard(1, 0.3, -0.4)),
+            &origin,
+        );
+        assert!((step.unwrap() - 0.5).abs() < 1e-5);
+        // Climbing a stair is not walking forward.
+        let up = Place::Aboard {
+            vehicle: 1,
+            eye: Vec3::new(0.0, EYE_HEIGHT + 0.8, 0.0),
+        };
+        assert!(horizontal_step(Some(aboard(1, 0.0, 0.0)), Some(up), &origin).unwrap() < 1e-5);
+        assert_eq!(
+            horizontal_step(
+                Some(aboard(1, 0.0, 0.0)),
+                Some(aboard(2, 0.0, 0.0)),
+                &origin
+            ),
+            None
+        );
+        let outside = |east: f32| Place::Outside {
+            eye: origin.from_render(Vec3::new(east, EYE_HEIGHT, 0.0)),
+        };
+        let step = horizontal_step(Some(outside(0.0)), Some(outside(1.5)), &origin);
+        assert!((step.unwrap() - 1.5).abs() < 1e-3, "{step:?}");
+        assert_eq!(
+            horizontal_step(Some(outside(0.0)), Some(outside(9.0)), &origin),
+            None
+        );
+        assert_eq!(
+            horizontal_step(Some(outside(0.0)), Some(aboard(0, 0.0, 0.0)), &origin),
+            None
+        );
+        assert_eq!(horizontal_step(None, Some(outside(0.0)), &origin), None);
     }
 
     #[test]

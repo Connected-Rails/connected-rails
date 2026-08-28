@@ -369,6 +369,8 @@ pub fn update(
                 &names.0,
                 &names.1,
                 &objects.map,
+                // The editor shows no crowd (`TerrainBuilder::with_line`).
+                default(),
                 &assets,
                 &mut meshes,
                 &mut materials,
@@ -421,7 +423,7 @@ pub fn update(
         let Some(loaded) = view.loaded.get_mut(&k) else {
             continue;
         };
-        let (trees, objects) = builder.rescatter(&loaded.tile);
+        let (trees, objects, people) = builder.rescatter(&loaded.tile);
         let old: Vec<Entity> = children
             .get(loaded.entity)
             .map(|c| c.iter().filter(|e| scattered.contains(*e)).collect())
@@ -432,6 +434,7 @@ pub fn update(
             old,
             trees,
             &objects,
+            &people,
             &view.catalog,
         );
         loaded.scatter = generation;

@@ -2,17 +2,21 @@
 
 #[cfg(test)]
 mod area_tests;
+pub mod characters;
 pub mod compose;
 pub mod demo;
 pub mod import;
+pub mod people;
 pub mod route;
 pub mod scenarios;
 pub mod terrain;
 pub mod vehicles;
 
+pub use characters::{CharacterSpec, Gender, Role};
 pub use compose::Composition;
 pub use demo::musterbahn;
 pub use import::{ImportOptions, ImportReport, import_line};
+pub use people::{Crowd, PersonInstance, Pose};
 pub use route::{CompiledLine, LineSource, TreeSource};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{

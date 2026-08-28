@@ -13,3 +13,6 @@
 # Betriebssystem
 Thumbs.db
 .DS_Store
+
+# Python tools (tools/*.py)
+__pycache__/

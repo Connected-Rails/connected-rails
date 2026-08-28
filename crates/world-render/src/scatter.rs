@@ -29,11 +29,12 @@ use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{Gltf, GltfAssetLabel, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldAsset;
-use content::{SceneryInstance, Tree};
+use content::{PersonInstance, SceneryInstance, Tree};
 use sim_core::train::lod_level;
 use std::collections::BTreeMap;
 use track_model::TrackObject;
 
+use crate::people::{PERSON_CULL, Passengers, person_bundle};
 use crate::{Season, asset_path};
 
 /// Past this distance no tree is drawn [m].
@@ -48,8 +49,9 @@ const LOD_BANDS: [f32; 3] = [200.0, 700.0, 1_500.0];
 pub const OBJECT_CULL: f32 = 3_000.0;
 
 /// Render assets of everything a tile can carry: per tree species the glTF
-/// of the mod object it names, per scenery object its scene, and the
-/// placeholders for names no installed mod answers for.
+/// of the mod object it names, per scenery object its scene, per passenger
+/// character its glTF and scene, and the placeholders for names no installed
+/// mod answers for.
 #[derive(Clone)]
 pub struct WorldCatalog {
     /// Indexed by [`Tree::object`]; `None` where the name resolved to no
@@ -57,6 +59,8 @@ pub struct WorldCatalog {
     trees: Vec<Option<Handle<Gltf>>>,
     /// Indexed by [`SceneryInstance::object`].
     objects: Vec<Option<Handle<WorldAsset>>>,
+    /// Indexed by [`PersonInstance::character`].
+    people: Passengers,
     /// Placeholder conifer and broadleaf, coloured by vertex so one white
     /// material serves both.
     placeholder_trees: [Handle<Mesh>; 2],
@@ -68,11 +72,14 @@ pub struct WorldCatalog {
 
 impl WorldCatalog {
     /// Resolves the names against the installed mods' `objects/*.ron`,
-    /// unknown names logged once and shown as placeholders.
+    /// unknown names logged once and shown as placeholders; `people` are the
+    /// crowd's characters, already resolved ([`Passengers::resolve`]).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         tree_names: &[String],
         object_names: &[String],
         registry: &BTreeMap<String, TrackObject>,
+        people: Passengers,
         assets: &AssetServer,
         meshes: &mut Assets<Mesh>,
         materials: &mut Assets<StandardMaterial>,
@@ -112,6 +119,7 @@ impl WorldCatalog {
         Self {
             trees,
             objects,
+            people,
             placeholder_trees,
             placeholder_tree_material,
             placeholder_object,
@@ -343,13 +351,15 @@ fn resolve(
     })
 }
 
-/// Spawns the trees and objects of a tile under its entity. The trees wait
-/// for their models ([`PendingTrees`]); the objects are scenes and wait on
-/// their own.
+/// Spawns the trees, objects and people of a tile under its entity. The
+/// trees wait for their models ([`PendingTrees`]); the objects and the people
+/// are scenes and wait on their own (a person is finished by
+/// [`crate::people::dress_people`] once its hierarchy is there).
 pub fn spawn_scatter(
     tile: &mut EntityCommands,
     trees: Vec<Tree>,
     objects: &[SceneryInstance],
+    people: &[PersonInstance],
     catalog: &WorldCatalog,
 ) {
     if !trees.is_empty() {
@@ -384,6 +394,20 @@ pub fn spawn_scatter(
                     ));
                 }
             }
+        }
+        // A person whose character no installed mod has is simply not there —
+        // the catalog logged the name once; a magenta block on a platform
+        // would be a worse answer than a gap in the crowd.
+        for person in people {
+            let Some(character) = catalog.people.get(person.character) else {
+                continue;
+            };
+            parent.spawn((
+                person_bundle(character, person.pose, person.phase, PERSON_CULL),
+                Transform::from_translation(Vec3::from(person.pos))
+                    .with_rotation(Quat::from_array(person.rotation)),
+                Scattered,
+            ));
         }
     });
 }

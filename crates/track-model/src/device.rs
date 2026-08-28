@@ -87,6 +87,30 @@ pub struct TracksideDevice {
     pub payload: String,
 }
 
+/// Payload of a [`DeviceKind::Platform`]: `(name:"Musterstadt",length:210.0)`.
+///
+/// The device sits at the start of the platform (its lowest `s`) and `length` runs on
+/// from there; which side of the track it is on is the sign of the device's
+/// `lateral_offset` (positive = left of increasing arc length). `height` is the
+/// platform surface above the railhead, for the people who wait on it — 0.76 m and
+/// 0.55 m are the German standards. A line whose platforms are not modelled leaves it
+/// at 0, and the crowd stands on the ground.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlatformPayload {
+    #[serde(default)]
+    pub name: String,
+    pub length: f64,
+    #[serde(default)]
+    pub height: f64,
+}
+
+impl PlatformPayload {
+    /// The payload of a platform device; `None` for a payload that is not one.
+    pub fn parse(payload: &str) -> Option<Self> {
+        ron::from_str(payload).ok()
+    }
+}
+
 fn default_device_id() -> DeviceId {
     DeviceId(u32::MAX)
 }
@@ -122,5 +146,23 @@ impl TracksideDevice {
     /// Reads the payload as the target type.
     pub fn payload_as<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
         ron::from_str(&self.payload).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The editor's template names only what a platform needs; the height is optional
+    /// and anything that is not a platform payload is `None`, not a panic.
+    #[test]
+    fn platform_payload_parses_with_and_without_height() {
+        let plain = PlatformPayload::parse("(name:\"Musterstadt\",length:210.0)").unwrap();
+        assert_eq!(plain.name, "Musterstadt");
+        assert_eq!(plain.length, 210.0);
+        assert_eq!(plain.height, 0.0);
+        let built = PlatformPayload::parse("(name:\"\",length:140.0,height:0.76)").unwrap();
+        assert_eq!(built.height, 0.76);
+        assert!(PlatformPayload::parse("(frequency:Hz1000)").is_none());
     }
 }

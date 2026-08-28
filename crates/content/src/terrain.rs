@@ -19,6 +19,7 @@
 //! driving (plan 4.3).
 
 use crate::import::dgm::{HeightTile, TerrainSource};
+use crate::people::{Crowd, PersonInstance, scatter_people};
 use crate::route::{LineSource, ObjectSource, TerrainEdit, TerrainEditSource, TreeSource};
 use glam::{DQuat, DVec2, DVec3};
 use std::collections::HashMap;
@@ -32,7 +33,7 @@ use world_coords::{EcefPos, EnuFrame, geo};
 /// grid nine times per vertex, and sixteen thousand vertices times nine
 /// SipHash rounds is a measurable slice of the build for no gain.
 #[derive(Default)]
-struct CellHasher(u64);
+pub(crate) struct CellHasher(u64);
 
 impl Hasher for CellHasher {
     fn finish(&self) -> u64 {
@@ -58,7 +59,7 @@ impl Hasher for CellHasher {
     }
 }
 
-type CellMap<V> = HashMap<(i64, i64), V, BuildHasherDefault<CellHasher>>;
+pub(crate) type CellMap<V> = HashMap<(i64, i64), V, BuildHasherDefault<CellHasher>>;
 
 /// Settings for the terrain generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -130,6 +131,10 @@ pub struct TerrainTile {
     /// Scenery objects standing on this tile, their feet on its ground where
     /// they snap to it — streamed with the tile like the trees.
     pub objects: Vec<SceneryInstance>,
+    /// The people waiting on this tile's platforms (plan ch. 12) — streamed
+    /// with the tile like the objects, and derived like the trees of a forest:
+    /// nothing about them is stored in the line.
+    pub people: Vec<PersonInstance>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
@@ -288,15 +293,15 @@ impl Centerline {
     }
 }
 
-fn key(p: DVec2, cell: f64) -> (i64, i64) {
+pub(crate) fn key(p: DVec2, cell: f64) -> (i64, i64) {
     ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64)
 }
 
 /// SplitMix64 — deterministic scatter without a `rand` dependency.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -305,8 +310,22 @@ impl Rng {
     }
 
     /// Uniform in [0, 1).
-    fn f64(&mut self) -> f64 {
+    pub(crate) fn f64(&mut self) -> f64 {
         (self.next() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Uniform in `lo..hi`.
+    pub(crate) fn range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * self.f64()
+    }
+
+    /// Uniform in `0..n`; 0 for an empty range.
+    pub(crate) fn below(&mut self, n: usize) -> usize {
+        if n == 0 {
+            0
+        } else {
+            (self.f64() * n as f64) as usize % n
+        }
     }
 }
 
@@ -459,7 +478,7 @@ impl Scenery {
 }
 
 /// Indices of `positions` by the tile they fall in.
-fn bucket(positions: impl Iterator<Item = DVec2>, tile_size: f64) -> CellMap<Vec<u32>> {
+pub(crate) fn bucket(positions: impl Iterator<Item = DVec2>, tile_size: f64) -> CellMap<Vec<u32>> {
     let mut by_tile: CellMap<Vec<u32>> = CellMap::default();
     for (i, p) in positions.enumerate() {
         by_tile.entry(key(p, tile_size)).or_default().push(i as u32);
@@ -720,6 +739,7 @@ pub struct TerrainBuilder {
     options: TerrainOptions,
     vegetation: Vegetation,
     scenery: Scenery,
+    crowd: Crowd,
     edits: TerrainEdits,
 }
 
@@ -731,6 +751,7 @@ impl TerrainBuilder {
             options,
             vegetation: Vegetation::default(),
             scenery: Scenery::default(),
+            crowd: Crowd::default(),
             edits: TerrainEdits::default(),
         }
     }
@@ -750,6 +771,14 @@ impl TerrainBuilder {
         self
     }
 
+    /// The people on the line's platforms — tiles built afterwards carry
+    /// them, on the platform's height or on their ground.
+    pub fn with_crowd(mut self, mut crowd: Crowd) -> Self {
+        crowd.bucket(self.options.tile_size);
+        self.crowd = crowd;
+        self
+    }
+
     /// Terrain brush strokes of the line — tiles built afterwards are shaped
     /// by them.
     pub fn with_edits(mut self, edits: TerrainEdits) -> Self {
@@ -762,7 +791,8 @@ impl TerrainBuilder {
     /// sheet cache shared with this builder. The route editor makes one
     /// after every edit; re-indexing the DGM each time would read the
     /// delivery off disk again, and replacing the builder in place would
-    /// make every worker wait for a lock.
+    /// make every worker wait for a lock. The editor shows no crowd, so
+    /// none is carried over.
     pub fn with_line(
         &self,
         net: &TrackNetwork,
@@ -776,6 +806,7 @@ impl TerrainBuilder {
             options: self.options,
             vegetation: Vegetation::default(),
             scenery: Scenery::default(),
+            crowd: Crowd::default(),
             edits,
         }
         .with_vegetation(vegetation)
@@ -791,6 +822,12 @@ impl TerrainBuilder {
     /// them).
     pub fn scenery_objects(&self) -> &[String] {
         self.scenery.objects()
+    }
+
+    /// The character names of the crowd ([`PersonInstance::character`]
+    /// indexes them).
+    pub fn crowd_characters(&self) -> &[String] {
+        self.crowd.characters()
     }
 
     pub fn options(&self) -> &TerrainOptions {
@@ -823,15 +860,19 @@ impl TerrainBuilder {
             &self.options,
             &self.vegetation,
             &self.scenery,
+            &self.crowd,
             &self.edits,
             stats,
         )
     }
 
-    /// The trees and objects of a tile, placed on its ground anew — for a
-    /// tile whose ground has not changed under an edited line. Takes the
+    /// The trees, objects and people of a tile, placed on its ground anew —
+    /// for a tile whose ground has not changed under an edited line. Takes the
     /// tile's own height grid, so it costs the scatter and nothing else.
-    pub fn rescatter(&self, tile: &TerrainTile) -> (Vec<Tree>, Vec<SceneryInstance>) {
+    pub fn rescatter(
+        &self,
+        tile: &TerrainTile,
+    ) -> (Vec<Tree>, Vec<SceneryInstance>, Vec<PersonInstance>) {
         let frame = EnuFrame::at(tile.anchor);
         let n = tile.n(self.options.tile_size);
         let k = key(
@@ -847,6 +888,7 @@ impl TerrainBuilder {
         (
             scatter_trees(k, &grid, &frame, &self.options, &self.vegetation),
             scatter_objects(k, &grid, &frame, &self.scenery),
+            scatter_people(k, &grid, &frame, &self.crowd),
         )
     }
 
@@ -938,6 +980,7 @@ fn build_key(
     options: &TerrainOptions,
     vegetation: &Vegetation,
     scenery: &Scenery,
+    crowd: &Crowd,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -950,7 +993,7 @@ fn build_key(
     // Only the strokes that reach this tile — the rest never see a grid point.
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
-        k, step, lod, centerline, sampler, options, vegetation, scenery, &edits, stats,
+        k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -987,6 +1030,7 @@ pub fn build(
             options,
             &Vegetation::default(),
             &Scenery::default(),
+            &Crowd::default(),
             &TerrainEdits::default(),
             &mut stats,
         ) {
@@ -1028,7 +1072,7 @@ fn blend_height(near: Option<(f64, f64)>, ground: f64, options: &TerrainOptions)
 
 /// The height grid of a tile: what the mesh, the trees and the objects all
 /// stand on. Row by row from the south, `(n + 1)²` values.
-struct HeightGrid<'a> {
+pub(crate) struct HeightGrid<'a> {
     min: DVec2,
     heights: &'a [f32],
     step: f64,
@@ -1037,7 +1081,7 @@ struct HeightGrid<'a> {
 
 impl HeightGrid<'_> {
     /// Height at the UTM point `p` (bilinear).
-    fn at(&self, p: DVec2) -> f64 {
+    pub(crate) fn at(&self, p: DVec2) -> f64 {
         let row = self.n + 1;
         let gx = ((p.x - self.min.x) / self.step).clamp(0.0, self.n as f64 - 1e-9);
         let gy = ((p.y - self.min.y) / self.step).clamp(0.0, self.n as f64 - 1e-9);
@@ -1062,6 +1106,7 @@ fn build_tile(
     options: &TerrainOptions,
     vegetation: &Vegetation,
     scenery: &Scenery,
+    crowd: &Crowd,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
@@ -1120,6 +1165,7 @@ fn build_tile(
     };
     let trees = scatter_trees(k, &grid, &frame, options, vegetation);
     let objects = scatter_objects(k, &grid, &frame, scenery);
+    let people = scatter_people(k, &grid, &frame, crowd);
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
@@ -1149,6 +1195,7 @@ fn build_tile(
         splat,
         trees,
         objects,
+        people,
         step,
         lod,
         radius,
@@ -1244,24 +1291,28 @@ fn scatter_objects(
             } else {
                 EcefPos(object.base.0 + object.up * object.height)
             };
-            // The model's frame in the tile's render axes: forward along the
-            // track, up the local vertical. Bevy's convention: -Z = forward.
-            let f = to_render_dir(frame.dir_to_local(object.dir)).normalize_or_zero();
-            let u = to_render_dir(frame.dir_to_local(object.up)).normalize_or_zero();
-            let right = f.cross(u).normalize_or_zero();
-            let rotation = if right.length_squared() < 0.5 {
-                glam::Quat::IDENTITY
-            } else {
-                glam::Quat::from_mat3(&glam::Mat3::from_cols(right, right.cross(f), -f))
-            };
             SceneryInstance {
                 pos: to_render(frame.to_local(anchor)),
-                rotation: rotation.to_array(),
+                rotation: model_rotation(frame, object.dir, object.up).to_array(),
                 object: object.object,
                 index: object.index,
             }
         })
         .collect()
+}
+
+/// A model's frame in the tile's render axes: its front (−Z, Bevy's
+/// convention) along `dir`, its up the local vertical `up`. Identity where the
+/// two do not span a frame.
+pub(crate) fn model_rotation(frame: &EnuFrame, dir: DVec3, up: DVec3) -> glam::Quat {
+    let f = to_render_dir(frame.dir_to_local(dir)).normalize_or_zero();
+    let u = to_render_dir(frame.dir_to_local(up)).normalize_or_zero();
+    let right = f.cross(u).normalize_or_zero();
+    if right.length_squared() < 0.5 {
+        glam::Quat::IDENTITY
+    } else {
+        glam::Quat::from_mat3(&glam::Mat3::from_cols(right, right.cross(f), -f))
+    }
 }
 
 /// Attaches a vertical skirt to the tile border: every border vertex once
@@ -1304,12 +1355,12 @@ fn add_skirt(
 }
 
 /// ENU (x = east, y = north, z = up) → render axes.
-fn to_render(p: DVec3) -> [f32; 3] {
+pub(crate) fn to_render(p: DVec3) -> [f32; 3] {
     [p.x as f32, p.z as f32, -p.y as f32]
 }
 
 /// ENU direction → render axes, as a vector.
-fn to_render_dir(d: DVec3) -> glam::Vec3 {
+pub(crate) fn to_render_dir(d: DVec3) -> glam::Vec3 {
     glam::Vec3::new(d.x as f32, d.z as f32, -d.y as f32)
 }
 
@@ -1683,7 +1734,7 @@ mod tests {
         );
 
         // Rescattering onto the built tile gives the same placement.
-        let (_, again) = builder.rescatter(tile);
+        let (_, again, _) = builder.rescatter(tile);
         assert_eq!(again, tile.objects);
     }
 
@@ -1846,7 +1897,7 @@ mod tests {
         // Rescattering onto the built tiles gives the same trees — the
         // editor does that for a tile whose ground has not changed.
         for tile in &tiles {
-            let (again, _) = builder.rescatter(tile);
+            let (again, _, _) = builder.rescatter(tile);
             assert_eq!(again, tile.trees);
         }
 

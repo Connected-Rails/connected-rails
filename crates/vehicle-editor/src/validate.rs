@@ -714,6 +714,7 @@ mod tests {
         spec.max_payload = 0.5;
         spec.model = Some(VehicleModel {
             file: String::new(),
+            seats: Vec::new(),
             lods: vec![
                 Lod {
                     level: 0,

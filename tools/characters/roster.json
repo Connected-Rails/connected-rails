@@ -1,0 +1,1159 @@
+{
+  "version": 1,
+  "characters": [
+    {
+      "id": "m01_lukas",
+      "name": "Lukas",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "student",
+        "athletic"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.412,
+        "macrodetails-universal/Muscle": 0.6,
+        "macrodetails-universal/Weight": 0.45,
+        "macrodetails-height/Height": 0.711,
+        "macrodetails-proportions/BodyProportions": 0.6,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "head/head-oval": 0.3,
+        "nose/nose-scale-vert-decr|incr": 0.2,
+        "chin/chin-prominent-decr|incr": 0.25,
+        "mouth/mouth-scale-horiz-decr|incr": 0.15,
+        "cheek/l-cheek-bones-decr|incr": 0.2,
+        "cheek/r-cheek-bones-decr|incr": 0.2,
+        "torso/torso-vshape-decr|incr": 0.3
+      },
+      "skin": "young_caucasian_male",
+      "eyes": "blue",
+      "eyebrows": "eyebrow002",
+      "eyelashes": null,
+      "hair": "short02",
+      "clothes": [
+        "male_casualsuit03",
+        "shoes02"
+      ],
+      "height_m": 1.91
+    },
+    {
+      "id": "m02_finn",
+      "name": "Finn",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "slim",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.382,
+        "macrodetails-universal/Muscle": 0.45,
+        "macrodetails-universal/Weight": 0.38,
+        "macrodetails-height/Height": 0.703,
+        "macrodetails-proportions/BodyProportions": 0.55,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "head/head-invertedtriangular": 0.25,
+        "nose/nose-hump-decr|incr": 0.2,
+        "chin/chin-width-decr|incr": -0.2,
+        "neck/neck-scale-horiz-decr|incr": -0.2,
+        "ears/l-ear-scale-decr|incr": 0.2,
+        "ears/r-ear-scale-decr|incr": 0.2,
+        "mouth/mouth-upperlip-volume-decr|incr": -0.15
+      },
+      "skin": "young_caucasian_male2",
+      "eyes": "green",
+      "eyebrows": "eyebrow004",
+      "eyelashes": "eyelashes01",
+      "hair": "short04",
+      "clothes": [
+        "male_casualsuit05",
+        "shoes05"
+      ],
+      "height_m": 1.85
+    },
+    {
+      "id": "m03_emre",
+      "name": "Emre",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "stocky",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.462,
+        "macrodetails-universal/Muscle": 0.65,
+        "macrodetails-universal/Weight": 0.55,
+        "macrodetails-height/Height": 0.6,
+        "macrodetails-proportions/BodyProportions": 0.5,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.2,
+        "macrodetails/Caucasian": 0.8,
+        "head/head-square": 0.3,
+        "nose/nose-volume-decr|incr": 0.25,
+        "nose/nose-hump-decr|incr": 0.3,
+        "chin/chin-bones-decr|incr": 0.3,
+        "eyebrows/eyebrows-trans-down|up": -0.2,
+        "torso/torso-muscle-pectoral-decr|incr": 0.2
+      },
+      "skin": "young_caucasian_male",
+      "eyes": "brown",
+      "eyebrows": "eyebrow012",
+      "eyelashes": null,
+      "hair": "short01",
+      "clothes": [
+        "male_casualsuit01",
+        "shoes01"
+      ],
+      "tints": {
+        "male_casualsuit01": {
+          "hue": 150.0,
+          "sat": 0.9,
+          "val": 0.85
+        }
+      },
+      "height_m": 1.83
+    },
+    {
+      "id": "m04_samuel",
+      "name": "Samuel",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "tall",
+        "athletic"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.432,
+        "macrodetails-universal/Muscle": 0.7,
+        "macrodetails-universal/Weight": 0.5,
+        "macrodetails-height/Height": 0.602,
+        "macrodetails-proportions/BodyProportions": 0.65,
+        "macrodetails/African": 0.875,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 0.125,
+        "head/head-oval": 0.2,
+        "nose/nose-width2-decr|incr": 0.15,
+        "mouth/mouth-lowerlip-volume-decr|incr": 0.2,
+        "chin/chin-height-decr|incr": 0.2,
+        "torso/torso-vshape-decr|incr": 0.4,
+        "armslegs/l-upperarm-muscle-decr|incr": 0.25,
+        "armslegs/r-upperarm-muscle-decr|incr": 0.25
+      },
+      "skin": "young_african_male",
+      "eyes": "brown",
+      "eyebrows": "eyebrow009",
+      "eyelashes": null,
+      "hair": "afro01",
+      "clothes": [
+        "male_casualsuit06",
+        "shoes04"
+      ],
+      "height_m": 1.88
+    },
+    {
+      "id": "m05_minh",
+      "name": "Minh",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "petite",
+        "student"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.38,
+        "macrodetails-universal/Muscle": 0.5,
+        "macrodetails-universal/Weight": 0.4,
+        "macrodetails-height/Height": 0.624,
+        "macrodetails-proportions/BodyProportions": 0.45,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 1.0,
+        "macrodetails/Caucasian": 0.0,
+        "head/head-round": 0.2,
+        "nose/nose-scale-depth-decr|incr": -0.15,
+        "chin/chin-width-decr|incr": -0.15,
+        "mouth/mouth-scale-horiz-decr|incr": -0.15,
+        "eyes/l-eye-scale-decr|incr": 0.15,
+        "eyes/r-eye-scale-decr|incr": 0.15,
+        "forehead/forehead-scale-vert-decr|incr": 0.15
+      },
+      "skin": "young_asian_male",
+      "eyes": "brown",
+      "eyebrows": "eyebrow005",
+      "eyelashes": "eyelashes01",
+      "hair": "short02",
+      "clothes": [
+        "male_casualsuit04",
+        "shoes03"
+      ],
+      "height_m": 1.71
+    },
+    {
+      "id": "m06_tobias",
+      "name": "Tobias",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "business",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.597,
+        "macrodetails-universal/Muscle": 0.5,
+        "macrodetails-universal/Weight": 0.58,
+        "macrodetails-height/Height": 0.531,
+        "macrodetails-proportions/BodyProportions": 0.5,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "head/head-rectangular": 0.3,
+        "head/head-age-decr|incr": 0.15,
+        "nose/nose-scale-horiz-decr|incr": 0.15,
+        "chin/chin-prominent-decr|incr": 0.2,
+        "mouth/mouth-laugh-lines-in|out": 0.2,
+        "eyes/l-eye-bag-decr|incr": 0.15,
+        "eyes/r-eye-bag-decr|incr": 0.15,
+        "forehead/forehead-temple-decr|incr": -0.15
+      },
+      "skin": "middleage_caucasian_male",
+      "eyes": "grey",
+      "eyebrows": "eyebrow001",
+      "eyelashes": null,
+      "hair": "short01",
+      "clothes": [
+        "male_elegantsuit01",
+        "shoes06"
+      ],
+      "height_m": 1.81
+    },
+    {
+      "id": "m07_michael",
+      "name": "Michael",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "work",
+        "heavy",
+        "railway-staff"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.62,
+        "macrodetails-universal/Muscle": 0.55,
+        "macrodetails-universal/Weight": 0.75,
+        "macrodetails-height/Height": 0.463,
+        "macrodetails-proportions/BodyProportions": 0.4,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "head/head-fat-decr|incr": 0.3,
+        "head/head-age-decr|incr": 0.2,
+        "chin/chin-double-decr|incr": 0.3,
+        "nose/nose-volume-decr|incr": 0.2,
+        "neck/neck-scale-horiz-decr|incr": 0.3,
+        "stomach/stomach-tone-decr|incr": -0.3,
+        "cheek/l-cheek-volume-decr|incr": 0.25,
+        "cheek/r-cheek-volume-decr|incr": 0.25
+      },
+      "skin": "middleage_caucasian_male",
+      "eyes": "bluegreen",
+      "eyebrows": "eyebrow011",
+      "eyelashes": null,
+      "hair": "short04",
+      "clothes": [
+        "male_worksuit01",
+        "shoes04"
+      ],
+      "height_m": 1.73
+    },
+    {
+      "id": "m08_daniel",
+      "name": "Daniel",
+      "gender": "male",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "business",
+        "mixed",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.576,
+        "macrodetails-universal/Muscle": 0.6,
+        "macrodetails-universal/Weight": 0.6,
+        "macrodetails-height/Height": 0.427,
+        "macrodetails-proportions/BodyProportions": 0.55,
+        "macrodetails/African": 0.5,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 0.5,
+        "head/head-oval": 0.25,
+        "head/head-age-decr|incr": 0.15,
+        "nose/nose-point-width-decr|incr": 0.15,
+        "chin/chin-cleft-decr|incr": 0.2,
+        "mouth/mouth-scale-horiz-decr|incr": 0.15,
+        "ears/l-ear-lobe-decr|incr": 0.2,
+        "ears/r-ear-lobe-decr|incr": 0.2,
+        "torso/torso-scale-horiz-decr|incr": 0.15
+      },
+      "skin": "middleage_african_male",
+      "eyes": "brownlight",
+      "eyebrows": "eyebrow002",
+      "eyelashes": "eyelashes01",
+      "hair": "short01",
+      "clothes": [
+        "male_elegantsuit01",
+        "shoes06"
+      ],
+      "tints": {
+        "male_elegantsuit01": {
+          "hue": -160.0,
+          "sat": 0.7,
+          "val": 0.6
+        },
+        "shoes06": {
+          "hue": 0.0,
+          "sat": 0.8,
+          "val": 0.6
+        }
+      },
+      "height_m": 1.76
+    },
+    {
+      "id": "m09_jian",
+      "name": "Jian",
+      "gender": "male",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "work",
+        "technician"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.66,
+        "macrodetails-universal/Muscle": 0.45,
+        "macrodetails-universal/Weight": 0.52,
+        "macrodetails-height/Height": 0.623,
+        "macrodetails-proportions/BodyProportions": 0.45,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 1.0,
+        "macrodetails/Caucasian": 0.0,
+        "head/head-square": 0.2,
+        "head/head-age-decr|incr": 0.2,
+        "nose/nose-flaring-decr|incr": 0.15,
+        "mouth/mouth-angles-down|up": -0.15,
+        "cheek/l-cheek-bones-decr|incr": 0.25,
+        "cheek/r-cheek-bones-decr|incr": 0.25,
+        "forehead/forehead-scale-vert-decr|incr": -0.15
+      },
+      "skin": "middleage_asian_male",
+      "eyes": "brown",
+      "eyebrows": "eyebrow008",
+      "eyelashes": null,
+      "hair": "short04",
+      "clothes": [
+        "male_worksuit01",
+        "shoes01"
+      ],
+      "tints": {
+        "male_worksuit01": {
+          "hue": -60.0,
+          "sat": 1.1,
+          "val": 0.9
+        }
+      },
+      "height_m": 1.79
+    },
+    {
+      "id": "m10_wolfgang",
+      "name": "Wolfgang",
+      "gender": "male",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "old",
+        "elegant",
+        "bald",
+        "hat",
+        "retired"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.85,
+        "macrodetails-universal/Muscle": 0.4,
+        "macrodetails-universal/Weight": 0.62,
+        "macrodetails-height/Height": 0.513,
+        "macrodetails-proportions/BodyProportions": 0.4,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "head/head-age-decr|incr": 0.45,
+        "nose/nose-scale-vert-decr|incr": 0.25,
+        "nose/nose-hump-decr|incr": 0.2,
+        "chin/chin-prominent-decr|incr": 0.2,
+        "eyes/l-eye-bag-decr|incr": 0.3,
+        "eyes/r-eye-bag-decr|incr": 0.3,
+        "mouth/mouth-laugh-lines-in|out": 0.3,
+        "neck/neck-scale-horiz-decr|incr": 0.15
+      },
+      "skin": "old_caucasian_male",
+      "eyes": "lightblue",
+      "eyebrows": "eyebrow009",
+      "eyelashes": null,
+      "hair": null,
+      "clothes": [
+        "male_elegantsuit01",
+        "shoes06",
+        "fedora01"
+      ],
+      "tints": {
+        "male_elegantsuit01": {
+          "hue": 0.0,
+          "sat": 0.5,
+          "val": 0.7
+        }
+      },
+      "height_m": 1.78
+    },
+    {
+      "id": "m11_klaus",
+      "name": "Klaus",
+      "gender": "male",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "old",
+        "casual",
+        "bald",
+        "heavy",
+        "retired"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.78,
+        "macrodetails-universal/Muscle": 0.38,
+        "macrodetails-universal/Weight": 0.8,
+        "macrodetails-height/Height": 0.401,
+        "macrodetails-proportions/BodyProportions": 0.35,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "head/head-age-decr|incr": 0.4,
+        "head/head-fat-decr|incr": 0.35,
+        "chin/chin-double-decr|incr": 0.4,
+        "nose/nose-volume-decr|incr": 0.3,
+        "ears/l-ear-scale-decr|incr": 0.25,
+        "ears/r-ear-scale-decr|incr": 0.25,
+        "stomach/stomach-tone-decr|incr": -0.4
+      },
+      "skin": "old_caucasian_male",
+      "eyes": "ice",
+      "eyebrows": "eyebrow012",
+      "eyelashes": null,
+      "hair": null,
+      "clothes": [
+        "male_casualsuit02",
+        "shoes02"
+      ],
+      "height_m": 1.68
+    },
+    {
+      "id": "m12_amadou",
+      "name": "Amadou",
+      "gender": "male",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "old",
+        "casual",
+        "hat",
+        "retired"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 1.0,
+        "macrodetails/Age": 0.82,
+        "macrodetails-universal/Muscle": 0.45,
+        "macrodetails-universal/Weight": 0.55,
+        "macrodetails-height/Height": 0.367,
+        "macrodetails-proportions/BodyProportions": 0.5,
+        "macrodetails/African": 1.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 0.0,
+        "head/head-age-decr|incr": 0.4,
+        "head/head-oval": 0.2,
+        "nose/nose-width3-decr|incr": 0.15,
+        "mouth/mouth-laugh-lines-in|out": 0.3,
+        "eyes/l-eye-bag-decr|incr": 0.2,
+        "eyes/r-eye-bag-decr|incr": 0.2,
+        "chin/chin-height-decr|incr": 0.15
+      },
+      "skin": "old_african_male",
+      "eyes": "brown",
+      "eyebrows": "eyebrow005",
+      "eyelashes": null,
+      "hair": "short01",
+      "clothes": [
+        "male_casualsuit01",
+        "shoes03",
+        "fedora_cocked"
+      ],
+      "tints": {
+        "male_casualsuit01": {
+          "hue": -110.0,
+          "sat": 0.8,
+          "val": 0.7
+        }
+      },
+      "height_m": 1.75
+    },
+    {
+      "id": "f01_lena",
+      "name": "Lena",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.442,
+        "macrodetails-universal/Muscle": 0.5,
+        "macrodetails-universal/Weight": 0.42,
+        "macrodetails-height/Height": 0.539,
+        "macrodetails-proportions/BodyProportions": 0.55,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "breast/BreastSize": 0.5,
+        "breast/BreastFirmness": 0.6,
+        "head/head-oval": 0.3,
+        "nose/nose-scale-vert-decr|incr": -0.15,
+        "chin/chin-width-decr|incr": -0.15,
+        "mouth/mouth-upperlip-volume-decr|incr": 0.2,
+        "cheek/l-cheek-bones-decr|incr": 0.2,
+        "cheek/r-cheek-bones-decr|incr": 0.2,
+        "eyes/l-eye-scale-decr|incr": 0.15,
+        "eyes/r-eye-scale-decr|incr": 0.15
+      },
+      "skin": "young_caucasian_female",
+      "eyes": "brown",
+      "eyebrows": "eyebrow004",
+      "eyelashes": "eyelashes02",
+      "hair": "bob01",
+      "clothes": [
+        "female_casualsuit01",
+        "shoes03"
+      ],
+      "height_m": 1.65
+    },
+    {
+      "id": "f02_mia",
+      "name": "Mia",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "sport",
+        "athletic",
+        "student"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.372,
+        "macrodetails-universal/Muscle": 0.55,
+        "macrodetails-universal/Weight": 0.38,
+        "macrodetails-height/Height": 0.67,
+        "macrodetails-proportions/BodyProportions": 0.6,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "breast/BreastSize": 0.4,
+        "breast/BreastFirmness": 0.65,
+        "head/head-invertedtriangular": 0.2,
+        "nose/nose-point-down|up": 0.2,
+        "nose/nose-scale-horiz-decr|incr": -0.15,
+        "mouth/mouth-scale-horiz-decr|incr": 0.2,
+        "chin/chin-prominent-decr|incr": -0.15,
+        "torso/torso-vshape-decr|incr": 0.15
+      },
+      "skin": "young_caucasian_female2",
+      "eyes": "deepblue",
+      "eyebrows": "eyebrow006",
+      "eyelashes": "eyelashes03",
+      "hair": "ponytail01",
+      "clothes": [
+        "female_sportsuit01",
+        "shoes02"
+      ],
+      "height_m": 1.67
+    },
+    {
+      "id": "f03_aylin",
+      "name": "Aylin",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.412,
+        "macrodetails-universal/Muscle": 0.45,
+        "macrodetails-universal/Weight": 0.5,
+        "macrodetails-height/Height": 0.67,
+        "macrodetails-proportions/BodyProportions": 0.5,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.25,
+        "macrodetails/Caucasian": 0.75,
+        "breast/BreastSize": 0.55,
+        "breast/BreastFirmness": 0.55,
+        "head/head-round": 0.2,
+        "nose/nose-hump-decr|incr": 0.2,
+        "nose/nose-scale-vert-decr|incr": 0.15,
+        "eyebrows/eyebrows-angle-down|up": 0.15,
+        "mouth/mouth-lowerlip-volume-decr|incr": 0.2,
+        "chin/chin-height-decr|incr": -0.15,
+        "eyes/l-eye-height2-decr|incr": 0.15,
+        "eyes/r-eye-height2-decr|incr": 0.15
+      },
+      "skin": "young_caucasian_female",
+      "eyes": "brown",
+      "eyebrows": "eyebrow003",
+      "eyelashes": "eyelashes01",
+      "hair": "long01",
+      "clothes": [
+        "female_casualsuit02",
+        "shoes05"
+      ],
+      "tints": {
+        "female_casualsuit02": {
+          "hue": -90.0,
+          "sat": 1.1,
+          "val": 1.0
+        }
+      },
+      "height_m": 1.71
+    },
+    {
+      "id": "f04_amara",
+      "name": "Amara",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "elegant",
+        "tall",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.472,
+        "macrodetails-universal/Muscle": 0.55,
+        "macrodetails-universal/Weight": 0.48,
+        "macrodetails-height/Height": 0.55,
+        "macrodetails-proportions/BodyProportions": 0.6,
+        "macrodetails/African": 0.875,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 0.125,
+        "breast/BreastSize": 0.6,
+        "breast/BreastFirmness": 0.6,
+        "head/head-oval": 0.3,
+        "nose/nose-width2-decr|incr": 0.15,
+        "mouth/mouth-upperlip-volume-decr|incr": 0.2,
+        "cheek/l-cheek-bones-decr|incr": 0.3,
+        "cheek/r-cheek-bones-decr|incr": 0.3,
+        "neck/neck-scale-vert-decr|incr": 0.2,
+        "chin/chin-width-decr|incr": -0.15
+      },
+      "skin": "young_african_female",
+      "eyes": "brown",
+      "eyebrows": "eyebrow010",
+      "eyelashes": "eyelashes02",
+      "hair": "braid01",
+      "clothes": [
+        "female_elegantsuit01",
+        "shoes06"
+      ],
+      "tints": {
+        "female_elegantsuit01": {
+          "hue": 30.0,
+          "sat": 0.9,
+          "val": 0.85
+        }
+      },
+      "height_m": 1.73
+    },
+    {
+      "id": "f05_linh",
+      "name": "Linh",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "young",
+        "casual",
+        "petite",
+        "student"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.4,
+        "macrodetails-universal/Muscle": 0.45,
+        "macrodetails-universal/Weight": 0.35,
+        "macrodetails-height/Height": 0.695,
+        "macrodetails-proportions/BodyProportions": 0.45,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 1.0,
+        "macrodetails/Caucasian": 0.0,
+        "breast/BreastSize": 0.35,
+        "breast/BreastFirmness": 0.6,
+        "head/head-round": 0.25,
+        "nose/nose-scale-depth-decr|incr": -0.15,
+        "nose/nose-point-width-decr|incr": 0.15,
+        "mouth/mouth-scale-horiz-decr|incr": -0.2,
+        "chin/chin-width-decr|incr": -0.2,
+        "forehead/forehead-scale-vert-decr|incr": 0.15
+      },
+      "skin": "young_asian_female",
+      "eyes": "brown",
+      "eyebrows": "eyebrow007",
+      "eyelashes": "eyelashes04",
+      "hair": "long01",
+      "clothes": [
+        "female_casualsuit01",
+        "shoes01"
+      ],
+      "tints": {
+        "female_casualsuit01": {
+          "hue": 90.0,
+          "sat": 1.0,
+          "val": 1.0
+        }
+      },
+      "height_m": 1.64
+    },
+    {
+      "id": "f06_sabine",
+      "name": "Sabine",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "business",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.58,
+        "macrodetails-universal/Muscle": 0.45,
+        "macrodetails-universal/Weight": 0.55,
+        "macrodetails-height/Height": 0.552,
+        "macrodetails-proportions/BodyProportions": 0.45,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "breast/BreastSize": 0.55,
+        "breast/BreastFirmness": 0.45,
+        "head/head-rectangular": 0.2,
+        "head/head-age-decr|incr": 0.15,
+        "nose/nose-scale-vert-decr|incr": 0.2,
+        "chin/chin-prominent-decr|incr": 0.15,
+        "mouth/mouth-laugh-lines-in|out": 0.15,
+        "eyes/l-eye-bag-decr|incr": 0.15,
+        "eyes/r-eye-bag-decr|incr": 0.15,
+        "forehead/forehead-scale-vert-decr|incr": 0.15
+      },
+      "skin": "middleage_caucasian_female",
+      "eyes": "green",
+      "eyebrows": "eyebrow008",
+      "eyelashes": "eyelashes01",
+      "hair": "bob02",
+      "clothes": [
+        "female_elegantsuit01",
+        "shoes06"
+      ],
+      "height_m": 1.69
+    },
+    {
+      "id": "f07_katrin",
+      "name": "Katrin",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "sport",
+        "athletic"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.576,
+        "macrodetails-universal/Muscle": 0.65,
+        "macrodetails-universal/Weight": 0.45,
+        "macrodetails-height/Height": 0.618,
+        "macrodetails-proportions/BodyProportions": 0.5,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "breast/BreastSize": 0.4,
+        "breast/BreastFirmness": 0.5,
+        "head/head-square": 0.2,
+        "head/head-age-decr|incr": 0.15,
+        "nose/nose-scale-horiz-decr|incr": 0.15,
+        "chin/chin-bones-decr|incr": 0.2,
+        "torso/torso-vshape-decr|incr": 0.25,
+        "armslegs/l-upperarm-muscle-decr|incr": 0.2,
+        "armslegs/r-upperarm-muscle-decr|incr": 0.2
+      },
+      "skin": "middleage_caucasian_female",
+      "eyes": "grey",
+      "eyebrows": "eyebrow001",
+      "eyelashes": "eyelashes02",
+      "hair": "short03",
+      "clothes": [
+        "female_sportsuit01",
+        "shoes02"
+      ],
+      "tints": {
+        "female_sportsuit01": {
+          "hue": 180.0,
+          "sat": 1.1,
+          "val": 0.9
+        }
+      },
+      "height_m": 1.78
+    },
+    {
+      "id": "f08_mei",
+      "name": "Mei",
+      "gender": "female",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "elegant",
+        "commuter"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.6,
+        "macrodetails-universal/Muscle": 0.4,
+        "macrodetails-universal/Weight": 0.5,
+        "macrodetails-height/Height": 0.573,
+        "macrodetails-proportions/BodyProportions": 0.4,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 1.0,
+        "macrodetails/Caucasian": 0.0,
+        "breast/BreastSize": 0.45,
+        "breast/BreastFirmness": 0.45,
+        "head/head-oval": 0.2,
+        "head/head-age-decr|incr": 0.2,
+        "nose/nose-scale-depth-decr|incr": -0.15,
+        "mouth/mouth-scale-horiz-decr|incr": -0.15,
+        "cheek/l-cheek-volume-decr|incr": 0.15,
+        "cheek/r-cheek-volume-decr|incr": 0.15,
+        "chin/chin-height-decr|incr": -0.15,
+        "eyebrows/eyebrows-trans-down|up": 0.15
+      },
+      "skin": "middleage_asian_female",
+      "eyes": "brown",
+      "eyebrows": "eyebrow010",
+      "eyelashes": "eyelashes03",
+      "hair": "bob01",
+      "clothes": [
+        "female_elegantsuit01",
+        "shoes04"
+      ],
+      "tints": {
+        "female_elegantsuit01": {
+          "hue": -40.0,
+          "sat": 0.8,
+          "val": 0.8
+        },
+        "shoes04": {
+          "hue": 0.0,
+          "sat": 0.7,
+          "val": 0.7
+        }
+      },
+      "height_m": 1.62
+    },
+    {
+      "id": "f09_nadja",
+      "name": "Nadja",
+      "gender": "female",
+      "roles": [
+        "player",
+        "passenger"
+      ],
+      "tags": [
+        "middle-aged",
+        "casual",
+        "mixed",
+        "heavy"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.65,
+        "macrodetails-universal/Muscle": 0.4,
+        "macrodetails-universal/Weight": 0.72,
+        "macrodetails-height/Height": 0.638,
+        "macrodetails-proportions/BodyProportions": 0.4,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.5,
+        "macrodetails/Caucasian": 0.5,
+        "breast/BreastSize": 0.65,
+        "breast/BreastFirmness": 0.35,
+        "head/head-round": 0.3,
+        "head/head-fat-decr|incr": 0.3,
+        "head/head-age-decr|incr": 0.15,
+        "chin/chin-double-decr|incr": 0.3,
+        "nose/nose-scale-horiz-decr|incr": 0.15,
+        "neck/neck-scale-horiz-decr|incr": 0.25,
+        "stomach/stomach-tone-decr|incr": -0.3,
+        "hip/hip-scale-horiz-decr|incr": 0.2
+      },
+      "skin": "middleage_caucasian_female",
+      "eyes": "brownlight",
+      "eyebrows": "eyebrow008",
+      "eyelashes": "eyelashes01",
+      "hair": "ponytail01",
+      "clothes": [
+        "female_casualsuit02",
+        "shoes05"
+      ],
+      "tints": {
+        "female_casualsuit02": {
+          "hue": 120.0,
+          "sat": 0.9,
+          "val": 0.9
+        }
+      },
+      "height_m": 1.75
+    },
+    {
+      "id": "f10_ingrid",
+      "name": "Ingrid",
+      "gender": "female",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "old",
+        "casual",
+        "retired"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.8,
+        "macrodetails-universal/Muscle": 0.35,
+        "macrodetails-universal/Weight": 0.6,
+        "macrodetails-height/Height": 0.481,
+        "macrodetails-proportions/BodyProportions": 0.35,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "breast/BreastSize": 0.5,
+        "breast/BreastFirmness": 0.3,
+        "head/head-age-decr|incr": 0.4,
+        "nose/nose-scale-vert-decr|incr": 0.15,
+        "nose/nose-point-down|up": -0.15,
+        "mouth/mouth-laugh-lines-in|out": 0.3,
+        "mouth/mouth-angles-down|up": -0.15,
+        "eyes/l-eye-bag-decr|incr": 0.25,
+        "eyes/r-eye-bag-decr|incr": 0.25,
+        "chin/chin-double-decr|incr": 0.15
+      },
+      "skin": "old_caucasian_female",
+      "eyes": "lightblue",
+      "eyebrows": "eyebrow006",
+      "eyelashes": "eyelashes01",
+      "hair": "short03",
+      "clothes": [
+        "female_casualsuit02",
+        "shoes01"
+      ],
+      "height_m": 1.6
+    },
+    {
+      "id": "f11_renate",
+      "name": "Renate",
+      "gender": "female",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "old",
+        "casual",
+        "petite",
+        "heavy",
+        "retired"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.88,
+        "macrodetails-universal/Muscle": 0.35,
+        "macrodetails-universal/Weight": 0.68,
+        "macrodetails-height/Height": 0.432,
+        "macrodetails-proportions/BodyProportions": 0.3,
+        "macrodetails/African": 0.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 1.0,
+        "breast/BreastSize": 0.6,
+        "breast/BreastFirmness": 0.3,
+        "head/head-age-decr|incr": 0.45,
+        "head/head-fat-decr|incr": 0.25,
+        "head/head-round": 0.2,
+        "chin/chin-double-decr|incr": 0.35,
+        "cheek/l-cheek-volume-decr|incr": 0.2,
+        "cheek/r-cheek-volume-decr|incr": 0.2,
+        "neck/neck-scale-horiz-decr|incr": 0.2,
+        "mouth/mouth-laugh-lines-in|out": 0.25
+      },
+      "skin": "old_caucasian_female",
+      "eyes": "grey",
+      "eyebrows": "eyebrow003",
+      "eyelashes": "eyelashes01",
+      "hair": "bob02",
+      "clothes": [
+        "female_casualsuit01",
+        "shoes03"
+      ],
+      "tints": {
+        "female_casualsuit01": {
+          "hue": -150.0,
+          "sat": 0.7,
+          "val": 0.8
+        }
+      },
+      "height_m": 1.58
+    },
+    {
+      "id": "f12_fatou",
+      "name": "Fatou",
+      "gender": "female",
+      "roles": [
+        "passenger"
+      ],
+      "tags": [
+        "old",
+        "elegant",
+        "retired"
+      ],
+      "modifiers": {
+        "macrodetails/Gender": 0.0,
+        "macrodetails/Age": 0.78,
+        "macrodetails-universal/Muscle": 0.4,
+        "macrodetails-universal/Weight": 0.65,
+        "macrodetails-height/Height": 0.465,
+        "macrodetails-proportions/BodyProportions": 0.4,
+        "macrodetails/African": 1.0,
+        "macrodetails/Asian": 0.0,
+        "macrodetails/Caucasian": 0.0,
+        "breast/BreastSize": 0.6,
+        "breast/BreastFirmness": 0.3,
+        "head/head-age-decr|incr": 0.35,
+        "head/head-oval": 0.2,
+        "nose/nose-width3-decr|incr": 0.15,
+        "mouth/mouth-laugh-lines-in|out": 0.3,
+        "eyes/l-eye-bag-decr|incr": 0.2,
+        "eyes/r-eye-bag-decr|incr": 0.2,
+        "cheek/l-cheek-bones-decr|incr": 0.2,
+        "cheek/r-cheek-bones-decr|incr": 0.2
+      },
+      "skin": "old_african_female",
+      "eyes": "brown",
+      "eyebrows": "eyebrow001",
+      "eyelashes": "eyelashes02",
+      "hair": "afro01",
+      "clothes": [
+        "female_elegantsuit01",
+        "shoes04"
+      ],
+      "tints": {
+        "female_elegantsuit01": {
+          "hue": 60.0,
+          "sat": 1.2,
+          "val": 0.9
+        }
+      },
+      "height_m": 1.66
+    }
+  ]
+}

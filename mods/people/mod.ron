@@ -1,0 +1,9 @@
+(
+    id: "people",
+    name: "People",
+    version: "0.1.0",
+    author: "Connected Rails",
+    description: "Characters made with MakeHuman 2: the walker's body and the passengers on platforms and in coaches. Regenerate with tools/characters/.",
+    depends: [],
+    enabled: true,
+)

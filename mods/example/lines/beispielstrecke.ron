@@ -81,6 +81,11 @@
         // Sperrsignal at the mouth of the stabling siding, facing a movement that is
         // leaving it: Sh 0 holds everything, Sh 1 lets a shunt out onto the line.
         (kind: Signal, edge: 2, s: 20.0, facing: Backward, lateral_offset: -2.5, payload: "(signal:Some(2))"),
+        // The platform of the stop at km 1.98 (timetable/probefahrt.ron): 210 m long,
+        // ending 20 m short of the main signal, left of the line. The app puts a
+        // waiting crowd on it out of the mods' characters (plan ch. 12); no platform
+        // body is modelled here, so the people stand on the ground (height 0).
+        (kind: Platform, edge: 0, s: 1770.0, facing: Both, lateral_offset: 5.0, payload: "(name:\"Beispielstadt Bksig\",length:210.0)"),
     ],
     // Scenery with a track reference: two masts left of the line (objects/mast.ron
     // carries the default offset and rotation the editor stamps on placement).

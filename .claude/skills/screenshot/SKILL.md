@@ -49,7 +49,7 @@ Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für gel
 | `--date JJJJ-MM-TT` | Startdatum — entscheidet über die Jahreszeit von Boden und Bewuchs. |
 | `--weather <preset>` | `clear`, `cloudy`, `overcast`, `fog`, `drizzle`, `rain`, `storm`, `thunderstorm`, `sleet`, `snow`, `blizzard`, `hail`, `frost`. Zusammen mit `--screenshot` sofort gesetzt statt eingezogen. |
 | `--wipers <0-3>` | Startet mit laufendem Scheibenwischer — ein Führerstandshebel, und ein Screenshot hat keine Hände. |
-| `--character <datei>` | Modell für den Fußgänger, gleiche `mods://`-Pfade wie Fahrzeugmodelle. |
+| `--character <name\|datei>` | Modell für den Fußgänger: eine Person aus den Mods (`people:f01_lena`) oder eine Datei auf den `mods://`-Pfaden der Fahrzeugmodelle. Ohne Flag die erste Person mit der Rolle `Player`. |
 
 ## Nur Moduleditor (`trainsim-route-editor`)
 

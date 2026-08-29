@@ -4,9 +4,11 @@
 //! The character controller is a body that falls. One ray downwards carries it —
 //! terrain, platform, the floor and the stairs of an interior — and one ahead at chest
 //! height stops it. Ground that rises no higher than [`STEP_UP`] he climbs, anything
-//! above that blocks, and where the ground drops away he falls until he lands. There is
-//! no physics engine and no collision data behind this: the meshes that are drawn anyway
-//! are what is asked, so a platform or a staircase needs nothing but its geometry.
+//! above that blocks, and where the ground drops away he falls until he lands. Standing
+//! on something he can also push off it: the jump key sets the same vertical speed
+//! upwards, and the fall it is already subject to brings him back down. There is no
+//! physics engine and no collision data behind this: the meshes that are drawn anyway are
+//! what is asked, so a platform or a staircase needs nothing but its geometry.
 //!
 //! Where he stands is kept in the frame that moves him — inside a vehicle in its model
 //! space, so he rides along by himself, outside in world coordinates, which an origin
@@ -43,6 +45,10 @@ const STEP_UP: f32 = 1.0;
 /// Fall acceleration [m/s²] and the speed the fall is held at [m/s].
 const GRAVITY: f32 = 9.81;
 const TERMINAL: f32 = 40.0;
+/// Speed the jump pushes off the ground with [m/s] — `v² / 2g` is a good half metre of
+/// air. Enough to hop a rail or a puddle, and short of [`STEP_UP`], so nothing is
+/// reachable by jumping that walking into it would not climb.
+const PUSH_OFF: f32 = 3.3;
 /// How far down ground is looked for [m] — deep enough for a fall off a bridge.
 const DROP: f32 = 60.0;
 /// Standing tolerance [m]: closer than this to the ground he is carried by it.
@@ -59,15 +65,16 @@ const STANDSTILL: f32 = 0.2;
 /// walls of their own to run a ray against.
 const BODY_HALF_WIDTH: f32 = 1.4;
 /// A step longer than this between two frames is not a walk but a teleport (a door,
-/// a stand-up out of the seat) and is not measured [m].
-const JUMP: f32 = 5.0;
+/// a stand-up out of the seat) and is not measured [m]. Nothing to do with the jump —
+/// that one is vertical, and this is measured over the ground.
+const TELEPORT: f32 = 5.0;
 
 /// The walker: where he is and how fast he is falling. `place` is `None` while he sits at
 /// the desk — F4 stands him up, F1 puts him back.
 #[derive(Resource, Default)]
 pub struct Walker {
     pub place: Option<Place>,
-    /// Vertical speed [m/s]: negative falls, zero stands.
+    /// Vertical speed [m/s]: negative falls, positive rises out of a jump, zero stands.
     pub fall: f32,
 }
 
@@ -85,7 +92,7 @@ pub enum Place {
 pub struct CharacterModel;
 
 /// Walks the player: four bound keys or the left stick over the ground and through the
-/// train, one more through a door.
+/// train, one more through a door and one off the ground.
 // A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn walk_player(
@@ -176,6 +183,12 @@ pub fn walk_player(
         let floor = eye_point(&train.vehicles[vehicle]).y - EYE_HEIGHT;
         let deck = to_render(frame, to_model(frame, feet).with_y(floor)).y;
         ground = Some(ground.map_or(deck, |ground| ground.max(deck)));
+    }
+    // Pushing off happens before the fall, so the frame the key is pressed in is already
+    // the frame that rises — and only from something he actually stands on, which is what
+    // keeps the key from being a second jump in mid-air.
+    if input.just_pressed(Action::WalkJump) && standing(feet.y, ground, walker.fall) {
+        walker.fall = PUSH_OFF;
     }
     let (height, fall) = fall_step(feet.y, ground, walker.fall, dt);
     feet.y = height;
@@ -297,7 +310,7 @@ pub fn horizontal_step(
         _ => return None,
     };
     let distance = Vec2::new(step.x, step.z).length();
-    (distance <= JUMP).then_some(distance)
+    (distance <= TELEPORT).then_some(distance)
 }
 
 /// What the walker's model was doing last frame.
@@ -386,14 +399,20 @@ fn step(
     }
 }
 
+/// Is he on his feet? Close enough to the ground to be carried by it and not on his way
+/// up — which is what both the fall and the jump ask.
+fn standing(height: f32, ground: Option<f32>, fall: f32) -> bool {
+    ground.is_some_and(|ground| height - ground <= CONTACT && fall <= 0.0)
+}
+
 /// Standing and falling: on the ground he is carried by it, off it he falls until he
-/// lands. With nothing below at all — unloaded terrain — he waits instead of dropping
-/// out of the world.
+/// lands — or rises first, where a jump has just pushed him off. With nothing below at
+/// all — unloaded terrain — he waits instead of dropping out of the world.
 fn fall_step(height: f32, ground: Option<f32>, fall: f32, dt: f32) -> (f32, f32) {
     let Some(ground) = ground else {
         return (height, 0.0);
     };
-    if height - ground <= CONTACT && fall <= 0.0 {
+    if standing(height, Some(ground), fall) {
         return (ground, 0.0);
     }
     let fall = (fall - GRAVITY * dt).max(-TERMINAL);
@@ -614,6 +633,46 @@ mod tests {
         assert_eq!(fall_step(0.2, Some(0.0), -20.0, 0.1), (0.0, 0.0));
         // Nothing below: he waits rather than falling out of the world.
         assert_eq!(fall_step(3.0, None, -5.0, 0.1), (3.0, 0.0));
+    }
+
+    /// The jump is a vertical speed like any other: he rises, slows, comes back and
+    /// lands — and the key only counts while he is on his feet.
+    #[test]
+    fn the_jump_pushes_off_the_ground_and_gravity_returns_him() {
+        // On the ground and not on his way up: that is what the key asks for.
+        assert!(standing(0.0, Some(0.0), 0.0));
+        assert!(
+            !standing(0.6, Some(0.0), 0.0),
+            "mid-air is not a second jump"
+        );
+        assert!(
+            !standing(0.0, Some(0.0), PUSH_OFF),
+            "the frame he pushes off in"
+        );
+        assert!(!standing(0.0, None, 0.0), "nothing to push off");
+
+        // Pushed off, he leaves the ground …
+        let (height, fall) = fall_step(0.0, Some(0.0), PUSH_OFF, 0.016);
+        assert!(height > 0.0 && fall > 0.0, "{height} {fall}");
+        // … reaches about `v² / 2g` and lands again, at a jump's worth of seconds.
+        let (mut height, mut fall, mut apex, dt) = (0.0_f32, PUSH_OFF, 0.0_f32, 0.004);
+        let mut steps = 0;
+        loop {
+            (height, fall) = fall_step(height, Some(0.0), fall, dt);
+            apex = apex.max(height);
+            steps += 1;
+            if fall == 0.0 || steps > 1000 {
+                break;
+            }
+        }
+        assert_eq!((height, fall), (0.0, 0.0), "he lands");
+        let reach = PUSH_OFF * PUSH_OFF / (2.0 * GRAVITY);
+        assert!((apex - reach).abs() < 0.05, "{apex} vs {reach}");
+        let seconds = steps as f32 * dt;
+        assert!(
+            (seconds - 2.0 * PUSH_OFF / GRAVITY).abs() < 0.05,
+            "{seconds} s"
+        );
     }
 
     #[test]

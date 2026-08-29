@@ -1304,6 +1304,7 @@ hud-key-cameras = Cab · outside · lineside · walk
 hud-key-look = Look around
 hud-key-zoom = Camera distance
 hud-key-walk = Walk (F4)
+hud-key-jump = Jump
 hud-key-hud = Display: full · reduced · off
 hud-key-overlays = This sheet · diagnostics
 hud-key-mods = Mod manager
@@ -1602,6 +1603,7 @@ ctl-walk-left = Walk left
 ctl-walk-right = Walk right
 ctl-walk-run = Run
 ctl-walk-door = Through the door
+ctl-walk-jump = Jump
 
 # The levers that have a position rather than a direction: only a stick or a trigger can
 # hold one, so their rows take an axis and their key column stays empty.

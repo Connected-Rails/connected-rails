@@ -126,6 +126,7 @@ pub enum Action {
     WalkRight,
     WalkRun,
     WalkDoor,
+    WalkJump,
 }
 
 /// The controls page, by group: the heading, and under it every action with the name it
@@ -344,6 +345,12 @@ pub const ACTIONS: [(&str, &[Row]); 7] = [
                 "walk-door",
                 KeyCode::KeyE,
                 Some(GamepadButton::West),
+            ),
+            (
+                Action::WalkJump,
+                "walk-jump",
+                KeyCode::Space,
+                Some(GamepadButton::South),
             ),
         ],
     ),

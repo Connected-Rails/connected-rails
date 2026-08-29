@@ -1305,6 +1305,7 @@ hud-key-cameras = Führerstand · außen · Strecke · gehen
 hud-key-look = Umsehen
 hud-key-zoom = Kameraabstand
 hud-key-walk = Gehen (F4)
+hud-key-jump = Springen
 hud-key-hud = Anzeige: voll · reduziert · aus
 hud-key-overlays = Diese Übersicht · Diagnose
 hud-key-mods = Mod-Verwaltung
@@ -1604,6 +1605,7 @@ ctl-walk-left = Nach links gehen
 ctl-walk-right = Nach rechts gehen
 ctl-walk-run = Laufen
 ctl-walk-door = Durch die Tür
+ctl-walk-jump = Springen
 
 # Die Hebel, die eine Stellung statt einer Richtung haben: nur ein Stick oder ein Trigger
 # kann eine halten, deshalb nehmen ihre Zeilen eine Achse und die Tastenspalte bleibt leer.

@@ -466,13 +466,13 @@ pub fn update_audio(
     let mut states: HashMap<(usize, usize), SoundState> = HashMap::new();
     for (t, train) in sim.trains.iter().enumerate() {
         let cab = sim.controls[t];
-        let alert = sim.runtime[t].protection.alert;
+        let protection = &sim.runtime[t].protection;
         for (v, vehicle) in train.vehicles.iter().enumerate() {
             if audio.table(&vehicle.spec).is_empty() {
                 continue;
             }
             let mut state =
-                SoundState::sample(vehicle, &cab, alert, audio.previous.get(&(t, v)), dt);
+                SoundState::sample(vehicle, &cab, protection, audio.previous.get(&(t, v)), dt);
             // The sampler deliberately sees no track and no weather — both are filled in
             // here, where net and world state live.
             state.roughness = sim

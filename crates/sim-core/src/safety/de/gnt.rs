@@ -355,6 +355,7 @@ impl TrainProtectionSystem for Gnt {
             },
             speed_limit: limit,
             alert: self.tripped || self.mode == GntMode::Fault,
+            protection_alert: self.tripped || self.mode == GntMode::Fault,
             ..Default::default()
         }
     }

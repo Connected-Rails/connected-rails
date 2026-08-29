@@ -513,6 +513,8 @@ impl TrainProtectionSystem for Lzb80 {
             target_speed: self.target_speed(),
             target_distance: self.target_distance(),
             alert: self.mode == LzbMode::Acceptance || self.mode == LzbMode::Ending,
+            vigilance_alert: false,
+            protection_alert: self.mode == LzbMode::Acceptance || self.mode == LzbMode::Ending,
         }
     }
 

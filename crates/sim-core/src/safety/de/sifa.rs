@@ -188,6 +188,7 @@ impl TrainProtectionSystem for Sifa {
                 ProtectionAction::None
             },
             alert: self.horn(),
+            vigilance_alert: self.horn(),
             ..Default::default()
         }
     }

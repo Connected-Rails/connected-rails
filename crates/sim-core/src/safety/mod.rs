@@ -95,8 +95,14 @@ pub struct ProtectionOutput {
     pub target_speed: Option<f64>,
     /// Distance to target [m] (LZB/ETCS).
     pub target_distance: Option<f64>,
-    /// The system demands an operation (for sound: horn/forced braking).
+    /// The system demands an operation (for sound: horn/forced braking) — either of the
+    /// two below.
     pub alert: bool,
+    /// The vigilance device (Sifa) is sounding: the driver has to operate it.
+    pub vigilance_alert: bool,
+    /// The train protection (PZB, LZB, …) is sounding its horn: an acknowledgement is
+    /// due, a supervision has tripped, or the system is being accepted or ended.
+    pub protection_alert: bool,
 }
 
 impl ProtectionOutput {
@@ -108,6 +114,8 @@ impl ProtectionOutput {
             target_speed: min_option(self.target_speed, other.target_speed),
             target_distance: min_option(self.target_distance, other.target_distance),
             alert: self.alert || other.alert,
+            vigilance_alert: self.vigilance_alert || other.vigilance_alert,
+            protection_alert: self.protection_alert || other.protection_alert,
         }
     }
 }

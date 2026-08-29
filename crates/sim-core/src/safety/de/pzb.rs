@@ -627,6 +627,7 @@ impl TrainProtectionSystem for Pzb {
             return ProtectionOutput {
                 action: ProtectionAction::EmergencyBrake,
                 alert: true,
+                protection_alert: true,
                 ..Default::default()
             };
         }
@@ -726,6 +727,7 @@ impl TrainProtectionSystem for Pzb {
             },
             speed_limit: limit,
             alert: self.m1000.is_some_and(|m| !m.acknowledged) || self.trip.is_some(),
+            protection_alert: self.m1000.is_some_and(|m| !m.acknowledged) || self.trip.is_some(),
             ..Default::default()
         }
     }

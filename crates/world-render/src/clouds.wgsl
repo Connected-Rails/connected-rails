@@ -14,12 +14,25 @@
 //     the parallax through a cloud; the silver lining, the dark base and the
 //     colour of the hour all survive.
 //
-// Either way only **one texel in sixteen** is written a frame — `frame.x` names
-// the 4×4 Bayer slot, and the panorama is never cleared, so the other fifteen
-// keep what earlier passes left. That is what pays for the resolution: at
-// 2048 × 1024 a texel is 0.18° of sky, where 768 × 384 was 0.47° and showed
-// every one of them. Sixteen frames is a quarter of a second, in which a cloud
-// at five kilometres drifts a fifth of a texel.
+// Either way only **one texel in sixteen** is marched a frame — `frame.x` names
+// the 4×4 Bayer slot — and the other fifteen are carried over from last frame's
+// panorama, bound here as `history_texture` (`clouds.rs` swaps the two
+// buffers). That is what pays for the resolution: at 2048 × 1024 a texel is
+// 0.18° of sky, where 768 × 384 was 0.47° and showed every one of them. Sixteen
+// frames is a quarter of a second, in which a cloud at five kilometres drifts a
+// fifth of a texel.
+//
+// A march is not written over its texel but **blended into it** (`history.x`),
+// and each turn it sends its ray through a new point of the texel, starts it a
+// new way into the first step and aims its light cone somewhere new
+// (`history.yz`, `history2.x`), so the blend converges on the integral over the
+// texel, the step and the cone: an edge filtered over the texel's footprint of
+// sky, and a body without noise. One sample of either — a stepped edge, and a
+// jitter that used to be the Bayer slot itself, a 4×4 pattern that repeated
+// exactly — is what a 2K screen, stretching a texel over five pixels, showed as
+// a raster. The deck drifts while the panorama remembers, so the history is
+// read where the cloud *was* a turn ago (`reprojected`, `history.w`): the blend
+// follows the cloud rather than smearing it along its path.
 //
 // The sky the clouds hang in is not guessed: Bevy's atmosphere writes its
 // sky-view table into a cubemap every frame (`AtmosphereEnvironmentMapLight`),
@@ -47,6 +60,16 @@ struct CloudParams {
     // y = 1 volumetric, 0 layered; z = extinction of the weather's haze [1/m],
     // w = its scale height [m].
     frame: vec4<f32>,
+    // x = the weight of this frame's march against what the texel held (1
+    // replaces it); y = where in its golden-ratio sequence this turn's ray
+    // jitter stands, 0…1, and scaled up the seed of the cone wobble; z = the
+    // point in the texel this turn's ray is sent through, 0…1, on the
+    // panorama's x axis; w = the scenario seconds since the texels this frame
+    // marches were last marched, by which the deck has drifted since their
+    // history was written.
+    history: vec4<f32>,
+    // x = the point in the texel on the panorama's y axis; yzw reserved.
+    history2: vec4<f32>,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CloudParams;
@@ -58,9 +81,19 @@ struct CloudParams {
 // in it (`clouds.rs` hands over Bevy's handle once a camera has one).
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var sky_texture: texture_cube<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(6) var sky_sampler: sampler;
+// Last frame's panorama: what a texel that is not marched this frame carries
+// over, texel for texel, and what a marched one is blended into — sampled where
+// the cloud stood a turn ago (`reprojected`).
+@group(#{MATERIAL_BIND_GROUP}) @binding(7) var history_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(8) var history_sampler: sampler;
 
 const PI = 3.14159265;
 const EARTH_RADIUS = 6360000.0;
+
+/// The most a texel is allowed to hold. The history is kept for good, so an
+/// overflow of the half float it lives in would stay in the sky until the next
+/// reset instead of for one turn.
+const HALF_MAX = 65000.0;
 
 /// Beyond this the layer is edge-on and adds nothing but cost [m]. It is also
 /// what `VIEW_STEPS × MAX_STEP` reaches, so nothing is marched that is then
@@ -293,16 +326,20 @@ fn bayer4(x: u32, y: u32) -> u32 {
     return ((a & 1u) << 3u) | ((y & 1u) << 2u) | (a & 2u) | ((y >> 1u) & 1u);
 }
 
-/// Three uncorrelated values in 0…1 from a texel position — the wobble on the
-/// light ray, and nothing that has to be reproducible between frames.
-fn hash3(v: vec2<f32>) -> vec3<f32> {
-    return fract(
-        sin(vec3(
-            dot(v, vec2(12.9898, 78.233)),
-            dot(v, vec2(39.3468, 11.135)),
-            dot(v, vec2(73.1560, 52.235)),
-        )) * 43758.5453,
-    );
+/// Three uncorrelated values in 0…1 from a texel and a turn — the wobble on the
+/// light ray. An integer hash (Jarzynski & Olano's pcg3d) rather than the sine
+/// trick, which stops being random once a turn count pushes its argument into
+/// the hundreds of thousands.
+fn hash3(v: vec3<u32>) -> vec3<f32> {
+    var p = v * 1664525u + 1013904223u;
+    p.x += p.y * p.z;
+    p.y += p.z * p.x;
+    p.z += p.x * p.y;
+    p ^= p >> vec3(16u);
+    p.x += p.y * p.z;
+    p.y += p.z * p.x;
+    p.z += p.x * p.y;
+    return vec3<f32>(p) / 4294967295.0;
 }
 
 /// Henyey-Greenstein: how much light carries on in the direction it was going.
@@ -566,6 +603,28 @@ fn aerial(cloud: vec4<f32>, dir: vec3<f32>, distance: f32) -> vec4<f32> {
     return vec4(cloud.rgb * through, cloud.a * seen);
 }
 
+/// Where in the panorama the cloud now seen in `dir` was seen a turn ago. The
+/// deck has drifted since the texel's history was written, and the history is
+/// read where the cloud *was*, so the blend follows the cloud instead of
+/// smearing it along its path — at a storm's 40 m/s aloft a cumulus overhead
+/// crosses a texel a turn. The deck is taken to stand at its middle height:
+/// exact for the sheet, and for the volume a fraction of a texel out.
+fn reprojected(dir: vec3<f32>, base: f32, thickness: f32) -> vec2<f32> {
+    let origin = vec3(0.0, EARTH_RADIUS, 0.0);
+    let hit = sphere_exit(origin, dir, EARTH_RADIUS + base + thickness * 0.5);
+    // `drifted` adds the drift to the noise coordinate, so a feature of the
+    // field moves *against* the drift vector: what is at p now was at
+    // p + drift × Δt a turn ago.
+    let shift = params.layer.zw * params.history.w;
+    let then = normalize(dir * max(hit, 0.0) + vec3(shift.x, 0.0, shift.y));
+    // The dome's mapping, run backwards.
+    let azimuth = atan2(then.x, -then.z);
+    let elevation = asin(clamp(then.y, -1.0, 1.0));
+    let u = azimuth / (2.0 * PI) + 0.5;
+    let v = sqrt(max(elevation, 0.0) / (PI * 0.5));
+    return vec2(u, 1.0 - v);
+}
+
 /// The volumetric answer: walk the shell of cloud and integrate what scatters
 /// back along the way.
 fn march(
@@ -683,37 +742,65 @@ fn layered(
     return aerial(vec4(radiance * alpha, alpha), dir, hit);
 }
 
-@fragment
-fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = vec2<u32>(in.position.xy);
-    let slot = bayer4(texel.x & 3u, texel.y & 3u);
-    // Amortisation: this texel is written on one frame in sixteen and keeps what
-    // it had on the other fifteen. `discard` before anything is marched is the
-    // whole saving — the pass has to be told not to clear, or there would be
-    // nothing left to keep (`clouds.rs`).
-    if params.frame.x >= 0.0 && slot != u32(params.frame.x) {
-        discard;
-        return vec4(0.0);
-    }
-
-    // Panorama mapping: longitude round, latitude squared so the horizon — where
-    // the layer is edge-on and most of the sky's detail sits — gets the samples.
-    let azimuth = (in.uv.x - 0.5) * 2.0 * PI;
-    let v = 1.0 - in.uv.y;
+/// The panorama's mapping: longitude round from north, latitude squared so the
+/// horizon — where the layer is edge-on and most of the sky's detail sits —
+/// gets the samples.
+fn direction(uv: vec2<f32>) -> vec3<f32> {
+    let azimuth = (uv.x - 0.5) * 2.0 * PI;
+    let v = 1.0 - uv.y;
     let elevation = v * v * (PI * 0.5);
-    let dir = vec3(
+    return vec3(
         cos(elevation) * sin(azimuth),
         sin(elevation),
         -cos(elevation) * cos(azimuth),
     );
+}
 
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let texel = vec2<u32>(in.position.xy);
+    let slot = bayer4(texel.x & 3u, texel.y & 3u);
+    // Amortisation: this texel is marched on one frame in sixteen; on the other
+    // fifteen it carries over what last frame's panorama holds. Returning before
+    // anything is marched is the whole saving.
+    if params.frame.x >= 0.0 && slot != u32(params.frame.x) {
+        return textureLoad(history_texture, vec2<i32>(texel), 0);
+    }
+
+    // Panorama mapping: longitude round, latitude squared so the horizon — where
+    // the layer is edge-on and most of the sky's detail sits — gets the samples.
+    // The ray goes through a point of the texel that moves every turn, not
+    // through its centre, so what the blend settles on is the texel's footprint
+    // of sky and not one line through it — the difference between a cloud edge
+    // filtered over the texel and one stepped along it. The history is read for
+    // the texel's centre, which the blend keeps where it is.
+    // Every texel has a phase of its own in the sequences (a Cranley-Patterson
+    // rotation): over the turns each texel's samples are still stratified, and
+    // between neighbours they are uncorrelated, so what the blend has not yet
+    // averaged away is grain and not a pattern. Anything with a period — the
+    // Bayer slot this once was, the interleaved gradient noise tried after it,
+    // which repeats every two texels one way and three the other — blended at
+    // the unequal weights of a running average shows through as a faint
+    // lattice, which is the raster this whole arrangement exists to remove.
+    let phase = hash3(vec3(texel, 7919u));
+    let point = fract(phase.yz + vec2(params.history.z, params.history2.x)) - 0.5;
+    let uv = in.uv + point / vec2<f32>(textureDimensions(history_texture));
+    let dir = direction(uv);
     let base = params.layer.x;
     let thickness = params.layer.y;
-    // The dither slot doubles as the offset into the first step: it is already
-    // the most dispersed pattern there is, so neighbouring texels start as far
-    // apart as they can and the step pattern reads as texture, not as rings.
-    let jitter = (f32(slot) + 0.5) / 16.0;
-    let wobble = hash3(in.position.xy) - 0.5;
+    let previous = textureSampleLevel(
+        history_texture,
+        history_sampler,
+        reprojected(direction(in.uv), base, thickness),
+        0.0,
+    );
+    // Where along the first step the ray starts, and where in the cone the light
+    // ray points. Both move with every turn — the jitter along a golden-ratio
+    // sequence, the wobble by its seed — so that over the panorama's memory a
+    // texel sees the whole step and the whole cone, and the blend below arrives
+    // at their average.
+    let jitter = fract(phase.x + params.history.y);
+    let wobble = hash3(vec3(texel, u32(params.history.y * 65536.0))) - 0.5;
     let to_sun = normalize(params.sun.xyz + wobble * CONE_SPREAD);
     let sky_top = sky_light();
 
@@ -726,5 +813,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Near the horizon the layer runs out into haze rather than ending in a line.
     let horizon = smoothstep(0.0, 0.06, dir.y);
-    return cloud * horizon;
+    // Blended into what the texel held rather than written over it.
+    let fresh = clamp(cloud * horizon, vec4(0.0), vec4(HALF_MAX));
+    return mix(previous, fresh, params.history.x);
 }

@@ -1200,7 +1200,11 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   line-side converters' whine while standing, the GTO converter at the start, the electric
   brake, the Makrofon, a buzzer each for the Sifa and the PZB/LZB, rolling noise in three
   bands, air and compressor (the electric brake and the Makrofon from two CC BY-SA
-  recordings, which those files stay). The sound table tells the Sifa from the
+  recordings, which those files stay). The example line got the **distant signal at km 1.0**
+  that its 1000 Hz magnet had been missing: `WhenRestrictive` asks the linked signal for its
+  distant indication, and the main signal it hung on carries none, so the magnet had never
+  been live and the classic acknowledgement case could not happen at all
+  (`crates/content/tests/pzb_alert.rs` drives it). The sound table tells the Sifa from the
   train protection since the same day: `VigilanceAlert` and `ProtectionAlert` next to the
   combined `Alert`, and `DynamicBrake` for the electric brake's own force. The default
   table of every other vehicle stays generated, and so do the 101's brake squeal and rail

@@ -72,9 +72,12 @@
         ),
     ],
     devices: [
-        // 1000 Hz magnet at the distant signal position, active only when the main signal
-        // announces a restriction.
-        (kind: Magnet, edge: 0, s: 1000.0, payload: "(frequency:Hz1000,signal:Some(0),activation:WhenRestrictive)"),
+        // 1000 Hz magnet at the distant signal (device 9, signal 3): active while that
+        // distant announces the main signal's restriction. It has to hang on the distant
+        // and not on the main itself — `WhenRestrictive` asks the linked signal for its
+        // *distant* indication, and a main signal at stop announces nothing, it is the
+        // restriction.
+        (kind: Magnet, edge: 0, s: 1000.0, payload: "(frequency:Hz1000,signal:Some(3),activation:WhenRestrictive)"),
         (kind: Signal, edge: 0, s: 2000.0, lateral_offset: 3.0, payload: "(signal:Some(0))"),
         // 500 Hz magnet 250 m ahead of the signal, and 2000 Hz at the signal itself.
         (kind: Magnet, edge: 0, s: 1750.0, payload: "(frequency:Hz500,signal:Some(0),activation:WhenStop)"),
@@ -95,6 +98,9 @@
         // TEMPORARY (viewing the people from the cab): a platform right beside the
         // train at the west portal. Remove before committing.
         (kind: Platform, edge: 0, s: 190.0, facing: Both, lateral_offset: 5.0, payload: "(name:\"TEMP\",length:90.0)"),
+        // 9: the distant signal at km 1.0, a braking distance ahead of the Ks main. New
+        // devices go at the end of this list — the entries above are addressed by index.
+        (kind: Signal, edge: 0, s: 1000.0, lateral_offset: 3.0, payload: "(signal:Some(3))"),
     ],
     // Scenery with a track reference: two masts left of the line (objects/mast.ron
     // carries the default offset and rotation the editor stamps on placement).
@@ -141,6 +147,18 @@
             guarded: [],
             requires_route: true,
             signal_type: Some("example:sperrsignal"),
+        ),
+        // 3: the distant signal for the Ks main at km 2.0. It guards nothing of its own —
+        // it repeats what stands ahead — and `next` is what makes it do that: the
+        // interlocking gives it Ks 2 (expect stop) while the main is at stop, and that is
+        // what puts the 1000 Hz magnet beside it under current. Without a model it draws
+        // the placeholder mast.
+        (
+            kind: Distant,
+            system: Ks,
+            device: 9,
+            next: Some(0),
+            guarded: [],
         ),
     ],
     routes: [

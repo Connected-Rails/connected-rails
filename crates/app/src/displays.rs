@@ -268,12 +268,12 @@ pub fn update_displays(
         return;
     };
     let cab = sim.0.controls.get(player.0).copied().unwrap_or_default();
-    let alert = sim
+    let protection = sim
         .0
         .runtime
         .get(player.0)
-        .map(|r| r.protection.alert)
-        .unwrap_or(false);
+        .map(|r| r.protection.clone())
+        .unwrap_or_default();
     // The html gauges tick at ~30 Hz, not every frame: binding updates and the
     // page's `onFrame` script are real work per tick, and no screen content is
     // read faster than that. The softkeys are the exception — a menu that
@@ -329,7 +329,7 @@ pub fn update_displays(
             None => {
                 let (state, indicators) = sampled.entry(view.vehicle).or_insert_with(|| {
                     (
-                        SoundState::sample(vehicle, &cab, alert, None, 0.0),
+                        SoundState::sample(vehicle, &cab, &protection, None, 0.0),
                         vehicle.safety.indicators(),
                     )
                 });

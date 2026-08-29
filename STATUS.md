@@ -1194,8 +1194,23 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   1998. That is the sources, not the architecture: Zusi's sound designers solve a transition
   with several loops cross-faded by volume and pitch curve — the ICE 3 carries one file per
   semitone rather than pitching one loop across the range — and the table format here does
-  exactly that, several entries with overlapping curves. What is missing is somebody's
-  recordings, and those go in a mod, not in this repository.
+  exactly that, several entries with overlapping curves. The example BR 101 has its
+  recordings since 2026-08-29: loops cut out of CC BY trainspotting videos and CC0
+  recordings (`tools/sounds/br101_sounds.py`, sources in THIRD_PARTY_LICENSES.md) — the
+  line-side converters' whine while standing, the GTO converter at the start, the electric
+  brake, the Makrofon, a buzzer each for the Sifa and the PZB/LZB, rolling noise in three
+  bands, air and compressor (the electric brake and the Makrofon from two CC BY-SA
+  recordings, which those files stay). The example line got the **distant signal at km 1.0**
+  that its 1000 Hz magnet had been missing: `WhenRestrictive` asks the linked signal for its
+  distant indication, and the main signal it hung on carries none, so the magnet had never
+  been live and the classic acknowledgement case could not happen at all
+  (`crates/content/tests/pzb_alert.rs` drives it). The sound table tells the Sifa from the
+  train protection since the same day: `VigilanceAlert` and `ProtectionAlert` next to the
+  combined `Alert`, and `DynamicBrake` for the electric brake's own force. The default
+  table of every other vehicle stays generated, and so do the 101's brake squeal and rail
+  joints. What no free recording covers is the loco under power at speed from inside, so
+  the upper two traction and brake bands are resampled; no free recording of the PZB horn
+  or the Sifa buzzer of a 101 exists either.
 - **The cab wall is one lowpass with one cutoff** for every vehicle; a per-vehicle
   insulation value moves into `VehicleSpec` when someone records real cabs and can hear
   the difference.
@@ -1356,7 +1371,7 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   faces, the needles, the rim markers, the Lf 7 board, the Hp 0 disc and the ten
   pictograms into `Image`s when the run starts. Same rule as the generated ground
   textures and the synthesised sounds of the default sound table: no asset directory, no
-  icon set, no third-party licence to carry (the example BR 101's recorded cab sounds are
+  icon set, no third-party licence to carry (the example BR 101's recorded sounds are
   the exception, credited in THIRD_PARTY_LICENSES.md) — and a pantograph that should read
   better at 20 px is a coordinate in that file.
   Everything comes out white on transparent and is tinted where it is used, so one drawing
@@ -1505,9 +1520,12 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
      not the top of rail, and is wrong on every bridge, embankment and tunnel. DB's line
      geometry, coarse as it is, carries the kilometre marks and so makes the best reference
      layer while drawing (see 2).
-5. **Recorded samples for the sound table** — the mechanism is in place and positional; what
-   is missing is the audio itself. Rail joints out of the track instead of out of a distance
-   interval belong in the same pass.
+5. **Recorded samples for the sound table** — the example BR 101 has them (line-side
+   converters, start, electric brake, Makrofon, buzzers, rolling in three bands, air,
+   compressor); what is missing is a recording of the loco under power at speed, the real
+   PZB and Sifa buzzers of a 101, brake squeal and rail joints, and the other reference
+   vehicles. Rail joints out of the track instead of out of a distance interval belong in
+   the same pass.
 6. **Weather and night rendering are done** (M6 and plan 14.1, see above) — thirteen
    weathers as physical quantities, volumetric clouds with their shadows, haze in the
    atmosphere itself, wet and snowed-on surfaces, lightning and thunder, and a ground mist

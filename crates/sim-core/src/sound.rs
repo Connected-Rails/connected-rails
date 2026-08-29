@@ -28,6 +28,7 @@
 //! way, and a mod with recorded samples writes exactly the same shape.
 
 use crate::cab::{CabControl, CabInputs};
+use crate::safety::ProtectionOutput;
 use crate::train::Vehicle;
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +54,9 @@ pub enum Quantity {
     TractiveEffort,
     /// Brake force acting [kN], absolute.
     BrakeEffort,
+    /// Force of the dynamic brake alone [kN] — the electric or hydrodynamic brake acting
+    /// through the drive, which is what a converter is heard doing while the train slows.
+    DynamicBrake,
     /// Brake pipe [bar].
     BrakePipe,
     /// Brake cylinder [bar], automatic plus direct brake.
@@ -75,8 +79,13 @@ pub enum Quantity {
     Doors,
     /// Horn operated (0/1).
     Horn,
-    /// The train protection demands an operation (0/1).
+    /// Any train protection or vigilance device demands an operation (0/1).
     Alert,
+    /// The vigilance device (Sifa) sounds its warning (0/1) — the driver has to operate.
+    VigilanceAlert,
+    /// The train protection (PZB, LZB, …) sounds its horn (0/1): an acknowledgement is
+    /// due, a supervision has tripped, or the system is being accepted or ended.
+    ProtectionAlert,
     /// Roughness of the track type under the vehicle, 1.0 = welded main-line
     /// rail (see `TrackType::roughness`). The app fills it from the track;
     /// jointed or worn track sits above 1, slab track below.
@@ -100,7 +109,7 @@ pub enum Quantity {
 impl Quantity {
     /// Every plain quantity, in the order the editor lists them. The editor
     /// appends `Control(…)` for each [`CabControl::ALL`] entry itself.
-    pub const ALL: [Quantity; 22] = [
+    pub const ALL: [Quantity; 25] = [
         Quantity::Speed,
         Quantity::Distance,
         Quantity::EngineRpm,
@@ -108,6 +117,7 @@ impl Quantity {
         Quantity::Circuit,
         Quantity::TractiveEffort,
         Quantity::BrakeEffort,
+        Quantity::DynamicBrake,
         Quantity::BrakePipe,
         Quantity::BrakeCylinder,
         Quantity::MainReservoir,
@@ -120,6 +130,8 @@ impl Quantity {
         Quantity::Doors,
         Quantity::Horn,
         Quantity::Alert,
+        Quantity::VigilanceAlert,
+        Quantity::ProtectionAlert,
         Quantity::Roughness,
         Quantity::Rain,
         Quantity::Thunder,
@@ -138,7 +150,9 @@ impl Quantity {
             Quantity::EngineRpm => 0.0..=3_000.0,
             Quantity::TapChangerStep => 0.0..=40.0,
             Quantity::Circuit => 0.0..=3.0,
-            Quantity::TractiveEffort | Quantity::BrakeEffort => 0.0..=600.0,
+            Quantity::TractiveEffort | Quantity::BrakeEffort | Quantity::DynamicBrake => {
+                0.0..=600.0
+            }
             Quantity::BrakePipe | Quantity::BrakeCylinder => 0.0..=6.0,
             Quantity::MainReservoir => 0.0..=12.0,
             Quantity::AirFlow => 0.0..=3.0,
@@ -160,6 +174,7 @@ impl Quantity {
             Quantity::Circuit => "snd-quantity-circuit",
             Quantity::TractiveEffort => "snd-quantity-tractive-effort",
             Quantity::BrakeEffort => "snd-quantity-brake-effort",
+            Quantity::DynamicBrake => "snd-quantity-dynamic-brake",
             Quantity::BrakePipe => "snd-quantity-brake-pipe",
             Quantity::BrakeCylinder => "snd-quantity-brake-cylinder",
             Quantity::MainReservoir => "snd-quantity-main-reservoir",
@@ -172,6 +187,8 @@ impl Quantity {
             Quantity::Doors => "snd-quantity-doors",
             Quantity::Horn => "snd-quantity-horn",
             Quantity::Alert => "snd-quantity-alert",
+            Quantity::VigilanceAlert => "snd-quantity-vigilance-alert",
+            Quantity::ProtectionAlert => "snd-quantity-protection-alert",
             Quantity::Roughness => "snd-quantity-roughness",
             Quantity::Rain => "snd-quantity-rain",
             Quantity::Thunder => "snd-quantity-thunder",
@@ -194,6 +211,8 @@ pub struct SoundState {
     pub circuit: f64,
     pub tractive_effort: f64,
     pub brake_effort: f64,
+    #[serde(default)]
+    pub dynamic_brake: f64,
     pub brake_pipe: f64,
     pub brake_cylinder: f64,
     #[serde(default)]
@@ -207,6 +226,10 @@ pub struct SoundState {
     pub doors: f64,
     pub horn: f64,
     pub alert: f64,
+    #[serde(default)]
+    pub vigilance_alert: f64,
+    #[serde(default)]
+    pub protection_alert: f64,
     /// The cab inputs as the driver set them — [`Quantity::Control`] reads the
     /// pure-cab controls straight from here.
     #[serde(default)]
@@ -256,6 +279,7 @@ impl Default for SoundState {
             circuit: 0.0,
             tractive_effort: 0.0,
             brake_effort: 0.0,
+            dynamic_brake: 0.0,
             brake_pipe: 0.0,
             brake_cylinder: 0.0,
             main_reservoir: 0.0,
@@ -268,6 +292,8 @@ impl Default for SoundState {
             doors: 0.0,
             horn: 0.0,
             alert: 0.0,
+            vigilance_alert: 0.0,
+            protection_alert: 0.0,
             cab: CabInputs::default(),
             battery: 0.0,
             pantograph_switch: 0.0,
@@ -292,6 +318,7 @@ impl SoundState {
             Quantity::Circuit => self.circuit,
             Quantity::TractiveEffort => self.tractive_effort,
             Quantity::BrakeEffort => self.brake_effort,
+            Quantity::DynamicBrake => self.dynamic_brake,
             Quantity::BrakePipe => self.brake_pipe,
             Quantity::BrakeCylinder => self.brake_cylinder,
             Quantity::MainReservoir => self.main_reservoir,
@@ -304,6 +331,8 @@ impl SoundState {
             Quantity::Doors => self.doors,
             Quantity::Horn => self.horn,
             Quantity::Alert => self.alert,
+            Quantity::VigilanceAlert => self.vigilance_alert,
+            Quantity::ProtectionAlert => self.protection_alert,
             Quantity::Roughness => self.roughness,
             Quantity::Rain => self.rain,
             Quantity::Thunder => self.thunder,
@@ -340,6 +369,7 @@ impl SoundState {
             Quantity::Circuit => self.circuit = value,
             Quantity::TractiveEffort => self.tractive_effort = value,
             Quantity::BrakeEffort => self.brake_effort = value,
+            Quantity::DynamicBrake => self.dynamic_brake = value,
             Quantity::BrakePipe => self.brake_pipe = value,
             Quantity::BrakeCylinder => self.brake_cylinder = value,
             Quantity::MainReservoir => self.main_reservoir = value,
@@ -352,6 +382,8 @@ impl SoundState {
             Quantity::Doors => self.doors = value,
             Quantity::Horn => self.horn = value,
             Quantity::Alert => self.alert = value,
+            Quantity::VigilanceAlert => self.vigilance_alert = value,
+            Quantity::ProtectionAlert => self.protection_alert = value,
             Quantity::Roughness => self.roughness = value,
             Quantity::Rain => self.rain = value,
             Quantity::Thunder => self.thunder = value,
@@ -370,13 +402,14 @@ impl SoundState {
 
     /// Reads the state of one vehicle.
     ///
-    /// `alert` comes from the train protection of the whole train, `cab` from the desk that
-    /// drives it — both are train-level, everything else belongs to the vehicle itself.
-    /// `previous` and `dt` are only needed for `AirFlow`; without them it stays 0.
+    /// `protection` is the merged output of the train protection of the whole train, `cab`
+    /// the desk that drives it — both are train-level, everything else belongs to the
+    /// vehicle itself. `previous` and `dt` are only needed for `AirFlow`; without them it
+    /// stays 0.
     pub fn sample(
         vehicle: &Vehicle,
         cab: &CabInputs,
-        alert: bool,
+        protection: &ProtectionOutput,
         previous: Option<&SoundState>,
         dt: f64,
     ) -> Self {
@@ -400,6 +433,7 @@ impl SoundState {
             circuit: drive.circuit as f64,
             tractive_effort: vehicle.tractive_effort.abs() / 1000.0,
             brake_effort: vehicle.brake_effort.abs() / 1000.0,
+            dynamic_brake: vehicle.brake.dynamic_force.abs() / 1000.0,
             brake_pipe: pipe,
             brake_cylinder: cylinder,
             main_reservoir: vehicle.brake.main_reservoir,
@@ -411,7 +445,9 @@ impl SoundState {
             compressor: f64::from(vehicle.brake.compressor_running && vehicle.traction.compressor),
             doors: vehicle.doors.left.travel.max(vehicle.doors.right.travel),
             horn: f64::from(cab.horn),
-            alert: f64::from(alert),
+            alert: f64::from(protection.alert),
+            vigilance_alert: f64::from(protection.vigilance_alert),
+            protection_alert: f64::from(protection.protection_alert),
             cab: *cab,
             battery: f64::from(vehicle.traction.battery),
             pantograph_switch: f64::from(vehicle.traction.pantograph_command),

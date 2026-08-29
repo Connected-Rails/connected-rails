@@ -1642,12 +1642,16 @@ console-weather-asked = Der Server wird um { $weather } gebeten
 console-time-now = { $time }
 console-time-set = Die Uhr springt auf { $time } — die Züge behalten ihren Zustand, der Plan zieht nach
 console-time-mp = Die Uhr lässt sich nur im Einzelspieler bewegen
+console-fly-on = Freikamera an — W/A/S/D bewegen, Leertaste hoch, Strg runter, Umschalt schnell, rechte Maustaste umsehen
+console-fly-off = Freikamera aus — zurück am Fahrpult
 console-usage-weather = weather [preset]
 console-usage-time = time [HH:MM[:SS]]
+console-usage-fly = fly
 console-usage-help = help [command]
 console-usage-clear = clear
 console-help-weather = das Wetter ändern — ohne Name zeigt es das aktuelle
 console-help-time = die Uhr auf eine Tageszeit vorstellen — ohne Zeit zeigt sie die aktuelle
+console-help-fly = die Freikamera zum Überfliegen der Strecke umschalten — ein Werkzeug für die Entwicklung
 console-help-help = die Befehle auflisten
 console-help-clear = den Log leeren
 

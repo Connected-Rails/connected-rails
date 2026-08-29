@@ -1485,10 +1485,17 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   menu through `crates/app/src/theme.rs`.
 - **The console on F8 (plan 16.3)** is the simulator's one command line: a panel on the
   bottom edge built from the same plain UI nodes as the rest of the game — no egui — with
-  the commands in one static table (`weather`, `time`, `help`, `clear`), `Tab` completion
-  over commands and their arguments, and a history over `↑`/`↓`. Everything it prints goes
-  through the i18n crate; commands and arguments stay English — a `preset` is one of
-  `sim_core::weather`'s names in lower case, the same word the `--weather` flag takes.
+  the commands in one static table (`weather`, `time`, `fly`, `help`, `clear`), `Tab`
+  completion over commands and their arguments, and a history over `↑`/`↓`. Everything it
+  prints goes through the i18n crate; commands and arguments stay English — a `preset` is
+  one of `sim_core::weather`'s names in lower case, the same word the `--weather` flag
+  takes, and a leading `/` (`/fly`) is tolerated spelling. `fly` toggles the free dev
+  camera — a `CameraMode::Fly` of its own in `ui.rs`, detached from train and walker: it
+  starts wherever the view was, flies where it looks (W/A/S/D along the view — the
+  walker's keys, so rebindings carry over — Space up, Ctrl down, Shift five times as
+  fast, right-drag to look), and leaves by the same F1–F4. Purely local, like every
+  camera: the view is the one thing a client owns outright, so there is no wire shape for
+  it.
   **Multiplayer**: the world is the server's, so a client's `weather` posts
   a wish (`net::WeatherRequest` → `WeatherWish`); the server applies it to its timeline
   and answers *every* client with a `WeatherSet` anchored to the moment it applied, so all

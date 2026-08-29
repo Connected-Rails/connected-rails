@@ -1640,12 +1640,16 @@ console-weather-asked = The server is asked for { $weather }
 console-time-now = { $time }
 console-time-set = The clock jumps to { $time } — trains keep their state, the plan catches up
 console-time-mp = The clock can only be moved in single player
+console-fly-on = Free camera on — WASD moves, Space up, Ctrl down, Shift fast, right-drag looks around
+console-fly-off = Free camera off — back in the driver's seat
 console-usage-weather = weather [preset]
 console-usage-time = time [HH:MM[:SS]]
+console-usage-fly = fly
 console-usage-help = help [command]
 console-usage-clear = clear
 console-help-weather = change the weather — without a name it shows the current one
 console-help-time = move the clock forward to a time of day — without a time it shows the current one
+console-help-fly = toggle the free camera for flying over the route — a developer tool
 console-help-help = list the commands
 console-help-clear = empty the log
 

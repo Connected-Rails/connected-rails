@@ -2172,6 +2172,9 @@ fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
                     }
                 });
         });
+        row(ui, "lay-formation", |ui| {
+            ui.checkbox(&mut lay.formation, "");
+        });
         row(ui, "lay-parallel", |ui| {
             editor_ui::field(ui, &mut lay.parallel, 1.0, 1.0..=8.0, "");
         });
@@ -2299,6 +2302,17 @@ fn selection_panel(
                         .color(colors::TEXT_SECONDARY),
                 );
             }
+            // The formation is the edge's own — an area cannot lay one over a
+            // stretch, and switching it off leaves bare rails on ground the
+            // terrain leaves alone. The change detector rebuilds track and
+            // terrain from the flipped bit, undo included.
+            editor_ui::form_grid(&format!("edge-formation-{i}")).show(ui, |ui| {
+                row(ui, "sel-edge-formation", |ui| {
+                    if let Some(edge) = line.source.edges.get_mut(i) {
+                        ui.checkbox(&mut edge.formation, "");
+                    }
+                });
+            });
             track_type_rows(ui, line, i, length, types);
             electrification_rows(ui, line, i, length);
             grade_rows(ui, line, i, length);

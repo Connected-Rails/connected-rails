@@ -76,7 +76,11 @@ pub struct TerrainOptions {
     pub base_step: f64,
     /// Up to here the finest level applies [m].
     pub corridor: f64,
-    /// Up to here the terrain follows the track exactly [m].
+    /// Up to here the terrain follows the track exactly [m] — the half width
+    /// of the formation (Planum) of a single track: the ~2.6 m ballast body
+    /// plus shoulder. Edges without a formation
+    /// ([`TrackEdge::formation`](track_model::TrackEdge::formation)) shape
+    /// nothing here.
     pub flatten: f64,
     /// How far the ground beside the track lies **below** the top of rail [m].
     /// The track is drawn as a ballast bed 30 cm under the rail head, and
@@ -85,8 +89,17 @@ pub struct TerrainOptions {
     /// centimetres keep the bed off the ground plane, which would otherwise
     /// z-fight with it.
     pub rail_offset: f64,
-    /// Up to here rail and terrain height are blended [m].
+    /// Up to here rail and terrain height are blended [m] — the foot of the
+    /// embankment or cutting. From the formation edge to here the ground runs
+    /// to its natural height, eight metres of run: roughly a 1:2 slope at the
+    /// heights a main line embankment has, steeper where the ground falls
+    /// away. An edge without a formation is not part of this.
     pub blend: f64,
+    /// Up to here the gravel texture reaches [m] — full weight on the
+    /// formation, fading out over the upper slope; the embankment itself is
+    /// grass. Has to lie beyond [`TerrainOptions::flatten`] for the fade to
+    /// make sense.
+    pub gravel: f64,
     /// Height of the skirt at the tile borders [m].
     pub skirt: f64,
     /// Height where no DGM is available [m] (NHN).
@@ -104,9 +117,10 @@ impl Default for TerrainOptions {
             radius: 1_200.0,
             base_step: 4.0,
             corridor: 96.0,
-            flatten: 10.0,
+            flatten: 4.0,
             rail_offset: 0.4,
-            blend: 45.0,
+            blend: 12.0,
+            gravel: 7.0,
             skirt: 8.0,
             fallback_height: 100.0,
             centerline_step: 25.0,
@@ -220,8 +234,19 @@ struct Centerline {
     points: Vec<DVec2>,
     /// Ellipsoidal height of the top of rail [m].
     heights: Vec<f64>,
-    /// Accelerated neighbourhood index.
-    grid: CellMap<Vec<usize>>,
+    /// Whether the point's edge carries a formation. Points without one —
+    /// track the builder laid on their own constructions — take part in the
+    /// corridor and the level of detail, but not in the embankment or the
+    /// gravel: nothing there is the terrain's business.
+    formation: Vec<bool>,
+    /// The samples as segments `(a, b)` of consecutive points of one edge.
+    /// Distance queries measure against these, so the answer is the distance
+    /// to the **line** and not to the nearest sample — at 25 m sampling the
+    /// difference is up to 12.5 m along the track, more than the blend zone
+    /// is wide.
+    segments: Vec<(usize, usize)>,
+    /// Accelerated neighbourhood index over the segments.
+    grid: CellMap<Vec<u32>>,
     cell: f64,
 }
 
@@ -229,7 +254,10 @@ impl Centerline {
     fn build(net: &TrackNetwork, options: &TerrainOptions) -> Self {
         let mut points = Vec::new();
         let mut heights = Vec::new();
+        let mut formation = Vec::new();
+        let mut segments = Vec::new();
         for edge in net.edges() {
+            let first = points.len();
             let steps = (edge.length() / options.centerline_step).ceil().max(1.0) as usize;
             for i in 0..=steps {
                 let s = edge.length() * i as f64 / steps as f64;
@@ -238,23 +266,40 @@ impl Centerline {
                 let (e, n) = geo::to_utm(lat, lon, options.zone);
                 points.push(DVec2::new(e, n));
                 heights.push(h);
+                formation.push(edge.formation);
+            }
+            for i in first..points.len() - 1 {
+                segments.push((i, i + 1));
             }
         }
 
         let cell = options.blend.max(50.0);
-        let mut grid: CellMap<Vec<usize>> = CellMap::default();
-        for (i, p) in points.iter().enumerate() {
-            grid.entry(key(*p, cell)).or_default().push(i);
+        let mut grid: CellMap<Vec<u32>> = CellMap::default();
+        for (i, &(a, b)) in segments.iter().enumerate() {
+            // A segment is short against the cell, but it may still cross a
+            // cell corner — insert it into every cell its box touches.
+            let (min, max) = (points[a].min(points[b]), points[a].max(points[b]));
+            let (x0, y0) = key(min, cell);
+            let (x1, y1) = key(max, cell);
+            for x in x0..=x1 {
+                for y in y0..=y1 {
+                    grid.entry((x, y)).or_default().push(i as u32);
+                }
+            }
         }
         Self {
             points,
             heights,
+            formation,
+            segments,
             grid,
             cell,
         }
     }
 
-    /// Nearest centreline point in the neighbourhood: `(distance, height)`.
+    /// Nearest point **of an edge with a formation**: `(distance, height)`.
+    /// Edges without one are skipped — they stand on the builder's own ground
+    /// and must not pull the terrain anywhere.
     fn nearest(&self, p: DVec2) -> Option<(f64, f64)> {
         let (kx, ky) = key(p, self.cell);
         let mut best: Option<(f64, f64)> = None;
@@ -264,9 +309,19 @@ impl Centerline {
                     continue;
                 };
                 for &i in bucket {
-                    let d = (self.points[i] - p).length();
+                    let (a, b) = self.segments[i as usize];
+                    if !self.formation[a] {
+                        continue;
+                    }
+                    let (d, h) = segment_distance(
+                        self.points[a],
+                        self.points[b],
+                        self.heights[a],
+                        self.heights[b],
+                        p,
+                    );
                     if best.is_none_or(|(bd, _)| d < bd) {
-                        best = Some((d, self.heights[i]));
+                        best = Some((d, h));
                     }
                 }
             }
@@ -303,6 +358,20 @@ impl Centerline {
 
 pub(crate) fn key(p: DVec2, cell: f64) -> (i64, i64) {
     ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64)
+}
+
+/// Distance from `p` to the segment `a–b`, with the rail height interpolated
+/// at the foot of the perpendicular.
+fn segment_distance(a: DVec2, b: DVec2, ha: f64, hb: f64, p: DVec2) -> (f64, f64) {
+    let ab = b - a;
+    let len2 = ab.length_squared();
+    let t = if len2 > 0.0 {
+        ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let foot = a + ab * t;
+    ((foot - p).length(), ha + (hb - ha) * t)
 }
 
 /// SplitMix64 — deterministic scatter without a `rand` dependency.
@@ -574,9 +643,9 @@ fn falloff(t: f64) -> f64 {
 }
 
 /// Keep this far from the track when baking a forest [m] — the blend zone of
-/// the default [`TerrainOptions`] plus a margin, so no tree stands on the
-/// embankment the terrain pulls up to rail height.
-pub const TREE_TRACK_CLEARANCE: f64 = 55.0;
+/// the default [`TerrainOptions`] (the foot of the embankment) plus a margin,
+/// so no tree stands on the embankment the terrain pulls up to rail height.
+pub const TREE_TRACK_CLEARANCE: f64 = 16.0;
 
 /// Fills a polygon (`(lat, lon)` [deg]) with trees — the editor's forest brush
 /// and forest import **bake** their strokes into single [`TreeSource`]s, so
@@ -1267,8 +1336,17 @@ fn splat_weights(
 
             let rock = ((slope - ROCK_SLOPE) / (ROCK_FULL - ROCK_SLOPE)).clamp(0.0, 1.0);
             let d = track_dist[iy * row + ix];
-            let gravel = ((options.blend - d) / (options.blend - options.flatten)).clamp(0.0, 1.0)
-                * (1.0 - rock);
+            // The formation is engineered ground: the ballast body and its
+            // shoulder carry gravel whatever the slopes of the walls beside it
+            // say to the rock weight. Beyond it the gravel fades out over the
+            // shoulder, and steep ground takes what is left.
+            let (gravel, rock) = if d <= options.flatten {
+                (1.0, 0.0)
+            } else {
+                let fade =
+                    ((options.gravel - d) / (options.gravel - options.flatten)).clamp(0.0, 1.0);
+                (fade * (1.0 - rock), rock)
+            };
             let grass = 1.0 - rock - gravel;
             splat.push([grass as f32, rock as f32, gravel as f32, 1.0]);
         }
@@ -1880,6 +1958,106 @@ mod tests {
             gravel_near > 10 && rock_far > 10,
             "{gravel_near}/{rock_far} checked"
         );
+    }
+
+    /// A straight 1 km edge at the test anchor, with the formation stated.
+    fn single_edge_net(formation: bool) -> TrackNetwork {
+        let mut net = TrackNetwork::new();
+        let a = net.add_node(NodeKind::Buffer);
+        let b = net.add_node(NodeKind::Buffer);
+        let mut edge = TrackEdge::new(
+            EdgeId(0),
+            a,
+            b,
+            geo::to_ecef_deg(52.0, 10.0, 100.0),
+            0.0,
+            vec![Segment::straight(1000.0)],
+        );
+        edge.formation = formation;
+        net.add_edge(edge);
+        net
+    }
+
+    /// The main line at the anchor, 12 m to the north a track the builder
+    /// laid on their own construction (`formation = false`).
+    fn net_with_yard_track() -> TrackNetwork {
+        let mut net = single_edge_net(true);
+        let c = net.add_node(NodeKind::Buffer);
+        let d = net.add_node(NodeKind::Buffer);
+        net.add_edge(
+            TrackEdge::new(
+                EdgeId(1),
+                c,
+                d,
+                geo::to_ecef_deg(52.0 + 12.0 / 111_320.0, 10.0, 100.0),
+                0.0,
+                vec![Segment::straight(1000.0)],
+            )
+            .with_formation(false),
+        );
+        net
+    }
+
+    #[test]
+    fn an_edge_without_formation_shapes_nothing() {
+        let net = net_with_yard_track();
+        let options = options();
+        let centerline = Centerline::build(&net, &options);
+
+        // The yard track's own points have no formation: the nearest
+        // formation point is the main line, metres away — and a line of
+        // nothing but formation-less edges has none at all.
+        let yard = *centerline.points.last().unwrap();
+        assert!(!centerline.formation[centerline.points.len() - 1]);
+        let (d, _) = centerline.nearest(yard).unwrap();
+        assert!(
+            d > 5.0,
+            "the yard track must not shape the ground: {d:.1} m"
+        );
+
+        let centerline = Centerline::build(&single_edge_net(false), &options);
+        assert!(
+            centerline.nearest(centerline.points[10]).is_none(),
+            "no formation anywhere, no nearest point"
+        );
+    }
+
+    #[test]
+    fn terrain_without_formation_stays_ground() {
+        // Track on the builder's own construction: the terrain keeps the DGM
+        // and its grass — no embankment, no gravel, not even at the track.
+        let net = single_edge_net(false);
+        let options = options();
+        let (tiles, _) = build(&net, &[test_source()], &options);
+        let source = test_source();
+
+        let mut checked = 0;
+        for tile in &tiles {
+            assert_eq!(tile.splat.len(), tile.positions.len());
+            let frame = EnuFrame::at(tile.anchor);
+            let n = (options.tile_size / tile.step).round() as usize;
+            for (pos, w) in tile
+                .positions
+                .iter()
+                .zip(&tile.splat)
+                .take((n + 1) * (n + 1))
+            {
+                assert_eq!(w[2], 0.0, "gravel on a line without formation: {w:?}");
+                let local = glam::DVec3::new(pos[0] as f64, -pos[2] as f64, pos[1] as f64);
+                let (lat, lon, height) = geo::from_ecef(frame.to_ecef(local));
+                let (e, nn) = geo::to_utm(lat, lon, options.zone);
+                let Some(ground) = source.height_at_utm(e, nn) else {
+                    continue;
+                };
+                let ground = ground + options.geoid_offset;
+                assert!(
+                    (height - ground).abs() < 0.5,
+                    "terrain pulled to {height:.2} beside a formation-less track (ground {ground:.2})"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 1_000, "too few points checked");
     }
 
     #[test]

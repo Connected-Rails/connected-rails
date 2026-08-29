@@ -104,6 +104,7 @@ pub fn musterbahn() -> LineSource {
                 speed: vec![(0.0, 160.0)],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             },
             EdgeSource {
                 from: 1,
@@ -119,6 +120,7 @@ pub fn musterbahn() -> LineSource {
                 speed: vec![(0.0, 130.0)],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             },
             EdgeSource {
                 from: 2,
@@ -130,6 +132,7 @@ pub fn musterbahn() -> LineSource {
                 speed: vec![(0.0, 160.0)],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             },
         ],
         devices: vec![

@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and fmt clean.
+As of 2026-08-29 · `cargo test --workspace`: **951 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -440,7 +440,18 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
   of rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
-  level in the app, built while driving (see streaming above). **Texturing/vegetation:** every tile carries per-vertex splat
+  level in the app, built while driving (see streaming above). The formation is sized like
+  the real thing (2026-08-29): a single track's Planum half-width of **4 m** (the ~2.6 m
+  ballast body plus shoulder), the embankment or cutting running from its edge to the
+  natural ground within **12 m** — roughly 1:2 at the heights a main line dam has — and the
+  gravel texture full on the formation, fading out by **7 m** so the slopes stay grass.
+  The distance queries measure against the centreline **segments** rather than the 25 m
+  samples, so the blend zone is where the line is, not where its samples happen to fall.
+  **Edges without a formation** (`route::EdgeSource::formation`, default on): track the
+  builder laid on their own constructions — bridges, platforms, self-shaped ground — gets
+  bare rails, no ballast bed mesh, no embankment, no gravel; the terrain leaves it alone.
+  Set per edge in the lay panel (for the piece about to be laid) or in the selection panel
+  (for one lying there). **Texturing/vegetation:** every tile carries per-vertex splat
   weights (gravel on the strip the track flattens, rock on steep ground, grass
   elsewhere) and the line's trees — every tree an own `trees:` entry, its foot
   on the tile's height grid. Woods come out of the editor's forest brush and

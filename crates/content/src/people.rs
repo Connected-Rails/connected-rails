@@ -91,40 +91,48 @@ const EMBEDDED_AREA_PEOPLE: u32 = 6;
 const EMBEDDED_WIDTH: f64 = 2.0;
 const EMBEDDED_WALKING_SHARE: f64 = 0.5;
 
-/// How a person stands — which of the model's clips it plays
-/// ([`crate::characters`] lists them).
+/// How a person stands or sits: which family of the model's clips it plays
+/// ([`crate::characters`] lists them) and which of that family's variants.
+/// The variant is drawn without knowing the model — a model with fewer
+/// variants takes it modulo their count — so the same seed puts the same
+/// person into the same clip on every client, whatever the model offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pose {
-    /// Looping stand with a little life in it.
-    Idle,
-    /// The second looping stand.
-    Idle2,
-    /// Single-frame standing poses.
-    Stand,
-    Stand2,
-    Stand3,
-    /// Single-frame, feet on the floor, seat about 0.45 m up.
-    Sit,
+    /// A looping stand with a little life in it: `idle`, `idle2`, ….
+    Idle(u8),
+    /// Seated, feet on the floor, seat about 0.45 m up: `sit`, `sit2`, ….
+    Sit(u8),
 }
 
 impl Pose {
-    /// The clip the pose plays.
-    pub fn clip(self) -> &'static str {
+    /// The clip family the pose plays — the name of its first variant.
+    pub fn family(self) -> &'static str {
         match self {
-            Pose::Idle => "idle",
-            Pose::Idle2 => "idle2",
-            Pose::Stand => "stand",
-            Pose::Stand2 => "stand2",
-            Pose::Stand3 => "stand3",
-            Pose::Sit => "sit",
+            Pose::Idle(_) => "idle",
+            Pose::Sit(_) => "sit",
         }
     }
 
-    /// Whether the clip runs (looping) or is a held frame.
-    pub fn is_looping(self) -> bool {
-        matches!(self, Pose::Idle | Pose::Idle2)
+    /// Which variant of the family: 0 is `idle`, 1 is `idle2`, ….
+    pub fn variant(self) -> u8 {
+        match self {
+            Pose::Idle(variant) | Pose::Sit(variant) => variant,
+        }
+    }
+
+    /// The name of clip `number` (from 0) of a family: `idle`, `idle2`, ….
+    pub fn clip_name(family: &str, number: usize) -> String {
+        if number == 0 {
+            family.to_string()
+        } else {
+            format!("{family}{}", number + 1)
+        }
     }
 }
+
+/// How many variants a pose is drawn from — more than any model has, so the
+/// draw is even over whatever a model offers.
+const VARIANTS: usize = 256;
 
 /// One person on a tile, in the tile's own frame — what the renderer spawns.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -203,6 +211,9 @@ pub struct StrollAgent {
     pub lateral: f32,
     /// Where in its cycle the agent starts, 0..1 — so no two walk in step.
     pub phase: f32,
+    /// Which of the model's walk and idle variants the agent plays
+    /// ([`Pose`]) — drawn once, like everything here.
+    pub variant: u8,
     /// The agent's own stream, mixed out of the walkway's: what its pauses and
     /// spots were drawn from.
     pub seed: u64,
@@ -264,12 +275,14 @@ impl Walkway {
                 // Spread round the oval with half a gap of jitter, so nobody ever walks
                 // in anybody's back — the gaps are kept by the shared lap time.
                 let phase = ((f64::from(index) + 0.5 * rng.f64()) / f64::from(people)) as f32;
+                let variant = rng.below(VARIANTS) as u8;
                 let seed = rng.next();
                 agents.push(StrollAgent {
                     character,
                     speed,
                     lateral,
                     phase,
+                    variant,
                     seed,
                     pauses: Vec::new(),
                     waypoints: Vec::new(),
@@ -317,13 +330,12 @@ impl Walkway {
                 let mut own = Rng(seed);
                 let pos = sample_inside(&mut own, &polygon);
                 let yaw = own.range(0.0, std::f64::consts::TAU) as f32;
-                let pick = own.f64();
-                let stand = own.below(3);
+                let variant = own.below(VARIANTS) as u8;
                 standing.push(PersonInstance {
                     pos,
                     rotation: Quat::from_rotation_y(yaw).to_array(),
                     character,
-                    pose: standing_pose(pick, stand),
+                    pose: Pose::Idle(variant),
                     phase,
                 });
             }
@@ -336,6 +348,7 @@ impl Walkway {
             for (character, phase, seed) in wanderers {
                 let mut own = Rng(seed);
                 let speed = own.range(AREA_SPEED.0, AREA_SPEED.1) as f32;
+                let variant = own.below(VARIANTS) as u8;
                 let mut waypoints: Vec<[f32; 3]> = Vec::with_capacity(AREA_WAYPOINTS);
                 for _ in 0..AREA_WAYPOINTS {
                     let spot =
@@ -351,6 +364,7 @@ impl Walkway {
                     speed,
                     lateral: 0.0,
                     phase,
+                    variant,
                     seed,
                     pauses,
                     waypoints,
@@ -1101,8 +1115,7 @@ impl Crowd {
                         DQuat::from_axis_angle(pose.up, turn) * -side
                     };
                     let character = rng.below(characters.len()) as u16;
-                    let pick = rng.f64();
-                    let stand = rng.below(3);
+                    let variant = rng.below(VARIANTS) as u8;
                     let phase = rng.f64() as f32;
                     let (lat, lon, _) = geo::from_ecef(base);
                     let (e, n) = geo::to_utm(lat, lon, zone);
@@ -1113,7 +1126,7 @@ impl Crowd {
                         dir,
                         height: platform.height.max(0.0),
                         character,
-                        pose: standing_pose(pick, stand),
+                        pose: Pose::Idle(variant),
                         phase,
                     });
                 }
@@ -1233,18 +1246,6 @@ fn walkway_seed(seed: u64, kind: u64, index: usize) -> u64 {
 /// How many people a platform of this length gets.
 fn crowd_size(length: f64) -> usize {
     ((length / PERSON_SPACING).round().max(0.0) as usize).clamp(MIN_CROWD, MAX_CROWD)
-}
-
-/// The standing pose for a draw `pick` in 0..1 and a choice `stand` in 0..3:
-/// 45 % `idle`, 25 % `idle2`, the rest the three held stands.
-fn standing_pose(pick: f64, stand: usize) -> Pose {
-    if pick < 0.45 {
-        Pose::Idle
-    } else if pick < 0.70 {
-        Pose::Idle2
-    } else {
-        [Pose::Stand, Pose::Stand2, Pose::Stand3][stand % 3]
-    }
 }
 
 /// The side of the track a platform device is on, as a unit vector across the
@@ -1538,9 +1539,16 @@ mod tests {
                     person.dir
                 );
             }
-            // A mix of poses, not one of them.
-            let idle = crowd.placed.iter().filter(|p| p.pose == Pose::Idle).count();
-            assert!(idle > 0 && idle < crowd.placed.len());
+            // Everybody stands, in a mix of the idle variants rather than one of them.
+            let variants: std::collections::HashSet<u8> = crowd
+                .placed
+                .iter()
+                .map(|p| match p.pose {
+                    Pose::Idle(variant) => variant,
+                    Pose::Sit(_) => panic!("nobody sits on a platform"),
+                })
+                .collect();
+            assert!(variants.len() > 1, "{variants:?}");
             // The walkers' lane lies on the platform too: it follows the track
             // behind the waiting crowd, so the two never cross.
             assert_eq!(crowd.walkways.len(), 1);
@@ -1708,11 +1716,10 @@ mod tests {
         assert_eq!(crowd_size(210.0), 35);
         assert_eq!(crowd_size(2.0), MIN_CROWD);
         assert_eq!(crowd_size(1_000.0), MAX_CROWD);
-        assert_eq!(standing_pose(0.1, 0), Pose::Idle);
-        assert_eq!(standing_pose(0.5, 0), Pose::Idle2);
-        assert_eq!(standing_pose(0.8, 1), Pose::Stand2);
-        assert!(Pose::Idle.is_looping() && !Pose::Stand3.is_looping());
-        assert_eq!(Pose::Sit.clip(), "sit");
+        assert_eq!(Pose::Idle(3).family(), "idle");
+        assert_eq!(Pose::Sit(3).variant(), 3);
+        assert_eq!(Pose::clip_name("idle", 0), "idle");
+        assert_eq!(Pose::clip_name("sit", 2), "sit3");
         assert_eq!(walking_count(35, PLATFORM_WALKING_SHARE), 11);
         assert_eq!(walking_count(1, PLATFORM_WALKING_SHARE), 0);
         assert_eq!(walking_count(10, 0.4), 4);
@@ -1907,7 +1914,7 @@ mod tests {
             assert!((person.pos[1] - 0.76).abs() < 1e-5, "on the surface");
             let up = Quat::from_array(person.rotation) * Vec3::Y;
             assert!(up.y > 0.999);
-            assert!(person.pose != Pose::Sit);
+            assert!(matches!(person.pose, Pose::Idle(_)));
         }
         for agent in &area.agents {
             assert_eq!(agent.waypoints.len(), AREA_WAYPOINTS);

@@ -10,32 +10,43 @@ Pipeline:
 
 1. Load every skinned primitive with its base-colour texture and class it as
    skin, clothes, shoes, hat, hair, eyes, eyebrows or eyelashes.
-2. Bake the rest pose and every clip with linear blend skinning. The rest
+2. Replace the clips. With `--plan` (what `build_all.py` passes) the person's
+   clips are motion capture: the recordings named in `clips.json` are
+   retargeted onto this character's skeleton (`mocap.py`) — one gait cycle
+   per walk, named `walk_<pace in cm/s>` after the pace it was walked at on
+   these legs; ten to twenty seconds of an idle each, looped, as `idle`,
+   `idle2`, …; and the upper body of an idle over the chair pose as `sit`,
+   `sit2`, …. Without a plan the MakeHuman clips stay, with a procedural walk
+   and the chair pose in place of MakeHuman's own.
+3. Bake the rest pose and every clip with linear blend skinning. The rest
    pose gives the height and the shoe test; the clips give the ground fix:
    the exporter scales the root joint's keyframes wrongly and leaves every
    clip about 0.7 m in the air, so the root translation channel of each clip
    is shifted by the constant that puts the lowest vertex of the whole clip
    on y = 0.
-3. Turn the character round: the walker yaws the model about Y and expects
+4. Turn the character round: the walker yaws the model about Y and expects
    the face towards −Z. The 180° turn is baked into positions, normals,
    inverse bind matrices, the skeleton root and its keyframes. The
    translation the exporter left on the mesh node is folded into the
    skeleton root as well, because glTF ignores a skinned mesh's own node
    transform.
-4. Pack the textures: base colours are tinted (HSV shift from the meta
+5. Pack the textures: base colours are tinted (HSV shift from the meta
    file), shrunk to a per-class edge and packed into two atlases — JPEG for
    the opaque meshes (`body`), PNG with alpha for hair, eyes, eyebrows and
    eyelashes (`cutout`). Normal, occlusion and roughness maps are dropped.
-5. Merge the meshes into those two groups and build four levels of detail
+6. Merge the meshes into those two groups and build four levels of detail
    with meshoptimizer, splitting each triangle budget between the groups.
-6. Write one GLB: `character` → `Root` (the joints) and `char_LOD0..3`, two
+7. Write one GLB: `character` → `Root` (the joints) and `char_LOD0..3`, two
    materials, one 4-byte aligned buffer. Optionally a stats file and a
    self-check that re-reads the file.
 
-    build_character.py in.glb out.glb --meta in.meta.json --stats out.json --check
+    build_character.py in.glb out.glb --meta in.meta.json --stats out.json --check \
+        --mocap ~/.cache/connected-rails/mocap --clips clips.json \
+        --plan '{"walk": ["walk-neutral"], "idle": ["idle-neutral"], "sit": ["sit-neutral"]}'
 """
 
 import argparse
+import csv
 import ctypes
 import io
 import json
@@ -50,6 +61,7 @@ import numpy as np
 from PIL import Image
 
 import glb
+import mocap
 
 GENERATOR = "connected-rails build_character.py"
 JOINT_COUNT = 53  # MakeHuman "game_engine" rig
@@ -71,6 +83,7 @@ GUTTER = 2  # texels of edge-extended padding on every side of an atlas region
 ATLAS_SHRINK = 0.92  # scale applied to all regions when they do not fit
 UV_OUTSIDE_WARN = 0.01  # share of UVs outside [0, 1] worth a warning
 SHOES_BELOW = 0.35  # a garment whose top stays below this share of the height is footwear
+FEET_JOINTS = ("calf_l", "calf_r", "foot_l", "foot_r", "ball_l", "ball_r")
 
 CUTOUT_MIN_SHARE = 0.12  # of every triangle budget, so the hair outlives the body
 SMALL_GROUP_SHARE = 0.25  # a group below this share of the budget is kept whole
@@ -218,6 +231,18 @@ class Baker:
         """World positions (n, 3) of all vertices in the given pose."""
         return glb.skin_positions(self.skeleton.joint_matrices(overrides), self.positions, self.joints, self.weights)
 
+    def feet(self):
+        """A baker over the vertices skinned to the lower legs and feet only — where
+        the lowest point of any standing, walking or seated pose is, at a fraction
+        of the cost of the whole body."""
+        nodes = self.skeleton.gltf["nodes"]
+        lower = {k for k, j in enumerate(self.skeleton.joints) if nodes[j].get("name") in FEET_JOINTS}
+        if not lower:
+            return self
+        keep = np.isin(self.joints, list(lower)).any(axis=1) & (self.weights > 0).any(axis=1)
+        part = SimpleNamespace(positions=self.positions[keep], joints=self.joints[keep], weights=self.weights[keep])
+        return Baker(self.skeleton, [part])
+
 
 def load_meshes(gltf, binary, meta):
     """Every skinned primitive of the export, in the exporter's frame."""
@@ -305,10 +330,11 @@ def classify(meshes, baker, rest, ground, height):
 
 def ground_shifts(gltf, binary, baker):
     """Per clip, how far the root must move so the lowest vertex of the whole clip sits on y = 0."""
+    feet = baker.feet()
     shifts = []
     for animation in gltf.get("animations", []):
         _, poses = glb.clip_poses(gltf, binary, animation)
-        shifts.append(-min(baker.pose(pose)[:, 1].min() for pose in poses))
+        shifts.append(-min(feet.pose(pose)[:, 1].min() for pose in poses))
     return shifts
 
 
@@ -369,7 +395,16 @@ WORLD_AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
 # What the check expects of the seated pose, in metres above the floor / in front of the pelvis.
 SEAT_HEIGHT = (0.35, 0.60)
 KNEES_AHEAD = 0.25
-HANDS_NEAR_SEAT = 0.35
+HANDS_BELOW_SEAT = 0.12
+
+
+def walk_pace(name):
+    """The pace [m/s] a clip's name carries — `walk` is 1.5, `walk_<cm/s>` says — or `None` for another clip."""
+    if name == WALK_CLIP:
+        return 1.5
+    if name.startswith(WALK_CLIP + "_") and name[len(WALK_CLIP) + 1 :].isdigit():
+        return int(name[len(WALK_CLIP) + 1 :]) / 100.0
+    return None
 
 
 def quat_from_axis_angle(axis, degrees):
@@ -724,12 +759,265 @@ def synthesize_walk(gltf, binary, skeleton):
     return binary
 
 
-def seated_geometry(gltf, binary, skeleton, baker):
-    """Seat height, how far the knees are ahead and the hands' height of the `sit` clip [m], or `None`.
+# ---------------------------------------------------------------------------
+# Motion capture clips
+# ---------------------------------------------------------------------------
 
-    Measured on the output frame (front towards −Z), above the clip's lowest vertex.
+# A walk cycle is written at this rate, an idle or a seated clip at that: the
+# idles move slowly and a keyframe every 67 ms interpolates cleanly, the walk
+# has heel strikes in it.
+WALK_FPS = 30.0
+IDLE_FPS = 15.0
+# An idle loop is cut this long [s], wherever the recording closes best on itself.
+IDLE_LOOP = (10.0, 20.0)
+# The loop's join is worked off over this much of its end [s].
+IDLE_SEAM = 1.0
+# A walk's name carries its pace on this character's legs: `walk_<cm/s>`.
+WALK_NAME = "walk_{}"
+# What the check expects of a walk: its pace and its cycle.
+WALK_PACE = (0.4, 2.5)
+WALK_CYCLE = (0.7, 2.2)
+# What the check expects of every clip's direction in the output frame: the hips face
+# −Z within this angle [deg], and in a walk the stance foot moves back (+Z) with no
+# more than this share of sideways drift — a clip turned the wrong way walks sideways.
+FACING_WITHIN = 35.0
+STANCE_DRIFT = 0.5
+
+
+def clip_name(kind, number):
+    """`idle`, `idle2`, `idle3`, … — the numbering the game reads."""
+    return kind if number == 0 else f"{kind}{number + 1}"
+
+
+class ClipLibrary:
+    """The recordings of `clips.json` in the cache: read, trimmed and calibrated
+    once, the useful stretch of each clip found once, retargeted per character."""
+
+    def __init__(self, clips_path, cache):
+        self.spec = json.loads(Path(clips_path).read_text(encoding="utf-8"))
+        self.cache = Path(cache)
+        self.rigs = {}
+        self.recordings = {}
+        self.cuts = {}
+        self.segments = {}
+
+    def path(self, source, file):
+        path = self.cache / source / file
+        if not path.is_file():
+            raise BuildError(f"{path}: recording missing — run tools/characters/fetch_mocap.py")
+        return path
+
+    def rig(self, source):
+        """The source skeleton, calibrated on its calibration clips."""
+        if source not in self.rigs:
+            spec = self.spec["sources"][source]
+            rig = mocap.SourceRig(spec["joints"], spec.get("scale", 0.01))
+            rig.calibrate([self.recording(source, file, trim=False) for file in spec["calibration"]])
+            self.rigs[source] = rig
+        return self.rigs[source]
+
+    def recording(self, source, file, trim=True):
+        """A BVH file of a source; `trim` cuts the lead-in and tail the source's
+        cut table names (100STYLE's T-poses)."""
+        key = (source, file, trim)
+        if key not in self.recordings:
+            spec = self.spec["sources"][source]
+            bvh = mocap.read_bvh(self.path(source, file), spec.get("scale", 0.01))
+            if trim and spec.get("cuts"):
+                start, stop = self.cut(source, file)
+                if start is not None:
+                    bvh = bvh.slice(start, stop)
+            self.recordings[key] = bvh
+        return self.recordings[key]
+
+    def cut(self, source, file):
+        """(start, stop) frames of a 100STYLE-style cut table, or (None, None)."""
+        spec = self.spec["sources"][source]
+        if source not in self.cuts:
+            table = {}
+            with open(self.path(source, spec["cuts"]), encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    table[row["STYLE_NAME"]] = row
+            self.cuts[source] = table
+        style, kind = Path(file).stem.rsplit("_", 1)
+        row = self.cuts[source].get(style)
+        if row is None or row.get(f"{kind}_START", "N/A") == "N/A":
+            return None, None
+        return int(row[f"{kind}_START"]), int(row[f"{kind}_STOP"])
+
+    def segment(self, clip_id):
+        """The stretch of the recording a clip is made of: `(bvh, yaw, kind, cycle)`
+        — the frames, the turn that faces it +Z, the kind, and for a walk its cycle."""
+        if clip_id not in self.segments:
+            clip = self.spec["clips"].get(clip_id)
+            if clip is None:
+                raise BuildError(f"clip {clip_id!r} is not in clips.json")
+            source, kind = clip["source"], clip["kind"]
+            rig = self.rig(source)
+            bvh = self.recording(source, clip["file"])
+            if kind == "walk":
+                cycle = mocap.walk_cycle(bvh, rig)
+                segment = bvh.slice(cycle.start, cycle.stop + 1)
+                yaw = mocap.yaw_to_forward(cycle.heading)
+            else:
+                first, last = mocap.idle_loop(bvh, rig, IDLE_LOOP[0], IDLE_LOOP[1])
+                segment = bvh.slice(first, last + 1)
+                yaw = mocap.yaw_to_forward(mocap.mean_facing(bvh, rig, first, last + 1))
+                cycle = None
+            self.segments[clip_id] = (segment, yaw, kind, cycle)
+        return self.segments[clip_id]
+
+
+def chair_rotations(gltf, skeleton, target):
+    """The chair pose as joint name → local rotation for every animated joint (the
+    rest rotation where the pose leaves a joint alone)."""
+    overrides = chair_pose(gltf, skeleton) or {}
+    nodes = gltf["nodes"]
+    rotations = {}
+    for name in mocap.TARGET_BONES:
+        index = target.by_name[name]
+        rotations[name] = np.asarray(overrides.get(index, {}).get("rotation", glb.node_trs(nodes[index])[1]), dtype=np.float64)
+    return rotations
+
+
+def write_motion(gltf, binary, target, name, motion):
+    """Append `motion` to the document as the animation `name`; returns the binary."""
+    binary, times = append_accessor(gltf, binary, motion.times.astype(np.float32), "SCALAR", bounds=True)
+    samplers, channels = [], []
+    for joint, rotations in motion.rotations.items():
+        binary, output = append_accessor(gltf, binary, rotations, "VEC4")
+        samplers.append({"input": times, "interpolation": "LINEAR", "output": output})
+        channels.append({"sampler": len(samplers) - 1, "target": {"node": target.by_name[joint], "path": "rotation"}})
+    binary, output = append_accessor(gltf, binary, motion.pelvis_translation, "VEC3")
+    samplers.append({"input": times, "interpolation": "LINEAR", "output": output})
+    channels.append({"sampler": len(samplers) - 1, "target": {"node": target.by_name["pelvis"], "path": "translation"}})
+    gltf.setdefault("animations", []).append({"name": name, "samplers": samplers, "channels": channels})
+    return binary
+
+
+# A seated clip whose hands come to rest lower than this above the seat has the arms
+# hanging beside it (an actor standing with the arms down): those arms are laid on the
+# thighs as the chair pose has them, with the recording's small movements kept, so no
+# passenger's hands go through the side of a seat [m].
+HANDS_HANG_BELOW = -0.03
+ARM_JOINTS = ("upperarm_{}", "lowerarm_{}", "hand_{}")
+
+
+def hands_height(gltf, skeleton, target, motion, frames):
+    """Mean height of the hands over the pelvis in the given frames of `motion` [m]."""
+    heights = []
+    for frame in frames:
+        overrides = {target.by_name[name]: {"rotation": q[frame]} for name, q in motion.rotations.items()}
+        overrides[target.by_name["pelvis"]]["translation"] = motion.pelvis_translation[frame]
+        world = glb.global_matrices(gltf, skeleton.parents, overrides)
+        pelvis = world[target.by_name["pelvis"]][1, 3]
+        heights.append(sum(world[target.by_name[f"hand_{side}"]][1, 3] - pelvis for side in "lr") / 2.0)
+    return float(np.mean(heights))
+
+
+def seated_clip(gltf, skeleton, target, upper, chair, pelvis_rest):
+    """The seated clip of an idle: its upper body over the chair pose's legs, and — when
+    the recording's arms hang down beside the seat — the chair pose's arms on the thighs
+    carrying the recording's movement about their mean."""
+    seated = mocap.seat(upper, chair, pelvis_rest)
+    samples = range(0, seated.frames, max(seated.frames // 8, 1))
+    if hands_height(gltf, skeleton, target, seated, samples) >= HANDS_HANG_BELOW:
+        return seated
+    for side in "lr":
+        for pattern in ARM_JOINTS:
+            name = pattern.format(side)
+            recorded = mocap.hemisphere(upper.rotations[name])
+            mean = mocap.quat_normalize(recorded.mean(axis=0))
+            delta = glb.quat_multiply(mocap.quat_conjugate(mean), recorded)
+            seated.rotations[name] = mocap.hemisphere(glb.quat_multiply(chair[name], delta))
+    return seated
+
+
+def mocap_clips(gltf, binary, skeleton, library, plan):
+    """Replace the document's clips by the plan's recordings retargeted onto this
+    skeleton; returns the binary. `plan` maps `walk`/`idle`/`sit` to clip ids."""
+    target = mocap.TargetRig(gltf, skeleton)
+    gltf["animations"] = []
+    retargeted = {}
+
+    def upper_body(clip_id):
+        """A retargeted idle at its frame rate — shared by the idle and the sit made of it."""
+        if clip_id not in retargeted:
+            segment, yaw, kind, _ = library.segment(clip_id)
+            if kind == "walk":
+                raise BuildError(f"{clip_id}: a walk cannot be an idle")
+            rig = library.rig(library.spec["clips"][clip_id]["source"])
+            motion = mocap.resample(mocap.retarget(segment, rig, target, yaw=yaw, translation="centre"), IDLE_FPS)
+            retargeted[clip_id] = mocap.seam(motion, IDLE_SEAM)
+        return retargeted[clip_id]
+
+    walks = []
+    for clip_id in plan.get("walk", []):
+        segment, yaw, kind, cycle = library.segment(clip_id)
+        if kind != "walk":
+            raise BuildError(f"{clip_id}: not a walk")
+        rig = library.rig(library.spec["clips"][clip_id]["source"])
+        motion = mocap.resample(mocap.retarget(segment, rig, target, yaw=yaw, translation="in-place"), WALK_FPS)
+        motion = mocap.seam(motion, motion.times[-1])
+        motion.pace = cycle.pace * target.leg_length / rig.leg_length
+        walks.append((motion.pace, clip_id, motion))
+    walks.sort(key=lambda w: w[0])
+    taken = set()
+    for pace, clip_id, motion in walks:
+        cm = int(round(pace * 100))
+        while cm in taken:
+            cm += 1
+        taken.add(cm)
+        binary = write_motion(gltf, binary, target, WALK_NAME.format(cm), motion)
+    for number, clip_id in enumerate(plan.get("idle", [])):
+        binary = write_motion(gltf, binary, target, clip_name("idle", number), upper_body(clip_id))
+    chair = chair_rotations(gltf, skeleton, target)
+    pelvis_rest = glb.node_trs(gltf["nodes"][target.by_name["pelvis"]])[0]
+    for number, clip_id in enumerate(plan.get("sit", [])):
+        seated = seated_clip(gltf, skeleton, target, upper_body(clip_id), chair, pelvis_rest)
+        binary = write_motion(gltf, binary, target, clip_name("sit", number), seated)
+    return binary
+
+
+def clip_direction(gltf, skeleton, poses):
+    """Where a clip faces and walks, measured on the joints in the output frame:
+    `(facing, stance)` — the mean unit vector the hips face (across the thighs, left
+    to right, turned to the front), and the mean velocity [m/s] of whichever foot is
+    on the ground relative to the pelvis, or `None` without two frames. A person
+    facing −Z walks with the stance foot going +Z."""
+    by_name = {gltf["nodes"][j].get("name"): j for j in skeleton.joints}
+    needed = ("pelvis", "thigh_l", "thigh_r", "foot_l", "foot_r")
+    if not all(name in by_name for name in needed):
+        return None
+    positions = []
+    for pose in poses:
+        world = glb.global_matrices(gltf, skeleton.parents, pose)
+        positions.append({name: world[by_name[name]][:3, 3] for name in needed})
+    facing = np.zeros(3)
+    for at in positions:
+        across = at["thigh_l"] - at["thigh_r"]
+        forward = np.cross(across, [0.0, 1.0, 0.0])
+        facing += forward / max(np.linalg.norm(forward), 1e-9)
+    facing /= max(np.linalg.norm(facing), 1e-9)
+    stance = None
+    if len(positions) >= 2:
+        steps = []
+        for before, after in zip(positions[:-1], positions[1:]):
+            foot = "foot_l" if before["foot_l"][1] <= before["foot_r"][1] else "foot_r"
+            if (after["foot_l"][1] <= after["foot_r"][1]) != (foot == "foot_l"):
+                continue  # the stance changes feet between these frames
+            steps.append((after[foot] - after["pelvis"]) - (before[foot] - before["pelvis"]))
+        if steps:
+            stance = np.mean(steps, axis=0)
+    return facing, stance
+
+
+def seated_geometry(gltf, binary, skeleton, baker, name=SIT_CLIP):
+    """Seat height, how far the knees are ahead and the hands' height of the seated clip `name` [m], or `None`.
+
+    Measured on the output frame (front towards −Z), above the clip's lowest vertex, on the first frame.
     """
-    sit = next((a for a in gltf.get("animations", []) if a.get("name") == SIT_CLIP), None)
+    sit = next((a for a in gltf.get("animations", []) if a.get("name") == name), None)
     if sit is None:
         return None
     by_name = {gltf["nodes"][j].get("name"): j for j in skeleton.joints}
@@ -737,7 +1025,7 @@ def seated_geometry(gltf, binary, skeleton, baker):
         return None
     _, poses = glb.clip_poses(gltf, binary, sit)
     world = glb.global_matrices(gltf, skeleton.parents, poses[0])
-    floor = baker.pose(poses[0])[:, 1].min()
+    floor = baker.feet().pose(poses[0])[:, 1].min()
 
     def at(name):
         return world[by_name[name]][:3, 3]
@@ -1358,7 +1646,10 @@ def statistics(character_id, meta, height, lods, atlases, document, binary, file
     clips = []
     for animation in document.get("animations", []):
         times = np.unique(np.concatenate([glb.read_accessor(document, binary, s["input"]) for s in animation["samplers"]]))
-        clips.append({"name": animation["name"], "frames": len(times), "seconds": round(float(times[-1]), 4)})
+        clip = {"name": animation["name"], "frames": len(times), "seconds": round(float(times[-1]), 4)}
+        if walk_pace(animation["name"]) is not None:
+            clip["pace"] = walk_pace(animation["name"])
+        clips.append(clip)
     return {
         "id": character_id,
         "gender": meta.get("gender"),
@@ -1411,20 +1702,54 @@ def check(path):
     rest = baker.pose({})
     ground, height = rest[:, 1].min(), rest[:, 1].max()
     report.append((1.4 <= height <= 2.1 and abs(ground) <= 0.01, f"rest pose: feet at y = {ground:+.4f}, height {height:.3f} m"))
+    feet = baker.feet()
+    names = [animation["name"] for animation in gltf.get("animations", [])]
     for animation in gltf.get("animations", []):
-        _, poses = glb.clip_poses(gltf, binary, animation)
-        low = min(baker.pose(pose)[:, 1].min() for pose in poses)
+        times, poses = glb.clip_poses(gltf, binary, animation)
+        low = min(feet.pose(pose)[:, 1].min() for pose in poses)
         report.append((abs(low) <= 0.01, f"clip {animation['name']}: lowest vertex y = {low:+.4f} over {len(poses)} frames"))
-    seated = seated_geometry(gltf, binary, skeleton, baker)
-    if seated is not None:
+        direction = clip_direction(gltf, skeleton, poses)
+        if direction is not None:
+            facing, stance = direction
+            report.append(
+                (
+                    -facing[2] >= np.cos(np.radians(FACING_WITHIN)),
+                    f"clip {animation['name']}: faces ({facing[0]:+.2f}, {facing[2]:+.2f}), −Z within {FACING_WITHIN:.0f}°",
+                )
+            )
+        pace = walk_pace(animation["name"])
+        if pace is not None:
+            cycle = float(times[-1])
+            report.append(
+                (
+                    WALK_PACE[0] <= pace <= WALK_PACE[1] and WALK_CYCLE[0] <= cycle <= WALK_CYCLE[1],
+                    f"clip {animation['name']}: {pace:.2f} m/s, one cycle of {cycle:.2f} s",
+                )
+            )
+            if direction is not None and direction[1] is not None and len(times) > 1:
+                back = direction[1] * (len(times) - 1) / cycle  # per frame → per second
+                report.append(
+                    (
+                        back[2] > 0.0 and abs(back[0]) <= STANCE_DRIFT * back[2],
+                        f"clip {animation['name']}: stance foot moves ({back[0]:+.2f}, {back[2]:+.2f}) m/s, back along +Z",
+                    )
+                )
+    for name in names:
+        if not name.startswith(SIT_CLIP):
+            continue
+        seated = seated_geometry(gltf, binary, skeleton, baker, name)
+        if seated is None:
+            continue
         seat, ahead, hands = seated
         report.append(
             (
                 SEAT_HEIGHT[0] <= seat <= SEAT_HEIGHT[1] and ahead >= KNEES_AHEAD,
-                f"clip sit: seat {seat:.2f} m up, knees {ahead:.2f} m ahead of the pelvis",
+                f"clip {name}: seat {seat:.2f} m up, knees {ahead:.2f} m ahead of the pelvis",
             )
         )
-        report.append((abs(hands - seat) <= HANDS_NEAR_SEAT, f"clip sit: hands {hands:.2f} m up, near the thighs"))
+        report.append((hands >= seat - HANDS_BELOW_SEAT, f"clip {name}: hands {hands:.2f} m up, not below the seat"))
+    report.append((any(n.startswith("idle") for n in names) and any(walk_pace(n) is not None for n in names),
+                   f"clips: {', '.join(names)}"))
     for name, part in zip(names, baker.slices):
         vertices = rest[part]
         if name == CUTOUT:
@@ -1532,6 +1857,13 @@ def parse_args(argv):
         "--max-edges", type=parse_max_edges, default={}, help="per-class texture edge overrides, e.g. skin=1024,hair=512"
     )
     parser.add_argument("--jpeg-quality", type=int, default=85, help="quality of the body atlas, default 85")
+    parser.add_argument("--mocap", help="cache of the motion capture recordings (tools/characters/fetch_mocap.py)")
+    parser.add_argument("--clips", default=str(Path(__file__).with_name("clips.json")), help="the clip library, default clips.json")
+    parser.add_argument(
+        "--plan",
+        help='JSON of the clips to retarget, {"walk": [...], "idle": [...], "sit": [...]} of clips.json ids; '
+        "without it the MakeHuman clips stay, with the procedural walk and the chair pose",
+    )
     parser.add_argument("--check", action="store_true", help="re-read the output and verify it")
     return parser.parse_args(argv)
 
@@ -1545,8 +1877,18 @@ def build(args):
     skeleton = Skeleton(gltf, binary)
     if len(skeleton.joints) != JOINT_COUNT:
         warn(f"skeleton has {len(skeleton.joints)} joints, the game rig has {JOINT_COUNT}")
-    binary = synthesize_sit(gltf, binary, skeleton)
-    binary = synthesize_walk(gltf, binary, skeleton)
+    if args.plan:
+        if not args.mocap:
+            raise BuildError("--plan needs --mocap, the cache the recordings were fetched into")
+        plan = json.loads(args.plan)
+        library = ClipLibrary(args.clips, args.mocap)
+        try:
+            binary = mocap_clips(gltf, binary, skeleton, library, plan)
+        except ValueError as error:
+            raise BuildError(f"motion capture: {error}") from error
+    else:
+        binary = synthesize_sit(gltf, binary, skeleton)
+        binary = synthesize_walk(gltf, binary, skeleton)
     meshes = load_meshes(gltf, binary, meta)
     source_triangles = sum(len(m.indices) // 3 for m in meshes)
 

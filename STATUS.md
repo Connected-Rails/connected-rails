@@ -786,21 +786,31 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   glTF files are Git LFS objects, like every binary asset below `mods/`) — four
   levels of detail on one skeleton (about 30 000 / 6 000 / 1 600 / 500 triangles — the
   garments Loop-subdivided before the finest one, so a bust is round and not a facet), an
-  opaque and a cut-out atlas each, and the clips `idle`, `idle2`, `walk`, `stand`,
-  `stand2`, `stand3` and `sit`. Every `Platform` device gets a **waiting crowd**
+  opaque and a cut-out atlas each, and **motion capture clips** retargeted onto each
+  person's own skeleton (`tools/characters/mocap.py`, from the CC BY collections 100STYLE
+  and ACCAD — see `THIRD_PARTY_LICENSES.md`): four walks named after the pace they were
+  walked at on these legs (`walk_<cm/s>` — a neutral walk, the actor's own, and two of
+  the age band's styles: phones and pockets for the young, folded arms and a proud stride
+  for the middle-aged, hands behind the back and a bowed head for the old), four idles of
+  ten to twenty seconds (`idle`, `idle2`, …) and three seated clips (`sit`, `sit2`, …:
+  the upper body of an idle over the chair pose, so passengers fold their arms or look
+  at their phones). Every `Platform` device gets a **waiting crowd**
   (`content::people`): one person per six metres or so, at a random spot along the
   platform and 2.3–3.5 m beside the track on the platform's side, facing the track give
-  or take, in a mix of the idle and standing clips with staggered starts, placed like the
-  scenery objects — track pose, tile bucket, on the platform's height or on the ground —
-  so they stream with the terrain tiles. The renderer (`world_render::people`) finishes
+  or take, each in one of its model's idles drawn by the seed (`Pose::Idle(variant)`)
+  with staggered starts, placed like the scenery objects — track pose, tile bucket, on
+  the platform's height or on the ground — so they stream with the terrain tiles. The renderer (`world_render::people`) finishes
   each instance once its scene is there: the `_LOD<n>` nodes become visibility bands
   (hand-over at 30, 80 and 200 m, culled at 500 m, 300 m aboard a train), the clips one
   cached animation graph per glTF, and the atlases get the mip chain the pipeline does not
   ship. A vehicle whose model lists `seats` has about two thirds of them **taken**,
-  decided by a hash of train, vehicle and seat, in the `sit` pose. The **walker** wears
-  the first `Player` character (`--character people:f01_lena` or a file picks another)
-  and is animated off his own pace — `idle` at a stand, `walk` on the move, cross-faded,
-  the cycle sped up with the pace. Nothing of it is replicated: the crowd is a function
+  decided by a hash of train, vehicle and seat, in one of the model's seated clips. The
+  **walker** wears the first `Player` character (`--character people:f01_lena` or a file
+  picks another) and is animated off his own pace — his idle at a stand, a walk on the
+  move, cross-faded, the clip picked for the pace (`world_render::people::gait`: the one
+  that covers the ground within 0.8–1.25× of its own speed, kept while it stays within
+  0.7–1.4×, the nearest sped up or slowed when none fits) and the cycle sped up with the
+  pace. Nothing of it is replicated: the crowd is a function
   of the line's name and the device index, the seats of the train's indices, so every
   client shows the same people; what another player's walker looks like is not sent, and
   remote walkers are not drawn.
@@ -821,8 +831,8 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   oval along a path, eight seeded waypoints inside an area,
   1.0–1.6 m/s on a path, 0.8–1.3 m/s in an area), so nothing is stored or sent, every
   client sees the same people, and a paused run freezes them; `world_render::people`
-  moves them every frame and cross-fades `walk` (rate = pace / 1.5 m/s) and `idle` on
-  state changes only. The **route editor** draws both in a *People* group of the
+  moves them every frame and cross-fades the walk picked for the agent's pace and
+  variant (rate = pace / the clip's own pace) and the agent's idle on state changes only. The **route editor** draws both in a *People* group of the
   palette (`--tool walk-path` / `walk-area`): clicks add vertices, Enter finishes, corners
   drag, a side click inserts, Delete removes; the rule check reports too few points and
   vertices outside the envelope.

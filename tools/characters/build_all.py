@@ -2,10 +2,12 @@
 """Builds the `people` mod out of the roster: export, post-process, register.
 
 Runs ``mh2_export.py`` for the roster (or the characters named with ``--only``),
-then ``build_character.py`` for every raw export, and writes the
-``characters/<id>.ron`` entry the mod runtime reads. The raw exports stay in a
-cache directory outside the repository; only the finished glTF and its RON land
-in ``mods/people/``.
+then ``build_character.py`` for every raw export — with the motion capture
+clips ``clip_plan`` picks for the person out of ``clips.json`` (fetched into
+the cache by ``fetch_mocap.py``) — and writes the ``characters/<id>.ron``
+entry the mod runtime reads. The raw exports and the recordings stay in cache
+directories outside the repository; only the finished glTF and its RON land in
+``mods/people/``.
 
 Usage::
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import subprocess
 import sys
 from pathlib import Path
@@ -24,9 +27,71 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 MOD = REPO / "mods" / "people"
+MOCAP_CACHE = Path.home() / ".cache/connected-rails/mocap"
 
 GENDER = {"male": "Male", "female": "Female"}
 ROLE = {"player": "Player", "passenger": "Passenger"}
+
+# MakeHuman's age macro: 0.5 is 25 years, 0.875 is 90.
+AGE_BANDS = ((0.5, "young"), (0.7, "middle"), (1.1, "old"))
+# How many clips of each kind a person carries.
+CLIPS_PER_PERSON = {"walk": 4, "idle": 4, "sit": 3}
+# The recorded actors' own clips: a real woman for the women, one of two men for the men.
+ACTOR_CLIPS = {
+    "female": {"walk": ["walk-female1"], "idle": ["idle-female1-wait", "idle-female1-look", "idle-female1-sway"],
+               "sit": ["sit-female1-look", "sit-female1-wait"]},
+    "male": {"walk": ["walk-male1", "walk-male2"], "idle": ["idle-male1-look", "idle-male1-sway", "idle-male2-look", "idle-male2-sway"],
+             "sit": ["sit-male1-look", "sit-male2-look"]},
+}
+# The styled clips (100STYLE) a person of an age band draws the rest from.
+STYLE_POOLS = {
+    "young": {
+        "walk": ["walk-rushed", "walk-phone-left", "walk-phone-right", "walk-pockets", "walk-elated"],
+        "idle": ["idle-phone-left", "idle-phone-right", "idle-pockets", "idle-arms-folded", "idle-followed", "idle-rushed"],
+        "sit": ["sit-phone-left", "sit-phone-right", "sit-neutral", "sit-arms-folded"],
+    },
+    "middle": {
+        "walk": ["walk-proud", "walk-rushed", "walk-pockets", "walk-phone-right", "walk-arms-folded"],
+        "idle": ["idle-arms-folded", "idle-look-up", "idle-akimbo", "idle-phone-right", "idle-proud", "idle-pockets"],
+        "sit": ["sit-arms-folded", "sit-neutral", "sit-phone-right", "sit-proud"],
+    },
+    "old": {
+        "walk": ["walk-depressed", "walk-arms-behind", "walk-arms-folded"],
+        "idle": ["idle-old", "idle-arms-behind", "idle-look-up", "idle-arms-folded", "idle-depressed"],
+        "sit": ["sit-old", "sit-arms-folded", "sit-depressed", "sit-neutral"],
+    },
+}
+# A tag that guarantees a clip, whatever the draw.
+TAG_CLIPS = {"business": ["walk-proud"], "old": ["walk-depressed", "idle-old"], "student": ["idle-phone-left", "idle-phone-right"]}
+
+
+def age_band(character: dict) -> str:
+    age = float(character.get("modifiers", {}).get("macrodetails/Age", 0.5))
+    return next(band for limit, band in AGE_BANDS if age < limit)
+
+
+def clip_plan(character: dict) -> dict[str, list[str]]:
+    """Which recorded clips a person gets: one of the actor's own of each kind,
+    the neutral walk and idle everybody has, and the rest drawn from the age
+    band's styles — the same draw every time for the same character id."""
+    rng = random.Random(character["id"])
+    band = age_band(character)
+    gender = character.get("gender", "male")
+    tags = set(character.get("tags", []))
+    plan = {}
+    for kind, count in CLIPS_PER_PERSON.items():
+        chosen = [rng.choice(ACTOR_CLIPS.get(gender, ACTOR_CLIPS["male"])[kind])]
+        if kind in ("walk", "idle"):
+            chosen.append(f"{kind}-neutral")
+        for tag in sorted(tags):
+            for clip in TAG_CLIPS.get(tag, []):
+                if clip.startswith(kind) and clip not in chosen and len(chosen) < count:
+                    chosen.append(clip)
+        pool = [c for c in STYLE_POOLS[band][kind] if c not in chosen]
+        rng.shuffle(pool)
+        chosen.extend(pool[: max(count - len(chosen), 0)])
+        plan[kind] = chosen[:count]
+    return plan
 
 
 def ron_string(text: str) -> str:
@@ -62,6 +127,10 @@ def main() -> int:
     parser.add_argument("--body-atlas", default="2048x1024")
     parser.add_argument("--cutout-atlas", default="1024x512")
     parser.add_argument("--lods", default="30000,6000,1600,500")
+    parser.add_argument("--mocap", type=Path, default=MOCAP_CACHE, help="cache of the motion capture recordings (fetch_mocap.py)")
+    parser.add_argument("--clips", type=Path, default=HERE / "clips.json")
+    parser.add_argument("--no-mocap", action="store_true", help="MakeHuman's own poses and the procedural walk instead of the recordings")
+    parser.add_argument("--plan", action="store_true", help="print the clip plan per character and stop")
     args = parser.parse_args()
 
     roster = json.loads(args.roster.read_text(encoding="utf-8"))
@@ -73,6 +142,20 @@ def main() -> int:
             print(f"unknown character ids: {unknown}", file=sys.stderr)
             return 2
         ids = wanted
+
+    by_id = {c["id"]: c for c in roster["characters"]}
+    if args.plan:
+        for id_ in ids:
+            plan = clip_plan(by_id[id_])
+            print(f"{id_} ({age_band(by_id[id_])}): " + "; ".join(f"{kind}: {', '.join(clips)}" for kind, clips in plan.items()))
+        return 0
+    if not args.no_mocap:
+        check = subprocess.run([sys.executable, str(HERE / "fetch_mocap.py"), "--clips", str(args.clips), "--cache", str(args.mocap), "--check"],
+                               check=False, capture_output=True, text=True)
+        if check.returncode != 0:
+            print(check.stdout.strip(), file=sys.stderr)
+            print("motion capture recordings missing — run tools/characters/fetch_mocap.py, or build with --no-mocap", file=sys.stderr)
+            return 1
 
     python = sys.executable
     if not args.skip_export:
@@ -101,6 +184,8 @@ def main() -> int:
                    "--meta", str(meta_path), "--stats", str(stats_path),
                    "--body-atlas", args.body_atlas, "--cutout-atlas", args.cutout_atlas,
                    "--lods", args.lods, "--check"]
+        if not args.no_mocap:
+            command += ["--mocap", str(args.mocap), "--clips", str(args.clips), "--plan", json.dumps(clip_plan(by_id[id_]))]
         if subprocess.run(command, check=False).returncode != 0:
             print(f"{id_}: build failed", file=sys.stderr)
             failures += 1
@@ -110,7 +195,7 @@ def main() -> int:
         (MOD / "characters" / f"{id_}.ron").write_text(character_ron(meta, stats), encoding="utf-8")
         size = out.stat().st_size
         total_bytes += size
-        print(f"{id_}: {size // 1024} KB")
+        print(f"{id_}: {size // 1024} KB, clips {', '.join(c['name'] for c in stats.get('clips', []))}")
     print(f"{len(ids) - failures} of {len(ids)} characters built, {total_bytes // 1024} KB in mods/people/assets")
     return 1 if failures else 0
 

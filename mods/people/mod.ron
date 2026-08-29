@@ -3,7 +3,7 @@
     name: "People",
     version: "0.1.0",
     author: "Connected Rails",
-    description: "Characters made with MakeHuman 2: the walker's body and the passengers on platforms and in coaches. Regenerate with tools/characters/.",
+    description: "Characters made with MakeHuman 2, moving like the people recorded in the 100STYLE and ACCAD motion capture collections (CC BY): the walker's body and the passengers on platforms and in coaches. Regenerate with tools/characters/.",
     depends: [],
     enabled: true,
 )

@@ -651,9 +651,9 @@ The model stands in its own origin — feet at Y = 0, looking along −Z, metres
 is what the character pipeline gives. It is shown whenever the camera is not the
 walker's own eye (F2, F3); in the first person it is hidden, because the eye sits inside
 its head and its body would otherwise be in the way of the walker's ray casts. A model
-with the clips `idle` and `walk` is animated: it stands with a little life in it and
-walks when the walker walks, the cycle sped up with his pace; a model without clips
-simply stands.
+with idle and walk clips (see *People* below) is animated: it stands with a little life
+in it and walks when the walker walks, in the walk clip nearest his pace, the cycle sped
+up with it; a model without clips simply stands.
 
 ### Displays
 
@@ -2151,10 +2151,20 @@ character needs no per-file tables:
   without a pose change. The generated people carry about 30 000 / 6 000 / 1 600 / 500
   triangles; the app hands over at 30, 80 and 200 m and culls a person at 500 m (300 m
   for somebody aboard a train).
-- **Clips:** `idle` and `idle2` (looping stands with a little life in them), `walk` (one
-  cycle at about 1.5 m/s), `stand`, `stand2`, `stand3` (single-frame standing poses) and
-  `sit` (feet on the floor, the seat about 0.45 m up). Whatever is missing is not used —
-  a character with no clips stands in its rest pose.
+- **Clips,** in families told apart by name, as many of each as the model likes:
+  `idle`, `idle2`, `idle3`, … (looping stands with a little life in them — a standing
+  person plays one of them, drawn by its seed), `sit`, `sit2`, … (feet on the floor, the
+  seat about 0.45 m up; a passenger plays one), `walk_<cm/s>` (one gait cycle in place,
+  named after the pace it was recorded at — `walk_120` covers 1.2 m/s at its own speed;
+  a plain `walk` counts as 1.5 m/s — a walking person plays the one nearest its pace,
+  sped up or down to cover the ground, so a stroll and a hurry are different clips
+  rather than one clip at two speeds) and `stand`, `stand2`, … (held frames, what a
+  model without idles falls back to). Whatever is missing is not used — the app falls
+  back to the nearest family it finds, and a character with no clips stands in its rest
+  pose. The shipped people carry four walks, four idles and three seated clips each,
+  retargeted from motion capture recordings (`tools/characters/README.md`) that are
+  licensed CC BY — a mod that copies one of these files takes the attribution in
+  `THIRD_PARTY_LICENSES.md` with it.
 - **Textures:** one opaque atlas for skin and clothes, one cut-out atlas (alpha mask) for
   hair, brows, lashes and eyes; the app builds the mip chain the first time a character
   is shown.
@@ -2166,7 +2176,7 @@ are cosmetic and derived, so nothing about them is stored or sent:
   person per six metres or so (at least one, at most sixty), 2.3–2.9 m beside the track
   on the platform's side, standing on the platform's height (or on the ground where none
   is given), facing the track give or take — a few look along the platform — in a mix
-  of the idle and standing clips with staggered starts so no two move in step. About a
+  of the model's idle clips with staggered starts so no two move in step. About a
   third of them walk instead, up and down a 1.2 m wide lane 3.8 m from the track, a
   shoulder's width behind the crowd. Which person stands where is decided by a hash of the line's name and the
   device's index, so every client of a multiplayer run — and every restart — shows the

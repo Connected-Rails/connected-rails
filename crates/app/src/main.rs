@@ -1022,7 +1022,7 @@ fn setup(
         commands.spawn((
             world_render::person_bundle(
                 &character,
-                content::Pose::Idle,
+                content::Pose::Idle(0),
                 0.0,
                 world_render::PERSON_CULL,
             ),

@@ -1,0 +1,450 @@
+{
+  "_comment": "Motion capture sources of the characters' clips \u2014 see tools/characters/README.md. fetch_mocap.py downloads the files into the cache, build_character.py retargets them; nothing of the raw data is checked in.",
+  "version": 1,
+  "sources": {
+    "100style": {
+      "name": "The 100STYLE Dataset - Ian Mason",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "url": "https://www.ianxmason.com/100style/",
+      "archive_url": "https://zenodo.org/record/8127870",
+      "citation": "Mason, Starke, Komura: Real-Time Style Modelling of Human Locomotion via Feature-Wise Transformations and Local Motion Phases, 2022",
+      "actor": "male",
+      "scale": 0.01,
+      "cuts": "Frame_Cuts.csv",
+      "joints": {
+        "pelvis": "Hips",
+        "spine_01": "Chest",
+        "spine_02": "Chest2",
+        "spine_03": "Chest3",
+        "neck_01": "Neck",
+        "head": "Head",
+        "clavicle_l": "LeftCollar",
+        "clavicle_r": "RightCollar",
+        "upperarm_l": "LeftShoulder",
+        "upperarm_r": "RightShoulder",
+        "lowerarm_l": "LeftElbow",
+        "lowerarm_r": "RightElbow",
+        "hand_l": "LeftWrist",
+        "hand_r": "RightWrist",
+        "thigh_l": "LeftHip",
+        "thigh_r": "RightHip",
+        "calf_l": "LeftKnee",
+        "calf_r": "RightKnee",
+        "foot_l": "LeftAnkle",
+        "foot_r": "RightAnkle",
+        "ball_l": "LeftToe",
+        "ball_r": "RightToe"
+      },
+      "calibration": [
+        "Neutral_FW.bvh",
+        "Neutral_ID.bvh"
+      ],
+      "files": {
+        "Akimbo_ID.bvh": "https://drive.google.com/uc?id=10c4XfHU-J-ghWO2cusYTYVS-GqUPyB0Q&export=download",
+        "ArmsBehindBack_FW.bvh": "https://drive.google.com/uc?id=1nr9oPwY3ClHc7fxxUCEqQoWGb5TQOdY4&export=download",
+        "ArmsBehindBack_ID.bvh": "https://drive.google.com/uc?id=1bPGTcWBSzQmLYD2Gphp1t9nu1pBbtjMl&export=download",
+        "ArmsFolded_FW.bvh": "https://drive.google.com/uc?id=1WRsCqbtO0Nc51OMvnaHz2jU8DaU5CRig&export=download",
+        "ArmsFolded_ID.bvh": "https://drive.google.com/uc?id=1m4YDVtW4lT7dCrSJCJ_MysmelYOQhuza&export=download",
+        "Depressed_FW.bvh": "https://drive.google.com/uc?id=1rojQ60Srrc2C61FnU7fQ5pEUsjy_vkbX&export=download",
+        "Depressed_ID.bvh": "https://drive.google.com/uc?id=1uZwj6YeJZ1T396xVTWZoGqV-AIHRaUFw&export=download",
+        "Elated_FW.bvh": "https://drive.google.com/uc?id=1TJ2ktPuskuAvEY_gelQ0dz0QASaHskqs&export=download",
+        "Followed_ID.bvh": "https://drive.google.com/uc?id=1RX_4gD4Wgok8_8hS-LyMkB7vmGZjwH2s&export=download",
+        "Frame_Cuts.csv": "https://drive.google.com/uc?id=1d0VM8k4UjA4dDmaviuZMjAf-WQNLUwnZ&export=download",
+        "HandsInPockets_FW.bvh": "https://drive.google.com/uc?id=1ZmmQaCi-Nfm7_qDHT3-cwWcdVqIjgkMA&export=download",
+        "HandsInPockets_ID.bvh": "https://drive.google.com/uc?id=1TVLEK4BXwbCj69v1edDYKkRsDAUa8ZnW&export=download",
+        "LookUp_ID.bvh": "https://drive.google.com/uc?id=10P5LVm-q4hWXfGgs-PYMXMck3xqZRiIm&export=download",
+        "Neutral_FW.bvh": "https://drive.google.com/uc?id=1-TqZdIJvpr-QVvAmYJREUZkuAgpAQSfd&export=download",
+        "Neutral_ID.bvh": "https://drive.google.com/uc?id=1Vnz5wnFmOztNzaSBHjSt9v6y0pl0FK8X&export=download",
+        "Old_ID.bvh": "https://drive.google.com/uc?id=1UHv8qNSd9om48xDDevMQ6pZGoEuqtX3_&export=download",
+        "OnPhoneLeft_FW.bvh": "https://drive.google.com/uc?id=1azCMSvyqpS5OyAFKLuZiCfxjQBfBeuEK&export=download",
+        "OnPhoneLeft_ID.bvh": "https://drive.google.com/uc?id=1xf7o6O9u-3iLvPjLEGQreyq7ikH6fQ9e&export=download",
+        "OnPhoneRight_FW.bvh": "https://drive.google.com/uc?id=1Gsse79RSRHzl8g0nPtXyy1pS9AZ-HKjp&export=download",
+        "OnPhoneRight_ID.bvh": "https://drive.google.com/uc?id=18AkyOHR23rVME7WpZ6jt_KQ0V0SObHx8&export=download",
+        "Proud_FW.bvh": "https://drive.google.com/uc?id=1KVawIc51q7SZxtuMJDXFeIztNFEFqSn8&export=download",
+        "Proud_ID.bvh": "https://drive.google.com/uc?id=19Or4e2n_RVGSXmUPpN1GCqZkYIIB4hZX&export=download",
+        "Rushed_FW.bvh": "https://drive.google.com/uc?id=1s_m3nWB7IZ5D38_aLbZ4Fo62IPeJqIJa&export=download",
+        "Rushed_ID.bvh": "https://drive.google.com/uc?id=16zcakGncI3H8qzdvvkTpDaXwPqiFTiGN&export=download"
+      }
+    },
+    "accad-female1": {
+      "name": "Open Motion Project, ACCAD, The Ohio State University",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "url": "https://accad.osu.edu/research/motion-lab/mocap-system-and-data",
+      "scale": 0.01,
+      "joints": {
+        "pelvis": [
+          "Hips",
+          "Spine"
+        ],
+        "spine_01": "Spine",
+        "spine_02": "Spine",
+        "spine_03": [
+          "Spine1",
+          "Neck"
+        ],
+        "neck_01": "Neck",
+        "head": "Head",
+        "clavicle_l": "LeftShoulder",
+        "clavicle_r": "RightShoulder",
+        "upperarm_l": "LeftArm",
+        "upperarm_r": "RightArm",
+        "lowerarm_l": "LeftForeArm",
+        "lowerarm_r": "RightForeArm",
+        "hand_l": "LeftHand",
+        "hand_r": "RightHand",
+        "thigh_l": "LeftUpLeg",
+        "thigh_r": "RightUpLeg",
+        "calf_l": "LeftLeg",
+        "calf_r": "RightLeg",
+        "foot_l": "LeftFoot",
+        "foot_r": "RightFoot",
+        "ball_l": "LeftToeBase",
+        "ball_r": "RightToeBase"
+      },
+      "actor": "female",
+      "archive": {
+        "file": "Female1_bvh.zip",
+        "url": "https://accad.osu.edu/sites/accad.osu.edu/files/Female1_bvh.zip"
+      },
+      "calibration": [
+        "Female1_B03_Walk1.bvh",
+        "Female1_A01_Stand.bvh"
+      ],
+      "files": [
+        "Female1_A01_Stand.bvh",
+        "Female1_A02_Sway.bvh",
+        "Female1_A04_Look.bvh",
+        "Female1_B03_Walk1.bvh",
+        "Female1_D2_Wait.bvh"
+      ]
+    },
+    "accad-male1": {
+      "name": "Open Motion Project, ACCAD, The Ohio State University",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "url": "https://accad.osu.edu/research/motion-lab/mocap-system-and-data",
+      "scale": 0.01,
+      "joints": {
+        "pelvis": [
+          "Hips",
+          "Spine"
+        ],
+        "spine_01": "Spine",
+        "spine_02": "Spine",
+        "spine_03": [
+          "Spine1",
+          "Neck"
+        ],
+        "neck_01": "Neck",
+        "head": "Head",
+        "clavicle_l": "LeftShoulder",
+        "clavicle_r": "RightShoulder",
+        "upperarm_l": "LeftArm",
+        "upperarm_r": "RightArm",
+        "lowerarm_l": "LeftForeArm",
+        "lowerarm_r": "RightForeArm",
+        "hand_l": "LeftHand",
+        "hand_r": "RightHand",
+        "thigh_l": "LeftUpLeg",
+        "thigh_r": "RightUpLeg",
+        "calf_l": "LeftLeg",
+        "calf_r": "RightLeg",
+        "foot_l": "LeftFoot",
+        "foot_r": "RightFoot",
+        "ball_l": "LeftToeBase",
+        "ball_r": "RightToeBase"
+      },
+      "actor": "male",
+      "archive": {
+        "file": "Male1_bvh.zip",
+        "url": "https://accad.osu.edu/sites/accad.osu.edu/files/Male1_bvh.zip"
+      },
+      "calibration": [
+        "Male1_B3_Walk.bvh",
+        "Male1_A1_Stand.bvh"
+      ],
+      "files": [
+        "Male1_A1_Stand.bvh",
+        "Male1_A2_Sway.bvh",
+        "Male1_A4_LookAround.bvh",
+        "Male1_B3_Walk.bvh"
+      ]
+    },
+    "accad-male2": {
+      "name": "Open Motion Project, ACCAD, The Ohio State University",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "url": "https://accad.osu.edu/research/motion-lab/mocap-system-and-data",
+      "scale": 0.01,
+      "joints": {
+        "pelvis": [
+          "Hips",
+          "Spine"
+        ],
+        "spine_01": "Spine",
+        "spine_02": "Spine",
+        "spine_03": [
+          "Spine1",
+          "Neck"
+        ],
+        "neck_01": "Neck",
+        "head": "Head",
+        "clavicle_l": "LeftShoulder",
+        "clavicle_r": "RightShoulder",
+        "upperarm_l": "LeftArm",
+        "upperarm_r": "RightArm",
+        "lowerarm_l": "LeftForeArm",
+        "lowerarm_r": "RightForeArm",
+        "hand_l": "LeftHand",
+        "hand_r": "RightHand",
+        "thigh_l": "LeftUpLeg",
+        "thigh_r": "RightUpLeg",
+        "calf_l": "LeftLeg",
+        "calf_r": "RightLeg",
+        "foot_l": "LeftFoot",
+        "foot_r": "RightFoot",
+        "ball_l": "LeftToeBase",
+        "ball_r": "RightToeBase"
+      },
+      "actor": "male",
+      "archive": {
+        "file": "Male2_bvh.zip",
+        "url": "https://accad.osu.edu/sites/accad.osu.edu/files/Male2_bvh.zip"
+      },
+      "calibration": [
+        "Male2_B3_Walk.bvh",
+        "Male2_A1_Stand.bvh"
+      ],
+      "files": [
+        "Male2_A1_Stand.bvh",
+        "Male2_A2_Sway.bvh",
+        "Male2_A4_LookAround.bvh",
+        "Male2_B3_Walk.bvh"
+      ]
+    }
+  },
+  "clips": {
+    "walk-neutral": {
+      "source": "100style",
+      "file": "Neutral_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-rushed": {
+      "source": "100style",
+      "file": "Rushed_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-phone-left": {
+      "source": "100style",
+      "file": "OnPhoneLeft_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-phone-right": {
+      "source": "100style",
+      "file": "OnPhoneRight_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-pockets": {
+      "source": "100style",
+      "file": "HandsInPockets_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-arms-folded": {
+      "source": "100style",
+      "file": "ArmsFolded_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-arms-behind": {
+      "source": "100style",
+      "file": "ArmsBehindBack_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-depressed": {
+      "source": "100style",
+      "file": "Depressed_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-proud": {
+      "source": "100style",
+      "file": "Proud_FW.bvh",
+      "kind": "walk"
+    },
+    "walk-elated": {
+      "source": "100style",
+      "file": "Elated_FW.bvh",
+      "kind": "walk"
+    },
+    "idle-neutral": {
+      "source": "100style",
+      "file": "Neutral_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-rushed": {
+      "source": "100style",
+      "file": "Rushed_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-old": {
+      "source": "100style",
+      "file": "Old_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-phone-left": {
+      "source": "100style",
+      "file": "OnPhoneLeft_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-phone-right": {
+      "source": "100style",
+      "file": "OnPhoneRight_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-pockets": {
+      "source": "100style",
+      "file": "HandsInPockets_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-arms-folded": {
+      "source": "100style",
+      "file": "ArmsFolded_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-arms-behind": {
+      "source": "100style",
+      "file": "ArmsBehindBack_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-depressed": {
+      "source": "100style",
+      "file": "Depressed_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-proud": {
+      "source": "100style",
+      "file": "Proud_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-look-up": {
+      "source": "100style",
+      "file": "LookUp_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-akimbo": {
+      "source": "100style",
+      "file": "Akimbo_ID.bvh",
+      "kind": "idle"
+    },
+    "idle-followed": {
+      "source": "100style",
+      "file": "Followed_ID.bvh",
+      "kind": "idle"
+    },
+    "sit-neutral": {
+      "source": "100style",
+      "file": "Neutral_ID.bvh",
+      "kind": "sit"
+    },
+    "sit-phone-left": {
+      "source": "100style",
+      "file": "OnPhoneLeft_ID.bvh",
+      "kind": "sit"
+    },
+    "sit-phone-right": {
+      "source": "100style",
+      "file": "OnPhoneRight_ID.bvh",
+      "kind": "sit"
+    },
+    "sit-arms-folded": {
+      "source": "100style",
+      "file": "ArmsFolded_ID.bvh",
+      "kind": "sit"
+    },
+    "sit-depressed": {
+      "source": "100style",
+      "file": "Depressed_ID.bvh",
+      "kind": "sit"
+    },
+    "sit-proud": {
+      "source": "100style",
+      "file": "Proud_ID.bvh",
+      "kind": "sit"
+    },
+    "sit-old": {
+      "source": "100style",
+      "file": "Old_ID.bvh",
+      "kind": "sit"
+    },
+    "walk-female1": {
+      "source": "accad-female1",
+      "file": "Female1_B03_Walk1.bvh",
+      "kind": "walk"
+    },
+    "idle-female1-wait": {
+      "source": "accad-female1",
+      "file": "Female1_D2_Wait.bvh",
+      "kind": "idle"
+    },
+    "idle-female1-look": {
+      "source": "accad-female1",
+      "file": "Female1_A04_Look.bvh",
+      "kind": "idle"
+    },
+    "idle-female1-sway": {
+      "source": "accad-female1",
+      "file": "Female1_A02_Sway.bvh",
+      "kind": "idle"
+    },
+    "sit-female1-look": {
+      "source": "accad-female1",
+      "file": "Female1_A04_Look.bvh",
+      "kind": "sit"
+    },
+    "sit-female1-wait": {
+      "source": "accad-female1",
+      "file": "Female1_D2_Wait.bvh",
+      "kind": "sit"
+    },
+    "walk-male1": {
+      "source": "accad-male1",
+      "file": "Male1_B3_Walk.bvh",
+      "kind": "walk"
+    },
+    "idle-male1-look": {
+      "source": "accad-male1",
+      "file": "Male1_A4_LookAround.bvh",
+      "kind": "idle"
+    },
+    "idle-male1-sway": {
+      "source": "accad-male1",
+      "file": "Male1_A2_Sway.bvh",
+      "kind": "idle"
+    },
+    "sit-male1-look": {
+      "source": "accad-male1",
+      "file": "Male1_A4_LookAround.bvh",
+      "kind": "sit"
+    },
+    "walk-male2": {
+      "source": "accad-male2",
+      "file": "Male2_B3_Walk.bvh",
+      "kind": "walk"
+    },
+    "idle-male2-look": {
+      "source": "accad-male2",
+      "file": "Male2_A4_LookAround.bvh",
+      "kind": "idle"
+    },
+    "idle-male2-sway": {
+      "source": "accad-male2",
+      "file": "Male2_A2_Sway.bvh",
+      "kind": "idle"
+    },
+    "sit-male2-look": {
+      "source": "accad-male2",
+      "file": "Male2_A4_LookAround.bvh",
+      "kind": "sit"
+    }
+  }
+}

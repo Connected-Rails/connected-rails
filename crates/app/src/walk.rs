@@ -120,7 +120,7 @@ pub fn walk_player(
             return;
         }
         CameraMode::Walk => {}
-        // The outside and wayside cameras leave him standing where he is.
+        // The outside and wayside cameras and the free one leave him standing where he is.
         _ => return,
     }
     let dt = time.delta_secs().min(0.1);

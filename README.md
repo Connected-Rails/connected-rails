@@ -36,6 +36,7 @@ cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --line example:beispielstrecke --day example:beispieltag --service 0  # a service out of a 24 h timetable
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 cargo run -p app -- --loco example:br101_afb --camera walk      # start on foot (F4) instead of on the seat
+cargo run -p app -- --loco example:br101_afb --camera fly       # free dev camera — also togglable with `fly` in the F8 console
 cargo run -p app -- --camera walk --character people:f01_lena             # a body of your choice (seen from F2/F3)
 
 cargo run -p app -- --dedicated 27015                    # dedicated server, no window

@@ -33,7 +33,7 @@ pub struct CabCamera;
 pub struct Crosshair;
 
 /// Camera perspectives (plan 12.4).
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CameraMode {
     /// View from the driver's seat.
     #[default]
@@ -44,6 +44,9 @@ pub enum CameraMode {
     Outside,
     /// Lineside camera: fixed at the spot where it was activated.
     Wayside,
+    /// Free camera of the console's `fly` command: detached from the train, it flies
+    /// where it looks. A developer tool (`crate::console`).
+    Fly,
 }
 
 /// View direction in the cab and orbit outside.
@@ -54,6 +57,9 @@ pub struct CameraState {
     pub pitch: f32,
     pub distance: f32,
     pub wayside: Option<Vec3>,
+    /// Where the free camera flies: `None` while it is off, and on the frame it is
+    /// switched on — it then starts wherever the view it left was.
+    pub fly: Option<Vec3>,
 }
 
 impl CameraMode {
@@ -79,9 +85,9 @@ pub fn player_input(
     if console.open {
         return;
     }
-    // Away from the seat WASD walks; the cab keys only answer to the driver sitting
-    // at the desk.
-    if camera.mode == CameraMode::Walk {
+    // Away from the seat WASD walks, and the free camera flies; the cab keys only
+    // answer to the driver sitting at the desk.
+    if camera.mode == CameraMode::Walk || camera.mode == CameraMode::Fly {
         return;
     }
     // And only to the one who is actually in charge of this train. Riding in somebody
@@ -305,12 +311,18 @@ pub fn player_input(
     }
 }
 
+/// Pace of the free camera [m/s]: cruising, and with Shift held — enough to run a
+/// line down in seconds without losing the ground entirely.
+const FLY: f32 = 30.0;
+const FLY_FAST: f32 = 150.0;
+
 /// Camera control: four actions switch the perspective, four more pan, and a
 /// controller's right stick looks around on its own.
 // A Bevy system takes its resources as parameters — the argument count says nothing here.
 #[allow(clippy::too_many_arguments)]
 pub fn camera_control(
     input: Input,
+    keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     time: Res<Time>,
@@ -348,6 +360,12 @@ pub fn camera_control(
     } else {
         1.2 * dt
     };
+    // The free camera looks over the poles — down at the train from high above it.
+    let limit = if state.mode == CameraMode::Fly {
+        1.5
+    } else {
+        1.2
+    };
     if input.pressed(Action::LookLeft) {
         state.yaw += turn;
     }
@@ -355,10 +373,10 @@ pub fn camera_control(
         state.yaw -= turn;
     }
     if input.pressed(Action::LookUp) {
-        state.pitch = (state.pitch + turn).min(1.2);
+        state.pitch = (state.pitch + turn).min(limit);
     }
     if input.pressed(Action::LookDown) {
-        state.pitch = (state.pitch - turn).max(-1.2);
+        state.pitch = (state.pitch - turn).max(-limit);
     }
     if input.pressed(Action::ZoomIn) {
         state.distance = (state.distance - 30.0 * dt).max(10.0);
@@ -372,7 +390,7 @@ pub fn camera_control(
     if buttons.pressed(MouseButton::Right) || state.mode == CameraMode::Walk {
         let speed = 0.003 * gameplay.look_speed;
         state.yaw -= motion.delta.x * speed;
-        state.pitch = (state.pitch - motion.delta.y * speed).clamp(-1.2, 1.2);
+        state.pitch = (state.pitch - motion.delta.y * speed).clamp(-limit, limit);
     }
     // The right stick looks around without a binding and without a button being held:
     // an axis is not a lever, and the mouse asks no permission either.
@@ -380,12 +398,74 @@ pub fn camera_control(
     if stick != Vec2::ZERO {
         let speed = 2.5 * gameplay.look_speed * dt;
         state.yaw -= stick.x * speed;
-        state.pitch = (state.pitch + stick.y * speed).clamp(-1.2, 1.2);
+        state.pitch = (state.pitch + stick.y * speed).clamp(-limit, limit);
     }
 
+    // Out of the free camera everything hangs on the train again. The state of the fly
+    // is dropped with it, so the next `fly` entry starts wherever the view then is.
+    if state.mode != CameraMode::Fly {
+        state.fly = None;
+    }
     let Ok(mut transform) = camera.single_mut() else {
         return;
     };
+
+    // The free camera of the console's `fly` command: detached from train and walker,
+    // it flies where it looks. W/A/S/D moves along the view — the walker's keys, so a
+    // rebinding carries over — Space climbs, Ctrl sinks, Shift is five times as fast,
+    // and the left stick walks as it does on foot. Purely local: a camera of one's own
+    // is nothing the server owns or needs to hear about.
+    if state.mode == CameraMode::Fly {
+        // First frame in the fly: take the position and the direction the view had,
+        // so the switch does not jump.
+        if state.fly.is_none() {
+            let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
+            state.yaw = yaw;
+            state.pitch = pitch.clamp(-limit, limit);
+            state.fly = Some(transform.translation);
+        }
+        let look = Quat::from_euler(EulerRot::YXZ, state.yaw, state.pitch, 0.0);
+        let ahead = look * Vec3::NEG_Z;
+        // Strafing stays horizontal even with the nose down: looking at the ground and
+        // sliding along the track is the one thing a dev camera does all day.
+        let right = Quat::from_rotation_y(state.yaw) * Vec3::X;
+        let mut offset = Vec3::ZERO;
+        // While the console is open it holds the keyboard — a command typed in mid-air
+        // is not meant to fly at the same time.
+        if !console.open {
+            if input.pressed(Action::WalkForward) {
+                offset += ahead;
+            }
+            if input.pressed(Action::WalkBack) {
+                offset -= ahead;
+            }
+            if input.pressed(Action::WalkLeft) {
+                offset -= right;
+            }
+            if input.pressed(Action::WalkRight) {
+                offset += right;
+            }
+            let stick = input.walk();
+            offset += right * stick.x - ahead * stick.y;
+            if input.pressed(Action::WalkJump) {
+                offset += Vec3::Y;
+            }
+            if keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight) {
+                offset -= Vec3::Y;
+            }
+        }
+        let speed = if input.pressed(Action::WalkRun) {
+            FLY_FAST
+        } else {
+            FLY
+        };
+        let pos = state.fly.get_or_insert(transform.translation);
+        *pos += offset.normalize_or_zero() * speed * dt;
+        transform.translation = *pos;
+        transform.rotation = look;
+        return;
+    }
+
     let train = &sim.0.trains[player.0];
     // A consist that was coupled away has nothing to hang a camera on; it keeps its slot
     // and stands nowhere (`sim_core::shunt`), so the view simply stays where it was.
@@ -453,6 +533,9 @@ pub fn camera_control(
             transform.translation = anchor;
             transform.look_at(pos, Vec3::Y);
         }
+        // Handled — and returned from — before the train was even asked for: the free
+        // camera hangs on nothing of the world below.
+        CameraMode::Fly => {}
     }
 }
 

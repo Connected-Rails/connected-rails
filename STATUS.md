@@ -1354,9 +1354,11 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   small signed-distance rasteriser (segment, circle, rounded box, triangle; coverage over
   one texel is the anti-aliasing) and about thirty lines of geometry produce the dial
   faces, the needles, the rim markers, the Lf 7 board, the Hp 0 disc and the ten
-  pictograms into `Image`s when the run starts. Same rule as the generated ground textures
-  and the synthesised sounds: no asset directory, no icon set, no third-party licence to
-  carry — and a pantograph that should read better at 20 px is a coordinate in that file.
+  pictograms into `Image`s when the run starts. Same rule as the generated ground
+  textures and the synthesised sounds of the default sound table: no asset directory, no
+  icon set, no third-party licence to carry (the example BR 101's recorded cab sounds are
+  the exception, credited in THIRD_PARTY_LICENSES.md) — and a pantograph that should read
+  better at 20 px is a coordinate in that file.
   Everything comes out white on transparent and is tinted where it is used, so one drawing
   serves a lamp that is lit and one that is dark.
 - **The display has three steps on F7** (`settings::HudMode`): full, reduced, off, and

@@ -374,8 +374,12 @@ pub fn setup_audio(
                 let Some(source) = audio.sources.get(&file).cloned() else {
                     continue;
                 };
-                // Starts silent; the curves bring it up in the first frame.
-                let source = source.volume(Decibels::SILENCE);
+                // Starts silent; the curves bring it up in the first frame. A loop entry
+                // repeats its sample for as long as it plays — the recorded ones out of a
+                // mod have no loop region of their own, and the generated ones keep theirs.
+                let source = source
+                    .volume(Decibels::SILENCE)
+                    .loop_region(0.0..);
                 let handle = match (positional, audio.emitters.get_mut(&(t, v))) {
                     // Placed in the world: the track rides along on the vehicle, so
                     // distance, stereo placement and the wall are its business.
@@ -578,7 +582,10 @@ pub fn update_audio(
             };
             let source = source
                 .volume(decibels(volume as f32))
-                .playback_rate(pitch * shift);
+                .playback_rate(pitch * shift)
+                // A one-shot is one shot: the generated sources carry a loop region, which
+                // a joint or a click must not keep.
+                .loop_region(Option::<kira::sound::Region>::None);
             let played = match (positional, audio.emitters.get_mut(&(t, v))) {
                 (true, Some(emitter)) => emitter.track.play(source),
                 _ => audio.cab.play(source),
@@ -758,6 +765,44 @@ mod tests {
         assert!(data.settings.loop_region.is_some(), "loops");
         // Mono into both channels, or the source would only come out of one ear.
         assert_eq!(data.frames[0].left, data.frames[0].right);
+    }
+
+    /// Whether a sound repeats comes from the entry, not the source: a recording has no
+    /// loop region of its own and has to be looped when its entry is a loop, and a
+    /// generated click keeps a loop region that a one-shot has to drop.
+    #[test]
+    fn loops_repeat_and_one_shots_end() {
+        use kira::backend::mock::MockBackendSettings;
+        use kira::sound::PlaybackState;
+        let mut manager = AudioManager::<kira::backend::mock::MockBackend>::new(
+            AudioManagerSettings {
+                backend_settings: MockBackendSettings {
+                    sample_rate: synth::RATE,
+                },
+                ..AudioManagerSettings::default()
+            },
+        )
+        .expect("manager");
+        // A tenth of a second of tone; one backend pass is 128 frames of it.
+        let data = looping(vec![0.25; (synth::RATE / 10) as usize], synth::RATE);
+
+        let mut loop_handle = manager.play(data.clone()).expect("play");
+        for _ in 0..64 {
+            // The mock backend runs the renderer by hand, like the cpal backend does.
+            manager.backend_mut().on_start_processing();
+            manager.backend_mut().process();
+        }
+        assert_eq!(loop_handle.state(), PlaybackState::Playing);
+
+        let shot = manager
+            .play(data.loop_region(Option::<kira::sound::Region>::None))
+            .expect("play");
+        for _ in 0..64 {
+            manager.backend_mut().on_start_processing();
+            manager.backend_mut().process();
+        }
+        assert_eq!(shot.state(), PlaybackState::Stopped);
+        let _ = &mut loop_handle;
     }
 
     /// What the driver hears follows where the driver *is*, not which camera is drawing.

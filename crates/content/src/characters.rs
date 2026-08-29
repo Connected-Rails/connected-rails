@@ -11,12 +11,25 @@
 //! - **Levels of detail:** the skinned mesh comes as nodes `char_LOD0` … `char_LOD3`
 //!   (the `_LOD<n>` convention every model in the game shares), finest first. All of
 //!   them hang on one skeleton, so a level switches without a pose change.
-//! - **Clips:** `idle`, `idle2` (looping stands with a little life in them), `walk` (one
-//!   cycle, ~1 s at 1.5 m/s), `stand`, `stand2`, `stand3` (single-frame standing poses)
-//!   and `sit` (single-frame, feet on the floor, seat about 0.45 m up). A character may
-//!   lack some; the app falls back to what is there.
+//! - **Clips**, in families told apart by name, any number of each:
+//!   - `idle`, `idle2`, `idle3`, … — looping stands with a little life in them, ten to
+//!     twenty seconds each. A standing person plays one of them, picked by its
+//!     [`crate::people::Pose`] variant.
+//!   - `sit`, `sit2`, … — seated, feet on the floor, seat about 0.45 m up; looping like
+//!     the idles, or a held frame. A passenger plays one.
+//!   - `walk_<cm/s>` — one gait cycle, in place, looped, named after the pace it was
+//!     made for (`walk_120` covers 1.2 m/s at its own speed); a plain `walk` is taken
+//!     for 1.5 m/s. A walking person plays the one nearest its pace, sped up or down
+//!     to cover the ground, so a model with a stroll and a hurry uses both.
+//!   - `stand`, `stand2`, … — held standing frames, what a model without idles
+//!     falls back to.
 //!
-//! The shipped `people` mod is generated out of MakeHuman 2 by `tools/characters/`.
+//!   A character may lack whole families; the app falls back to the nearest one it
+//!   has (a stand for a missing idle, an idle for a missing sit) and, failing
+//!   everything, plays any clip at all.
+//!
+//! The shipped `people` mod is generated out of MakeHuman 2 by `tools/characters/`,
+//! its clips retargeted from motion capture recordings (`tools/characters/clips.json`).
 
 use serde::{Deserialize, Serialize};
 

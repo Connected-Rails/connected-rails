@@ -323,8 +323,8 @@ pub struct WalkerGait {
     player: Option<Entity>,
 }
 
-/// Plays the character model's clips off the walker's pace: `idle` at a stand, `walk`
-/// on the move, cross-faded, the cycle sped up with the pace — the same gaits the
+/// Plays the character model's clips off the walker's pace: its idle at a stand, a
+/// walk on the move, cross-faded, the cycle sped up with the pace — the same gaits the
 /// crowd's walkers play (`world_render::people`), driven here by a measured pace
 /// instead of a clock. A model without those clips (or without any) simply stands as
 /// `dress_people` left it.
@@ -350,17 +350,24 @@ pub fn animate_walker(
     let Some(pace) = step.filter(|_| dt > 0.0).map(|d| d / dt) else {
         return;
     };
-    let wanted = gait(pace);
     let Some(graph) = graphs.get(person.gltf.id()) else {
         return;
     };
+    let wanted = gait(pace, graph.paces(), person.pose.variant(), state.gait);
     let Some((mut transitions, mut player)) = dressed.player.and_then(|e| players.get_mut(e).ok())
     else {
         return;
     };
-    if play_gait(&mut transitions, &mut player, graph, state.gait, wanted) {
+    if play_gait(
+        &mut transitions,
+        &mut player,
+        graph,
+        person.pose,
+        state.gait,
+        wanted,
+    ) {
         match wanted {
-            Gait::Walk { rate } => info!("walker: walk at {rate:.2}x"),
+            Gait::Walk { clip, rate } => info!("walker: walk {clip} at {rate:.2}x"),
             Gait::Idle => info!("walker: idle"),
         }
     }
@@ -701,13 +708,21 @@ mod tests {
     /// three times it at the run — and never outside its band.
     #[test]
     fn the_gait_follows_the_pace() {
-        assert_eq!(gait(0.0), Gait::Idle);
-        assert_eq!(gait(0.2), Gait::Idle);
-        assert_eq!(gait(WALK), Gait::Walk { rate: 1.0 });
-        assert_eq!(gait(RUN), Gait::Walk { rate: 3.0 });
-        assert_eq!(gait(0.4), Gait::Walk { rate: 0.6 });
-        assert_eq!(Gait::Idle.clip(), "idle");
-        assert_eq!(gait(WALK).clip(), "walk");
+        let paces = [WALK];
+        assert_eq!(gait(0.0, &paces, 0, Gait::Idle), Gait::Idle);
+        assert_eq!(gait(0.2, &paces, 0, Gait::Idle), Gait::Idle);
+        assert_eq!(
+            gait(WALK, &paces, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 1.0 }
+        );
+        assert_eq!(
+            gait(RUN, &paces, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 3.0 }
+        );
+        assert_eq!(
+            gait(0.4, &paces, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 0.6 }
+        );
     }
 
     /// The pace is read off the place the walker is kept in: aboard in the vehicle's

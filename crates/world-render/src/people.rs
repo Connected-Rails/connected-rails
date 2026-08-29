@@ -12,7 +12,13 @@
 //! ship. [`dress_people`] does that once per instance; nothing here runs per
 //! frame on a person that is finished — except the walkers: a [`Stroller`]
 //! is put where the scenario clock says every frame ([`move_strollers`]),
-//! and its clips follow, `walk` on the move and `idle` at a stop.
+//! and its clips follow, a walk on the move and its idle at a stop.
+//!
+//! A model's clips sort into families by name (`content::characters`):
+//! `idle`, `idle2`, … and `sit`, `sit2`, … are the poses a person is spawned
+//! in, its [`Pose`] variant picking one; `walk` and `walk_<cm/s>` are the
+//! gaits, and the one a person walks with is picked for its pace and its
+//! variant ([`gait`]) — a stroll is not a sped-down hurry.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -179,9 +185,17 @@ pub struct Dressed {
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct PeopleClock(pub f64);
 
-/// The pace the walk cycle was made for [m/s] (`content::characters`): at it
-/// the clip runs at its own speed, faster it is sped up.
+/// The pace a clip named plainly `walk` was made for [m/s]
+/// (`content::characters`); a `walk_<cm/s>` clip says its own. At its pace a
+/// clip runs at its own speed, faster it is sped up.
 pub const CYCLE_PACE: f32 = 1.5;
+/// A walk clip fits a pace when playing it between these rates of its own
+/// covers the ground; of several that fit, the person's variant picks one.
+/// When none fits, the nearest is sped up or slowed to make do.
+pub const PICK_RATES: (f32, f32) = (0.8, 1.25);
+/// A clip already walking is kept while its rate stays in this band, so a
+/// pace wavering about a boundary does not switch clips every frame.
+pub const KEEP_RATES: (f32, f32) = (0.7, 1.4);
 /// The walk cycle's playback speed is kept in this band — slower is a
 /// moonwalk, faster a cartoon.
 pub const CYCLE_RATE: (f32, f32) = (0.6, 3.0);
@@ -192,75 +206,111 @@ pub const WALKING_ABOVE: f32 = 0.3;
 /// How long a model takes to cross-fade between standing and walking [s].
 pub const GAIT_FADE: f32 = 0.2;
 
-/// What a walking model does: standing, or walking at a rate of its cycle.
-/// The player's walker and the crowd's walkers are moved by different things
-/// — a pace measured over the ground, a pose out of the clock — and end up
-/// here, where the clips are the same.
+/// What a walking model does: standing, or walking one of its walk clips at
+/// a rate of its cycle. The player's walker and the crowd's walkers are moved
+/// by different things — a pace measured over the ground, a pose out of the
+/// clock — and end up here, where the clips are the same.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Gait {
     #[default]
     Idle,
     Walk {
+        /// Which walk clip: an index into the model's walks by pace
+        /// ([`CharacterGraph::paces`]).
+        clip: u8,
         /// Playback speed of the walk cycle.
         rate: f32,
     },
 }
 
-impl Gait {
-    pub fn clip(self) -> &'static str {
-        match self {
-            Gait::Idle => "idle",
-            Gait::Walk { .. } => "walk",
-        }
+/// The gait for a pace [m/s] on a model whose walk clips were made for
+/// `paces` (ascending): standing below [`WALKING_ABOVE`] or without a walk,
+/// otherwise a walk clip at the rate that covers the ground, clamped to
+/// [`CYCLE_RATE`]. The clip is the one of `current` while its rate stays in
+/// [`KEEP_RATES`]; else one that fits the pace within [`PICK_RATES`], the
+/// person's `variant` telling apart several that do; else the nearest.
+pub fn gait(pace: f32, paces: &[f32], variant: u8, current: Gait) -> Gait {
+    if pace < WALKING_ABOVE || paces.is_empty() {
+        return Gait::Idle;
+    }
+    let kept = match current {
+        Gait::Walk { clip, .. } => paces
+            .get(usize::from(clip))
+            .filter(|own| (KEEP_RATES.0..=KEEP_RATES.1).contains(&(pace / *own)))
+            .map(|_| clip),
+        Gait::Idle => None,
+    };
+    let clip = kept.unwrap_or_else(|| choose_walk(paces, pace, variant));
+    Gait::Walk {
+        clip,
+        rate: (pace / paces[usize::from(clip)]).clamp(CYCLE_RATE.0, CYCLE_RATE.1),
     }
 }
 
-/// The gait for a pace [m/s]: standing below [`WALKING_ABOVE`], otherwise the
-/// walk cycle at the pace over the one it was made for, clamped to
-/// [`CYCLE_RATE`].
-pub fn gait(pace: f32) -> Gait {
-    if pace < WALKING_ABOVE {
-        Gait::Idle
+/// The walk clip for a pace: of those that fit within [`PICK_RATES`] the
+/// variant's, else the nearest in rate.
+fn choose_walk(paces: &[f32], pace: f32, variant: u8) -> u8 {
+    let fitting: Vec<usize> = (0..paces.len())
+        .filter(|&i| (PICK_RATES.0..=PICK_RATES.1).contains(&(pace / paces[i])))
+        .collect();
+    let index = if fitting.is_empty() {
+        (0..paces.len())
+            .min_by(|&a, &b| {
+                (pace / paces[a])
+                    .ln()
+                    .abs()
+                    .total_cmp(&(pace / paces[b]).ln().abs())
+            })
+            .unwrap_or(0)
     } else {
-        Gait::Walk {
-            rate: (pace / CYCLE_PACE).clamp(CYCLE_RATE.0, CYCLE_RATE.1),
-        }
-    }
+        fitting[usize::from(variant) % fitting.len()]
+    };
+    index.min(usize::from(u8::MAX)) as u8
 }
 
-/// Puts a dressed model into a gait, cross-faded from the one it is in: `walk`
-/// at its rate, else `idle`. Walking on only follows the rate, standing on
-/// changes nothing. `true` when a clip was started — the caller logs that in
-/// its own words. A model without the clip is left doing what it does.
+/// Puts a dressed model into a gait, cross-faded from the one it is in: the
+/// gait's walk clip at its rate, else the model's clip for `pose`. Walking on
+/// with the same clip only follows the rate, standing on changes nothing.
+/// `true` when a clip was started — the caller logs that in its own words. A
+/// model without the clip is left doing what it does.
 pub fn play_gait(
     transitions: &mut AnimationTransitions,
     player: &mut AnimationPlayer,
     graph: &CharacterGraph,
+    pose: Pose,
     from: Gait,
     to: Gait,
 ) -> bool {
-    let Some((node, _)) = graph.clip(to.clip()) else {
-        return false;
-    };
     match (from, to) {
-        (Gait::Walk { .. }, Gait::Walk { rate }) => {
-            if let Some(active) = player.animation_mut(node) {
+        (Gait::Walk { clip: before, .. }, Gait::Walk { clip, rate }) if before == clip => {
+            if let Some(walk) = graph.walks.get(usize::from(clip))
+                && let Some(active) = player.animation_mut(walk.node)
+            {
                 active.set_speed(rate);
             }
             false
         }
         (Gait::Idle, Gait::Idle) => false,
-        (_, Gait::Walk { rate }) => {
+        (_, Gait::Walk { clip, rate }) => {
+            let Some(walk) = graph.walks.get(usize::from(clip)) else {
+                return false;
+            };
             transitions
-                .play(player, node, Duration::from_secs_f32(GAIT_FADE))
+                .play(player, walk.node, Duration::from_secs_f32(GAIT_FADE))
                 .set_repeat(RepeatAnimation::Forever)
                 .set_speed(rate);
             true
         }
         (_, Gait::Idle) => {
-            transitions
-                .play(player, node, Duration::from_secs_f32(GAIT_FADE))
-                .set_repeat(RepeatAnimation::Forever);
+            let Some((_, node, duration)) = graph.pick(pose) else {
+                return false;
+            };
+            let active = transitions.play(player, node, Duration::from_secs_f32(GAIT_FADE));
+            if duration > 0.0 {
+                active.set_repeat(RepeatAnimation::Forever);
+            } else {
+                active.pause();
+            }
             true
         }
     }
@@ -317,7 +367,12 @@ pub fn spawn_strollers(
         };
         let pose = stroll_pose(&walkway, agent, now);
         parent.spawn((
-            person_bundle(character, Pose::Idle, agent.phase, PERSON_CULL),
+            person_bundle(
+                character,
+                Pose::Idle(agent.variant),
+                agent.phase,
+                PERSON_CULL,
+            ),
             stroll_transform(&pose),
             Stroller::new(walkway.clone(), index as u16),
             marker.clone(),
@@ -327,9 +382,9 @@ pub fn spawn_strollers(
     spawned
 }
 
-/// Puts every walker where the clock says and has its clips follow: `walk`
-/// at the agent's pace on the move, `idle` at a stop, cross-faded, and the
-/// player touched only when that changes. A walker nobody can see — further
+/// Puts every walker where the clock says and has its clips follow: a walk
+/// for the agent's pace on the move, its idle at a stop, cross-faded, and
+/// the player touched only when that changes. A walker nobody can see — further
 /// from every camera than its cull distance — keeps its transform up to date
 /// and its clips alone: the meshes are not drawn, and a transition on them
 /// is work for nothing.
@@ -368,27 +423,34 @@ pub fn move_strollers(
         if !seen {
             continue;
         }
+        let Some(graph) = graphs.get(person.gltf.id()) else {
+            continue;
+        };
         let gait = if pose.moving {
-            gait(agent.speed)
+            gait(agent.speed, graph.paces(), agent.variant, stroller.gait)
         } else {
             Gait::Idle
         };
         if gait == stroller.gait {
             continue;
         }
-        let Some(graph) = graphs.get(person.gltf.id()) else {
-            continue;
-        };
         let Ok((mut transitions, mut player)) = players.get_mut(player) else {
             continue;
         };
-        if play_gait(&mut transitions, &mut player, graph, stroller.gait, gait) {
+        if play_gait(
+            &mut transitions,
+            &mut player,
+            graph,
+            person.pose,
+            stroller.gait,
+            gait,
+        ) {
             debug!(
                 "stroller {}#{}: {}",
                 stroller.walkway.name,
                 stroller.agent,
                 match gait {
-                    Gait::Walk { rate } => format!("walk at {rate:.2}x"),
+                    Gait::Walk { clip, rate } => format!("walk {clip} at {rate:.2}x"),
                     Gait::Idle => "idle".to_string(),
                 }
             );
@@ -509,14 +571,108 @@ pub fn collect_walkway_nodes(
 }
 
 /// The animation graph of one character glTF: every clip as a node under the
-/// root, with its name and its duration.
+/// root, with its name and its duration, sorted into the families the names
+/// say (`content::characters`).
 pub struct CharacterGraph {
     pub handle: Handle<AnimationGraph>,
     /// Sorted by name, so the fallback to "any clip" is the same every time.
     clips: Vec<(Box<str>, AnimationNodeIndex, f32)>,
+    /// `idle`, `idle2`, … as indices into `clips`, in that order; likewise
+    /// the seated and the held standing clips.
+    idles: Vec<usize>,
+    sits: Vec<usize>,
+    stands: Vec<usize>,
+    /// The walk clips by pace, slowest first.
+    walks: Vec<WalkClip>,
+    /// The walks' paces [m/s], in their order — what [`gait`] takes.
+    paces: Vec<f32>,
+}
+
+/// A walk cycle of a model and the pace it was recorded at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WalkClip {
+    pub node: AnimationNodeIndex,
+    pub pace: f32,
+    pub duration: f32,
+}
+
+/// What a clip's name says it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Family {
+    /// `idle` is 1, `idle2` is 2, ….
+    Idle(u32),
+    Sit(u32),
+    Stand(u32),
+    /// A walk and the pace it was made for [m/s].
+    Walk(f32),
+}
+
+/// The family a clip name belongs to: `idle`/`idle<n>`, `sit`/`sit<n>`,
+/// `stand`/`stand<n>`, `walk` ([`CYCLE_PACE`]) and `walk_<cm/s>`.
+fn family(name: &str) -> Option<Family> {
+    let numbered = |prefix: &str| -> Option<u32> {
+        let rest = name.strip_prefix(prefix)?;
+        if rest.is_empty() {
+            Some(1)
+        } else {
+            rest.parse().ok().filter(|n| *n >= 2)
+        }
+    };
+    if let Some(n) = numbered("idle") {
+        return Some(Family::Idle(n));
+    }
+    if let Some(n) = numbered("sit") {
+        return Some(Family::Sit(n));
+    }
+    if let Some(n) = numbered("stand") {
+        return Some(Family::Stand(n));
+    }
+    if name == "walk" {
+        return Some(Family::Walk(CYCLE_PACE));
+    }
+    name.strip_prefix("walk_")
+        .and_then(|cm| cm.parse::<u32>().ok())
+        .filter(|cm| *cm > 0)
+        .map(|cm| Family::Walk(cm as f32 / 100.0))
 }
 
 impl CharacterGraph {
+    /// Sorts `clips` (name, node, duration) into their families.
+    fn new(
+        handle: Handle<AnimationGraph>,
+        mut clips: Vec<(Box<str>, AnimationNodeIndex, f32)>,
+    ) -> Self {
+        clips.sort_by(|a, b| a.0.cmp(&b.0));
+        let (mut idles, mut sits, mut stands, mut walks) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for (index, (name, node, duration)) in clips.iter().enumerate() {
+            match family(name) {
+                Some(Family::Idle(n)) => idles.push((n, index)),
+                Some(Family::Sit(n)) => sits.push((n, index)),
+                Some(Family::Stand(n)) => stands.push((n, index)),
+                Some(Family::Walk(pace)) => walks.push(WalkClip {
+                    node: *node,
+                    pace,
+                    duration: *duration,
+                }),
+                None => {}
+            }
+        }
+        idles.sort_unstable();
+        sits.sort_unstable();
+        stands.sort_unstable();
+        walks.sort_by(|a, b| a.pace.total_cmp(&b.pace));
+        Self {
+            handle,
+            clips,
+            idles: idles.into_iter().map(|(_, i)| i).collect(),
+            sits: sits.into_iter().map(|(_, i)| i).collect(),
+            stands: stands.into_iter().map(|(_, i)| i).collect(),
+            paces: walks.iter().map(|w| w.pace).collect(),
+            walks,
+        }
+    }
+
     /// The node of the clip `name` and the clip's duration [s].
     pub fn clip(&self, name: &str) -> Option<(AnimationNodeIndex, f32)> {
         self.clips
@@ -525,29 +681,31 @@ impl CharacterGraph {
             .map(|(_, node, duration)| (*node, *duration))
     }
 
-    /// What plays for a pose: its own clip, else the first standing clip the
-    /// file has, else any clip at all. `None` for a file without clips.
+    /// The paces of the model's walk clips [m/s], slowest first.
+    pub fn paces(&self) -> &[f32] {
+        &self.paces
+    }
+
+    /// What plays for a pose: the variant's clip of the pose's family, else
+    /// of the nearest family the file has (a stand for a missing idle, an idle
+    /// for a missing sit), else any clip at all. `None` for a file without
+    /// clips.
     fn pick(&self, pose: Pose) -> Option<(&str, AnimationNodeIndex, f32)> {
-        std::iter::once(pose.clip())
-            .chain(FALLBACK_CLIPS.iter().copied())
-            .find_map(|name| {
-                self.clip(name)
-                    .map(|(node, duration)| (name, node, duration))
-            })
-            .or_else(|| {
-                self.clips
-                    .first()
-                    .map(|(name, node, duration)| (&**name, *node, *duration))
+        let families: [&[usize]; 3] = match pose {
+            Pose::Idle(_) => [&self.idles, &self.stands, &self.sits],
+            Pose::Sit(_) => [&self.sits, &self.idles, &self.stands],
+        };
+        let variant = usize::from(pose.variant());
+        families
+            .iter()
+            .find(|family| !family.is_empty())
+            .map(|family| family[variant % family.len()])
+            .or_else(|| (!self.clips.is_empty()).then_some(0))
+            .map(|index| {
+                let (name, node, duration) = &self.clips[index];
+                (&**name, *node, *duration)
             })
     }
-}
-
-/// Clips tried in this order when the pose's own is missing.
-const FALLBACK_CLIPS: [&str; 6] = ["idle", "idle2", "stand", "stand2", "stand3", "sit"];
-
-/// Whether a clip of this name runs on, or is a held frame.
-fn looping(clip: &str) -> bool {
-    matches!(clip, "idle" | "idle2" | "walk")
 }
 
 /// Animation graphs by character glTF, built once each. `None` is a glTF
@@ -598,7 +756,7 @@ impl CharacterGraphs {
         };
         let mut graph = AnimationGraph::new();
         let root = graph.root;
-        let mut named: Vec<(Box<str>, AnimationNodeIndex, f32)> = gltf
+        let named: Vec<(Box<str>, AnimationNodeIndex, f32)> = gltf
             .named_animations
             .iter()
             .map(|(name, clip)| {
@@ -607,19 +765,23 @@ impl CharacterGraphs {
                 (name.clone(), node, duration)
             })
             .collect();
-        named.sort_by(|a, b| a.0.cmp(&b.0));
-        let names: Vec<&str> = named.iter().map(|(n, _, _)| &**n).collect();
-        info!(
-            "character {:?}: {} clips ({})",
-            handle.path().map(|p| p.to_string()).unwrap_or_default(),
-            named.len(),
-            names.join(", ")
-        );
         let resolved = (!named.is_empty()).then(|| {
-            Arc::new(CharacterGraph {
-                handle: graphs.add(graph),
-                clips: named,
-            })
+            let character = CharacterGraph::new(graphs.add(graph), named);
+            info!(
+                "character {:?}: {} clips ({}), {} idles, {} sits, walks at {:?} m/s",
+                handle.path().map(|p| p.to_string()).unwrap_or_default(),
+                character.clips.len(),
+                character
+                    .clips
+                    .iter()
+                    .map(|(n, _, _)| &**n)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                character.idles.len(),
+                character.sits.len(),
+                character.paces,
+            );
+            Arc::new(character)
         });
         self.resolved.insert(handle.id(), resolved.clone());
         Resolved::Ready(resolved)
@@ -744,7 +906,7 @@ pub fn dress_people(
         {
             let mut transitions = AnimationTransitions::new();
             let active = transitions.play(&mut player, node, Duration::ZERO);
-            if looping(name) {
+            if duration > 0.0 {
                 active
                     .set_repeat(RepeatAnimation::Forever)
                     .set_speed(clip_speed(person.phase))
@@ -926,8 +1088,8 @@ pub fn seat_transform(seat: &SeatSpec) -> Transform {
         .with_rotation(Quat::from_rotation_y(-seat.yaw_deg.to_radians()))
 }
 
-/// Fills a vehicle's seats: every taken seat gets its hashed character in the
-/// `sit` pose, as children of the vehicle's view entity.
+/// Fills a vehicle's seats: every taken seat gets its hashed character in one
+/// of the model's seated clips, as children of the vehicle's view entity.
 pub fn spawn_seated(
     parent: &mut ChildSpawnerCommands,
     passengers: &Passengers,
@@ -946,8 +1108,9 @@ pub fn spawn_seated(
             continue;
         };
         let phase = unit(seat_hash(train, vehicle, index, 3));
+        let variant = (unit(seat_hash(train, vehicle, index, 4)) * 256.0) as u8;
         parent.spawn((
-            person_bundle(character, Pose::Sit, phase, PASSENGER_CULL),
+            person_bundle(character, Pose::Sit(variant), phase, PASSENGER_CULL),
             seat_transform(seat),
         ));
         seated += 1;
@@ -1019,25 +1182,55 @@ mod tests {
         assert!((facing - Vec3::X).length() < 1e-5, "{facing:?}");
     }
 
-    /// The pose's own clip, then the standing fallbacks, then anything — and
-    /// nothing for a file without clips.
-    #[test]
-    fn the_clip_pick_falls_back_without_panicking() {
-        let graph = |names: &[&str]| CharacterGraph {
-            handle: Handle::default(),
-            clips: names
+    fn graph(names: &[&str]) -> CharacterGraph {
+        CharacterGraph::new(
+            Handle::default(),
+            names
                 .iter()
                 .enumerate()
                 .map(|(i, n)| ((*n).into(), AnimationNodeIndex::new(i + 1), 1.0))
                 .collect(),
-        };
-        let full = graph(&["idle", "idle2", "sit", "stand", "walk"]);
-        assert_eq!(full.pick(Pose::Sit).map(|p| p.0), Some("sit"));
-        assert_eq!(full.pick(Pose::Stand2).map(|p| p.0), Some("idle"));
+        )
+    }
+
+    /// The variant's clip of the pose's family, modulo what the file has; the
+    /// nearest family when that one is missing; anything at all otherwise —
+    /// and nothing for a file without clips.
+    #[test]
+    fn the_clip_pick_falls_back_without_panicking() {
+        let full = graph(&[
+            "idle", "idle2", "idle3", "sit", "sit2", "stand", "walk", "walk_120",
+        ]);
+        assert_eq!(full.pick(Pose::Idle(0)).map(|p| p.0), Some("idle"));
+        assert_eq!(full.pick(Pose::Idle(2)).map(|p| p.0), Some("idle3"));
+        assert_eq!(full.pick(Pose::Idle(4)).map(|p| p.0), Some("idle2"));
+        assert_eq!(full.pick(Pose::Sit(1)).map(|p| p.0), Some("sit2"));
+        assert_eq!(full.pick(Pose::Sit(2)).map(|p| p.0), Some("sit"));
+        assert_eq!(full.paces(), &[1.2, 1.5]);
+        let stands = graph(&["stand", "stand2"]);
+        assert_eq!(stands.pick(Pose::Idle(1)).map(|p| p.0), Some("stand2"));
+        assert_eq!(stands.pick(Pose::Sit(0)).map(|p| p.0), Some("stand"));
         let odd = graph(&["wave"]);
-        assert_eq!(odd.pick(Pose::Idle).map(|p| p.0), Some("wave"));
-        assert!(graph(&[]).pick(Pose::Idle).is_none());
-        assert!(looping("walk") && !looping("sit"));
+        assert_eq!(odd.pick(Pose::Idle(0)).map(|p| p.0), Some("wave"));
+        assert!(graph(&[]).pick(Pose::Idle(0)).is_none());
+        assert!(graph(&[]).paces().is_empty());
+    }
+
+    /// Names sort into their families: numbered from 2, `walk` at the default
+    /// pace, `walk_<cm/s>` at its own, and anything else into none.
+    #[test]
+    fn clip_names_say_their_family() {
+        assert_eq!(family("idle"), Some(Family::Idle(1)));
+        assert_eq!(family("idle12"), Some(Family::Idle(12)));
+        assert_eq!(family("idle1"), None);
+        assert_eq!(family("idler"), None);
+        assert_eq!(family("sit3"), Some(Family::Sit(3)));
+        assert_eq!(family("stand"), Some(Family::Stand(1)));
+        assert_eq!(family("walk"), Some(Family::Walk(CYCLE_PACE)));
+        assert_eq!(family("walk_95"), Some(Family::Walk(0.95)));
+        assert_eq!(family("walk_0"), None);
+        assert_eq!(family("walk_fast"), None);
+        assert_eq!(family("wave"), None);
     }
 
     /// A plain image gets its chain and a mipmapped sampler; one that has a
@@ -1083,17 +1276,58 @@ mod tests {
         assert_eq!(float.texture_descriptor.mip_level_count, 1);
     }
 
-    /// Standing below a fifth of the walk, the cycle at its own speed at the
-    /// walk, three times it at the run — and never outside its band.
+    /// Standing below a fifth of the walk or without a walk clip; the cycle at
+    /// its own speed at its pace, three times it at a run — never outside its
+    /// band. Of two clips that fit a pace the variant picks; none fitting, the
+    /// nearest; and a clip once chosen is kept while its rate stays in the
+    /// band.
     #[test]
     fn the_gait_follows_the_pace() {
-        assert_eq!(gait(0.0), Gait::Idle);
-        assert_eq!(gait(0.2), Gait::Idle);
-        assert_eq!(gait(CYCLE_PACE), Gait::Walk { rate: 1.0 });
-        assert_eq!(gait(5.0), Gait::Walk { rate: 3.0 });
-        assert_eq!(gait(0.4), Gait::Walk { rate: 0.6 });
-        assert_eq!(Gait::Idle.clip(), "idle");
-        assert_eq!(gait(CYCLE_PACE).clip(), "walk");
+        let one = [CYCLE_PACE];
+        assert_eq!(gait(0.0, &one, 0, Gait::Idle), Gait::Idle);
+        assert_eq!(gait(0.2, &one, 0, Gait::Idle), Gait::Idle);
+        assert_eq!(gait(1.5, &[], 0, Gait::Idle), Gait::Idle);
+        assert_eq!(
+            gait(CYCLE_PACE, &one, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 1.0 }
+        );
+        assert_eq!(
+            gait(5.0, &one, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 3.0 }
+        );
+        assert_eq!(
+            gait(0.4, &one, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 0.6 }
+        );
+        let two = [1.0, 1.5];
+        assert_eq!(
+            gait(1.2, &two, 0, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 1.2 }
+        );
+        assert_eq!(
+            gait(1.2, &two, 1, Gait::Idle),
+            Gait::Walk { clip: 1, rate: 0.8 }
+        );
+        assert_eq!(
+            gait(0.5, &two, 1, Gait::Idle),
+            Gait::Walk { clip: 0, rate: 0.6 }
+        );
+        assert_eq!(
+            gait(5.0, &two, 0, Gait::Idle),
+            Gait::Walk { clip: 1, rate: 3.0 }
+        );
+        let walking = Gait::Walk { clip: 0, rate: 1.0 };
+        assert_eq!(
+            gait(1.35, &two, 1, walking),
+            Gait::Walk {
+                clip: 0,
+                rate: 1.35
+            }
+        );
+        assert_eq!(
+            gait(1.5, &two, 0, walking),
+            Gait::Walk { clip: 1, rate: 1.0 }
+        );
     }
 
     /// The walkway nodes of a spawned model are read out of its hierarchy with
@@ -1206,7 +1440,7 @@ mod tests {
             .spawn((
                 Person {
                     gltf: Handle::default(),
-                    pose: Pose::Idle,
+                    pose: Pose::Idle(0),
                     phase: 0.0,
                     cull: PERSON_CULL,
                 },
@@ -1239,7 +1473,7 @@ mod tests {
             .spawn((
                 Person {
                     gltf: Handle::default(),
-                    pose: Pose::Idle,
+                    pose: Pose::Idle(0),
                     phase: 0.0,
                     cull: PERSON_CULL,
                 },

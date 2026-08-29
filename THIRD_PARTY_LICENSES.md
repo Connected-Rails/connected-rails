@@ -105,9 +105,57 @@ CC0 were: Data Collection AB, Joel Palmius, Jonas Hauquier."* The MakeHuman
 base mesh and targets are CC0 as well (MakeHuman's `makehuman_license.txt`).
 
 Nothing of MakeHuman's program code is included; the pipeline runs it, the
-repository only keeps what it exported. The generated files are content of
-this repository and, being derived from CC0 material, carry no further
-attribution requirement — the credit above is given because it is deserved.
+repository only keeps what it exported. The generated meshes and textures are
+content of this repository and, being derived from CC0 material, carry no
+further attribution requirement — the credit above is given because it is
+deserved.
+
+The **animation clips** in the same files are another matter: they are motion
+capture of real people from two collections licensed under Creative Commons
+Attribution. The recordings themselves are not in the repository —
+`tools/characters/fetch_mocap.py` downloads them into a cache, `clips.json`
+says which file each clip comes from — but the clips in `mods/people/assets/*.glb`
+are **adaptations** of them: `tools/characters/mocap.py` retargets the
+recorded motion onto the MakeHuman rig of each character, cuts one gait cycle
+or a ten-to-twenty-second loop out of a recording, resamples it and closes the
+loop, and `build_character.py` lays the upper body of an idle over a seated
+pose. The originals are:
+
+- **The 100STYLE Dataset — Ian Mason.** © Ian Mason; Ian Mason, Sebastian
+  Starke, Taku Komura: "Real-Time Style Modelling of Human Locomotion via
+  Feature-Wise Transformations and Local Motion Phases", ACM Transactions on
+  Graphics, 2022. <https://www.ianxmason.com/100style/>, archived at
+  <https://zenodo.org/record/8127870>. Licensed under the Creative Commons
+  Attribution 4.0 International licence
+  (<https://creativecommons.org/licenses/by/4.0/>). The walks and idles in the
+  `Neutral`, `Rushed`, `OnPhoneLeft`, `OnPhoneRight`, `HandsInPockets`,
+  `ArmsFolded`, `ArmsBehindBack`, `Depressed`, `Proud`, `Elated`, `Old`,
+  `LookUp`, `Akimbo` and `Followed` styles come from it.
+- **Open Motion Project by ACCAD / The Ohio State University.** © Advanced
+  Computing Center for the Arts and Design (ACCAD), The Ohio State University.
+  <https://accad.osu.edu/research/motion-lab/mocap-system-and-data>. Licensed
+  under the Creative Commons Attribution 3.0 Unported licence
+  (<https://creativecommons.org/licenses/by/3.0/>). The `Female1`, `Male1` and
+  `Male2` walks, stands, sways and look-arounds come from it.
+
+Both licences allow the adapted clips to be used and redistributed for any
+purpose, including commercially, on the conditions above: the credit, the
+licence reference and the note that the material was changed have to travel
+with every copy of the character files — a binary release, a mod that copies a
+file out of `mods/people/`, a fork. This file is that notice; ship it
+alongside. The clips are provided as they are, without warranties of any kind,
+as the licences say; neither the datasets nor their authors endorse this
+simulator or anything made with it. The additional permission in `LICENSE`
+lets mod content be licensed freely, but it is the Licensor's permission for
+the Licensor's own work — it cannot relicense these clips, which stay CC BY
+wherever they go.
+
+The [CMU Graphics Lab motion capture database](http://mocap.cs.cmu.edu/) was
+considered and not used. Its terms are a bespoke notice, not a licence: free
+for research, allowed inside commercially-sold products, but "you may not
+resell this data directly, even in converted form". Character files that
+`LICENSE` explicitly lets mods sell would put a converted copy of the data in
+exactly that position, so the doubt was left out of the repository.
 
 ## Rust dependencies
 

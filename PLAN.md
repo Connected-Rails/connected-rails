@@ -484,12 +484,21 @@ the sun and sky through the column the sample's body density says stands above i
 the whole difference between an overcast that is a grey sky and one that is a black slab.
 
 Two things make that resolution affordable, and both matter more than the march itself.
-**The panorama is amortised**: one texel in sixteen is rewritten each frame on a 4 × 4 Bayer
-slot and the pass does not clear, so 131 k texels a frame buy a sky at 0.18° a texel — fewer
-texels than a 768 × 384 panorama rewritten whole, and 2.7 × the angular resolution, which is
-the difference between a cumulus edge and a staircase. Sixteen frames is a quarter of a second,
-in which a cloud five kilometres out drifts a fifth of a texel. **The noise is sampled
-anisotropically**: the third texture coordinate is the fraction of the way up the deck rather
+**The panorama is amortised**: one texel in sixteen is marched each frame on a 4 × 4 Bayer
+slot and the other fifteen are carried over from the frame before, so 131 k texels a frame buy
+a sky at 0.18° a texel — fewer texels than a 768 × 384 panorama rewritten whole, and 2.7 × the
+angular resolution, which is the difference between a cumulus edge and a staircase. Sixteen
+frames is a quarter of a second, in which a cloud five kilometres out drifts a fifth of a
+texel. The march is *blended into* the texel rather than written over it — the panorama is two
+buffers that swap roles each frame, and a texel remembers about a second whatever the frame
+rate — and every turn the ray goes through a new point of the texel, starts a new way into its
+first step and aims its light cone somewhere new, so the blend converges on the integral over
+all three: an edge filtered over the texel's footprint of sky, and a body without noise. One
+sample of either is what a 2K screen, stretching a texel over five pixels, showed as a raster.
+The history is read where the deck has drifted from over the turn, so the blend follows a cloud
+instead of smearing it along its path, and each texel takes its own phase in the sequences —
+anything periodic, blended at a running average's unequal weights, shows through as a lattice.
+**The noise is sampled anisotropically**: the third texture coordinate is the fraction of the way up the deck rather
 than a metre count, because a layer is a kilometre thick against eighteen across and one scale
 for all three axes extrudes a single horizontal slice through the whole cloud.
 

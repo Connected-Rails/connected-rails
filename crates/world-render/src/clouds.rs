@@ -5,10 +5,28 @@
 //! 2048 × 1024 equirectangular panorama and a dome samples it: a camera that
 //! stands on the ground never enters a cloud, so a direction is all a cloud has
 //! to be a function of. What makes that panorama affordable at this size is
-//! **amortisation** — one texel in sixteen is rewritten each frame, on a 4 × 4
-//! Bayer slot, and the pass does not clear, so the other fifteen keep what
-//! earlier frames left. 131 k texels a frame, which is fewer than the 768 × 384
-//! panorama this replaces cost at full rate, for 2.7 × the angular resolution.
+//! **amortisation** — one texel in sixteen is marched each frame, on a 4 × 4
+//! Bayer slot, and the other fifteen are carried over from the frame before.
+//! 131 k texels a frame, which is fewer than the 768 × 384 panorama this
+//! replaces cost at full rate, for 2.7 × the angular resolution.
+//!
+//! A march is not written over its texel but **blended into it**. The panorama
+//! is two buffers that swap roles every frame — the pass reads the one written
+//! last frame and writes the other — and a fresh march is mixed into what the
+//! texel held at a weight that gives the panorama a memory of about a second
+//! ([`HISTORY_SECONDS`]), whatever the frame rate. Each march sends its ray
+//! through a new point of the texel, starts it a new way into the first step
+//! and aims its light cone somewhere new every turn, so what the blend
+//! converges on is the integral over the texel, the step and the cone: a cloud
+//! edge filtered over the texel's footprint of sky, and a body without noise.
+//! Both are what a 2K screen, which stretches a texel over five pixels, showed
+//! as a raster — a stepped edge, and one sample's noise frozen into every
+//! texel, because the jitter used to *be* the Bayer slot, a 4 × 4 pattern that
+//! repeated exactly and never averaged out. The deck drifts while the panorama
+//! remembers, so a march reads its history where the cloud *was* a turn ago
+//! ([`TurnClock`]) and the blend follows the cloud instead of smearing it along
+//! its path. A change that makes the history worthless — the quality switch, a
+//! jump of the clock — starts the panorama over.
 //!
 //! What is marched into it depends on the setting:
 //!
@@ -55,6 +73,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat, TextureUsages,
 };
+use bevy::render::view::Msaa;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin, MeshMaterial2d};
 use std::f32::consts::PI;
@@ -68,6 +87,34 @@ const PANORAMA: UVec2 = UVec2::new(2048, 1024);
 /// `clouds.wgsl`. A quarter of a second at 60 Hz, in which a cloud five
 /// kilometres out drifts a fifth of a texel.
 const AMORTISE: u32 = 16;
+
+/// How long the panorama remembers \[s\]. A remarched texel is blended into
+/// what it held at the weight that makes the running average forget over about
+/// this long, whatever the frame rate — so the noise one march leaves is
+/// averaged over as many marches as fit into a second. Long enough to take the
+/// jitter and the cone wobble out of the volumetric path — at the horizon a
+/// step is 300 m against wisps of 90, and one sample of that is what a 2K
+/// screen showed as a raster — and short enough that a deck drifting at 25 m/s
+/// five kilometres out smears by a texel or two and no more.
+const HISTORY_SECONDS: f32 = 1.0;
+
+/// The least weight a fresh march ever gets. Past a few hundred frames a second
+/// the second's worth of turns would make each one nearly weightless, and the
+/// panorama would lag a change of weather by more than the eye forgives.
+const HISTORY_BLEND_MIN: f32 = 0.08;
+
+/// A clock that moves by more than this between two frames has jumped — the
+/// console's `time`, a new run — and taken the drift of the deck kilometres
+/// with it, so the history describes a sky that is gone. A frame is a tenth of a
+/// second at the very worst; a jump is minutes.
+const TIME_JUMP: f64 = 10.0;
+
+/// The fractional part of the golden ratio, and Roberts' R2 pair: the steps of
+/// the best-spread sequences there are in one and in two dimensions. The first
+/// walks the ray jitter from turn to turn, the second the point inside the texel
+/// the ray is sent through.
+const GOLDEN: f64 = 0.618_033_988_749_895;
+const R2: [f64; 2] = [0.754_877_666_246_692_7, 0.569_840_290_998_053_2];
 
 /// The layer the panorama camera and its quad live on, so the pass sees nothing
 /// else and nothing else sees them.
@@ -166,6 +213,16 @@ pub struct CloudParams {
     /// \[1/m\], w = its scale height \[m\] — the march fades a far cloud into
     /// the fog the way it fades one into the blue.
     pub frame: Vec4,
+    /// x = the weight of this frame's march against what the texel held (1
+    /// replaces it); y = where in its golden-ratio sequence this turn's ray
+    /// jitter stands, 0 … 1, and scaled up the seed of the cone wobble; z = the
+    /// point in the texel this turn's ray is sent through, 0 … 1, on the
+    /// panorama's x axis; w = the scenario seconds since the texels this frame
+    /// marches were last marched, by which the deck has drifted since their
+    /// history was written.
+    pub history: Vec4,
+    /// x = the point in the texel on the panorama's y axis; yzw reserved.
+    pub history2: Vec4,
 }
 
 /// The march itself, drawn into the panorama by a camera of its own.
@@ -188,6 +245,12 @@ pub struct CloudMaterial {
     #[texture(5, dimension = "cube")]
     #[sampler(6)]
     sky: Option<Handle<Image>>,
+    /// Last frame's panorama — the other of the two buffers — which this
+    /// frame's pass carries over texel by texel and blends its marches into,
+    /// sampled where the cloud stood a turn ago.
+    #[texture(7)]
+    #[sampler(8)]
+    history: Handle<Image>,
 }
 
 impl Material2d for CloudMaterial {
@@ -246,6 +309,45 @@ impl Material for DomeMaterial {
 #[derive(Component)]
 pub struct Dome;
 
+/// The two panorama buffers. Each frame one is written and the other read, and
+/// [`update`] swaps them — a pass cannot sample the texture it renders into,
+/// and the blend needs what the texel held.
+#[derive(Resource)]
+struct Panorama {
+    buffers: [Handle<Image>; 2],
+}
+
+/// Marks the camera that draws the panorama, so [`update`] can point it at the
+/// buffer whose turn it is.
+#[derive(Component)]
+struct PanoramaCamera;
+
+/// The scenario clock at each of the last [`AMORTISE`] frames, so a march can
+/// be told how long ago its texel was last marched — one turn, whatever the
+/// frame rate did in between — and read its history where the deck has drifted
+/// from.
+#[derive(Default)]
+struct TurnClock {
+    seconds: [f64; AMORTISE as usize],
+}
+
+impl TurnClock {
+    /// Records `now` for `frame` and returns the seconds since the texels this
+    /// frame marches were last marched. Zero through the warm-up: every texel
+    /// is marched every frame there, and a frame's drift is not worth a
+    /// resample.
+    fn advance(&mut self, frame: u32, now: f64) -> f32 {
+        let slot = (frame % AMORTISE) as usize;
+        let delta = if frame >= AMORTISE {
+            (now - self.seconds[slot]).max(0.0)
+        } else {
+            0.0
+        };
+        self.seconds[slot] = now;
+        delta as f32
+    }
+}
+
 /// Spawns the panorama, the camera that draws it, and the dome that shows it.
 /// Startup rather than a call in `sky::spawn`, so neither program has to know
 /// that the sky grew a cloud layer.
@@ -256,7 +358,7 @@ fn spawn(
     mut clouds: ResMut<Assets<CloudMaterial>>,
     mut domes: ResMut<Assets<DomeMaterial>>,
 ) {
-    let panorama = images.add(panorama_target());
+    let buffers = [images.add(panorama_target()), images.add(panorama_target())];
     let material = clouds.add(CloudMaterial {
         params: CloudParams::default(),
         shape: images.add(noise_volume(SHAPE_VOLUME, 4.0, 7, Shape::Dense)),
@@ -264,6 +366,7 @@ fn spawn(
         // 350 m billow down to an 87 m wisp. Only its Worley channels are read.
         detail: images.add(noise_volume(DETAIL_VOLUME, 2.0, 23, Shape::Dense)),
         sky: None,
+        history: buffers[1].clone(),
     });
 
     // A camera of its own, on its own layer, rendering one quad — the cheapest
@@ -272,17 +375,20 @@ fn spawn(
     let layer = RenderLayers::layer(CLOUD_LAYER);
     commands.spawn((
         crate::Persistent,
+        PanoramaCamera,
         Camera2d,
         Camera {
             order: -1,
-            // **Not cleared.** Each frame writes one texel in sixteen and the
-            // rest have to survive — that is the whole amortisation. It also
-            // means the panorama has to be filled before it is first shown,
-            // which `update` does by marching every texel for the first turn.
+            // Not cleared: every texel is written each frame, marched or carried
+            // over from the other buffer, so a clear would only be paid for.
             clear_color: ClearColorConfig::None,
             ..default()
         },
-        RenderTarget::Image(panorama.clone().into()),
+        // One quad over the whole target has no edge to multisample; the
+        // default four samples would cost a resolve and a panorama four times
+        // the size, every frame.
+        Msaa::Off,
+        RenderTarget::Image(buffers[0].clone().into()),
         layer.clone(),
     ));
     commands.spawn((
@@ -297,16 +403,18 @@ fn spawn(
         Dome,
         Mesh3d(meshes.add(dome_mesh())),
         MeshMaterial3d(domes.add(DomeMaterial {
-            panorama,
+            panorama: buffers[0].clone(),
             params: DomeParams::default(),
         })),
         Transform::from_scale(Vec3::splat(DOME_RADIUS)),
         Visibility::default(),
     ));
+    commands.insert_resource(Panorama { buffers });
 }
 
-/// The image the march writes into: half float, because a sunlit cloud edge is
-/// well above 1, and wrapped in longitude so the seam behind the observer closes.
+/// One of the two images the march writes into: half float, because a sunlit
+/// cloud edge is well above 1, and wrapped in longitude so the seam behind the
+/// observer closes.
 fn panorama_target() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
@@ -563,12 +671,14 @@ fn remap(value: f32, from_min: f32, from_max: f32, to_min: f32, to_max: f32) -> 
     to_min + (value - from_min) / (from_max - from_min).max(1e-5) * (to_max - to_min)
 }
 
-/// Feeds the march from the sky, turns the amortisation over and keeps the dome
-/// on the camera.
+/// Feeds the march from the sky, turns the amortisation over, swaps the two
+/// panorama buffers and keeps the dome on the camera.
 #[allow(clippy::too_many_arguments)]
 fn update(
     sky: Res<Sky>,
     quality: Res<Quality>,
+    time: Res<Time>,
+    panorama: Res<Panorama>,
     mut materials: ResMut<Assets<CloudMaterial>>,
     mut domes: ResMut<Assets<DomeMaterial>>,
     handles: Query<&MeshMaterial2d<CloudMaterial>>,
@@ -579,7 +689,10 @@ fn update(
     // `AtmosphereEnvironmentMapLight`, and the handle in it is the sky itself.
     sky_map: Query<&GeneratedEnvironmentMapLight>,
     mut dome: Query<&mut Transform, (With<Dome>, Without<Sun>)>,
+    mut target: Query<&mut RenderTarget, With<PanoramaCamera>>,
     mut frame: Local<u32>,
+    mut last_seconds: Local<Option<f64>>,
+    mut clock: Local<TurnClock>,
 ) {
     // The sun's own transform looks *along* the light, so the direction towards
     // it is the other way.
@@ -590,15 +703,22 @@ fn update(
     let weather = sky.weather;
     let daylight = ((sun_dir.y * 90.0f32.to_radians().sin() + 0.1) * 4.0).clamp(0.0, 1.0);
 
-    // A panorama that holds nothing — the first frames, or the frames after the
-    // setting was dialled and every texel means something else now — has to be
-    // marched whole, because there is no older frame worth keeping.
-    *frame = if quality.is_changed() {
+    // A panorama that holds nothing — the first frames, the frames after the
+    // setting was dialled and every texel means something else now, or after
+    // the clock jumped and took the deck kilometres along — has to be marched
+    // whole, because there is no older frame worth keeping.
+    let jumped = last_seconds.is_some_and(|last| (sky.seconds - last).abs() > TIME_JUMP);
+    *last_seconds = Some(sky.seconds);
+    *frame = if quality.is_changed() || jumped {
         0
     } else {
-        frame.saturating_add(1)
+        // Wrapping on purpose: the wrap is one more warm-up, two years in.
+        frame.wrapping_add(1)
     };
     let writing = writing_slot(*frame).map_or(-1.0, |slot| slot as f32);
+    let (blend, turn) = history(*frame, time.delta_secs());
+    let sequence = sequence(turn);
+    let turn_seconds = clock.advance(*frame, sky.seconds);
 
     let params = CloudParams {
         sun: sun_dir.extend(daylight),
@@ -623,6 +743,8 @@ fn update(
             crate::sky::haze_extinction(weather.visibility),
             crate::sky::haze_height(weather.fog_depth),
         ),
+        history: Vec4::new(blend, sequence.x, sequence.y, turn_seconds),
+        history2: Vec4::new(sequence.z, 0.0, 0.0, 0.0),
     };
     // The cubemap arrives with the first camera and is a new image with every
     // run's camera; the march follows whichever one there is.
@@ -630,13 +752,26 @@ fn update(
         .iter()
         .next()
         .map(|light| light.environment_map.clone());
+    // The buffers swap roles every frame: this frame's pass reads what last
+    // frame's wrote and writes the other, and the dome shows the one just
+    // written. Which is which does not matter on the frame after a reset — the
+    // blend is 1 there and the history is not looked at.
+    let (write, read) = if frame.is_multiple_of(2) {
+        (0, 1)
+    } else {
+        (1, 0)
+    };
     for handle in &handles {
         if let Some(mut material) = materials.get_mut(&handle.0) {
             material.params = params;
+            material.history = panorama.buffers[read].clone();
             if material.sky != sky_map {
                 material.sky = sky_map.clone();
             }
         }
+    }
+    for mut target in &mut target {
+        *target = RenderTarget::Image(panorama.buffers[write].clone().into());
     }
 
     let dome_params = DomeParams {
@@ -648,6 +783,7 @@ fn update(
     for handle in &dome_handles {
         if let Some(mut dome) = domes.get_mut(&handle.0) {
             dome.params = dome_params;
+            dome.panorama = panorama.buffers[write].clone();
         }
     }
 
@@ -665,6 +801,39 @@ fn update(
 /// worth keeping — and from there each slot comes up once a turn.
 fn writing_slot(frame: u32) -> Option<u32> {
     (frame >= AMORTISE).then_some(frame % AMORTISE)
+}
+
+/// What this frame's march weighs against the texel's history, and which turn
+/// of the jitter sequence it takes.
+///
+/// The first frame after a reset replaces the history outright. The frames of
+/// the warm-up turn — every texel marched, every frame — average exactly,
+/// `1/n`, until that drops under the running weight, which is one turn's share
+/// of [`HISTORY_SECONDS`] at the current frame rate: more frames a second are
+/// more marches to average, and each of them counts for less. The turn moves on
+/// with every march of a texel — every frame while warming up, once a turn
+/// after — so no two marches blended together share a jitter.
+fn history(frame: u32, delta_secs: f32) -> (f32, u32) {
+    let running = (AMORTISE as f32 * delta_secs / HISTORY_SECONDS).clamp(HISTORY_BLEND_MIN, 1.0);
+    let blend = (1.0 / (frame as f32 + 1.0)).max(running);
+    let turn = if frame < AMORTISE {
+        frame
+    } else {
+        AMORTISE + frame / AMORTISE
+    };
+    (blend, turn)
+}
+
+/// Where a turn stands in its sequences: x = the ray jitter's offset, yz = the
+/// point in the texel, all 0 … 1. Taken in f64 and only the fractions sent — a
+/// turn count times an irrational outgrows an f32's fraction within an hour.
+fn sequence(turn: u32) -> Vec3 {
+    let turn = f64::from(turn);
+    Vec3::new(
+        (turn * GOLDEN).fract() as f32,
+        (0.5 + turn * R2[0]).fract() as f32,
+        (0.5 + turn * R2[1]).fract() as f32,
+    )
 }
 
 /// The colour of the sunlight that reaches the cloud layer, from the sun's
@@ -726,6 +895,109 @@ mod tests {
             visited,
             (0..AMORTISE).collect(),
             "every slot comes up, and none twice over"
+        );
+    }
+
+    /// The blend replaces the history on the first frame after a reset, averages
+    /// the warm-up exactly, and settles on one turn's share of a second — never
+    /// under the floor, never over one.
+    #[test]
+    fn the_history_forgets_over_about_a_second() {
+        let dt = 1.0 / 60.0;
+        assert_eq!(
+            history(0, dt).0,
+            1.0,
+            "nothing worth keeping on the first frame"
+        );
+        assert!(
+            (history(1, dt).0 - 0.5).abs() < 1e-6,
+            "the second frame is averaged with the first"
+        );
+        let settled = history(AMORTISE * 4, dt).0;
+        assert!(
+            (settled - AMORTISE as f32 * dt / HISTORY_SECONDS).abs() < 1e-6,
+            "a turn's share of a second: {settled}"
+        );
+        assert_eq!(
+            history(AMORTISE * 4, 1.0 / 240.0).0,
+            HISTORY_BLEND_MIN,
+            "floored at high frame rates"
+        );
+        assert_eq!(
+            history(AMORTISE * 4, 0.5).0,
+            1.0,
+            "a slideshow has no history worth keeping"
+        );
+    }
+
+    /// Every march of one texel has to stand somewhere new in the jitter
+    /// sequence — the warm-up frames one after the other, and after that once a
+    /// turn — or the blend averages the same sample with itself.
+    #[test]
+    fn the_jitter_sequence_moves_on_with_every_march() {
+        let dt = 1.0 / 60.0;
+        let mut turns: Vec<u32> = (0..AMORTISE).map(|frame| history(frame, dt).1).collect();
+        // Slot 3's marches after the warm-up.
+        turns.extend((1..5).map(|turn| history(AMORTISE * turn + 3, dt).1));
+        let distinct: std::collections::BTreeSet<u32> = turns.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            turns.len(),
+            "a turn came up twice: {turns:?}"
+        );
+        // And the two frames of one turn, marching different slots, share it.
+        assert_eq!(
+            history(AMORTISE * 2 + 3, dt).1,
+            history(AMORTISE * 2 + 9, dt).1
+        );
+    }
+
+    /// The sequences stay inside the step and the texel, and over as many turns
+    /// as the history spans no two of them come close — a repeat would be the
+    /// same sample averaged with itself.
+    #[test]
+    fn the_sequences_spread_out() {
+        let points: Vec<Vec3> = (0..64).map(sequence).collect();
+        for p in &points {
+            assert!(
+                p.min_element() >= 0.0 && p.max_element() < 1.0,
+                "{p} out of range"
+            );
+        }
+        for (i, a) in points.iter().enumerate() {
+            for b in &points[i + 1..] {
+                assert!((a.x - b.x).abs() > 1e-3, "jitter repeats: {a} / {b}");
+                let d = ((a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt();
+                assert!(d > 1e-2, "texel point repeats: {a} / {b}");
+            }
+        }
+    }
+
+    /// A march is told how long ago its texel was last marched: nothing while
+    /// warming up, a turn's worth of clock after — sixteen frames, however long
+    /// they took.
+    #[test]
+    fn the_turn_clock_measures_a_turn() {
+        let mut clock = TurnClock::default();
+        let mut now = 100.0;
+        for frame in 0..AMORTISE {
+            assert_eq!(clock.advance(frame, now), 0.0, "warm-up frame {frame}");
+            now += 1.0 / 60.0;
+        }
+        for frame in AMORTISE..AMORTISE * 3 {
+            let turn = clock.advance(frame, now);
+            assert!(
+                (turn - AMORTISE as f32 / 60.0).abs() < 1e-4,
+                "frame {frame}: {turn}"
+            );
+            now += 1.0 / 60.0;
+        }
+        // A stutter is measured, not assumed.
+        now += 0.5;
+        let turn = clock.advance(AMORTISE * 3, now);
+        assert!(
+            (turn - (AMORTISE as f32 / 60.0 + 0.5)).abs() < 1e-4,
+            "{turn}"
         );
     }
 

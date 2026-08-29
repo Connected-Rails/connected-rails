@@ -16,3 +16,6 @@ Thumbs.db
 
 # Python tools (tools/*.py)
 __pycache__/
+
+# The forest measurement writes a throw-away mod (tools/trees/bench_forest.mjs).
+mods/_forest_bench/

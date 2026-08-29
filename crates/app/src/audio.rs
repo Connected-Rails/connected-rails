@@ -377,9 +377,7 @@ pub fn setup_audio(
                 // Starts silent; the curves bring it up in the first frame. A loop entry
                 // repeats its sample for as long as it plays — the recorded ones out of a
                 // mod have no loop region of their own, and the generated ones keep theirs.
-                let source = source
-                    .volume(Decibels::SILENCE)
-                    .loop_region(0.0..);
+                let source = source.volume(Decibels::SILENCE).loop_region(0.0..);
                 let handle = match (positional, audio.emitters.get_mut(&(t, v))) {
                     // Placed in the world: the track rides along on the vehicle, so
                     // distance, stereo placement and the wall are its business.
@@ -774,15 +772,14 @@ mod tests {
     fn loops_repeat_and_one_shots_end() {
         use kira::backend::mock::MockBackendSettings;
         use kira::sound::PlaybackState;
-        let mut manager = AudioManager::<kira::backend::mock::MockBackend>::new(
-            AudioManagerSettings {
+        let mut manager =
+            AudioManager::<kira::backend::mock::MockBackend>::new(AudioManagerSettings {
                 backend_settings: MockBackendSettings {
                     sample_rate: synth::RATE,
                 },
                 ..AudioManagerSettings::default()
-            },
-        )
-        .expect("manager");
+            })
+            .expect("manager");
         // A tenth of a second of tone; one backend pass is 128 frames of it.
         let data = looping(vec![0.25; (synth::RATE / 10) as usize], synth::RATE);
 

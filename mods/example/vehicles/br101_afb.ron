@@ -79,7 +79,9 @@
     // has to carry everything the vehicle is to make.
     //
     // `synth:<name>` is one of the sources the app generates at start-up. A mod's own
-    // samples go in the same field: `file: "example/assets/whine.ogg"`.
+    // samples go in the same field: `file: "example/assets/whine.ogg"`. The cab sounds —
+    // the Sifa/PZB buzzer and every button and switch click — are CC0 recordings in
+    // `assets/sounds/`, credited in THIRD_PARTY_LICENSES.md.
     //
     // One sound is normally several entries. A single loop stretched over a whole speed
     // range by its playback rate drags its formants along and arrives at the top as a toy
@@ -182,13 +184,14 @@
             volume: Some((quantity: Horn, points: [(0.0, 0.0), (1.0, 0.7)])),
             positional: true,
         ),
-        // The buzzer sits in the cab: not placed in the world, so it does not fade with
-        // distance when the camera goes outside.
+        // The Sifa/PZB warning horn sits in the cab: not placed in the world, so it does
+        // not fade with distance when the camera goes outside. The recording is a real
+        // cab buzzer looped seamlessly (see THIRD_PARTY_LICENSES.md).
         (
             name: "buzzer",
-            file: "synth:buzzer",
+            file: "example/assets/sounds/buzzer.ogg",
             trigger: Loop,
-            volume: Some((quantity: Alert, points: [(0.0, 0.0), (1.0, 0.35)])),
+            volume: Some((quantity: Alert, points: [(0.0, 0.0), (1.0, 0.5)])),
             positional: false,
         ),
         // Brake squeal is a *condition* on a loop, not an event: it is heard while the train
@@ -222,91 +225,117 @@
         // or a script moved it. `Every` with the detent spacing clicks a switch on
         // both edges with one entry; a single-point curve is a constant volume.
         // Not positional — the driver's own hand is always at the same distance.
+        // The samples are CC0 recordings of the real kind of hardware (see
+        // THIRD_PARTY_LICENSES.md): a stiff push button for the Sifa pedal, rubber
+        // keys for the PZB buttons and the screen softkeys, toggles and breakers
+        // for the desk switches. Recordings play at their own pitch — a pitch
+        // curve would drag the whole click along.
         (
             name: "sifa-button",
-            file: "synth:contactor",
+            file: "example/assets/sounds/button-stiff.ogg",
             trigger: Rises(quantity: Control(Sifa), threshold: 0.5),
-            volume: Some((quantity: Speed, points: [(0.0, 0.25)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 1.8)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.45)])),
+            positional: false,
+        ),
+        (
+            name: "pzb-acknowledge-button",
+            file: "example/assets/sounds/button-soft.ogg",
+            trigger: Rises(quantity: Control(PzbAcknowledge), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.45)])),
+            positional: false,
+        ),
+        (
+            name: "pzb-override-button",
+            file: "example/assets/sounds/button-soft.ogg",
+            trigger: Rises(quantity: Control(PzbOverride), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.45)])),
+            positional: false,
+        ),
+        (
+            name: "pzb-free-button",
+            file: "example/assets/sounds/button-soft.ogg",
+            trigger: Rises(quantity: Control(PzbExempt), threshold: 0.5),
+            volume: Some((quantity: Speed, points: [(0.0, 0.45)])),
             positional: false,
         ),
         (
             name: "reverser-notch",
-            file: "synth:contactor",
+            file: "example/assets/sounds/reverser.ogg",
             trigger: Every(quantity: Control(Reverser), interval: 0.5),
-            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 1.4)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.5)])),
             positional: false,
         ),
         (
             name: "battery-switch",
-            file: "synth:contactor",
+            file: "example/assets/sounds/switch-breaker.ogg",
             trigger: Every(quantity: Control(Battery), interval: 1.0),
-            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.6)])),
             positional: false,
         ),
         (
             name: "pantograph-switch",
-            file: "synth:contactor",
+            file: "example/assets/sounds/switch-toggle.ogg",
             trigger: Every(quantity: Control(Pantograph), interval: 1.0),
-            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.5)])),
             positional: false,
         ),
         (
             name: "main-switch-switch",
-            file: "synth:contactor",
+            file: "example/assets/sounds/switch-main.ogg",
             trigger: Every(quantity: Control(MainSwitch), interval: 1.0),
-            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.55)])),
             positional: false,
         ),
         (
             name: "compressor-switch",
-            file: "synth:contactor",
+            file: "example/assets/sounds/switch-toggle.ogg",
             trigger: Every(quantity: Control(Compressor), interval: 1.0),
-            volume: Some((quantity: Speed, points: [(0.0, 0.4)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.5)])),
             positional: false,
         ),
         // Wiper switch: four positions 1/3 apart on the normalised travel, so
         // `Every` at that spacing clicks on each detent passed.
         (
             name: "wiper-switch",
-            file: "synth:contactor",
+            file: "example/assets/sounds/switch-detent.ogg",
             trigger: Every(quantity: Control(Wipers), interval: 0.3333333),
-            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.5)])),
             positional: false,
         ),
-        // Display softkeys: a short high click on the press edge only.
+        // Display softkeys: a short high click on the press edge only — the same
+        // rubber key as the PZB buttons, pitched up a little because the MFA keys
+        // are smaller and lighter.
         (
             name: "display-key",
-            file: "synth:contactor",
+            file: "example/assets/sounds/button-soft.ogg",
             trigger: Rises(quantity: Control(Display(0)), threshold: 0.5),
-            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 1.2)])),
             positional: false,
         ),
         (
             name: "display-key-2",
-            file: "synth:contactor",
+            file: "example/assets/sounds/button-soft.ogg",
             trigger: Rises(quantity: Control(Display(1)), threshold: 0.5),
-            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 1.2)])),
             positional: false,
         ),
         // EBuLa softkeys: the same click as the MFA keys.
         (
             name: "display-key-3",
-            file: "synth:contactor",
+            file: "example/assets/sounds/button-soft.ogg",
             trigger: Rises(quantity: Control(Display(2)), threshold: 0.5),
-            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 1.2)])),
             positional: false,
         ),
         (
             name: "display-key-4",
-            file: "synth:contactor",
+            file: "example/assets/sounds/button-soft.ogg",
             trigger: Rises(quantity: Control(Display(3)), threshold: 0.5),
-            volume: Some((quantity: Speed, points: [(0.0, 0.2)])),
-            pitch: Some((quantity: Speed, points: [(0.0, 2.2)])),
+            volume: Some((quantity: Speed, points: [(0.0, 0.35)])),
+            pitch: Some((quantity: Speed, points: [(0.0, 1.2)])),
             positional: false,
         ),
     ],

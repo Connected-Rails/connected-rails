@@ -157,6 +157,40 @@ resell this data directly, even in converted form". Character files that
 `LICENSE` explicitly lets mods sell would put a converted copy of the data in
 exactly that position, so the doubt was left out of the repository.
 
+## Cab sounds in `mods/example/assets/sounds/`
+
+The eight samples the example BR 101's sound table plays — the Sifa/PZB
+warning buzzer and the operating clicks of the Sifa pedal, the three PZB
+buttons, the screen softkeys and the desk switches — are recordings from
+[freesound.org](https://freesound.org), each released under Creative Commons
+Zero 1.0 Universal (<https://creativecommons.org/publicdomain/zero/1.0/>).
+CC0 puts the recordings into the public domain as far as the law allows: they
+may be used, changed and redistributed for any purpose, including
+commercially, with no conditions. The credit below is given because it is
+deserved, not because it is owed.
+
+The files in the repository are processed copies: each recording was trimmed
+to the one event a sound table entry needs, normalised to −1.5 dBFS, converted
+to mono Ogg Vorbis and — for the buzzer, which plays as a loop — cut to a
+whole number of its ~1.76 kHz periods and crossfaded at the wrap so it repeats
+seamlessly. The site's preview files (128 kbit/s MP3) were used, as the
+originals sit behind a login; the processing does not change the licence.
+
+| File | Recording | Author |
+| ---- | --------- | ------ |
+| `buzzer.ogg` | [BiLevel Cab Car cabin buzzer](https://freesound.org/people/chungus43A/sounds/745668/) | chungus43A |
+| `button-stiff.ogg` | [Button_05.wav](https://freesound.org/people/deleted_user_2104797/sounds/346709/) | deleted_user_2104797 |
+| `button-soft.ogg` | [rubber button on electric device](https://freesound.org/people/ShJafari/sounds/747199/) | ShJafari |
+| `switch-toggle.ogg` | [Toggle switch On Off](https://freesound.org/people/cookies+policy/sounds/556636/) | cookies+policy |
+| `switch-breaker.ogg` | [Kill Switch (Large Breaker Switch) .WAV](https://freesound.org/people/EchoCinematics/sounds/131599/) | EchoCinematics |
+| `switch-main.ogg` | [Industrial Switch With Spring](https://freesound.org/people/cookies+policy/sounds/556635/) | cookies+policy |
+| `switch-detent.ogg` | [fan switch.ogg](https://freesound.org/people/BoboTheEpic/sounds/411422/) | BoboTheEpic |
+| `reverser.ogg` | [rotary switch on and off.wav](https://freesound.org/people/ProdMultimediasHQI/sounds/512502/) | ProdMultimediasHQI |
+
+Every sound table entry that plays one of these files carries a
+`see THIRD_PARTY_LICENSES.md` remark in `mods/example/vehicles/br101_afb.ron`,
+so the notice travels with the file a mod would copy out.
+
 ## Rust dependencies
 
 Crates pulled in by Cargo are not vendored here; their licences are those

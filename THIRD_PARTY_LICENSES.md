@@ -52,6 +52,44 @@ Attribution: *The HYG database, © David Nash / Astronomy Nexus, CC BY-SA 4.0.*
 The file is data, not code: it is read by `world_render::sky` and shipped inside
 the binary, and any redistribution of it stays under CC BY-SA 4.0.
 
+## Federal state boundaries in `crates/fields/src/laender.bin`
+
+Which German state a place lies in decides which agricultural service the field
+import asks, which schema comes back and which crop code list applies. The
+boundaries are the **VG2500** of the Bundesamt für Kartographie und Geodäsie —
+the 1:2 500 000 administrative areas — fetched from the BKG's open WFS and
+thinned to about half a kilometre by `tools/gen_laender.py`.
+
+The data is published under the *Datenlizenz Deutschland – Namensnennung – 2.0*
+(<https://www.govdata.de/dl-de/by-2-0>).
+
+Attribution: *© GeoBasis-DE / BKG (2023), dl-de/by-2-0.* The file is data, not
+code: it is read by `fields::land` and shipped inside the binary.
+
+## Crop code tables in `crates/fields/src/crops/`
+
+`nw.csv` maps North Rhine-Westphalia's InVeKoS crop codes onto the render groups
+the simulator draws; `groups.csv` and `arable.csv` hold the weights the import
+draws from where a state publishes no crop. All three were read off the
+**Teilschläge** layer of the Landwirtschaftskammer Nordrhein-Westfalen's WFS by
+`tools/gen_crop_codes.py` — the code, its text, its InVeKoS group and the share
+of the sampled area it covers.
+
+The data is published under the *Datenlizenz Deutschland – Namensnennung – 2.0*.
+
+Attribution: *© Landwirtschaftskammer Nordrhein-Westfalen, dl-de/by-2-0.*
+
+The rest of the field data is **not** shipped: the import fetches it from each
+state's own service at build time and records what it used in the module's
+`field_sources`, so the source note follows the line rather than the program.
+The licences differ per state — see *Fields* in MODS.md, and note that three
+states have not stated one. Rhineland-Palatinate has no service at all, and a
+module outside Germany has no German register under it; both fall back to
+OpenStreetMap, which is **ODbL 1.0** — share-alike, so a module built on it
+carries the obligation on. That is why it is the fallback and not the first
+choice, and why the import names it in the module's attribution and warns in
+its summary.
+
 ## Phosphor icons in the editor bars
 
 The sun on the status bar's day rail, the calendar leaf on its date button and

@@ -1621,6 +1621,186 @@ an imported wood is thinned out or cleared exactly like a painted one. For bulk 
 **marking brush** (key 8) sweeps over the map and marks every tree and object under the
 circle; Delete (or the panel button) removes them together in one undo step.
 
+### Fields
+
+The countryside a line runs through is mostly farmed, and a field is not a green
+rectangle: it is winter wheat, and in April that is ankle-high and blue-green, in June
+waist-high, in late July gold and about to be cut, and in August a stubble field. A line
+stores the **outline and the crop**; everything else follows from the crop and the date:
+
+```ron
+fields: [
+    (
+        polygon: [(lat: 51.5901, lon: 8.1402), (lat: 51.5901, lon: 8.1436), …],
+        crop: "winter-cereal",
+        // What the register said, kept verbatim — nothing reads it, but it is
+        // what says where a wrong crop came from.
+        code: "115",
+        label: "Winterweichweizen",
+        // The direction the field was worked in, against grid east. Furrows,
+        // tramlines and the combine's swath all run along it.
+        direction_deg: 12.4,
+        source: "NW",
+        year: 2026,
+        seed: 8123481956122354,
+    ),
+],
+```
+
+`crop` is one of thirteen groups — the resolution at which two fields genuinely look
+different from a train window:
+
+| id | | id | |
+|---|---|---|---|
+| `winter-cereal` | wheat, rye, barley, triticale | `grassland` | meadow and pasture |
+| `summer-cereal` | the same sown in spring, plus oats | `vegetable` | beds, worked in strips |
+| `maize` | grain and silage | `orchard` | fruit, nuts, Christmas trees |
+| `rapeseed` | and the mustards, which flower like it | `vineyard` | vines |
+| `sugar-beet` | and fodder beet | `fallow` | set-aside, flowering strips, margins |
+| `potato` | | `other` | anything with no group of its own |
+| `legume` | peas, beans, lupins, soya | | |
+
+An id no table knows is drawn as bare ground and called out by the rule check, so a typo
+is visible rather than fatal.
+
+**Nothing about the appearance is stored.** The crop plus the scenario's date gives the
+growth stage, the colour, the ground cover and the row contrast; the `seed` shifts the
+field's own year by up to a week either way, so two neighbouring wheat fields are never
+cut on the same afternoon. That is also what makes fields free over the network: every
+client works the picture out from the same three numbers.
+
+#### Importing them
+
+Every EU member state has to publish what its farmers declared (Art. 67(3) of Regulation
+(EU) 2021/2116), and the German states do it as web services. **File ▸ Import fields…**
+in the route editor asks them:
+
+- **Cover** — the whole module inside its envelope, or the selected field on its own. The
+  first is what a new module wants; the second is for re-fetching one parcel after
+  correcting a crop mapping.
+- **Cut at the boundary** — cut the fields at the envelope, so the neighbouring module
+  owns the rest. Off keeps whole every field whose middle is inside.
+- **Smallest field**, **Clear of the track** — below half a hectare a parcel is a margin
+  strip, and nothing should lie on the formation the ground pulls up to rail height.
+- **Fetch again** — ask the services rather than reading what was fetched before.
+
+The import runs on a thread of its own: a bar, the state being asked, and a Stop that
+means it. It ends in a **summary** — so many fields, so many hectares, this many of each
+crop, these warnings — and nothing is written until **Add to the module** is pressed.
+That is one undo step, so Ctrl+Z takes a whole import back out. A module import replaces
+what an earlier import put there and leaves hand-drawn fields alone.
+
+The **field tool** (landscape category) draws one by hand: clicks set the corners, Enter
+or right-click closes it, and the crop comes from the tool options. That is the way to
+fill a corner the register does not cover, and the only way in a fictional module.
+
+#### A line to look at it on
+
+`lines/boerde.ron` in the example mod is five kilometres across the Soester Börde with 135
+real parcels beside it, and `example:boerdefahrt` drives it:
+
+```bash
+cargo run -p app -- --scenario example:boerdefahrt
+cargo run -p app -- --scenario example:boerdefahrt --date 2026-04-25   # the same fields in April
+```
+
+The module is deliberately plain — two buffer stops, one curve, one main signal — because
+everything worth looking at is beside the track. Drive it in the last week of July, which is
+what the scenario is set to, and the winter wheat is gold with half of it already cut, the
+maize is at full height and dark, and the beet is closed and darker still. Drive the same
+five kilometres in April and it is a different place: nothing about the appearance is
+stored, so the date decides all of it.
+
+Two things it shows that are easy to get wrong when building your own. The **track has to
+sit at the height the ground is** (`height: 100.0` here, matching the terrain's fallback
+where a module ships no DGM) — put the rails eight metres below the plain and the line runs
+down a cutting for its whole length and you see banks instead of countryside. And the
+import's **clearance** decides how close the fields come: the 45 m default keeps them off
+the formation, 20 m brings them up to the lineside where they belong on a plain.
+
+#### What each state publishes
+
+Two levels, and which one a state offers decides how much the import can do. **GSA** is
+the applied-for parcel with its crop code — what a passenger perceives as one field.
+**LPIS** is the field block, arable or grassland and no finer; one block can hold half a
+dozen crops.
+
+| | | |
+|---|---|---|
+| GSA, with the crop | NW, NI (and HB, HH), BB (and BE), SN, TH | dl-de/by-2-0 or CC BY 4.0 |
+| LPIS, blocks only | BY, HE, MV, SL, ST, SH | CC BY 4.0, dl-de/zero-2-0, or unstated |
+| no register — OpenStreetMap instead | RP | ODbL 1.0 |
+
+For an LPIS state the crop is **drawn rather than guessed**: the regional cropping
+statistics give the share of each crop on arable land, and the draw is seeded by the
+parcel's own id. The single field is then wrong about as often as the statistics say it
+should be, and the landscape is right — the correct share of wheat, in fields of the
+right size, in the right places. From a train window that is the whole of the effect.
+
+Rhineland-Palatinate publishes no InVeKoS service at all — the register entry is empty and
+the application portal is behind a login. There the import falls back to **OpenStreetMap**:
+`landuse=farmland` and its neighbours out of Overpass, with the crop drawn from the
+statistics the same way, or read off a `crop=*` tag where a mapper wrote one down. That
+gives the shape of the countryside — which piece is farmed, which is meadow, which is
+vineyard — at whatever coverage the mappers have managed, which is patchy. Note that
+OpenStreetMap is **ODbL**, which is share-alike: a module built on it carries that on. The
+same path is what a module outside Germany gets, where there is no register at all.
+
+The better fallback for Rhineland-Palatinate would be the state's own **ATKIS Basis-DLM**
+(dl-de/by-2-0 since June 2024, object class 41001 `AX_Landwirtschaft` with arable,
+grassland, vineyard and orchard on it). It comes out of a web shop as a whole-state file
+rather than a service, so it needs the same "point the editor at a file" path
+Schleswig-Holstein's GeoPackage needs; neither is built yet.
+
+#### Outside Germany
+
+The approach is **national by nature**: the registers are national, so are their schemas
+and their crop code lists. A module in Austria or the Netherlands finds no state under it
+and takes the same OpenStreetMap fallback — the outline from `landuse=*`, the crop from a
+`crop=*` tag or the statistics, the UTM zone from the longitude rather than from a state's
+convention. The dialog says so before the import runs, and the import warns again in its
+summary, because ODbL is share-alike and thinner than a register.
+
+Doing better means reading that country's own IACS publication. They exist and they have
+the same shape — Austria's AMA data is on data.gv.at under CC BY, with *Feldstücke* and
+*Schläge* carrying a `SNAR_BEZEICHNUNG` land-use code — so adding one is a service entry, a
+crop CSV and an attribution line, the same three things a German state needs. None is built:
+what is built is the mechanism, and the fallback that keeps a foreign module from being
+empty in the meantime.
+
+#### Licences
+
+The data is free, not unconditional. Most states ask for a source note; Schleswig-Holstein
+asks for nothing. The import collects which states it drew on and shows the note verbatim,
+ready to copy into the module's credits, and the line records what it was built against:
+
+```ron
+field_sources: [(land: "NW", year: 2026, fetched: 1787059200)],
+```
+
+Three states have **not stated an open licence** — Mecklenburg-Vorpommern writes "UrhG",
+Saxony-Anhalt says nothing, Baden-Württemberg publishes no open download. The import
+fetches them and marks the module: build and look with them, and get the answer in
+writing before a module that uses them is released. Bavaria's *Feldstückskarte* is
+CC BY-ND — no derivatives, which is exactly what turning a polygon into a mesh is — so
+the import asks its LPIS service under CC BY instead and never touches that one.
+
+#### Correcting a crop mapping
+
+Which bucket *Kohlrübe* belongs in is a judgement call, and the answer changes with the
+region. So the mapping is a CSV, not code:
+
+```
+# cache/fields/crops/nw.csv — code, render group, and documentation after it
+602,potato,Kartoffeln,HF,16.63
+603,sugar-beet,Zuckerrüben,HF,16.21
+```
+
+Drop a file into `cache/fields/crops/` named after the state (`nw.csv`, `by.csv`, …) and
+it is read over the built-in table the next time the dialog opens; `groups.csv` and
+`arable.csv` override the weights the draws use. Only the first two columns are read —
+the rest is there so a human can see what a row is about.
+
 ### Height data (DGM)
 
 A module can carry its own ground, so it runs without `--dgm` on the command line:

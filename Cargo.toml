@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/i18n",
+    "crates/fields",
     "crates/app-icon",
     "crates/world-coords",
     "crates/track-model",
@@ -59,6 +60,7 @@ content = { path = "crates/content" }
 mod-runtime = { path = "crates/mod-runtime" }
 ai-driver = { path = "crates/ai-driver" }
 imagery = { path = "crates/imagery" }
+fields = { path = "crates/fields" }
 editor-ui = { path = "crates/editor-ui" }
 world-render = { path = "crates/world-render" }
 

@@ -5,6 +5,7 @@ mod area_tests;
 pub mod characters;
 pub mod compose;
 pub mod demo;
+pub mod farmland;
 pub mod import;
 pub mod people;
 pub mod route;
@@ -15,12 +16,13 @@ pub mod vehicles;
 pub use characters::{CharacterSpec, Gender, Role};
 pub use compose::Composition;
 pub use demo::musterbahn;
+pub use farmland::{FieldPatch, Fields};
 pub use import::{ImportOptions, ImportReport, import_line};
 pub use people::{
     Crowd, PersonInstance, Pose, StrollAgent, StrollPose, Walkway, WalkwayKind, WalkwayNode,
     embedded_walkways, stroll_pose,
 };
-pub use route::{CompiledLine, LineSource, TreeSource};
+pub use route::{CompiledLine, FieldSource, LineSource, TreeSource};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{
     Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,

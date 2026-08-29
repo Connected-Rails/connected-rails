@@ -1,0 +1,34 @@
+# InVeKoS group code -> the render groups it can stand for, with weights.
+# For services that publish only the group (Lower Saxony, Saxony): the render
+# group is drawn from these weights, seeded by the parcel id, so the same
+# parcel always comes out as the same crop (plan ch. 5).
+# Weighted by area, read off North Rhine-Westphalia's Teilschlaege over ten
+# sample regions — see tools/gen_crop_codes.py.
+# Columns: group, render group, weight.
+AF,maize,0.7780
+AF,grassland,0.2215
+DA,orchard,0.6768
+DA,vegetable,0.3195
+DA,vineyard,0.0038
+EP,maize,1.0000
+EW,legume,1.0000
+GL,grassland,0.9883
+GL,orchard,0.0094
+GM,vegetable,1.0000
+GT,winter-cereal,0.8531
+GT,maize,0.1150
+GT,summer-cereal,0.0319
+HF,sugar-beet,0.5093
+HF,potato,0.4907
+HP,vegetable,1.0000
+OE,rapeseed,0.9904
+OE,legume,0.0072
+PA,fallow,1.0000
+SF,other,0.4207
+SF,fallow,0.3386
+SF,grassland,0.1322
+SF,vegetable,0.1006
+SF,summer-cereal,0.0052
+SL,fallow,0.9772
+SL,other,0.0228
+ZP,vegetable,1.0000

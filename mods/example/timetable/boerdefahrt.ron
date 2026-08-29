@@ -1,0 +1,20 @@
+// The Bördefahrt's one stop, in front of the main signal. It is what turns the run into
+// something with a score: position error and delay at the stop, on top of the scenario's
+// own points.
+(
+    number: "RB 59",
+    category: "RB",
+    kind: Scenario,
+    stops: [
+        (
+            name: "Börde Bksig",
+            edge: EdgeId(0),
+            s: 4560.0,
+            // Five kilometres from a standing start, with a stop at the end: four and a
+            // half minutes is a run, not a race.
+            arrival: 270.0,
+            departure: 330.0,
+            platform: "1",
+        ),
+    ],
+)

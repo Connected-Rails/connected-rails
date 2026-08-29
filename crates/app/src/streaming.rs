@@ -138,6 +138,7 @@ impl TerrainStreamer {
 }
 
 /// Loads and discards terrain tiles around camera and trains.
+#[allow(clippy::too_many_arguments)]
 pub fn stream_terrain(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -146,6 +147,13 @@ pub fn stream_terrain(
     sim: Res<SimResource>,
     origin: Res<Origin>,
     camera: Query<&GlobalTransform, With<ui::CabCamera>>,
+    // The farmland of a tile and the day it is drawn on — one material per
+    // crop, shared by every tile (see `world_render::farmland`).
+    (mut field_materials, mut field_assets, sky): (
+        ResMut<world_render::FieldMaterials>,
+        ResMut<Assets<world_render::FieldMaterial>>,
+        Res<world_render::sky::Sky>,
+    ),
 ) {
     let options = streamer.options;
     // Every train counts, not just the player's — otherwise an AI train would drive
@@ -238,6 +246,19 @@ pub fn stream_terrain(
             radius: tile.radius,
             lod: tile.lod,
         });
+        // The fields hang under the tile, so they stream out with it.
+        world_render::spawn_fields(
+            &mut commands,
+            &mut meshes,
+            &mut world_render::FieldDraw {
+                materials: &mut field_materials,
+                assets: &mut field_assets,
+                month: sky.month,
+                day: sky.day,
+            },
+            entity,
+            &tile.fields,
+        );
         streamer.missing += stats.missing;
         streamer.tile_loads = stats.tile_loads;
         streamer.loaded.insert(

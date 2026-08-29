@@ -12,6 +12,17 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use sim_core::brakes::DriverBrakeValve;
 use sim_core::shunt::ShuntCommand;
+use std::sync::LazyLock;
+
+/// Whether the running session is Wayland, i.e. whether the pointer can be locked
+/// instead of merely confined. Read once: this guesses from the environment exactly the
+/// way winit picks its unix backend — a non-empty `WAYLAND_DISPLAY` or `WAYLAND_SOCKET`
+/// means Wayland — so the guess is right whenever the window really is on Wayland,
+/// including through XWayland's usual leaking of both variables.
+static POINTER_LOCKABLE: LazyLock<bool> = LazyLock::new(|| {
+    let set = |key: &str| std::env::var_os(key).is_some_and(|value| !value.is_empty());
+    set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET")
+});
 
 /// Camera of the player.
 #[derive(Component)]
@@ -462,7 +473,7 @@ pub fn grab_cursor(
     // no re-centring, because it does not move. X11 cannot lock at all, so there the
     // pointer is confined and pushed back to the middle every frame, which is what keeps
     // it off the window edge.
-    let lockable = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let lockable = *POINTER_LOCKABLE;
     for (mut window, mut cursor) in windows.iter_mut() {
         if cursor.visible == walking {
             cursor.visible = !walking;

@@ -14,10 +14,13 @@
 //! the same rain. `time` moves the run's clock, which the operating day's dispatcher,
 //! the scenario and the sun all hang off; a client is refused, because a clock jump
 //! cannot be replicated as a setpoint and would put the peers' worlds out of step. It
-//! is gated rather than shipped half-way.
+//! is gated rather than shipped half-way. The `fly` command, by contrast, moves nothing
+//! but the local view — a camera of one's own is client-owned (`CLAUDE.md` ch. 20) — so
+//! it needs no wire at all.
 
 use crate::bindings;
 use crate::theme::{Face, Fonts, TEXT_BRIGHT, TEXT_FAINT, TEXT_MID, text};
+use crate::ui::{CameraMode, CameraState};
 use crate::{GameState, SimResource, net};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -229,6 +232,7 @@ pub fn console(
     keys: Res<ButtonInput<KeyCode>>,
     mut typed: MessageReader<KeyboardInput>,
     mut sim: ResMut<SimResource>,
+    mut camera: ResMut<CameraState>,
     role: Option<Res<net::Role>>,
     mut wishes: MessageWriter<net::WeatherRequest>,
     mut log: Query<&mut Text, With<LogMarker>>,
@@ -265,7 +269,12 @@ pub fn console(
                 state.completing = None;
             }
             Key::Enter if !press.repeat => {
-                if let Some(preset) = run_line(&mut state, &mut sim.0, is_client(role.as_deref())) {
+                if let Some(preset) = run_line(
+                    &mut state,
+                    &mut sim.0,
+                    &mut camera,
+                    is_client(role.as_deref()),
+                ) {
                     wishes.write(net::WeatherRequest(preset));
                 }
             }
@@ -407,11 +416,11 @@ fn suggestions(line: &str) -> Vec<String> {
 
 /// The candidates for word number `word` of the line, of which `prefix` is typed.
 fn completions(words: &[&str], word: usize, prefix: &str) -> Vec<String> {
-    let prefix = prefix.to_ascii_lowercase();
+    let prefix = prefix.trim_start_matches('/').to_ascii_lowercase();
     let base: Vec<String> = if word == 0 {
         COMMANDS.iter().map(|c| c.name.to_string()).collect()
     } else {
-        let Some(first) = words.first() else {
+        let Some(first) = words.first().map(|word| word.trim_start_matches('/')) else {
             return Vec::new();
         };
         let Some(command) = COMMANDS.iter().find(|c| c.name.eq_ignore_ascii_case(first)) else {
@@ -427,11 +436,13 @@ fn completions(words: &[&str], word: usize, prefix: &str) -> Vec<String> {
 
 // ----------------------------------------------------------------------------- commands
 
-/// What a command finds when it runs: the simulation, the console to print into, and
-/// whether this side has to ask the server for what it wants.
+/// What a command finds when it runs: the simulation, the console to print into, the
+/// view state, and whether this side has to ask the server for what it wants.
 struct Ctx<'a> {
     sim: &'a mut Sim,
     console: &'a mut Console,
+    /// The view state, which `fly` flips — the camera is nothing the simulation holds.
+    camera: &'a mut CameraState,
     /// True on a multiplayer client — the world is the server's, so commands wish.
     client: bool,
     /// The weather a client's `weather` command asked the server for.
@@ -449,7 +460,7 @@ struct Command {
     run: fn(&mut Ctx, &[&str]),
 }
 
-const COMMANDS: [Command; 4] = [
+const COMMANDS: [Command; 5] = [
     Command {
         name: "weather",
         usage: "console-usage-weather",
@@ -463,6 +474,13 @@ const COMMANDS: [Command; 4] = [
         help: "console-help-time",
         args: no_args,
         run: cmd_time,
+    },
+    Command {
+        name: "fly",
+        usage: "console-usage-fly",
+        help: "console-help-fly",
+        args: no_args,
+        run: cmd_fly,
     },
     Command {
         name: "help",
@@ -555,6 +573,19 @@ fn cmd_weather(ctx: &mut Ctx, args: &[&str]) {
     }
 }
 
+/// Toggles the free camera: on, it detaches from the train and flies where it looks;
+/// off, the driver is back in his seat. Purely local — the view is the one thing a
+/// client owns outright, so there is nothing to ask the server about.
+fn cmd_fly(ctx: &mut Ctx, _: &[&str]) {
+    if ctx.camera.mode == CameraMode::Fly {
+        ctx.camera.mode = CameraMode::Cab;
+        ctx.console.print(t!("console-fly-off"));
+    } else {
+        ctx.camera.mode = CameraMode::Fly;
+        ctx.console.print(t!("console-fly-on"));
+    }
+}
+
 fn cmd_time(ctx: &mut Ctx, args: &[&str]) {
     let Some(wanted) = args.first() else {
         ctx.console
@@ -633,7 +664,12 @@ fn parse_clock(text: &str) -> Option<f64> {
 ///
 /// Returns the weather a client asked the server for — the caller puts it on the wire,
 /// because a command has no business knowing that a socket exists.
-fn run_line(state: &mut Console, sim: &mut Sim, client: bool) -> Option<Preset> {
+fn run_line(
+    state: &mut Console,
+    sim: &mut Sim,
+    camera: &mut CameraState,
+    client: bool,
+) -> Option<Preset> {
     let line = state.input.trim().to_string();
     state.print(format!("> {line}"));
     state.input.clear();
@@ -646,7 +682,9 @@ fn run_line(state: &mut Console, sim: &mut Sim, client: bool) -> Option<Preset> 
         state.history.push(line.clone());
     }
     let mut words = line.split_whitespace();
-    let name = words.next()?;
+    // A leading slash is tolerated: other games' consoles take `/fly`, and the habit
+    // comes with the player. What is looked up is the word without it.
+    let name = words.next()?.trim_start_matches('/');
     let args: Vec<&str> = words.collect();
     let Some(command) = COMMANDS.iter().find(|c| c.name.eq_ignore_ascii_case(name)) else {
         state.print(t!("console-unknown", name = name));
@@ -655,6 +693,7 @@ fn run_line(state: &mut Console, sim: &mut Sim, client: bool) -> Option<Preset> 
     let mut ctx = Ctx {
         sim,
         console: state,
+        camera,
         client,
         wish: None,
     };
@@ -715,9 +754,11 @@ mod tests {
         sim.start.hour = 0;
         sim.start.minute = 0;
         sim.time = 20.0 * 3_600.0;
+        let mut camera = CameraState::default();
         let mut ctx = Ctx {
             sim: &mut sim,
             console: &mut console,
+            camera: &mut camera,
             client: false,
             wish: None,
         };
@@ -750,6 +791,10 @@ mod tests {
         );
         // A prefix narrows them.
         assert_eq!(suggestions("cl"), vec!["clear".to_string()]);
+        // A slash before the command is tolerated, as in the consoles the habit of
+        // typing one comes from.
+        assert_eq!(suggestions("/fl"), vec!["fly".to_string()]);
+        assert_eq!(suggestions("/weather rai"), vec!["rain".to_string()]);
         // A finished word followed by a space offers that command's arguments.
         let list = suggestions("weather ");
         assert!(list.contains(&"rain".to_string()));
@@ -765,8 +810,9 @@ mod tests {
     fn a_line_is_echoed_and_then_runs() {
         let mut console = Console::default();
         let mut sim = sim();
+        let mut camera = CameraState::default();
         console.input = "frobnicate now".into();
-        assert_eq!(run_line(&mut console, &mut sim, false), None);
+        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
         assert!(
             console.log.iter().any(|l| l.contains("> frobnicate now")),
             "the line is echoed before it is answered"
@@ -779,14 +825,17 @@ mod tests {
         );
         // A known command runs, and a client's weather becomes a wish for the server.
         console.input = "weather rain".into();
-        assert_eq!(run_line(&mut console, &mut sim, false), None);
+        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
         assert_eq!(
             sim.weather.now.precip,
             Precip::None,
             "the transition has only just started — the rain is not here yet"
         );
         console.input = "weather snow".into();
-        assert_eq!(run_line(&mut console, &mut sim, true), Some(Preset::Snow));
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, true),
+            Some(Preset::Snow)
+        );
         assert_eq!(
             sim.weather.now.precip,
             Precip::None,
@@ -797,6 +846,29 @@ mod tests {
             console.history,
             ["frobnicate now", "weather rain", "weather snow"]
         );
+    }
+
+    /// `fly` hands the view to the free camera and takes it back — and the slash of the
+    /// `/fly` spelling changes nothing, only the way the command is written.
+    #[test]
+    fn fly_toggles_the_free_camera() {
+        let mut console = Console::default();
+        let mut sim = sim();
+        let mut camera = CameraState::default();
+        console.input = "fly".into();
+        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
+        assert_eq!(camera.mode, CameraMode::Fly);
+        console.input = "/fly".into();
+        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
+        assert_eq!(camera.mode, CameraMode::Cab);
+        assert!(
+            console.log.iter().any(|l| l.contains("> /fly")),
+            "the echo shows the line as it was typed"
+        );
+        // A client flies its own camera: no wish for the server comes of it.
+        console.input = "/fly".into();
+        assert_eq!(run_line(&mut console, &mut sim, &mut camera, true), None);
+        assert_eq!(camera.mode, CameraMode::Fly);
     }
 
     #[test]

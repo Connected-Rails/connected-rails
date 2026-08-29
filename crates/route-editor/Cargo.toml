@@ -16,6 +16,7 @@ sim-core = { workspace = true }
 track-model = { workspace = true }
 world-coords = { workspace = true }
 content = { workspace = true }
+fields = { workspace = true }
 imagery = { workspace = true }
 world-render = { workspace = true }
 glam = { workspace = true }

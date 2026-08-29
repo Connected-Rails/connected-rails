@@ -99,6 +99,7 @@ mod section_tests {
             "areas",
             "interlock",
             "markers",
+            "fields",
             "heights",
             "module",
             "sky",
@@ -167,9 +168,10 @@ pub fn draw(
     mut gizmo: ResMut<crate::gizmo::GizmoState>,
     // Paired into one parameter: Bevy systems carry at most sixteen, and this
     // one is full.
-    (mut sky, mut settings): (
+    (mut sky, mut settings, mut field_import): (
         ResMut<world_render::sky::Sky>,
         ResMut<crate::settings::Settings>,
+        ResMut<crate::fields::FieldImport>,
     ),
     mut catalogs: crate::Catalogs,
     mut themed: Local<bool>,
@@ -247,6 +249,7 @@ pub fn draw(
             &ground.marks,
             &mut active,
             &mut settings,
+            &mut field_import,
         );
     }
 
@@ -1044,6 +1047,8 @@ pub(crate) fn new_line(
         trees: vec![],
         walk_paths: vec![],
         walk_areas: vec![],
+        fields: vec![],
+        field_sources: vec![],
         markers: vec![],
         terrain: vec![],
         heights: vec![],
@@ -1113,6 +1118,10 @@ fn menu_bar(
                         save_as(line, state, overlay);
                     }
                     ui.separator();
+                    if ui.button(t!("action-import-fields")).clicked() {
+                        ui.close();
+                        request.import_fields = true;
+                    }
                     if ui.button(t!("action-import-forest")).clicked() {
                         ui.close();
                         import_forest(state);
@@ -1420,6 +1429,7 @@ fn category_sections(category: &str) -> &'static [(&'static str, &'static str)] 
             ("interlock", "heading-interlock"),
             ("markers", "heading-markers"),
         ],
+        "tool-group-vegetation" => &[("fields", "heading-fields")],
         "tool-group-terrain" => &[("heights", "heading-heights")],
         "tool-group-module" => &[
             ("module", "heading-module"),
@@ -1428,8 +1438,7 @@ fn category_sections(category: &str) -> &'static [(&'static str, &'static str)] 
             ("imagery", "heading-imagery"),
             ("cache", "heading-cache"),
         ],
-        // Vegetation, and any category still to come: tools and selection
-        // say everything.
+        // Any category still to come: tools and selection say everything.
         _ => &[],
     }
 }
@@ -1470,6 +1479,7 @@ fn detail_panel(
     marks: &crate::terrain::Marks,
     active: &mut Option<&'static str>,
     settings: &mut crate::settings::Settings,
+    field_import: &mut crate::fields::FieldImport,
 ) {
     // The size range is a working cap, not decoration: egui persists the width
     // a panel's content grew it to, so without the cap one over-wide row (a
@@ -1725,6 +1735,10 @@ fn detail_panel(
                             ui.add_space(space::XS);
                             crate::walkways::tool_rows(ui, line, state, kind);
                         }
+                        if state.tool == Tool::PlaceField {
+                            ui.add_space(space::XS);
+                            crate::fields::tool_rows(ui, state);
+                        }
                         if state.tool == Tool::Brush {
                             ui.add_space(space::XS);
                             editor_ui::form_grid("brush").show(ui, |ui| {
@@ -1827,7 +1841,17 @@ fn detail_panel(
                         "selection",
                         "heading-selection",
                         |ui| {
-                            selection_panel(ui, line, state, types, objects, focus, marks, overlay);
+                            selection_panel(
+                                ui,
+                                line,
+                                state,
+                                types,
+                                objects,
+                                focus,
+                                marks,
+                                overlay,
+                                (sky.month, sky.day),
+                            );
                         },
                     );
 
@@ -1855,6 +1879,19 @@ fn detail_panel(
                     if shown("markers") {
                         nav_section(ui, jump, &mut current, "markers", "heading-markers", |ui| {
                             marker_section(ui, line, state, focus, marks);
+                        });
+                    }
+                    if shown("fields") {
+                        nav_section(ui, jump, &mut current, "fields", "heading-fields", |ui| {
+                            crate::fields::rows(
+                                ui,
+                                line,
+                                state,
+                                focus,
+                                field_import,
+                                sky.month,
+                                sky.day,
+                            );
                         });
                     }
                     if shown("heights") {
@@ -2144,6 +2181,9 @@ fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
                     }
                 });
         });
+        row(ui, "lay-formation", |ui| {
+            ui.checkbox(&mut lay.formation, "");
+        });
         row(ui, "lay-parallel", |ui| {
             editor_ui::field(ui, &mut lay.parallel, 1.0, 1.0..=8.0, "");
         });
@@ -2207,6 +2247,8 @@ fn selection_panel(
     focus: &mut Focus,
     marks: &crate::terrain::Marks,
     overlay: &mut Overlay,
+    // The date the map is being shown on — a field's readout depends on it.
+    date: (u32, u32),
 ) {
     match state.selection {
         Selection::None => {
@@ -2236,6 +2278,10 @@ fn selection_panel(
                 crate::walkways::Kind::Area,
                 i,
             );
+        }
+        Selection::Field(_) => {
+            let zone = state.terrain_options().zone;
+            crate::fields::selection_rows(ui, line, state, zone, date.0, date.1);
         }
         Selection::Edge(i) => {
             let Some(edge) = line.source.edges.get(i) else {
@@ -2282,6 +2328,17 @@ fn selection_panel(
                         .color(colors::TEXT_SECONDARY),
                 );
             }
+            // The formation is the edge's own — an area cannot lay one over a
+            // stretch, and switching it off leaves bare rails on ground the
+            // terrain leaves alone. The change detector rebuilds track and
+            // terrain from the flipped bit, undo included.
+            editor_ui::form_grid(&format!("edge-formation-{i}")).show(ui, |ui| {
+                row(ui, "sel-edge-formation", |ui| {
+                    if let Some(edge) = line.source.edges.get_mut(i) {
+                        ui.checkbox(&mut edge.formation, "");
+                    }
+                });
+            });
             track_type_rows(ui, line, i, length, types);
             electrification_rows(ui, line, i, length);
             grade_rows(ui, line, i, length);
@@ -4014,6 +4071,10 @@ fn issue_target(
             ),
             Selection::WalkPath(*path as usize),
         ),
+        RuleIssue::FieldTooSmall { field } | RuleIssue::FieldUnknownCrop { field } => (
+            crate::fields::vertex_pos(line, focus, *field as usize, 0),
+            Selection::Field(*field as usize),
+        ),
         RuleIssue::WalkAreaTooSmall { area } => (
             crate::walkways::vertex_pos(
                 line,
@@ -4062,13 +4123,17 @@ fn issue_text(issue: &RuleIssue) -> String {
             terrain,
             markers,
             walkways,
+            fields,
         } => t!(
             "check-outside-envelope",
             trees = trees,
             terrain = terrain,
             markers = markers,
-            walkways = walkways
+            walkways = walkways,
+            fields = fields
         ),
+        RuleIssue::FieldTooSmall { field } => t!("check-field-small", field = field),
+        RuleIssue::FieldUnknownCrop { field } => t!("check-field-crop", field = field),
     }
 }
 

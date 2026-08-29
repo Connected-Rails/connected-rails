@@ -8,6 +8,7 @@ license.workspace = true
 sim-core = { workspace = true }
 track-model = { workspace = true }
 world-coords = { workspace = true }
+fields = { workspace = true }
 glam = { workspace = true }
 serde = { workspace = true }
 ron = { workspace = true }

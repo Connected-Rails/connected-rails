@@ -451,7 +451,10 @@ pub fn update_audio(
         FADE,
     );
     let listener_velocity = match camera_state.mode {
-        ui::CameraMode::Wayside => Vec3::ZERO,
+        // The wayside camera and the free one stand still in the world: a train running
+        // past either of them is a pass-by and has to sound like one, which it cannot if
+        // the listener is credited with the train's own speed.
+        ui::CameraMode::Wayside | ui::CameraMode::Fly => Vec3::ZERO,
         // On foot on the ground the listener stands still like a wayside camera does: the
         // train running past him is a pass-by and has to sound like one, which it cannot
         // if he is credited with its own speed.
@@ -464,13 +467,13 @@ pub fn update_audio(
     let mut states: HashMap<(usize, usize), SoundState> = HashMap::new();
     for (t, train) in sim.trains.iter().enumerate() {
         let cab = sim.controls[t];
-        let alert = sim.runtime[t].protection.alert;
+        let protection = &sim.runtime[t].protection;
         for (v, vehicle) in train.vehicles.iter().enumerate() {
             if audio.table(&vehicle.spec).is_empty() {
                 continue;
             }
             let mut state =
-                SoundState::sample(vehicle, &cab, alert, audio.previous.get(&(t, v)), dt);
+                SoundState::sample(vehicle, &cab, protection, audio.previous.get(&(t, v)), dt);
             // The sampler deliberately sees no track and no weather — both are filled in
             // here, where net and world state live.
             state.roughness = sim
@@ -616,7 +619,7 @@ fn inside_a_vehicle(mode: ui::CameraMode, place: Option<crate::walk::Place>) -> 
         ui::CameraMode::Cab => true,
         // `None` is the seat itself: he never got up.
         ui::CameraMode::Walk => !matches!(place, Some(crate::walk::Place::Outside { .. })),
-        ui::CameraMode::Outside | ui::CameraMode::Wayside => false,
+        ui::CameraMode::Outside | ui::CameraMode::Wayside | ui::CameraMode::Fly => false,
     }
 }
 

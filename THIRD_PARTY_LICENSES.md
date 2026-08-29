@@ -52,6 +52,44 @@ Attribution: *The HYG database, © David Nash / Astronomy Nexus, CC BY-SA 4.0.*
 The file is data, not code: it is read by `world_render::sky` and shipped inside
 the binary, and any redistribution of it stays under CC BY-SA 4.0.
 
+## Federal state boundaries in `crates/fields/src/laender.bin`
+
+Which German state a place lies in decides which agricultural service the field
+import asks, which schema comes back and which crop code list applies. The
+boundaries are the **VG2500** of the Bundesamt für Kartographie und Geodäsie —
+the 1:2 500 000 administrative areas — fetched from the BKG's open WFS and
+thinned to about half a kilometre by `tools/gen_laender.py`.
+
+The data is published under the *Datenlizenz Deutschland – Namensnennung – 2.0*
+(<https://www.govdata.de/dl-de/by-2-0>).
+
+Attribution: *© GeoBasis-DE / BKG (2023), dl-de/by-2-0.* The file is data, not
+code: it is read by `fields::land` and shipped inside the binary.
+
+## Crop code tables in `crates/fields/src/crops/`
+
+`nw.csv` maps North Rhine-Westphalia's InVeKoS crop codes onto the render groups
+the simulator draws; `groups.csv` and `arable.csv` hold the weights the import
+draws from where a state publishes no crop. All three were read off the
+**Teilschläge** layer of the Landwirtschaftskammer Nordrhein-Westfalen's WFS by
+`tools/gen_crop_codes.py` — the code, its text, its InVeKoS group and the share
+of the sampled area it covers.
+
+The data is published under the *Datenlizenz Deutschland – Namensnennung – 2.0*.
+
+Attribution: *© Landwirtschaftskammer Nordrhein-Westfalen, dl-de/by-2-0.*
+
+The rest of the field data is **not** shipped: the import fetches it from each
+state's own service at build time and records what it used in the module's
+`field_sources`, so the source note follows the line rather than the program.
+The licences differ per state — see *Fields* in MODS.md, and note that three
+states have not stated one. Rhineland-Palatinate has no service at all, and a
+module outside Germany has no German register under it; both fall back to
+OpenStreetMap, which is **ODbL 1.0** — share-alike, so a module built on it
+carries the obligation on. That is why it is the fallback and not the first
+choice, and why the import names it in the module's attribution and warns in
+its summary.
+
 ## Phosphor icons in the editor bars
 
 The sun on the status bar's day rail, the calendar leaf on its date button and
@@ -207,11 +245,24 @@ Scots pine orange-red in plates, and no generic scan gives that. The impostors
 are rasterised from the models themselves by `lib/impostor.mjs`. Both are
 content of this repository under its own licence.
 
-## Cab sounds in `mods/example/assets/sounds/`
+## Sounds in `mods/example/assets/sounds/`
 
-The eight samples the example BR 101's sound table plays — the Sifa/PZB
-warning buzzer and the operating clicks of the Sifa pedal, the three PZB
-buttons, the screen softkeys and the desk switches — are recordings from
+Everything the example BR 101's sound table plays that is not a `synth:`
+source is a recording somebody else made and published under a licence that
+allows this use. Three groups: the cab sounds are CC0 recordings from
+freesound.org; the driving noise — what the loco itself sounds like — is cut
+out of Creative Commons trainspotting videos and two more Freesound
+recordings; the electric brake and the Makrofon come from two CC BY-SA
+recordings on Wikimedia Commons, and those files stay CC BY-SA.
+[`tools/sounds/br101_sounds.py`](tools/sounds/br101_sounds.py) holds every
+cut (source, position, length, filters) and rebuilds the files from the
+sources.
+
+### Cab sounds (CC0)
+
+The nine samples of the desk — the operating clicks of the Sifa pedal, the
+three PZB buttons, the screen softkeys and the desk switches, and the two
+buzzers of the Sifa and the train protection — are recordings from
 [freesound.org](https://freesound.org), each released under Creative Commons
 Zero 1.0 Universal (<https://creativecommons.org/publicdomain/zero/1.0/>).
 CC0 puts the recordings into the public domain as far as the law allows: they
@@ -219,16 +270,17 @@ may be used, changed and redistributed for any purpose, including
 commercially, with no conditions. The credit below is given because it is
 deserved, not because it is owed.
 
-The files in the repository are processed copies: each recording was trimmed
-to the one event a sound table entry needs, normalised to −1.5 dBFS, converted
-to mono Ogg Vorbis and — for the buzzer, which plays as a loop — cut to a
-whole number of its ~1.76 kHz periods and crossfaded at the wrap so it repeats
-seamlessly. The site's preview files (128 kbit/s MP3) were used, as the
-originals sit behind a login; the processing does not change the licence.
+The files in the repository are processed copies: each click was trimmed to
+the one event a sound table entry needs, normalised to −1.5 dBFS and
+converted to mono Ogg Vorbis; the two buzzers, which play as loops, are cut
+and folded over their own tails like the driving noise below. The site's
+preview files (128 kbit/s MP3) were used, as the originals sit behind a
+login; the processing does not change the licence.
 
 | File | Recording | Author |
 | ---- | --------- | ------ |
-| `buzzer.ogg` | [BiLevel Cab Car cabin buzzer](https://freesound.org/people/chungus43A/sounds/745668/) | chungus43A |
+| `sifa-buzzer.ogg` | [Buzzer_Alarm.wav](https://freesound.org/s/524909/) — a steady alarm buzzer, standing in for the Sifa's, of which no free recording exists | Engineer_815 |
+| `pzb-buzzer.ogg` | [buzzer.wav](https://freesound.org/s/332563/) — an electromechanical door buzzer, standing in for the PZB/LZB buzzer, likewise | 011-_11919_1-1011111 |
 | `button-stiff.ogg` | [Button_05.wav](https://freesound.org/people/deleted_user_2104797/sounds/346709/) | deleted_user_2104797 |
 | `button-soft.ogg` | [rubber button on electric device](https://freesound.org/people/ShJafari/sounds/747199/) | ShJafari |
 | `switch-toggle.ogg` | [Toggle switch On Off](https://freesound.org/people/cookies+policy/sounds/556636/) | cookies+policy |
@@ -237,9 +289,73 @@ originals sit behind a login; the processing does not change the licence.
 | `switch-detent.ogg` | [fan switch.ogg](https://freesound.org/people/BoboTheEpic/sounds/411422/) | BoboTheEpic |
 | `reverser.ogg` | [rotary switch on and off.wav](https://freesound.org/people/ProdMultimediasHQI/sounds/512502/) | ProdMultimediasHQI |
 
+### Driving noise of the loco (CC BY 3.0 and CC0)
+
+The loops that make the 101 sound like a 101 are cut out of videos that
+railway enthusiasts filmed on the platform and published on YouTube under the
+Creative Commons Attribution licence — YouTube's "reuse allowed" option, which
+is CC BY 3.0 (<https://creativecommons.org/licenses/by/3.0/>) — and out of two
+CC0 recordings from freesound.org. CC BY asks that the author is named, the
+source and the licence are given and changes are stated: this section is that
+notice, and what follows is what was changed. Each loop is a window of a few
+seconds out of the video's audio track, decoded to mono at 48 kHz, filtered
+(a high-pass against wind and handling noise), for the whines reduced to the
+lines of their spectrogram — the converter's tones are kept, the station
+between them is dropped — folded over its own tail so it repeats without a
+seam, normalised to the loudness of the generated loops and encoded as Ogg
+Vorbis. `aux-idle.ogg` is resampled by half a percent so that its 500 Hz comb
+sits on the one in the traction loops; `traction-mid.ogg` and
+`traction-high.ogg` are the `traction-low.ogg` cut resampled 1.32× and 1.74×,
+because no free recording of the loco under power at speed exists. The
+videos' pictures are not used.
+
+| File | Window | Video | Author |
+| ---- | ------ | ----- | ------ |
+| `aux-idle.ogg` | 8.5–16.5 s | [DB 101 070-1 mit IC 2442 nach Hannover Hbf](https://www.youtube.com/watch?v=W6yEO0nOb2g) | TheZugBox |
+| `traction-low.ogg`, `traction-mid.ogg`, `traction-high.ogg` | 12.0–15.5 s | [BR 101 Abfahrt Bochum Hbf](https://www.youtube.com/watch?v=Eb51FqjK31o) | Zugfan 110 |
+| `rolling-low.ogg` | 36–48 s | [BR101 Abfahrt Düsseldorf Hbf](https://www.youtube.com/watch?v=qhlQ0r_I3z0) | Zugfan 110 |
+| `rolling-mid.ogg` | 17.5–23.5 s | [101 094-1 mit IC 2261 durch A-Oberhausen](https://www.youtube.com/watch?v=7Q374vGrWuo) | AugsburgerTrainspotter |
+| `rolling-high.ogg` | 68–73 s | [Züge am Pfingstbergtunnel (SFS Mannheim Stuttgart) mit ICE 1, 3, 4, Velaro D und ICs BR101](https://www.youtube.com/watch?v=bRNnhwc2FZM) | Paul |
+
+The two CC0 recordings, processed the same way and again taken from the
+site's preview files:
+
+| File | Recording | Author |
+| ---- | --------- | ------ |
+| `air.ogg` | [Train Air Brake 01.wav](https://freesound.org/s/388568/) | totalcult |
+| `compressor.ogg` | [Tilt Train Compressor](https://freesound.org/s/349145/) | Yoyodaman234 |
+
+### Electric brake and Makrofon (CC BY-SA)
+
+Two recordings on Wikimedia Commons are published under Creative Commons
+Attribution-ShareAlike. ShareAlike binds the adaptation: the four files cut
+from them are themselves CC BY-SA and may only be passed on under that
+licence — which is a condition on these files, not on the rest of the mod or
+on the simulator. Anyone copying `ebrake-*.ogg` or `horn.ogg` into a mod of
+their own takes the licence with them.
+
+| File | Window | Recording | Author | Licence |
+| ---- | ------ | --------- | ------ | ------- |
+| `ebrake-low.ogg`, `ebrake-mid.ogg`, `ebrake-high.ogg` | 837.5–843.5 s | [Cab Ride Hamburg Hbf to Hamburg Altona BR 101 NJ 470](https://commons.wikimedia.org/wiki/File:Cab_Ride_Hamburg_Hbf_to_Hamburg_Altona_BR_101_NJ_470.webm) | IC-Lokführer | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| `horn.ogg` | 0.55–2.05 s | [Makrofon DB Baureihe 628](https://commons.wikimedia.org/wiki/File:Makrofon_DB_Baureihe_628.ogg) | MdE | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+
+The cab ride is the author's own recording, released with a permission on
+file at Wikimedia (VRT ticket 2025071110002506) and filmed with DB's
+permission; the site's 480p transcode was used, whose audio is the
+original's. Processing as above (mono, filters, reduction to the
+spectrogram's lines, seam, normalisation, Vorbis), with a treble shelf on the
+brake loops since the cab wall had taken it off and the simulator's own cab
+wall takes it again; `ebrake-mid.ogg` and `ebrake-high.ogg` are the low band
+resampled 1.32× and 1.74×. What the pieces are: the electric brake is the
+loco's converters as it brakes into Hamburg-Altona; the Makrofon is the DB
+signal horn as blown by a class 628, the same instrument at 621 Hz where the
+101 in Bochum was measured at 608 Hz, and resampled those two per cent down.
+
 Every sound table entry that plays one of these files carries a
 `see THIRD_PARTY_LICENSES.md` remark in `mods/example/vehicles/br101_afb.ron`,
-so the notice travels with the file a mod would copy out.
+so the notice travels with the file a mod would copy out. What the table
+still generates — brake squeal and rail joints — it generates because no
+free recording of the 101 doing either turned up.
 
 ## Rust dependencies
 

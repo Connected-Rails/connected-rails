@@ -28,6 +28,7 @@ use track_model::{Facing, TrackEdge, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 pub mod clouds;
+pub mod farmland;
 pub mod mist;
 pub mod people;
 pub mod precipitation;
@@ -36,6 +37,9 @@ pub mod sky;
 pub mod weather;
 pub mod windscreen;
 
+pub use farmland::{
+    CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
+};
 pub use people::{
     CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
     PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
@@ -55,7 +59,10 @@ pub struct WorldRenderPlugin;
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "terrain_splat.wgsl");
+        embedded_asset!(app, "fields.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
+            .add_plugins(MaterialPlugin::<farmland::FieldMaterial>::default())
+            .init_resource::<farmland::FieldMaterials>()
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()
             .init_resource::<people::CharacterGraphs>()
@@ -75,6 +82,7 @@ impl Plugin for WorldRenderPlugin {
                     switch_night_nodes,
                     materialise_trees,
                     scatter::cull_distant_woods,
+                    farmland::follow_date,
                     // A walker dressed this frame gets its gait the same frame.
                     (people::dress_people, people::move_strollers, mip_textures).chain(),
                     people::bind_walkways,
@@ -559,10 +567,12 @@ const BALLAST_HALF: f64 = 2.6;
 /// Sample spacing along the edge [m].
 const SAMPLE: f64 = 4.0;
 
-/// Builds meshes for all edges of the network and spawns them. The ballast
-/// bed takes its material from the edge's track type — color, and the type's
-/// texture where one is named (`mods://…`, tiled along the track); the type
-/// sections of one edge become separate meshes at the type boundaries.
+/// Builds meshes for all edges of the network and spawns them. Where the edge
+/// carries a formation, the ballast bed takes its material from the edge's
+/// track type — color, and the type's texture where one is named (`mods://…`,
+/// tiled along the track); the type sections of one edge become separate
+/// meshes at the type boundaries. Without a formation — track on the builder's
+/// own constructions — only the rails stand; the bed is theirs to model.
 pub fn spawn_track(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -609,16 +619,19 @@ pub fn spawn_track(
         let frame = EnuFrame::at(anchor);
         let (translation, rotation) = origin.frame_transform(&frame);
 
-        let mut parts: Vec<(Mesh, Handle<StandardMaterial>)> = edge
-            .track_type_runs()
-            .into_iter()
-            .map(|(s0, s1, index)| {
-                let material = ballast_materials
-                    .get(index as usize)
-                    .unwrap_or(&ballast_materials[0]);
-                (build_ballast(edge, &frame, s0, s1), material.clone())
-            })
-            .collect();
+        let mut parts: Vec<(Mesh, Handle<StandardMaterial>)> = if edge.formation {
+            edge.track_type_runs()
+                .into_iter()
+                .map(|(s0, s1, index)| {
+                    let material = ballast_materials
+                        .get(index as usize)
+                        .unwrap_or(&ballast_materials[0]);
+                    (build_ballast(edge, &frame, s0, s1), material.clone())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         parts.push((build_rails(edge, &frame), rail_material.clone()));
         for (mesh, material) in parts {
             commands.spawn((

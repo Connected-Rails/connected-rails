@@ -797,6 +797,13 @@ fn setup(
     );
     let passengers =
         world_render::Passengers::resolve(&passenger_names, &mods.mods.characters, &assets);
+    // The line's farmland, cut to the tiles it covers (see `content::farmland`).
+    let farmland = content::farmland::Fields::from_line(
+        &line_source,
+        terrain_options.zone,
+        terrain_options.tile_size,
+    );
+    info!("fields: {} on the line", farmland.len());
     // Trees, scenery objects and people come with the tiles: each stands on
     // the ground of the tile it lands on, and streams in and out with it.
     let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
@@ -807,6 +814,7 @@ fn setup(
             terrain_options.zone,
         ))
         .with_crowd(crowd)
+        .with_fields(farmland)
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(
@@ -1054,8 +1062,9 @@ fn setup(
     }
 
     // `--camera outside` starts on the external camera — handy for screenshots of a
-    // vehicle model — and `--camera walk` on foot, which a screenshot cannot reach
-    // otherwise (F4 needs a key press).
+    // vehicle model — `--camera walk` on foot, which a screenshot cannot reach
+    // otherwise (F4 needs a key press), and `--camera fly` in the free camera of the
+    // console's `fly` command.
     match arg("--camera").as_deref() {
         Some("outside") => {
             commands.insert_resource(ui::CameraState {
@@ -1070,6 +1079,29 @@ fn setup(
                 mode: ui::CameraMode::Walk,
                 ..default()
             });
+        }
+        Some("fly") => {
+            // Seeded where the wayside camera would put itself — beside the track,
+            // looking at the train. Without it the free camera would wake at the raw
+            // origin: rail-head height, inside the lead vehicle.
+            let mut state = ui::CameraState {
+                mode: ui::CameraMode::Fly,
+                ..default()
+            };
+            if let Some(front) = sim.trains[player].vehicles.first() {
+                let pose = front.pos.pose(&sim.net);
+                let pos = origin.to_render(pose.pos);
+                let up = origin.dir_to_render(pose.up);
+                let forward = origin.dir_to_render(pose.tangent);
+                let right = forward.cross(up).normalize_or_zero();
+                state.fly = Some(pos + right * 25.0 + up * 6.0);
+                let at = (pos + up * 2.0 - state.fly.unwrap()).normalize();
+                state.pitch = at.y.asin();
+                // The angles of the walk's view convention: forward is
+                // (−sin yaw · cos pitch, sin pitch, −cos yaw · cos pitch).
+                state.yaw = (-at.x).atan2(-at.z);
+            }
+            commands.insert_resource(state);
         }
         _ => {}
     }

@@ -36,6 +36,7 @@ cargo run -p app -- --line example:beispielstrecke --scenario example:probefahrt
 cargo run -p app -- --line example:beispielstrecke --day example:beispieltag --service 0  # a service out of a 24 h timetable
 cargo run -p app -- --loco example:br101_afb --camera outside   # look at the vehicle model
 cargo run -p app -- --loco example:br101_afb --camera walk      # start on foot (F4) instead of on the seat
+cargo run -p app -- --loco example:br101_afb --camera fly       # free dev camera — also togglable with `fly` in the F8 console
 cargo run -p app -- --camera walk --character people:f01_lena             # a body of your choice (seen from F2/F3)
 
 cargo run -p app -- --dedicated 27015                    # dedicated server, no window
@@ -323,10 +324,11 @@ or the whole corridor.
 | `html-display` | HTML/CSS/JS cab displays: parser, layout, script engine — in-engine, no browser (ch. 12) |
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
-| `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, track objects, floating-origin anchoring |
+| `fields` | Farmland from the state agricultural registers (InVeKoS): which state a place is in, the WFS clients, crop code mapping, geometry clean-up, phenology |
+| `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, farmland, track objects, floating-origin anchoring |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); multiplayer and the dedicated server on lightyear (ch. 20); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
-| `route-editor` | Route editor: flown 3D view over aerial imagery — track, equipment, objects, vegetation, terrain (ch. 15) |
+| `route-editor` | Route editor: flown 3D view over aerial imagery — track, equipment, objects, vegetation, fields, terrain (ch. 15) |
 | `vehicle-editor` | Vehicle editor: base data, block diagram (drive, brake, equipment), glTF import, LOD, moving parts (ch. 15) |
 | `signal-editor` | Signal editor: modular signal models — glTF parts on mount points, lamp bindings (ch. 15) |
 
@@ -485,10 +487,15 @@ around the line and at graded resolution:
 For comparison: unmodified DGM1 would be 2,000,000 triangles per km². On top of that come
 512 m tiles (one entity per tile → frustum culling, plus a view distance limit per LOD level),
 skirts at the tile edges against cracks between levels, and a cutting/embankment profile that
-pulls the terrain near the track up to rail level.
+pulls the terrain near the track up to rail level. It is sized like the real thing: the
+formation (Planum) of a single track reaches 4 m to each side, the embankment or cutting
+runs from its edge down to the natural ground within 12 m, and edges can be laid **without**
+a formation at all (`formation: false` in the line file) — bare rails on bridges, platforms
+or ground the builder shaped themselves, with no ballast bed, embankment or gravel strip.
 
 The ground is textured by **splatting**: per-vertex weights from slope and track distance blend
-grass, rock and gravel. Trees and scenery objects are line content — every one its own entry,
+grass, rock and gravel — gravel full on the formation, fading out by 7 m so the embankment
+slopes stay grass. Trees and scenery objects are line content — every one its own entry,
 placed by the terrain tile it stands on and spawned as a child of it, so they stream with the
 ground. A tree is not a scene instance but one entity per mesh part of its model, sharing the
 part's mesh and material, so Bevy batches a wood into instanced draws; `_LOD` nodes become
@@ -508,6 +515,28 @@ triangles (STATUS.md has the table). Tiles are built several at a time — the
 builder is shared read-only, the DGM sheets keep their own short lock. Terrain, splatting,
 vegetation and track objects live in `world-render` and therefore look the same in the
 simulator and in the route editor.
+
+**Fields** lie on that ground: the outline and the crop are line content, and what a field
+looks like on the day is a function of the crop, the date and the field's own seed — winter
+wheat is blue-green in April, gold in the last week of July and stubble in August, and no
+two neighbouring fields are cut on the same afternoon. Each terrain tile carries one
+surface per crop on it, draped on the tile's own height grid and cut to the track's
+formation, so a tile costs one draw call per crop and the whole line costs thirteen
+materials. Which way each field was worked comes out of its own long axis, and the furrows
+and the sprayer's tramlines run along it — the single biggest thing the eye picks up about
+a field.
+
+The fields themselves come from the **state agricultural registers**: every EU member state
+has to publish what its farmers declared, and **File ▸ Import fields…** in the route editor
+asks them for the module's envelope. Six states give the parcel with its crop; six give the
+field block alone, and the crop is then drawn from the regional cropping statistics, seeded
+by the parcel's id — the single field is wrong about as often as the statistics say, and the
+landscape is right. Rhineland-Palatinate publishes nothing at all, and a module abroad has
+no German register under it at all; both fall back to OpenStreetMap's `landuse=farmland`,
+which is thinner than a register and share-alike, and the import says so. See *Fields* in
+MODS.md for the crop groups, the licences and how to correct a mapping — and `cargo run -p app -- --scenario
+example:boerdefahrt` for five kilometres across the Soester Börde with 135 real parcels
+beside the track.
 
 The app shows the terrain automatically (flat without DGM):
 
@@ -751,7 +780,8 @@ be laid, which never touches one already lying there.
 | `4` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
 | **Vegetation** | |
 | `2` / `3` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
-| `4` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
+| `4` Field | Clicks outline a piece of farmland, Enter or right-click closes it, the crop comes from the tool options. The usual way to get fields is **File ▸ Import fields…**, which fetches them from the state agricultural registers |
+| `5` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
 | **Terrain** | |
 | `2` Raise ground | One lifting stroke per click, by the set amount and radius. The track keeps its height, cutting and embankment are laid over the strokes afterwards |
 | `3` Lower ground | The same stroke downward — a hollow, a pond bed, a pit |

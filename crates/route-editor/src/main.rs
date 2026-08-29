@@ -13,6 +13,7 @@
 mod areas;
 mod content_drawer;
 mod envelope;
+mod fields;
 mod gizmo;
 mod new_module;
 mod overlay;
@@ -333,6 +334,8 @@ pub struct Request {
     pub cycle_provider: bool,
     pub toggle_offline: bool,
     pub clear_cache: bool,
+    /// Open the field import dialog (menu, see [`fields`]).
+    pub import_fields: bool,
     pub retry_failed: bool,
     pub load_config: bool,
     pub save_config: bool,
@@ -450,6 +453,7 @@ fn main() {
     .init_resource::<gizmo::GizmoState>()
     .init_resource::<thumbnails::Thumbnails>()
     .init_resource::<new_module::NewModule>()
+    .init_resource::<fields::FieldImport>()
     .init_resource::<terrain::Marks>()
     .init_resource::<tools::GhostPreview>()
     // A glTF spawns its own children, and a render layer does not reach them by
@@ -460,7 +464,10 @@ fn main() {
     .add_systems(Startup, setup)
     // After `ui::draw`: the theme is installed there, and the modal belongs on
     // top of the panels anyway.
-    .add_systems(EguiPrimaryContextPass, (ui::draw, new_module::draw).chain())
+    .add_systems(
+        EguiPrimaryContextPass,
+        (ui::draw, new_module::draw, fields::draw).chain(),
+    )
     .add_systems(
         Update,
         (
@@ -738,9 +745,10 @@ fn diff(
         || last.envelope != now.envelope
         // The walkways are drawn as gizmos, but the rule check that reports
         // a vertex outside the envelope runs with the rebuild, like the
-        // envelope's own.
+        // envelope's own. The fields are checked the same way.
         || last.walk_paths != now.walk_paths
-        || last.walk_areas != now.walk_areas;
+        || last.walk_areas != now.walk_areas
+        || last.fields != now.fields;
     if !track {
         // A stroke reaches the ground under its disc, before and after.
         for stroke in changed(&last.terrain, &now.terrain) {
@@ -759,6 +767,34 @@ fn diff(
                 change
                     .scatter
                     .add_disc(utm(lat.to_degrees(), lon.to_degrees()), 1.0);
+            }
+        }
+        // A field is not something standing on the ground — it *is* the ground,
+        // part of the tile's own mesh, so a changed one rebuilds the tiles
+        // under it. An import changes hundreds at once, and marking each of
+        // them costs more than rebuilding the module.
+        if last.fields != now.fields {
+            const MANY: usize = 32;
+            let touched: Vec<&content::route::FieldSource> =
+                changed(&last.fields, &now.fields).take(MANY + 1).collect();
+            if touched.len() > MANY {
+                change = TerrainChange::all();
+            } else {
+                for field in touched {
+                    let corners: Vec<glam::DVec2> =
+                        field.polygon.iter().map(|p| utm(p.lat, p.lon)).collect();
+                    let Some(lo) = corners.iter().copied().reduce(glam::DVec2::min) else {
+                        continue;
+                    };
+                    let hi = corners
+                        .iter()
+                        .copied()
+                        .reduce(glam::DVec2::max)
+                        .unwrap_or(lo);
+                    change
+                        .ground
+                        .add_disc((lo + hi) / 2.0, (hi - lo).length() / 2.0 + 1.0);
+                }
             }
         }
     }
@@ -1486,5 +1522,55 @@ mod tests {
                 .species_of(Some(&"stand-obstgarten".to_string()))
                 .is_empty()
         );
+    }
+
+    /// A field *is* the ground, so adding one has to rebuild the tiles under
+    /// it — without this an import would leave the module looking unchanged
+    /// until something else happened to touch the terrain.
+    #[test]
+    fn a_field_rebuilds_the_ground_it_lies_on() {
+        use terrain::Region;
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let zone = 32;
+
+        let field = |lat: f64, lon: f64| content::route::FieldSource {
+            polygon: [(0.0, 0.0), (0.0, 0.002), (0.002, 0.002), (0.002, 0.0)]
+                .into_iter()
+                .map(|(dlat, dlon)| content::route::FieldPoint {
+                    lat: lat + dlat,
+                    lon: lon + dlon,
+                })
+                .collect(),
+            crop: "winter-cereal".into(),
+            code: String::new(),
+            label: String::new(),
+            level: String::new(),
+            direction_deg: 0.0,
+            source: String::new(),
+            year: None,
+            seed: 1,
+            tags: Vec::new(),
+        };
+
+        let mut sown = source.clone();
+        sown.fields.push(field(52.0, 10.0));
+        let (scene, change) = diff(&source, &sown, &net, zone);
+        // The rule check runs with the rebuild, like the walkways'.
+        assert!(scene, "a field is checked with the scene");
+        assert!(
+            matches!(change.ground, Region::Rects(ref r) if r.len() == 1),
+            "{:?}",
+            change.ground
+        );
+
+        // A whole import is not marked field by field — past a few dozen it is
+        // cheaper to rebuild the module than to list what moved.
+        let mut imported = source.clone();
+        for i in 0..200 {
+            imported.fields.push(field(52.0 + i as f64 * 0.003, 10.0));
+        }
+        let (_, change) = diff(&source, &imported, &net, zone);
+        assert_eq!(change, terrain::TerrainChange::all());
     }
 }

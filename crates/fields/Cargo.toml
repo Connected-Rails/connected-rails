@@ -1,0 +1,13 @@
+[package]
+name = "fields"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+i18n = { workspace = true }
+world-coords = { workspace = true }
+glam = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }

@@ -9,5 +9,6 @@ content = { workspace = true }
 track-model = { workspace = true }
 sim-core = { workspace = true }
 world-coords = { workspace = true }
+fields = { workspace = true }
 glam = { workspace = true }
 bevy = { workspace = true }

@@ -184,6 +184,7 @@ pub fn import_line(
             // The wire belongs to the track: every imported edge starts out
             // saying so itself, so it can be changed one edge at a time.
             electrification: vec![(0.0, options.electrification.clone())],
+            formation: true,
         });
         offset += len;
     }

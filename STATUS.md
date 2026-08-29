@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-29 · `cargo test --workspace`: **823 tests green** · clippy and fmt clean.
+As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -395,11 +395,63 @@ As of 2026-08-29 · `cargo test --workspace`: **823 tests green** · clippy and 
   an entire directory supply the gradient profile. Tiles are loaded lazily (sheet boundaries
   from the file name) and kept in an LRU, so even a federal state's DGM1 is usable.
   CLI: `import-line`.
+- **Fields from the agricultural registers (field plan, complete):** the countryside beside
+  the line is farmed, and a field is a crop rather than a green rectangle. A line stores the
+  outline, the crop, the working direction and a seed (`route::FieldSource`); what a field
+  *looks like* on a given day comes out of `fields::phenology` — a table of key dates per
+  crop giving ground cover, stand height, colour and row contrast, with the seed shifting a
+  field's own year by up to a week so no two neighbours are cut on the same afternoon. That
+  makes the appearance free over the network (every client derives it from the same three
+  numbers) and free to change: the date lives in the material, so dragging the editor's date
+  slider turns every field in the world without a mesh being rebuilt.
+  **The data** is the InVeKoS publication every EU member state owes under Art. 67(3) of
+  Regulation (EU) 2021/2116. The new `fields` crate holds the sixteen state services with
+  their levels and licences (`land.rs`, the boundaries baked from the BKG's VG2500), a WFS
+  GeoJSON client that always carries a bounding box and quarters it when a service answers
+  with more than a request can hold (`wfs.rs`), a two-stage crop taxonomy — the state's own
+  code where it publishes one, its InVeKoS group otherwise, the regional cropping statistics
+  where it publishes neither, drawn deterministically from the parcel's id (`crops.rs`,
+  `stats.rs`, 222 North Rhine-Westphalian codes read off the service itself and shipped as a
+  CSV a builder can correct), a Greiner-Hormann clipper with Douglas-Peucker thinning, ear
+  clipping and rotating calipers for the working direction (`geometry.rs`), and a tile cache
+  that makes an import reproducible and offline (`cache.rs`). Six states publish the parcel
+  with its crop (NW, NI/HB/HH, BB/BE, SN, TH — Saxony as points, joined onto its reference
+  parcels); six publish the field block alone; Rhineland-Palatinate publishes nothing at all
+  and falls back to OpenStreetMap's `landuse=farmland` through Overpass (`osm.rs`, ODbL,
+  which the attribution records); three states have stated no licence, which the import
+  flags rather than hides. **A module outside Germany** finds no state under it and takes
+  the same fallback — `FieldFeature::land` is an `Option`, the UTM zone comes from the
+  longitude instead of a state's convention, and the crop is drawn from the general
+  statistics row. Measured on the Marchfeld east of Vienna: 27 ways, 23 fields, 443 ha,
+  credited to OpenStreetMap under ODbL.
+  **The editor** has a threaded import with a progress bar, the state being asked, a Stop
+  that means it, and a summary that has to be confirmed before anything is written — one
+  undo step for a whole import. Scope is the module envelope or the selected field. A field
+  tool draws one by hand. **The renderer** cuts each field to the terrain tiles, drapes it on
+  the tile's own height grid, punches out the track's formation, and draws it with one
+  material per crop — furrows at the crop's own drill spacing, the sprayer's tramlines every
+  24 m, both fading out as they fall below a pixel. **Driveable**: `lines/boerde.ron` and
+  `example:boerdefahrt` are five kilometres across the Soester Börde with 135 real parcels
+  beside the track, which is what caught the one bug the editor could not — a module whose
+  rails sit below the terrain's fallback height runs down a cutting for its whole length,
+  and from a cab that is banks rather than countryside. Invisible from a top-down editor
+  view; obvious at two and a half metres.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
   of rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
-  level in the app, built while driving (see streaming above). **Texturing/vegetation:** every tile carries per-vertex splat
+  level in the app, built while driving (see streaming above). The formation is sized like
+  the real thing (2026-08-29): a single track's Planum half-width of **4 m** (the ~2.6 m
+  ballast body plus shoulder), the embankment or cutting running from its edge to the
+  natural ground within **12 m** — roughly 1:2 at the heights a main line dam has — and the
+  gravel texture full on the formation, fading out by **7 m** so the slopes stay grass.
+  The distance queries measure against the centreline **segments** rather than the 25 m
+  samples, so the blend zone is where the line is, not where its samples happen to fall.
+  **Edges without a formation** (`route::EdgeSource::formation`, default on): track the
+  builder laid on their own constructions — bridges, platforms, self-shaped ground — gets
+  bare rails, no ballast bed mesh, no embankment, no gravel; the terrain leaves it alone.
+  Set per edge in the lay panel (for the piece about to be laid) or in the selection panel
+  (for one lying there). **Texturing/vegetation:** every tile carries per-vertex splat
   weights (gravel on the strip the track flattens, rock on steep ground, grass
   elsewhere) and the line's trees — every tree an own `trees:` entry, its foot
   on the tile's height grid. Woods come out of the editor's forest brush and
@@ -1247,6 +1299,50 @@ As of 2026-08-29 · `cargo test --workspace`: **823 tests green** · clippy and 
 
 Every simplification is marked with a `ponytail:` comment at the code site, with an upgrade path:
 
+- **A field has no holes and no standing crop.** `fields::geometry::clip` keeps outer rings
+  only, so a pond or a copse in the middle of a field is drawn over rather than cut out; a
+  polygon type with holes would have to run all the way through the mesh builder, and a hole
+  in a German field block is rare enough to wait for that. And the surface lies on the
+  ground: a maize field in August really does stand two and a half metres above the track,
+  but the crop's height is colour and row contrast, not geometry. Standing crop wants its own
+  pass — a shell over the surface with sides, or instanced cards.
+- **The cropping statistics are national, not per district.** A state that publishes only
+  field blocks has its crop drawn from `crops/arable.csv`, which is North Rhine-Westphalia's
+  own area shares standing in for the country. The mechanism is per region already — the
+  first column is the key, and a `cache/fields/crops/arable.csv` with a row per state
+  overrides it — but the district-level figures the plan asks for (Destatis *Bodennutzung*,
+  BKG's `vg2500_krs` for the boundaries) are not shipped. Until they are, a line through the
+  Uckermark grows North Rhine-Westphalia's rotation, which is the right shape and the wrong
+  region.
+- **No foreign register is read.** Every EU member state owes the same publication, and the
+  neighbours' have the same shape — Austria's AMA data is on data.gv.at under CC BY, with
+  *Feldstücke* and *Schläge* carrying a land-use code. Adding one is a `Land::service`
+  entry, a crop CSV and an attribution line, which is what a German state costs; the
+  machinery does not care which country it is asking. What stands in the way is that
+  `fields::land` is built around the sixteen German states, so a country needs a rung above
+  `Land` before the second one is worth adding. Until then a module abroad gets the
+  OpenStreetMap fallback, which is thinner and share-alike, and is told so.
+- **Two states need a file the import cannot fetch.** Schleswig-Holstein publishes its field
+  blocks as a yearly GeoPackage and no service, and Rhineland-Palatinate's best source is the
+  ATKIS Basis-DLM out of a web shop. Both are open (dl-de/zero-2-0 and dl-de/by-2-0) and
+  neither can be asked for a bounding box, so both want a "point the editor at the file you
+  downloaded" path that does not exist. Until it does, Schleswig-Holstein reports what it
+  needs and Rhineland-Palatinate makes do with OpenStreetMap.
+- **No landscape elements.** Hedges, tree rows, field margins and copses are published in
+  the same services (`Landschaftselemente`, `invekos:LandscapeFeature`) and are the thing
+  that turns a patchwork of fields into a countryside. They are not imported: a hedge is a
+  mesh along a line, which is a vegetation feature rather than a field one, and it belongs
+  with the tree rows the forest brush cannot draw either.
+- **Soil is one brown everywhere.** `world_render::farmland::SOIL` is a single colour under
+  every crop, so a loess field in the Börde and a sandy one on the Geest are the same bare
+  ground. The soil map (BÜK200, also open) would fix it, at the cost of a second import and
+  a second attribution.
+- **The service endpoints are a table in code.** `fields::land::Land::service` lists sixteen
+  states' URLs, layer names and licences. They move about once a year, and a wrong one is a
+  bug report rather than a setting — but it does mean a state that changes its endpoint needs
+  a release. The BLE keeps the register that says when they move
+  (<https://gdi.bmleh.de/geodaten/geodaten-aus-dem-invekos-eu-agrarfoerderung>); looking
+  there belongs in the release routine, twice a year.
 - **A shunt move that does not finish is placed instead.** A working with a road to go to is
   given the move on top of its timetable and ten minutes of window to drive it, and whatever
   the driver managed the unit is *placed* on the road when that window closes. That backstop
@@ -1332,8 +1428,23 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   1998. That is the sources, not the architecture: Zusi's sound designers solve a transition
   with several loops cross-faded by volume and pitch curve — the ICE 3 carries one file per
   semitone rather than pitching one loop across the range — and the table format here does
-  exactly that, several entries with overlapping curves. What is missing is somebody's
-  recordings, and those go in a mod, not in this repository.
+  exactly that, several entries with overlapping curves. The example BR 101 has its
+  recordings since 2026-08-29: loops cut out of CC BY trainspotting videos and CC0
+  recordings (`tools/sounds/br101_sounds.py`, sources in THIRD_PARTY_LICENSES.md) — the
+  line-side converters' whine while standing, the GTO converter at the start, the electric
+  brake, the Makrofon, a buzzer each for the Sifa and the PZB/LZB, rolling noise in three
+  bands, air and compressor (the electric brake and the Makrofon from two CC BY-SA
+  recordings, which those files stay). The example line got the **distant signal at km 1.0**
+  that its 1000 Hz magnet had been missing: `WhenRestrictive` asks the linked signal for its
+  distant indication, and the main signal it hung on carries none, so the magnet had never
+  been live and the classic acknowledgement case could not happen at all
+  (`crates/content/tests/pzb_alert.rs` drives it). The sound table tells the Sifa from the
+  train protection since the same day: `VigilanceAlert` and `ProtectionAlert` next to the
+  combined `Alert`, and `DynamicBrake` for the electric brake's own force. The default
+  table of every other vehicle stays generated, and so do the 101's brake squeal and rail
+  joints. What no free recording covers is the loco under power at speed from inside, so
+  the upper two traction and brake bands are resampled; no free recording of the PZB horn
+  or the Sifa buzzer of a 101 exists either.
 - **The cab wall is one lowpass with one cutoff** for every vehicle; a per-vehicle
   insulation value moves into `VehicleSpec` when someone records real cabs and can hear
   the difference.
@@ -1494,7 +1605,7 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   faces, the needles, the rim markers, the Lf 7 board, the Hp 0 disc and the ten
   pictograms into `Image`s when the run starts. Same rule as the generated ground
   textures and the synthesised sounds of the default sound table: no asset directory, no
-  icon set, no third-party licence to carry (the example BR 101's recorded cab sounds are
+  icon set, no third-party licence to carry (the example BR 101's recorded sounds are
   the exception, credited in THIRD_PARTY_LICENSES.md) — and a pantograph that should read
   better at 20 px is a coordinate in that file.
   Everything comes out white on transparent and is tinted where it is used, so one drawing
@@ -1523,10 +1634,17 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   menu through `crates/app/src/theme.rs`.
 - **The console on F8 (plan 16.3)** is the simulator's one command line: a panel on the
   bottom edge built from the same plain UI nodes as the rest of the game — no egui — with
-  the commands in one static table (`weather`, `time`, `help`, `clear`), `Tab` completion
-  over commands and their arguments, and a history over `↑`/`↓`. Everything it prints goes
-  through the i18n crate; commands and arguments stay English — a `preset` is one of
-  `sim_core::weather`'s names in lower case, the same word the `--weather` flag takes.
+  the commands in one static table (`weather`, `time`, `fly`, `help`, `clear`), `Tab`
+  completion over commands and their arguments, and a history over `↑`/`↓`. Everything it
+  prints goes through the i18n crate; commands and arguments stay English — a `preset` is
+  one of `sim_core::weather`'s names in lower case, the same word the `--weather` flag
+  takes, and a leading `/` (`/fly`) is tolerated spelling. `fly` toggles the free dev
+  camera — a `CameraMode::Fly` of its own in `ui.rs`, detached from train and walker: it
+  starts wherever the view was, flies where it looks (W/A/S/D along the view — the
+  walker's keys, so rebindings carry over — Space up, Ctrl down, Shift five times as
+  fast, right-drag to look), and leaves by the same F1–F4. Purely local, like every
+  camera: the view is the one thing a client owns outright, so there is no wire shape for
+  it.
   **Multiplayer**: the world is the server's, so a client's `weather` posts
   a wish (`net::WeatherRequest` → `WeatherWish`); the server applies it to its timeline
   and answers *every* client with a `WeatherSet` anchored to the moment it applied, so all
@@ -1643,9 +1761,12 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
      not the top of rail, and is wrong on every bridge, embankment and tunnel. DB's line
      geometry, coarse as it is, carries the kilometre marks and so makes the best reference
      layer while drawing (see 2).
-5. **Recorded samples for the sound table** — the mechanism is in place and positional; what
-   is missing is the audio itself. Rail joints out of the track instead of out of a distance
-   interval belong in the same pass.
+5. **Recorded samples for the sound table** — the example BR 101 has them (line-side
+   converters, start, electric brake, Makrofon, buzzers, rolling in three bands, air,
+   compressor); what is missing is a recording of the loco under power at speed, the real
+   PZB and Sifa buzzers of a 101, brake squeal and rail joints, and the other reference
+   vehicles. Rail joints out of the track instead of out of a distance interval belong in
+   the same pass.
 6. **Weather and night rendering are done** (M6 and plan 14.1, see above) — thirteen
    weathers as physical quantities, volumetric clouds with their shadows, haze in the
    atmosphere itself, wet and snowed-on surfaces, lightning and thunder, and a ground mist

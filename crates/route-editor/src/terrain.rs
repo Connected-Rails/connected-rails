@@ -343,6 +343,13 @@ pub fn update(
     origin: Res<Origin>,
     scattered: Query<(), With<Scattered>>,
     children: Query<&Children>,
+    // The fields of a tile, and the date they are drawn on: one material per
+    // crop, shared by every tile (see `world_render::farmland`).
+    (mut field_materials, mut field_assets, sky): (
+        ResMut<world_render::FieldMaterials>,
+        ResMut<Assets<world_render::FieldMaterial>>,
+        Res<world_render::sky::Sky>,
+    ),
 ) {
     // Taken only when there is something to take: a write through `ResMut`
     // marks the line changed, and the marks and the title watch for that.
@@ -500,12 +507,26 @@ pub fn update(
             &origin.0,
         );
         commands.entity(entity).insert(TerrainChunk);
+        // The farmland hangs under the tile, so it streams out with it.
+        world_render::spawn_fields(
+            &mut commands,
+            &mut meshes,
+            &mut world_render::FieldDraw {
+                materials: &mut field_materials,
+                assets: &mut field_assets,
+                month: sky.month,
+                day: sky.day,
+            },
+            entity,
+            &tile.fields,
+        );
         // The mesh is on its way to the GPU; what stays is the height grid.
         tile.positions = Vec::new();
         tile.indices = Vec::new();
         tile.splat = Vec::new();
         tile.trees = Vec::new();
         tile.objects = Vec::new();
+        tile.fields = Vec::new();
         let replaced = view.loaded.insert(
             k,
             LoadedTile {
@@ -729,13 +750,15 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
     let vegetation = Vegetation::from_line(&line.source, options.zone);
     let scenery = Scenery::from_line(&line.source, &line.net, options.zone);
     let edits = TerrainEdits::from_line(&line.source, options.zone);
+    let farmland =
+        content::farmland::Fields::from_line(&line.source, options.zone, options.tile_size);
 
     if let Some(builder) = &view.builder
         && view.sources == wanted
         && view.options == options
     {
         view.builder = Some(Arc::new(
-            builder.with_line(&line.net, vegetation, scenery, edits),
+            builder.with_line(&line.net, vegetation, scenery, farmland, edits),
         ));
         return;
     }
@@ -765,6 +788,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
         TerrainBuilder::new(&line.net, sources, options)
             .with_vegetation(vegetation)
             .with_scenery(scenery)
+            .with_fields(farmland)
             .with_edits(edits),
     ));
     view.stale.all(view.generation);

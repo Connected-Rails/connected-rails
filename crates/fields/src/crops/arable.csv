@@ -1,0 +1,18 @@
+# What grows on arable land, as weights for the draw a state without a GSA
+# service needs: its LPIS says 'Ackerland' and no more (plan ch. 5).
+# Weighted by area, read off North Rhine-Westphalia's Teilschlaege over ten
+# sample regions — see tools/gen_crop_codes.py. A region with a different
+# rotation overrides this file; the first column is the state's code.
+# Columns: region ('*' = anywhere), render group, weight.
+*,winter-cereal,0.4502
+*,maize,0.2522
+*,rapeseed,0.0611
+*,grassland,0.0566
+*,fallow,0.0388
+*,sugar-beet,0.0366
+*,potato,0.0352
+*,vegetable,0.0223
+*,summer-cereal,0.0169
+*,legume,0.0155
+*,other,0.0076
+*,orchard,0.0069

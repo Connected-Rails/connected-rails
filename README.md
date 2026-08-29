@@ -487,10 +487,15 @@ around the line and at graded resolution:
 For comparison: unmodified DGM1 would be 2,000,000 triangles per km². On top of that come
 512 m tiles (one entity per tile → frustum culling, plus a view distance limit per LOD level),
 skirts at the tile edges against cracks between levels, and a cutting/embankment profile that
-pulls the terrain near the track up to rail level.
+pulls the terrain near the track up to rail level. It is sized like the real thing: the
+formation (Planum) of a single track reaches 4 m to each side, the embankment or cutting
+runs from its edge down to the natural ground within 12 m, and edges can be laid **without**
+a formation at all (`formation: false` in the line file) — bare rails on bridges, platforms
+or ground the builder shaped themselves, with no ballast bed, embankment or gravel strip.
 
 The ground is textured by **splatting**: per-vertex weights from slope and track distance blend
-grass, rock and gravel. Trees and scenery objects are line content — every one its own entry,
+grass, rock and gravel — gravel full on the formation, fading out by 7 m so the embankment
+slopes stay grass. Trees and scenery objects are line content — every one its own entry,
 placed by the terrain tile it stands on and spawned as a child of it, so they stream with the
 ground. A tree is not a scene instance but one entity per mesh part of its model, sharing the
 part's mesh and material, so Bevy batches a wood into instanced draws; `_LOD` nodes become

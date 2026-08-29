@@ -294,6 +294,16 @@ pub struct EdgeSource {
     /// [`LineSource::electrification`].
     #[serde(default)]
     pub electrification: Vec<(f64, String)>,
+    /// Whether this edge carries a formation — ballast bed, and the embankment
+    /// or cutting the terrain builds under it (`true` unless the file says
+    /// otherwise). `false` for track on the builder's own constructions:
+    /// bridges, platforms, ground they shaped themselves.
+    #[serde(default = "default_formation")]
+    pub formation: bool,
+}
+
+fn default_formation() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2098,6 +2108,7 @@ impl LineSource {
         let joint = self.nodes.len() as u32;
         self.nodes.push(NodeSource::Joint);
         let old_to = self.edges[index].to;
+        let formation = self.edges[index].formation;
         self.edges[index].to = joint;
         self.edges[index].segments = first;
         self.edges[index].grade = grade_a;
@@ -2115,6 +2126,7 @@ impl LineSource {
             speed: speed_b,
             track_type: type_b,
             electrification: power_b,
+            formation,
         });
 
         // Followers continued from the old end, which now belongs to the second
@@ -2474,7 +2486,8 @@ impl LineSource {
             let to = *node_ids
                 .get(e.to as usize)
                 .ok_or(CompileError::UnknownNode(e.to))?;
-            let mut edge = TrackEdge::new(EdgeId(0), from, to, anchor, heading, e.segments.clone());
+            let mut edge = TrackEdge::new(EdgeId(0), from, to, anchor, heading, e.segments.clone())
+                .with_formation(e.formation);
             // Marked areas are laid over the edge's own profiles, in file order, so a
             // later area wins where two of them overlap.
             let length: f64 = e.segments.iter().map(|g| g.len).sum();
@@ -2992,6 +3005,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: Vec::new(),
+            formation: true,
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -3109,6 +3123,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: Vec::new(),
+            formation: true,
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -3152,6 +3167,7 @@ mod tests {
                 speed: vec![],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             });
         }
         line.nodes[buffer as usize] = NodeSource::Switch {
@@ -3213,6 +3229,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: Vec::new(),
+            formation: true,
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -3347,6 +3364,7 @@ mod tests {
                     speed: vec![],
                     track_type: vec![],
                     electrification: Vec::new(),
+                    formation: true,
                 },
                 EdgeSource {
                     from: 1,
@@ -3358,6 +3376,7 @@ mod tests {
                     speed: vec![],
                     track_type: vec![],
                     electrification: Vec::new(),
+                    formation: true,
                 },
                 EdgeSource {
                     from: 1,
@@ -3369,6 +3388,7 @@ mod tests {
                     speed: vec![],
                     track_type: vec![],
                     electrification: Vec::new(),
+                    formation: true,
                 },
             ],
             devices: vec![],

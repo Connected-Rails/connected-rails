@@ -570,10 +570,12 @@ const BALLAST_HALF: f64 = 2.6;
 /// Sample spacing along the edge [m].
 const SAMPLE: f64 = 4.0;
 
-/// Builds meshes for all edges of the network and spawns them. The ballast
-/// bed takes its material from the edge's track type — color, and the type's
-/// texture where one is named (`mods://…`, tiled along the track); the type
-/// sections of one edge become separate meshes at the type boundaries.
+/// Builds meshes for all edges of the network and spawns them. Where the edge
+/// carries a formation, the ballast bed takes its material from the edge's
+/// track type — color, and the type's texture where one is named (`mods://…`,
+/// tiled along the track); the type sections of one edge become separate
+/// meshes at the type boundaries. Without a formation — track on the builder's
+/// own constructions — only the rails stand; the bed is theirs to model.
 pub fn spawn_track(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -620,16 +622,19 @@ pub fn spawn_track(
         let frame = EnuFrame::at(anchor);
         let (translation, rotation) = origin.frame_transform(&frame);
 
-        let mut parts: Vec<(Mesh, Handle<StandardMaterial>)> = edge
-            .track_type_runs()
-            .into_iter()
-            .map(|(s0, s1, index)| {
-                let material = ballast_materials
-                    .get(index as usize)
-                    .unwrap_or(&ballast_materials[0]);
-                (build_ballast(edge, &frame, s0, s1), material.clone())
-            })
-            .collect();
+        let mut parts: Vec<(Mesh, Handle<StandardMaterial>)> = if edge.formation {
+            edge.track_type_runs()
+                .into_iter()
+                .map(|(s0, s1, index)| {
+                    let material = ballast_materials
+                        .get(index as usize)
+                        .unwrap_or(&ballast_materials[0]);
+                    (build_ballast(edge, &frame, s0, s1), material.clone())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         parts.push((build_rails(edge, &frame), rail_material.clone()));
         for (mesh, material) in parts {
             commands.spawn((

@@ -356,6 +356,11 @@ pub struct LayOptions {
     pub grade: f64,
     /// Electrification id (`"ac-15kv"`, `"none"`, …); `None` = nothing said.
     pub electrification: Option<String>,
+    /// Whether the piece carries a formation — ballast bed and the embankment
+    /// or cutting the terrain builds under it. Off, the piece lays bare rails:
+    /// for track on the builder's own constructions (bridges, platforms,
+    /// ground they shaped themselves).
+    pub formation: bool,
     /// How many tracks one lay puts down — yards are laid several at a time.
     pub parallel: u32,
     /// Centre distance of parallel tracks [m]; 4 m is the German main line.
@@ -380,6 +385,7 @@ impl Default for LayOptions {
             speed: None,
             grade: 0.0,
             electrification: None,
+            formation: true,
             parallel: 1,
             spacing: 4.0,
             snap_radius: false,
@@ -411,6 +417,7 @@ impl LayOptions {
                 .clone()
                 .map(|e| vec![(0.0, e)])
                 .unwrap_or_default(),
+            formation: self.formation,
         }
     }
 }
@@ -452,6 +459,7 @@ struct Profiles {
     speed: Vec<(f64, f64)>,
     track_type: Vec<(f64, String)>,
     electrification: Vec<(f64, String)>,
+    formation: bool,
 }
 
 impl Profiles {
@@ -466,6 +474,7 @@ impl Profiles {
             speed: self.speed,
             track_type: self.track_type,
             electrification: self.electrification,
+            formation: self.formation,
         }
     }
 }
@@ -2481,6 +2490,7 @@ pub fn offset_edge(line: &mut Line, index: usize, distance: f64) -> Option<usize
         speed: source.speed,
         track_type: source.track_type,
         electrification: source.electrification,
+        formation: source.formation,
     });
     Some(new)
 }
@@ -4750,6 +4760,7 @@ mod tests {
                 speed: vec![],
                 track_type: vec![],
                 electrification: vec![],
+                formation: true,
             }],
             ..Default::default()
         }
@@ -4797,6 +4808,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);
@@ -4852,6 +4864,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);
@@ -4906,6 +4919,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);
@@ -5164,6 +5178,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);

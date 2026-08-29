@@ -111,7 +111,7 @@ impl Default for FieldImport {
             scope: Scope::Module,
             cut: true,
             min_area_ha: 0.5,
-            clearance: 45.0,
+            clearance: 15.0,
             refresh: false,
             job: None,
             report: None,

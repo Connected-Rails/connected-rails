@@ -766,19 +766,21 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   model, cab, displays and sound table — so the loco without the AFB script has the same
   3D cab as the one with it; the vehicle editor's templates strip that dress again.
 - **First person (ch. 12.4):** F4 stands the driver up out of the seat — a character
-  controller that falls. He walks at 1.5 m/s, runs at 5 m/s with shift, looks around with
-  the mouse on its own (the cursor is caught on a crosshair, so the cab controls keep
-  taking clicks), climbs what is no higher than a step (platform edge, stair), is stopped
-  by what stands at chest height and falls where the ground drops away. Ground and walls
-  come out of two ray casts against the meshes that are drawn anyway, one down and one
-  ahead, so nothing in the world needs collision data of its own — terrain, platforms,
-  objects and a modelled interior all carry him as they are drawn; a vehicle without an
-  interior holds him on the floor its `eye` implies. Past the end of a vehicle he walks on
-  into the next one of the train, and `E` takes him through a door: out of an open
-  passenger door or a traction unit's cab door at a stand, and back in at any vehicle
-  beside him. He wears one of the mods' people, shown from the outside cameras (see
-  *People* below; `--character` picks another).
-  The driving keys rest while he is off the seat; F1 puts him back.
+  controller that falls. He walks at 1.5 m/s, runs at 5 m/s with shift, looks around
+  with the mouse on its own (the cursor is caught on a crosshair, so the cab controls
+  keep taking clicks), climbs what is no higher than a step (platform edge, stair), is
+  stopped by what stands at chest height and falls where the ground drops away. Space
+  jumps — half a metre of air, off whatever he is standing on and only off something he
+  is standing on, so the key is no second jump in mid-air. Ground and walls come out of
+  two ray casts against the meshes that are drawn anyway, one down and one ahead, so
+  nothing in the world needs collision data of its own — terrain, platforms, objects and
+  a modelled interior all carry him as they are drawn; a vehicle without an interior
+  holds him on the floor its `eye` implies. Past the end of a vehicle he walks on into
+  the next one of the train, and `E` takes him through a door: out of an open passenger
+  door or a traction unit's cab door at a stand, and back in at any vehicle beside him.
+  He wears one of the mods' people, shown from the outside cameras (see *People* below;
+  `--character` picks another). The driving keys rest while he is off the seat; F1 puts
+  him back.
 - **People (ch. 12):** a mod ships characters (`characters/*.ron`), and the `people` mod
   carries twenty-four of them generated out of MakeHuman 2 by `tools/characters/` (their
   glTF files are Git LFS objects, like every binary asset below `mods/`) — four

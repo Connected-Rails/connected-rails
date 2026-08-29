@@ -496,6 +496,7 @@ const HELP: [(&str, &[HelpLine]); 5] = [
                 ],
                 "hud-key-walk",
             ),
+            (&[Action::WalkJump], "hud-key-jump"),
             (
                 &[Action::HelpOverlay, Action::Diagnostics],
                 "hud-key-overlays",

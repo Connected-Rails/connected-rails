@@ -452,6 +452,7 @@ The table below is what everything ships with.
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 | `WASD` / `Shift` | First person (`F4`): walk (1.5 m/s) and run (5 m/s) through the train and over the ground. The walker falls where the ground drops away, climbs what is no higher than a step, is stopped by what stands at chest height and walks on through the train from vehicle to vehicle. The mouse looks around on its own, the cursor is caught on the crosshair and the driving keys rest until `F1` puts the driver back on the seat |
+| `Space` | First person: jump — a push off the ground of about half a metre, wherever he is standing (on the ground, on a platform, in the train) |
 | `E` | First person: through the door — out beside the train, and back in at any vehicle standing next to you. A passenger door has to be open for it; a traction unit's own cab door opens itself, both only at a stand |
 | Mouse | Left button operates the controls of the 3D cab (click, drag, wheel), right button looks around |
 

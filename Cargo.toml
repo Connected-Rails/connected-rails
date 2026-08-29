@@ -30,7 +30,11 @@ serde = { version = "1", features = ["derive"] }
 ron = "0.12"
 # Lua 5.4, statically linked; `send` so the runtime can live in a Bevy resource.
 mlua = { version = "0.12", features = ["lua54", "vendored", "send"] }
-bevy = "0.19"
+# `wayland`: Bevy's default features only carry winit's X11 backend, so on a Wayland
+# desktop every window would go through XWayland. Compiled in, winit picks Wayland
+# whenever `WAYLAND_DISPLAY`/`WAYLAND_SOCKET` is set and falls back to X11 otherwise;
+# on Windows and macOS the feature is inert.
+bevy = { version = "0.19", features = ["wayland"] }
 # Desktop UI of the editors: menu bar, docked panels (bevy_egui) and the operating
 # system's own file dialogs (rfd).
 bevy_egui = "0.41"

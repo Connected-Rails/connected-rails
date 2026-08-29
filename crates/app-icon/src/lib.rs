@@ -5,7 +5,9 @@
 //! Windows Explorer, the task bar and Alt+Tab read; the startup system below hands the
 //! same drawing to winit, which is what the title bar and X11 want. macOS reads
 //! neither — an icon there belongs to an `.app` bundle, and the release ships plain
-//! binaries.
+//! binaries. Wayland has no window-icon protocol: winit takes the call without
+//! complaint but shows nothing, and a desktop entry would be the place to point at
+//! `icon.png` should the programs ever be packaged.
 //!
 //! `icon.png` is the master and the only file to edit — a square RGBA drawing.
 //! `tools/gen_icon.py` bakes `icon.ico` out of it.

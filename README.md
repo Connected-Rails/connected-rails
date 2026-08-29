@@ -68,6 +68,8 @@ relink after a code change. The first build with the flag recompiles Bevy, and t
 binary needs the Bevy DLL next to it — so use it for development only, never for a release.
 Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit.
 
+On Linux the four programs run natively on **Wayland**: winit picks Wayland whenever `WAYLAND_DISPLAY` or `WAYLAND_SOCKET` is set and falls back to X11 (or XWayland) otherwise.
+
 Several worktrees on one machine can share their intermediate artifacts, so dependencies
 compile once per machine: a `.cargo/config.toml` in a directory *above* the worktrees (nothing
 lands in the repo) sets `build.build-dir` to one shared directory and `[unstable]

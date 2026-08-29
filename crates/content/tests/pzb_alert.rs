@@ -106,7 +106,11 @@ fn the_1000_hz_magnet_sounds_the_horn_until_it_is_acknowledged() {
 
     // Acknowledged within the four seconds: the horn stops, and no braking follows.
     acknowledge(&mut sim, t);
-    assert_eq!(sound(&sim, t).protection_alert, 0.0, "the horn falls silent");
+    assert_eq!(
+        sound(&sim, t).protection_alert,
+        0.0,
+        "the horn falls silent"
+    );
     assert_ne!(
         sim.runtime[t].protection.action,
         ProtectionAction::EmergencyBrake

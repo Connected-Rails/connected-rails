@@ -438,14 +438,35 @@ fn main() {
 
 /// Exits the app after the given number of frames — with `--screenshot` the window is
 /// captured beforehand.
+///
+/// The last frame's diagnostics go into the log on the way out. A `--frames`
+/// run is how the rendering is measured (the forest test of
+/// `tools/trees/bench_forest.mjs` is one), and reading them off a screenshot of
+/// the F6 overlay is neither scriptable nor precise.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    terrain: Res<TerrainInfo>,
     mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     *count += 1;
+    if *count == limit.0 {
+        let perf = hud::Perf::read(&diagnostics);
+        info!(
+            "after {} frames: {:.0} fps, {:.1} ms, {} entities; \
+             terrain {} tiles, {} triangles, {:.1} MB",
+            limit.0,
+            perf.fps,
+            perf.frame_ms,
+            perf.entities,
+            terrain.0.tiles,
+            terrain.0.triangles,
+            terrain.0.memory() as f64 / (1024.0 * 1024.0),
+        );
+    }
     let Some(shot) = shot else {
         if *count >= limit.0 {
             exit.write(AppExit::Success);

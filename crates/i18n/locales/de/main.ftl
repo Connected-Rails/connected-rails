@@ -1138,7 +1138,7 @@ check-area-off-track = Gleisbereich { $area }: ein Abschnitt liegt auf keinem Gl
 check-area-no-effect = Gleisbereich { $area }: deckt nichts ab oder setzt nichts — er erreicht das Modul nicht
 check-area-track-type = Gleisbereich { $area }: nennt eine Gleisbauart, die kein installiertes Mod kennt
 check-lzb-no-conductor = Gleis { $edge }: LZB-Gleisart, aber das Modul verlegt keinen Linienleiter
-check-outside-envelope = Außerhalb der Hüllkurve: Bäume { $trees }, Geländestriche { $terrain }, Marker { $markers }, Wegpunkte { $walkways } — Grenze verlegen oder löschen
+check-outside-envelope = Außerhalb der Hüllkurve: Bäume { $trees }, Geländestriche { $terrain }, Marker { $markers }, Wegpunkte { $walkways }, Feldecken { $fields } — Grenze verlegen oder löschen
 check-walk-path-short = Fußweg { $path } hat weniger als zwei Punkte — Weg zeichnen oder löschen
 check-walk-area-small = Gehfläche { $area } hat weniger als drei Ecken — Fläche umreißen oder löschen
 check-envelope-crossed = Die Hüllkurve überschneidet sich — so eine Grenze hat kein Innen; die Ecke zurückziehen
@@ -2494,3 +2494,107 @@ yard-refused-off-the-graph = das Gleis hinter der Marke reicht nicht
 yard-refused-not-a-portal = nur ein Portal nimmt einen Zug von der Strecke
 yard-refused-not-there = der Zug steht nicht an diesem Portal
 yard-refused-moving = noch in Bewegung
+
+# --- Felder ------------------------------------------------------------------
+# Ackerflächen aus den Agrarregistern (InVeKoS), gezeichnet nach dem
+# Wachstumsstadium ihrer Kultur am Tag der Fahrt.
+
+# Die zwölf Kulturgruppen, die der Simulator unterscheiden kann. Nicht die
+# Codeliste des Registers — die hat Hunderte Einträge, und aus dem Zug sieht
+# niemand den Unterschied zwischen zwei Winterweizensorten.
+crop-winter-cereal = Wintergetreide
+crop-summer-cereal = Sommergetreide
+crop-maize = Mais
+crop-rapeseed = Raps
+crop-sugar-beet = Zuckerrüben
+crop-potato = Kartoffeln
+crop-legume = Hülsenfrüchte
+crop-grassland = Grünland
+crop-vegetable = Gemüse
+crop-orchard = Obstanlage
+crop-vineyard = Weinberg
+crop-fallow = Brache
+crop-other = Sonstiges
+
+# Woher die Kultur eines Feldes bekannt ist.
+field-level-declared = beantragt
+field-level-group = aus der Kulturgruppe
+field-level-drawn = aus der Anbaustatistik
+
+# Was am Tag der Fahrt auf dem Feld passiert.
+growth-bare = gepflügt
+growth-emerging = im Auflaufen
+growth-growing = im Wachstum
+growth-flowering = in Blüte
+growth-ripening = in der Reife
+growth-ripe = reif
+growth-stubble = Stoppel
+
+# Das Panel.
+heading-fields = Felder
+tool-field = Feld
+tool-field-hint = Klicks umreißen ein Feld; Enter oder Rechtsklick schließt es · Esc bricht ab · der übliche Weg zu Feldern ist der Import
+field-count = { $count } Felder
+field-list-empty = Noch keine Felder — importieren oder mit dem Feldwerkzeug zeichnen
+field-crop = Kultur
+field-crop-hint = Was hier wächst — die Gruppe, die der Simulator zeichnet, nicht der Code des Registers
+field-direction = Bearbeitungsrichtung
+field-direction-hint = Wie das Feld bearbeitet wurde, gegen Gitter-Ost; Furchen und Fahrgassen laufen entlang
+field-area = Fläche
+field-growth = Heute
+field-growth-hint = Was die Kultur am angezeigten Datum macht — aus Kultur, Datum und dem Saatwert des Feldes, nichts davon gespeichert
+field-growth-detail = { $cover } % Deckung · { $height } m
+field-active = Feld: { $corners } Ecken — Enter schließt es
+field-source-row = { $land } { $year }
+field-attribution = Quellenvermerk
+
+# Der Importdialog.
+action-import-fields = Felder importieren…
+field-import-title = Felder importieren
+field-import-intro = Ackerflächen aus den Agrarregistern der Länder. Es wird nichts geschrieben, bevor du es sagst.
+field-import-scope = Umfang
+field-import-scope-hint = Das ganze Modul innerhalb seiner Hüllkurve oder nur das ausgewählte Feld
+field-import-scope-module = Das ganze Modul
+field-import-scope-selection = Das ausgewählte Feld
+field-import-cut = An der Grenze schneiden
+field-import-cut-hint = Felder an der Hüllkurve schneiden, damit der Rest dem Nachbarn gehört. Aus behält jedes Feld ganz, dessen Mitte drinnen liegt
+field-import-min-area = Kleinstes Feld
+field-import-min-area-hint = Darunter ist eine Parzelle ein Randstreifen, und eine Strecke will keine zehntausend davon
+field-import-clearance = Abstand zum Gleis
+field-import-clearance-hint = Wie weit die Felder vom Bahnkörper wegbleiben, damit keins auf dem Damm liegt, den das Gelände auf Schienenhöhe zieht
+field-import-refresh = Neu abrufen
+field-import-refresh-hint = Die Dienste fragen statt den Zwischenspeicher zu lesen — für ein Register, das weitergezogen ist
+field-import-start = Importieren
+field-import-stop = Anhalten
+field-import-stopped = Angehalten — was bis dahin gefunden wurde, steht unten.
+field-import-failed = Der Import ist nicht fertig geworden.
+field-import-of = { $done } von { $total }
+field-import-locating = Ermittle die Bundesländer
+field-import-fetching = Frage das Register
+field-import-mapping = Lese die Kulturen
+field-import-cleaning = Schneide zurecht
+field-import-done = Fertig
+field-import-found = { $fields } Felder, { $hectares } ha
+field-import-counts = { $parcels } Parzellen · { $small } zu klein · { $outside } außerhalb · { $split } geteilt
+field-import-tiles = { $fetched } abgerufen, { $cached } aus dem Zwischenspeicher
+field-import-unknown-codes = Kulturcodes, die keine Tabelle kennt: { $codes }
+field-import-commit = Ins Modul übernehmen
+field-import-again = Einstellungen ändern
+field-import-no-envelope = Das Modul hat keine Hüllkurve, in die importiert werden könnte — erst eine anlegen
+field-import-no-selection = Es ist kein Feld ausgewählt
+
+# Was jedes Land veröffentlicht, und unter welcher Lizenz.
+field-source-gsa = Schläge mit Kulturart
+field-source-lpis = nur Feldblöcke
+field-source-osm = kein Register — stattdessen OpenStreetMap
+field-source-abroad = außerhalb der Register
+field-source-abroad-hint = Der Ansatz ist national: die Register, ihre Schemata und ihre Kulturcodelisten sind es alle. Außerhalb Deutschlands kommen die Felder stattdessen aus OpenStreetMap — dünner als ein Register, und share-alike
+field-source-none = nichts veröffentlicht
+field-licence-unclear = Lizenz unklar
+field-licence-unclear-hint = Dieses Land hat keine offene Lizenz genannt. Bauen kann man damit; vor einer Veröffentlichung muss die Antwort schriftlich vorliegen.
+field-licence-unclear-land = { $land }: Lizenz vor der Veröffentlichung schriftlich klären
+
+status-fields-imported = { $count } Felder übernommen
+status-field-points = Ein Feld braucht mindestens drei Ecken — die nächste anklicken
+check-field-small = Feld { $field } hat weniger als drei Ecken
+check-field-crop = Feld { $field } nennt eine Kultur, die keine Tabelle kennt — es wird als nackter Boden gezeichnet

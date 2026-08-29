@@ -139,6 +139,10 @@ pub struct TerrainTile {
     /// agents on them (plan ch. 12) — a walker's place at any moment is
     /// [`crate::people::stroll_pose`] of these, the seed and the clock.
     pub walkways: Vec<Walkway>,
+    /// The farmland on this tile, one surface per crop (see
+    /// [`crate::farmland`]) — draped on this tile's own ground, so it follows
+    /// every hollow the terrain has.
+    pub fields: Vec<crate::farmland::FieldPatch>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
@@ -744,6 +748,7 @@ pub struct TerrainBuilder {
     vegetation: Vegetation,
     scenery: Scenery,
     crowd: Crowd,
+    fields: crate::farmland::Fields,
     edits: TerrainEdits,
 }
 
@@ -756,6 +761,7 @@ impl TerrainBuilder {
             vegetation: Vegetation::default(),
             scenery: Scenery::default(),
             crowd: Crowd::default(),
+            fields: crate::farmland::Fields::default(),
             edits: TerrainEdits::default(),
         }
     }
@@ -785,6 +791,11 @@ impl TerrainBuilder {
 
     /// Terrain brush strokes of the line — tiles built afterwards are shaped
     /// by them.
+    pub fn with_fields(mut self, fields: crate::farmland::Fields) -> Self {
+        self.fields = fields;
+        self
+    }
+
     pub fn with_edits(mut self, edits: TerrainEdits) -> Self {
         self.edits = edits;
         self
@@ -802,6 +813,7 @@ impl TerrainBuilder {
         net: &TrackNetwork,
         vegetation: Vegetation,
         scenery: Scenery,
+        fields: crate::farmland::Fields,
         edits: TerrainEdits,
     ) -> Self {
         Self {
@@ -811,6 +823,7 @@ impl TerrainBuilder {
             vegetation: Vegetation::default(),
             scenery: Scenery::default(),
             crowd: Crowd::default(),
+            fields,
             edits,
         }
         .with_vegetation(vegetation)
@@ -865,6 +878,7 @@ impl TerrainBuilder {
             &self.vegetation,
             &self.scenery,
             &self.crowd,
+            &self.fields,
             &self.edits,
             stats,
         )
@@ -886,12 +900,7 @@ impl TerrainBuilder {
             tile.min + DVec2::splat(self.options.tile_size / 2.0),
             self.options.tile_size,
         );
-        let grid = HeightGrid {
-            min: tile.min,
-            heights: &tile.heights,
-            step: tile.step,
-            n,
-        };
+        let grid = HeightGrid::new(tile.min, &tile.heights, tile.step, n);
         let mut people = scatter_people(k, &grid, &frame, &self.crowd);
         people.extend(scatter_walkways(k, &grid, &frame, &self.crowd).1);
         (
@@ -990,6 +999,7 @@ fn build_key(
     vegetation: &Vegetation,
     scenery: &Scenery,
     crowd: &Crowd,
+    farmland: &crate::farmland::Fields,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -1002,7 +1012,8 @@ fn build_key(
     // Only the strokes that reach this tile — the rest never see a grid point.
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
-        k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, &edits, stats,
+        k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, farmland, &edits,
+        stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -1040,6 +1051,7 @@ pub fn build(
             &Vegetation::default(),
             &Scenery::default(),
             &Crowd::default(),
+            &crate::farmland::Fields::default(),
             &TerrainEdits::default(),
             &mut stats,
         ) {
@@ -1088,7 +1100,16 @@ pub(crate) struct HeightGrid<'a> {
     n: usize,
 }
 
-impl HeightGrid<'_> {
+impl<'a> HeightGrid<'a> {
+    pub(crate) fn new(min: DVec2, heights: &'a [f32], step: f64, n: usize) -> Self {
+        Self {
+            min,
+            heights,
+            step,
+            n,
+        }
+    }
+
     /// Height at the UTM point `p` (bilinear).
     pub(crate) fn at(&self, p: DVec2) -> f64 {
         let row = self.n + 1;
@@ -1116,6 +1137,7 @@ fn build_tile(
     vegetation: &Vegetation,
     scenery: &Scenery,
     crowd: &Crowd,
+    farmland: &crate::farmland::Fields,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
@@ -1166,12 +1188,7 @@ fn build_tile(
     // The grid is kept with the tile in f32: a metre of terrain does not
     // carry more, and the tile is what the trees are placed on later.
     let heights: Vec<f32> = heights.iter().map(|h| *h as f32).collect();
-    let grid = HeightGrid {
-        min,
-        heights: &heights,
-        step,
-        n,
-    };
+    let grid = HeightGrid::new(min, &heights, step, n);
     let trees = scatter_trees(k, &grid, &frame, options, vegetation);
     let objects = scatter_objects(k, &grid, &frame, scenery);
     let mut people = scatter_people(k, &grid, &frame, crowd);
@@ -1179,6 +1196,10 @@ fn build_tile(
     // rather than walk them — ordinary people of the tile from here on.
     let (walkways, standing) = scatter_walkways(k, &grid, &frame, crowd);
     people.extend(standing);
+    // The farmland of the tile, cut to it and draped on the same grid the trees
+    // stand on — so a field follows every hollow the ground has.
+    let fields =
+        crate::farmland::patches(k, &grid, &frame, options.zone, options.tile_size, farmland);
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
@@ -1210,6 +1231,7 @@ fn build_tile(
         objects,
         people,
         walkways,
+        fields,
         step,
         lod,
         radius,
@@ -1659,6 +1681,7 @@ mod tests {
             &net,
             Vegetation::default(),
             Scenery::default(),
+            crate::farmland::Fields::default(),
             TerrainEdits::from_parts(
                 &[TerrainEditSource {
                     lat: hill_lat,

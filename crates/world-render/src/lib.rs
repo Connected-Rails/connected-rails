@@ -28,6 +28,7 @@ use track_model::{Facing, TrackEdge, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 pub mod clouds;
+pub mod farmland;
 pub mod mist;
 pub mod people;
 pub mod precipitation;
@@ -36,6 +37,9 @@ pub mod sky;
 pub mod weather;
 pub mod windscreen;
 
+pub use farmland::{
+    CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
+};
 pub use people::{
     CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
     PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
@@ -55,7 +59,10 @@ pub struct WorldRenderPlugin;
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "terrain_splat.wgsl");
+        embedded_asset!(app, "fields.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
+            .add_plugins(MaterialPlugin::<farmland::FieldMaterial>::default())
+            .init_resource::<farmland::FieldMaterials>()
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()
             .init_resource::<people::CharacterGraphs>()
@@ -74,6 +81,7 @@ impl Plugin for WorldRenderPlugin {
                 (
                     switch_night_nodes,
                     materialise_trees,
+                    farmland::follow_date,
                     // A walker dressed this frame gets its gait the same frame.
                     (
                         people::dress_people,

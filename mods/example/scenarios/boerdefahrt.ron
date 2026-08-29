@@ -1,0 +1,37 @@
+// A short run across the Soester Börde — the scenario the field import is shown on.
+// Five kilometres of plain track, and beside it the farmland that is actually there:
+// 130 parcels out of North Rhine-Westphalia's InVeKoS register, each with the crop its
+// farmer applied for in 2026 (`lines/boerde.ron`).
+//
+//   cargo run -p app -- --scenario example:boerdefahrt
+//
+// The date is the last week of July on purpose. That is when a Börde looks least like a
+// green carpet: the winter wheat is gold and half of it already cut, the maize is at
+// full height and dark, the beet is closed and darker still, and the stubble fields are
+// straw. Drive it in April (`--date 2026-04-20`) and the same module is a different
+// place — nothing about the fields is stored per season, so the date decides.
+(
+    name: "Bördefahrt",
+    description: "Five kilometres across the Soester Börde, to the main signal at km 4.6.",
+    // Late July, mid-morning: the sun is high enough to show the crops apart and low
+    // enough that the tramlines still throw a line.
+    start: (year: 2026, month: 7, day: 28, hour: 9, minute: 20, utc_offset: 2.0),
+    player_train: 0,
+    events: [
+        (
+            name: "welcome",
+            trigger: Time(2.0),
+            actions: [Message("Bördefahrt: run to the main signal at km 4.6. The fields beside you are the real ones.")],
+        ),
+        (
+            name: "arrived",
+            trigger: TrainStopped(train: 0, edge: EdgeId(0), s: 4560.0, radius: 60.0),
+            actions: [
+                Score(points: 20, reason: "Stopped at the signal"),
+                Finish(success: true, reason: "Bördefahrt complete"),
+            ],
+        ),
+    ],
+    timetable: Some("example:boerdefahrt"),
+    line: Some("example:boerde"),
+)

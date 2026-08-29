@@ -95,6 +95,135 @@ pub struct WalkAreaSource {
     pub tags: Vec<String>,
 }
 
+/// A corner of a field. Degrees like every other geo-positioned entry; the
+/// height comes from the terrain the field is draped over.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FieldPoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// A field: a polygon of farmland with a crop on it (plan ch. 14, and the
+/// field plan in full).
+///
+/// Imported from the state agricultural registers by the route editor's field
+/// import, or drawn by hand like a walk area. Either way it is an ordinary
+/// entry of the line — one that can be moved, re-cropped and deleted, so an
+/// import is a starting point rather than a black box.
+///
+/// What is *not* stored is what the field looks like today: the crop plus the
+/// scenario's date gives the growth stage, the colour and the height through
+/// `fields::phenology`, so the same module shows winter wheat green in April
+/// and gold in July without holding either. That also makes it free over the
+/// network — every client works the appearance out from the same three numbers
+/// (see CLAUDE.md, *Multiplayer*).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldSource {
+    /// The outline in either winding — three corners at least, and not closed
+    /// (the last corner joins the first).
+    pub polygon: Vec<FieldPoint>,
+    /// What grows here, as a `fields::CropClass` id — `"winter-cereal"`,
+    /// `"maize"`. An id the installed tables do not know is drawn as bare
+    /// ground rather than refused.
+    pub crop: String,
+    /// The register's own crop code, kept verbatim. Nothing reads it; it is
+    /// what a builder needs to correct a mapping, and what says where a wrong
+    /// crop came from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub code: String,
+    /// The crop as the register spells it — `"Winterweichweizen"`. Shown in
+    /// the editor, never matched on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// How the crop came to be known: `"declared"` (the farmer applied for it),
+    /// `"group"` (the register gave only the crop group and it was drawn from
+    /// that group's weights) or `"drawn"` (the register gave no crop at all and
+    /// it came from the regional statistics). Empty for a field drawn by hand.
+    ///
+    /// It is not decoration. Half the states publish the field block and no
+    /// crop, so half a module's fields can be plausible guesses — and a builder
+    /// correcting one by hand needs to see which those are (plan ch. 5).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub level: String,
+    /// Which way the field was worked, against grid east [deg]. Furrows,
+    /// tramlines and the combine's swath all run along it; the import takes it
+    /// from the outline's long axis, and it can be turned by hand afterwards.
+    #[serde(default)]
+    pub direction_deg: f64,
+    /// The state the parcel came from, as its code (`"NW"`). Empty for a field
+    /// drawn by hand.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
+    /// Application year the parcel was declared for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    /// Seed of everything that varies per field: how far through its season it
+    /// is, where the rows start, how wide the working width is. Kept in the
+    /// file rather than derived from the outline, so nudging a corner does not
+    /// re-roll the whole field.
+    #[serde(default)]
+    pub seed: u64,
+    /// Free-form tags, lower-case kebab like everywhere else.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl FieldSource {
+    /// Middle of the outline [deg] — where the editor's list jumps to.
+    pub fn centre(&self) -> (f64, f64) {
+        if self.polygon.is_empty() {
+            return (0.0, 0.0);
+        }
+        let n = self.polygon.len() as f64;
+        (
+            self.polygon.iter().map(|p| p.lat).sum::<f64>() / n,
+            self.polygon.iter().map(|p| p.lon).sum::<f64>() / n,
+        )
+    }
+
+    /// Area of the outline [m²], measured in the UTM zone `zone`.
+    pub fn area(&self, zone: u8) -> f64 {
+        let ring: Vec<glam::DVec2> = self
+            .polygon
+            .iter()
+            .map(|p| {
+                let (e, n) =
+                    world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
+                glam::DVec2::new(e, n)
+            })
+            .collect();
+        if ring.len() < 3 {
+            return 0.0;
+        }
+        let mut total = 0.0;
+        let mut j = ring.len() - 1;
+        for i in 0..ring.len() {
+            total += (ring[j].x - ring[i].x) * (ring[j].y + ring[i].y);
+            j = i;
+        }
+        (total / 2.0).abs()
+    }
+}
+
+/// What a field import drew on: one row per state it asked, with the state of
+/// the register it got (plan ch. 4, ch. 9).
+///
+/// Two things need it. The licences of most states ask for a source note, and
+/// the note has to name the year; and the registers move under the module —
+/// North Rhine-Westphalia's daily, Brandenburg's yearly — so a line that does
+/// not record what it was built against cannot be rebuilt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldSourceStamp {
+    /// The state's code, `"NW"`.
+    pub land: String,
+    /// Application year the parcels were declared for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<u32>,
+    /// When it was fetched, in seconds since the Unix epoch.
+    #[serde(default)]
+    pub fetched: u64,
+}
+
 fn default_walk_width() -> f64 {
     2.0
 }
@@ -659,6 +788,15 @@ pub struct LineSource {
     /// Places people are about on (see [`WalkAreaSource`]).
     #[serde(default)]
     pub walk_areas: Vec<WalkAreaSource>,
+    /// Fields: farmland with a crop on it (see [`FieldSource`]), imported from
+    /// the agricultural registers or drawn by hand.
+    #[serde(default)]
+    pub fields: Vec<FieldSource>,
+    /// What the field import drew on (see [`FieldSourceStamp`]) — one row per
+    /// state, so the module says which register it portrays and the licences
+    /// can be honoured.
+    #[serde(default)]
+    pub field_sources: Vec<FieldSourceStamp>,
     /// Reference markers — editor aids in named layers, ignored by everything
     /// that drives a train (see [`MarkerSource`]).
     #[serde(default)]
@@ -720,6 +858,8 @@ impl Default for LineSource {
             trees: Vec::new(),
             walk_paths: Vec::new(),
             walk_areas: Vec::new(),
+            fields: Vec::new(),
+            field_sources: Vec::new(),
             markers: Vec::new(),
             terrain: Vec::new(),
             heights: Vec::new(),
@@ -734,6 +874,11 @@ impl Default for LineSource {
         }
     }
 }
+
+/// How far a field's corner may sit outside the envelope before the rule check
+/// calls it out [m]. A cut field ends *on* the boundary, and a metre is well
+/// under what a builder could drag a corner by without meaning to.
+pub const FIELD_MARGIN: f64 = 1.0;
 
 /// Half the edge length of the envelope a new module starts with [m].
 ///
@@ -909,6 +1054,11 @@ pub enum RuleIssue {
     WalkPathTooShort { path: u32 },
     /// A walk area with fewer than three corners — no area at all.
     WalkAreaTooSmall { area: u32 },
+    /// A field with fewer than three corners — no area at all.
+    FieldTooSmall { field: u32 },
+    /// A field whose crop is not one the installed tables know. It is drawn as
+    /// bare ground; the row says which id to correct.
+    FieldUnknownCrop { field: u32 },
     /// The envelope crosses itself — see [`envelope_self_intersects`].
     EnvelopeSelfIntersects,
     /// Landscape outside the module envelope. Placing it is refused by the
@@ -921,6 +1071,8 @@ pub enum RuleIssue {
         /// Vertices of footpaths and corners of walk areas — counted one by
         /// one, so the figure says how much has to move back in.
         walkways: u32,
+        /// Corners of fields, counted the same way.
+        fields: u32,
     },
 }
 
@@ -2033,13 +2185,36 @@ impl LineSource {
                 .chain(self.walk_areas.iter().flat_map(|a| a.polygon.iter()))
                 .filter(|v| !self.envelope_contains(v.lat, v.lon))
                 .count() as u32;
-            if trees + terrain + markers + walkways > 0 {
+            // Fields corner by corner for the same reason. With a margin,
+            // unlike the trees: the import cuts a field *to* the boundary, so
+            // its outermost corners lie exactly on the polygon, where ray
+            // casting is undefined — the same reason the track has one.
+            let fields = self
+                .fields
+                .iter()
+                .flat_map(|f| f.polygon.iter())
+                .filter(|v| !self.envelope_contains_within(v.lat, v.lon, FIELD_MARGIN))
+                .count() as u32;
+            if trees + terrain + markers + walkways + fields > 0 {
                 issues.push(RuleIssue::OutsideEnvelope {
                     trees,
                     terrain,
                     markers,
                     walkways,
+                    fields,
                 });
+            }
+        }
+
+        // Fields: three corners at least, and a crop the tables know. A crop
+        // that is not known is not fatal — the field is drawn as bare ground —
+        // but it is always either a typo or a mod that has not been installed.
+        for (i, field) in self.fields.iter().enumerate() {
+            if field.polygon.len() < 3 {
+                issues.push(RuleIssue::FieldTooSmall { field: i as u32 });
+            }
+            if fields::CropClass::from_id(&field.crop).is_none() {
+                issues.push(RuleIssue::FieldUnknownCrop { field: i as u32 });
             }
         }
 
@@ -3576,6 +3751,7 @@ mod tests {
                     terrain: 0,
                     markers: 0,
                     walkways: 2,
+                    fields: 0,
                 })
         );
         // Without an envelope there is nothing to be outside of.

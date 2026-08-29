@@ -395,6 +395,47 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   an entire directory supply the gradient profile. Tiles are loaded lazily (sheet boundaries
   from the file name) and kept in an LRU, so even a federal state's DGM1 is usable.
   CLI: `import-line`.
+- **Fields from the agricultural registers (field plan, complete):** the countryside beside
+  the line is farmed, and a field is a crop rather than a green rectangle. A line stores the
+  outline, the crop, the working direction and a seed (`route::FieldSource`); what a field
+  *looks like* on a given day comes out of `fields::phenology` — a table of key dates per
+  crop giving ground cover, stand height, colour and row contrast, with the seed shifting a
+  field's own year by up to a week so no two neighbours are cut on the same afternoon. That
+  makes the appearance free over the network (every client derives it from the same three
+  numbers) and free to change: the date lives in the material, so dragging the editor's date
+  slider turns every field in the world without a mesh being rebuilt.
+  **The data** is the InVeKoS publication every EU member state owes under Art. 67(3) of
+  Regulation (EU) 2021/2116. The new `fields` crate holds the sixteen state services with
+  their levels and licences (`land.rs`, the boundaries baked from the BKG's VG2500), a WFS
+  GeoJSON client that always carries a bounding box and quarters it when a service answers
+  with more than a request can hold (`wfs.rs`), a two-stage crop taxonomy — the state's own
+  code where it publishes one, its InVeKoS group otherwise, the regional cropping statistics
+  where it publishes neither, drawn deterministically from the parcel's id (`crops.rs`,
+  `stats.rs`, 222 North Rhine-Westphalian codes read off the service itself and shipped as a
+  CSV a builder can correct), a Greiner-Hormann clipper with Douglas-Peucker thinning, ear
+  clipping and rotating calipers for the working direction (`geometry.rs`), and a tile cache
+  that makes an import reproducible and offline (`cache.rs`). Six states publish the parcel
+  with its crop (NW, NI/HB/HH, BB/BE, SN, TH — Saxony as points, joined onto its reference
+  parcels); six publish the field block alone; Rhineland-Palatinate publishes nothing at all
+  and falls back to OpenStreetMap's `landuse=farmland` through Overpass (`osm.rs`, ODbL,
+  which the attribution records); three states have stated no licence, which the import
+  flags rather than hides. **A module outside Germany** finds no state under it and takes
+  the same fallback — `FieldFeature::land` is an `Option`, the UTM zone comes from the
+  longitude instead of a state's convention, and the crop is drawn from the general
+  statistics row. Measured on the Marchfeld east of Vienna: 27 ways, 23 fields, 443 ha,
+  credited to OpenStreetMap under ODbL.
+  **The editor** has a threaded import with a progress bar, the state being asked, a Stop
+  that means it, and a summary that has to be confirmed before anything is written — one
+  undo step for a whole import. Scope is the module envelope or the selected field. A field
+  tool draws one by hand. **The renderer** cuts each field to the terrain tiles, drapes it on
+  the tile's own height grid, punches out the track's formation, and draws it with one
+  material per crop — furrows at the crop's own drill spacing, the sprayer's tramlines every
+  24 m, both fading out as they fall below a pixel. **Driveable**: `lines/boerde.ron` and
+  `example:boerdefahrt` are five kilometres across the Soester Börde with 135 real parcels
+  beside the track, which is what caught the one bug the editor could not — a module whose
+  rails sit below the terrain's fallback height runs down a cutting for its whole length,
+  and from a cab that is banks rather than countryside. Invisible from a top-down editor
+  view; obvious at two and a half metres.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
@@ -1109,6 +1150,50 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
 
 Every simplification is marked with a `ponytail:` comment at the code site, with an upgrade path:
 
+- **A field has no holes and no standing crop.** `fields::geometry::clip` keeps outer rings
+  only, so a pond or a copse in the middle of a field is drawn over rather than cut out; a
+  polygon type with holes would have to run all the way through the mesh builder, and a hole
+  in a German field block is rare enough to wait for that. And the surface lies on the
+  ground: a maize field in August really does stand two and a half metres above the track,
+  but the crop's height is colour and row contrast, not geometry. Standing crop wants its own
+  pass — a shell over the surface with sides, or instanced cards.
+- **The cropping statistics are national, not per district.** A state that publishes only
+  field blocks has its crop drawn from `crops/arable.csv`, which is North Rhine-Westphalia's
+  own area shares standing in for the country. The mechanism is per region already — the
+  first column is the key, and a `cache/fields/crops/arable.csv` with a row per state
+  overrides it — but the district-level figures the plan asks for (Destatis *Bodennutzung*,
+  BKG's `vg2500_krs` for the boundaries) are not shipped. Until they are, a line through the
+  Uckermark grows North Rhine-Westphalia's rotation, which is the right shape and the wrong
+  region.
+- **No foreign register is read.** Every EU member state owes the same publication, and the
+  neighbours' have the same shape — Austria's AMA data is on data.gv.at under CC BY, with
+  *Feldstücke* and *Schläge* carrying a land-use code. Adding one is a `Land::service`
+  entry, a crop CSV and an attribution line, which is what a German state costs; the
+  machinery does not care which country it is asking. What stands in the way is that
+  `fields::land` is built around the sixteen German states, so a country needs a rung above
+  `Land` before the second one is worth adding. Until then a module abroad gets the
+  OpenStreetMap fallback, which is thinner and share-alike, and is told so.
+- **Two states need a file the import cannot fetch.** Schleswig-Holstein publishes its field
+  blocks as a yearly GeoPackage and no service, and Rhineland-Palatinate's best source is the
+  ATKIS Basis-DLM out of a web shop. Both are open (dl-de/zero-2-0 and dl-de/by-2-0) and
+  neither can be asked for a bounding box, so both want a "point the editor at the file you
+  downloaded" path that does not exist. Until it does, Schleswig-Holstein reports what it
+  needs and Rhineland-Palatinate makes do with OpenStreetMap.
+- **No landscape elements.** Hedges, tree rows, field margins and copses are published in
+  the same services (`Landschaftselemente`, `invekos:LandscapeFeature`) and are the thing
+  that turns a patchwork of fields into a countryside. They are not imported: a hedge is a
+  mesh along a line, which is a vegetation feature rather than a field one, and it belongs
+  with the tree rows the forest brush cannot draw either.
+- **Soil is one brown everywhere.** `world_render::farmland::SOIL` is a single colour under
+  every crop, so a loess field in the Börde and a sandy one on the Geest are the same bare
+  ground. The soil map (BÜK200, also open) would fix it, at the cost of a second import and
+  a second attribution.
+- **The service endpoints are a table in code.** `fields::land::Land::service` lists sixteen
+  states' URLs, layer names and licences. They move about once a year, and a wrong one is a
+  bug report rather than a setting — but it does mean a state that changes its endpoint needs
+  a release. The BLE keeps the register that says when they move
+  (<https://gdi.bmleh.de/geodaten/geodaten-aus-dem-invekos-eu-agrarfoerderung>); looking
+  there belongs in the release routine, twice a year.
 - **A shunt move that does not finish is placed instead.** A working with a road to go to is
   given the move on top of its timetable and ten minutes of window to drive it, and whatever
   the driver managed the unit is *placed* on the road when that window closes. That backstop

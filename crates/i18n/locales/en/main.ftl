@@ -1137,7 +1137,7 @@ check-area-off-track = Marked area { $area }: a stretch lies on no track, or pas
 check-area-no-effect = Marked area { $area }: covers nothing, or sets nothing — it does not reach the module
 check-area-track-type = Marked area { $area }: names a track type no installed mod defines
 check-lzb-no-conductor = Track { $edge }: LZB track type, but the module places no line conductor
-check-outside-envelope = Outside the envelope: trees { $trees }, terrain strokes { $terrain }, markers { $markers }, walkway vertices { $walkways } — move the boundary or delete them
+check-outside-envelope = Outside the envelope: trees { $trees }, terrain strokes { $terrain }, markers { $markers }, walkway vertices { $walkways }, field corners { $fields } — move the boundary or delete them
 check-walk-path-short = Footpath { $path } has fewer than two points — draw the way or delete it
 check-walk-area-small = Walk area { $area } has fewer than three corners — outline the area or delete it
 check-envelope-crossed = The envelope crosses itself — a boundary like that has no inside; pull the corner back
@@ -2491,3 +2491,107 @@ yard-refused-off-the-graph = the track behind the mark runs out
 yard-refused-not-a-portal = only a portal takes a train off the line
 yard-refused-not-there = the train is not standing at that portal
 yard-refused-moving = still moving
+
+# --- Fields ------------------------------------------------------------------
+# Farmland imported from the agricultural registers (InVeKoS), and drawn by the
+# growth stage of its crop on the day of the run.
+
+# The dozen crop groups the simulator can tell apart. Not the register's own
+# code list — that has hundreds of entries, and nobody can see the difference
+# between two kinds of winter wheat from a train.
+crop-winter-cereal = Winter cereal
+crop-summer-cereal = Spring cereal
+crop-maize = Maize
+crop-rapeseed = Oilseed rape
+crop-sugar-beet = Sugar beet
+crop-potato = Potatoes
+crop-legume = Pulses
+crop-grassland = Grassland
+crop-vegetable = Vegetables
+crop-orchard = Orchard
+crop-vineyard = Vineyard
+crop-fallow = Set-aside
+crop-other = Other
+
+# How the crop of a field came to be known.
+field-level-declared = declared
+field-level-group = from the crop group
+field-level-drawn = from the regional statistics
+
+# What is happening on the field on the day of the run.
+growth-bare = ploughed
+growth-emerging = emerging
+growth-growing = growing
+growth-flowering = in flower
+growth-ripening = ripening
+growth-ripe = ripe
+growth-stubble = stubble
+
+# The panel.
+heading-fields = Fields
+tool-field = Field
+tool-field-hint = Clicks outline a field; Enter or right-click closes it · Esc cancels · the usual way to get fields is the import
+field-count = { $count } fields
+field-list-empty = No fields yet — import them, or draw one with the field tool
+field-crop = Crop
+field-crop-hint = What grows here — the group the simulator draws, not the register's own code
+field-direction = Working direction
+field-direction-hint = Which way the field was worked, against grid east; furrows and tramlines run along it
+field-area = Area
+field-growth = Today
+field-growth-hint = What the crop is doing on the date the map is shown on — the crop, the date and the field's own seed, nothing stored
+field-growth-detail = { $cover } % cover · { $height } m
+field-active = Field: { $corners } corners — Enter closes it
+field-source-row = { $land } { $year }
+field-attribution = Source note
+
+# The import dialog.
+action-import-fields = Import fields…
+field-import-title = Import fields
+field-import-intro = Farmland from the state agricultural registers. Nothing is written until you say so.
+field-import-scope = Cover
+field-import-scope-hint = The whole module inside its envelope, or the selected field on its own
+field-import-scope-module = The whole module
+field-import-scope-selection = The selected field
+field-import-cut = Cut at the boundary
+field-import-cut-hint = Cut fields at the module envelope, so the neighbour owns the rest. Off keeps whole every field whose middle is inside
+field-import-min-area = Smallest field
+field-import-min-area-hint = Below this a parcel is a margin strip, and a line does not want ten thousand of them
+field-import-clearance = Clear of the track
+field-import-clearance-hint = How far the fields stay off the formation, so none lies on the embankment the ground pulls up to rail height
+field-import-refresh = Fetch again
+field-import-refresh-hint = Ask the services rather than reading what was fetched before — for a register that has moved on
+field-import-start = Import
+field-import-stop = Stop
+field-import-stopped = Stopped — what had been found so far is below.
+field-import-failed = The import did not finish.
+field-import-of = { $done } of { $total }
+field-import-locating = Working out which states
+field-import-fetching = Asking the register
+field-import-mapping = Reading the crops
+field-import-cleaning = Cutting to shape
+field-import-done = Done
+field-import-found = { $fields } fields, { $hectares } ha
+field-import-counts = { $parcels } parcels · { $small } too small · { $outside } outside · { $split } split
+field-import-tiles = { $fetched } fetched, { $cached } from the cache
+field-import-unknown-codes = Crop codes no table knows: { $codes }
+field-import-commit = Add to the module
+field-import-again = Change settings
+field-import-no-envelope = The module has no envelope to import into — give it one first
+field-import-no-selection = No field is selected
+
+# What each state publishes, and under what.
+field-source-gsa = parcels with their crop
+field-source-lpis = field blocks only
+field-source-osm = no register — OpenStreetMap instead
+field-source-abroad = outside the registers
+field-source-abroad-hint = The approach is national: the registers, their schemas and their crop code lists all are. Outside Germany the fields come from OpenStreetMap instead — thinner than a register, and share-alike
+field-source-none = nothing published
+field-licence-unclear = licence unclear
+field-licence-unclear-hint = This state has not stated an open licence. The data can be built with; get the answer in writing before a module is released.
+field-licence-unclear-land = { $land }: settle the licence in writing before releasing
+
+status-fields-imported = { $count } fields added
+status-field-points = A field needs at least three corners — click the next one
+check-field-small = Field { $field } has fewer than three corners
+check-field-crop = Field { $field } names a crop no table knows — it is drawn as bare ground

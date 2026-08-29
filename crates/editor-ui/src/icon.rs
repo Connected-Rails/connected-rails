@@ -69,6 +69,8 @@ pub enum Icon {
     WalkPath,
     /// Walk area — an outline with the stipple a map puts on a pedestrian area.
     WalkArea,
+    /// Field — a parcel with the furrows running across it.
+    Field,
     /// Module — a jigsaw piece: what plugs into its neighbours.
     Module,
     /// Split track — a rail with a cut through it.
@@ -460,6 +462,27 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         // A pedestrian area as a map draws one: the outline, and the stipple
         // inside that says people are about on it.
+        // A parcel, with the drill runs across it — what tells a field from an
+        // area at a glance is the furrows, not the shape.
+        Icon::Field => {
+            let mut shapes = vec![Shape::closed_line(
+                vec![
+                    at(0.08, 0.30),
+                    at(0.92, 0.16),
+                    at(0.92, 0.72),
+                    at(0.08, 0.86),
+                ],
+                stroke,
+            )];
+            for i in 1..4 {
+                let t = i as f32 / 4.0;
+                shapes.push(line(vec![
+                    at(0.08 + 0.84 * t, 0.30 - 0.14 * t),
+                    at(0.08 + 0.84 * t, 0.86 - 0.14 * t),
+                ]));
+            }
+            shapes
+        }
         Icon::WalkArea => {
             let mut shapes = vec![Shape::closed_line(
                 vec![

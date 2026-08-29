@@ -92,6 +92,11 @@ pub enum Tool {
     PlaceWalkPath,
     /// Walk area: the same as a closed polygon people are about on.
     PlaceWalkArea,
+    /// Field: clicks set the corners of a piece of farmland, Enter/right-click
+    /// closes it. The import (see [`crate::fields`]) is the usual way to get
+    /// fields; this is for the corner it did not cover, and for a fictional
+    /// module where there is no register to ask.
+    PlaceField,
 }
 
 /// What the Select tool holds.
@@ -114,6 +119,9 @@ pub enum Selection {
     WalkPath(usize),
     /// A walk area, likewise.
     WalkArea(usize),
+    /// A field — the whole outline; the corner held, if any, is
+    /// [`EditorState::walk_vertex`], which the fields share.
+    Field(usize),
 }
 
 /// The stroke the area brush is painting: one stretch of one track, growing under the
@@ -276,6 +284,7 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 6] = [
         &[
             (Tool::PlaceTree, "tool-tree", editor_ui::Icon::Tree),
             (Tool::PlaceForest, "tool-forest", editor_ui::Icon::Forest),
+            (Tool::PlaceField, "tool-field", editor_ui::Icon::Field),
             (Tool::Brush, "tool-brush", editor_ui::Icon::Brush),
         ],
     ),
@@ -561,6 +570,9 @@ pub struct EditorState {
     pub signal_model: Option<String>,
     /// Tree object the tree and forest tools use; `None` = placeholder tree.
     pub tree_object: Option<String>,
+    /// Crop the field tool gives the next field it closes; `None` = winter
+    /// cereal, the commonest crop in the country.
+    pub field_crop: Option<fields::CropClass>,
     /// Corner points of the forest polygon being drawn.
     pub forest_points: Vec<EcefPos>,
     /// Forest brush density [m² per tree]; `None` = 500.
@@ -743,7 +755,8 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         | Tool::PickTile
         | Tool::EditEnvelope
         | Tool::PlaceWalkPath
-        | Tool::PlaceWalkArea => None,
+        | Tool::PlaceWalkArea
+        | Tool::PlaceField => None,
     }
 }
 
@@ -1611,6 +1624,16 @@ pub fn selection_pos(
             let (kind, index) = crate::walkways::Kind::of_selection(selection)?;
             crate::walkways::vertex_pos(line, marks, kind, index, 0)
         }
+        // A field's own middle, at the module's height like its outline.
+        Selection::Field(i) => {
+            let field = line.source.fields.get(i)?;
+            let (lat, lon) = field.centre();
+            Some(geo::to_ecef_deg(
+                lat,
+                lon,
+                crate::envelope::height(line, focus),
+            ))
+        }
         Selection::None => None,
     }
 }
@@ -1845,6 +1868,12 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
                     state.selection = selection;
                 }
                 _ => crate::walkways::remove(line, kind, index),
+            }
+        }
+        // Nothing references a field by index, so a plain remove suffices.
+        Selection::Field(i) => {
+            if i < line.source.fields.len() {
+                line.source.fields.remove(i);
             }
         }
         Selection::None => {}
@@ -2801,7 +2830,15 @@ pub fn tool_input(
         if !state.forest_points.is_empty() {
             finish_forest(&mut line, &mut state, &mut overlay);
         } else if !state.walk_points.is_empty() {
-            if let Some(status) = crate::walkways::finish(&mut line, &mut state) {
+            // The field tool collects its corners in the same buffer the
+            // walkways do — the gesture is the same, only what is made of it
+            // at the end differs.
+            let status = if state.tool == Tool::PlaceField {
+                crate::fields::finish(&mut line, &mut state)
+            } else {
+                crate::walkways::finish(&mut line, &mut state)
+            };
+            if let Some(status) = status {
                 overlay.status = status;
             }
         } else if !finish_drawing(&mut line, &mut state, Some(&ground)) {
@@ -3231,6 +3268,26 @@ pub fn tool_input(
                     state.walk_points.push(p);
                 }
             }
+        }
+        Tool::PlaceField => {
+            // While an outline is being drawn every click is its next corner,
+            // whatever it lands on — a field has to be drawable inside another
+            // one's neighbourhood.
+            if state.walk_points.is_empty()
+                && let Some(index) = crate::fields::pick(&line, p)
+            {
+                state.selection = Selection::Field(index);
+                return;
+            }
+            let (lat, lon, _) = geo::from_ecef(p);
+            if !line
+                .source
+                .envelope_contains(lat.to_degrees(), lon.to_degrees())
+            {
+                overlay.status = t!("status-outside-envelope");
+                return;
+            }
+            state.walk_points.push(p);
         }
         // Handled above, where the button is held rather than only clicked.
         Tool::MarkArea => {}
@@ -3853,6 +3910,10 @@ pub fn draw_gizmos(
         | Selection::EnvelopePoint(_)
         | Selection::WalkPath(_)
         | Selection::WalkArea(_) => {}
+        // Fields draw their own outline and their working direction, in
+        // `crate::fields::draw_outlines` below — every field, not only the
+        // selected one.
+        Selection::Field(_) => {}
         Selection::None => {}
     }
 
@@ -4125,6 +4186,16 @@ pub fn draw_gizmos(
         &state,
         cursor,
     );
+    // Fields: their outlines, and the one being drawn by hand.
+    crate::fields::draw_outlines(&mut gizmos, &line, &state, &focus, &origin.0);
+    if state.tool == Tool::PlaceField && !state.walk_points.is_empty() {
+        let points = state.walk_points.iter().copied().chain(cursor).map(|p| {
+            let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+            origin.0.to_render(p) + up
+        });
+        gizmos.linestrip(points, Color::srgb(0.44, 0.68, 0.32));
+    }
+
     // Forest brush preview: the ring so far, the cursor as the next corner.
     if !state.forest_points.is_empty() {
         let points = state.forest_points.iter().copied().chain(cursor).map(|p| {

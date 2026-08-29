@@ -131,6 +131,7 @@ fn handles(
         | Selection::EnvelopePoint(_)
         | Selection::WalkPath(_)
         | Selection::WalkArea(_)
+        | Selection::Field(_)
         | Selection::None => None,
     }
 }
@@ -337,6 +338,7 @@ fn apply(line: &mut Line, selection: Selection, axis: Axis, dir: DVec3, delta: f
         | Selection::EnvelopePoint(_)
         | Selection::WalkPath(_)
         | Selection::WalkArea(_)
+        | Selection::Field(_)
         | Selection::None => {}
     }
 }

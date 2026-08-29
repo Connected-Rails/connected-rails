@@ -776,6 +776,13 @@ fn setup(
     );
     let passengers =
         world_render::Passengers::resolve(&passenger_names, &mods.mods.characters, &assets);
+    // The line's farmland, cut to the tiles it covers (see `content::farmland`).
+    let farmland = content::farmland::Fields::from_line(
+        &line_source,
+        terrain_options.zone,
+        terrain_options.tile_size,
+    );
+    info!("fields: {} on the line", farmland.len());
     // Trees, scenery objects and people come with the tiles: each stands on
     // the ground of the tile it lands on, and streams in and out with it.
     let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
@@ -786,6 +793,7 @@ fn setup(
             terrain_options.zone,
         ))
         .with_crowd(crowd)
+        .with_fields(farmland)
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(

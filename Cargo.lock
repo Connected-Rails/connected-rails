@@ -2925,6 +2925,7 @@ dependencies = [
 name = "content"
 version = "0.1.0"
 dependencies = [
+ "fields",
  "glam 0.32.1",
  "ron",
  "serde",
@@ -3705,6 +3706,18 @@ name = "fearless_simd"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
+name = "fields"
+version = "0.1.0"
+dependencies = [
+ "glam 0.32.1",
+ "i18n",
+ "serde",
+ "serde_json",
+ "ureq",
+ "world-coords",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -7981,6 +7994,7 @@ dependencies = [
  "bevy_egui",
  "content",
  "editor-ui",
+ "fields",
  "glam 0.32.1",
  "i18n",
  "imagery",
@@ -9489,6 +9503,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "972d7902c8735f2695410b8aed7df6ed12a47394aa1c8d7af49f0497b731a94d"
 dependencies = [
  "base64 0.23.1",
+ "flate2",
  "log",
  "percent-encoding",
  "rustls",
@@ -10551,6 +10566,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "content",
+ "fields",
  "glam 0.32.1",
  "sim-core",
  "track-model",

@@ -1,0 +1,226 @@
+# North Rhine-Westphalia: InVeKoS crop code -> render group.
+# Read off the Teilschlaege WFS, see tools/gen_crop_codes.py.
+# Columns: code, render group, detail label (as the service writes it),
+# InVeKoS group, share of the sampled parcels in per mille.
+81,orchard,Agroforstsystem (Streifen),SF,0.40
+88,fallow,ÖR 1a Freiwillige Stilllegung,PA,70.92
+90,fallow,ÖR 1b Blühfläche auf AL,PA,2.25
+92,fallow,ÖR 1c Blühfläche auf DK,SF,0.00
+93,fallow,ÖR 1d Altgrasstreifen DGL,SF,3.00
+112,winter-cereal,Winterdurum (Hartweizen),GT,0.38
+113,summer-cereal,Sommerdurum (Hartweizen),GT,0.00
+114,winter-cereal,Winter-Dinkel,GT,1.62
+115,winter-cereal,Winterweichweizen,GT,92.73
+116,summer-cereal,Sommerweichweizen,GT,2.18
+118,winter-cereal,Winter-Emmer/ -Einkorn,GT,0.03
+119,summer-cereal,Sommer-Emmer/ -Einkorn,GT,0.03
+120,summer-cereal,Sommer-Dinkel,GT,0.03
+121,winter-cereal,Winterroggen,GT,16.92
+122,summer-cereal,Sommerroggen,GT,0.23
+125,winter-cereal,Wintermenggetreide,GT,0.13
+131,winter-cereal,Wintergerste,GT,58.14
+132,summer-cereal,Sommergerste,GT,4.12
+142,winter-cereal,Winterhafer,GT,0.97
+143,summer-cereal,Sommerhafer,GT,4.66
+144,summer-cereal,Sommermenggetreide,GT,0.18
+150,summer-cereal,Gemenge Getr./Leg.(mehrG./o.M),SF,0.38
+156,winter-cereal,Wintertriticale,GT,19.66
+157,summer-cereal,Sommertriticale,GT,0.16
+171,maize,Mais (ohne Silomais),GT,29.18
+181,summer-cereal,Rispenhirse,GT,0.08
+182,summer-cereal,Buchweizen,GT,0.06
+183,maize,Mohren-/Zuckerhirse,GT,0.07
+187,summer-cereal,Quinoa,GT,0.01
+189,summer-cereal,Chia,GT,0.01
+210,legume,Futtererbsen,EW,2.09
+211,legume,Gemüseerbse,EW,0.32
+220,legume,Ackerbohnen-/Dicke Bohne,EW,3.92
+221,legume,Wicken,EW,0.00
+222,legume,Linsen,EW,0.00
+230,legume,Lupinen,EW,0.35
+240,legume,Erbsen/Bohnen - Gemische,EW,0.04
+250,legume,Gemenge Leg./Getr.(mehrL./o.M),EW,0.47
+311,rapeseed,Winterraps,OE,22.41
+312,rapeseed,Sommerraps,OE,0.09
+315,rapeseed,Winterrübsen,OE,0.01
+316,rapeseed,Sommerrübsen,OE,0.00
+320,other,Sonnenblumen,OE,0.51
+330,legume,Sojabohnen,OE,0.21
+341,other,Lein, Flachs,OE,0.04
+393,other,Leindotter,OE,0.01
+411,maize,Silomais,AF,92.08
+413,sugar-beet,Futterrübe/Runkelrübe,AF,0.22
+414,sugar-beet,Kohlrübe, -/Steckrüben,AF,0.00
+421,grassland,Klee,AF,0.21
+422,grassland,Kleegras,AF,6.47
+423,grassland,Luzerne,AF,1.01
+424,grassland,Ackergras,AF,33.58
+425,grassland,Klee-Luzerne-Gemisch,AF,0.35
+429,grassland,Esparsette,AF,0.01
+430,grassland,Serradella,AF,0.00
+432,grassland,Kleemischung,AF,0.09
+433,grassland,Luzerne-Gras,AF,0.51
+434,grassland,Gras-Leguminosen  (mehr Leg.),SF,0.88
+459,grassland,Grünland,GL,379.30
+480,orchard,Streuobst (Grünlandnutzung),GL,9.42
+492,fallow,(Heide (DGL etabl. Praktiken),GL,1.60
+510,vegetable,Goldrute,ZP,0.00
+512,vegetable,Iberischer Drachenkopf,ZP,0.00
+514,vegetable,Hauswurz,ZP,0.00
+560,fallow,Brache (im Rahmen VNS),PA,7.65
+564,other,Aufforstung Ländl.Raum,SL,0.05
+573,fallow,Uferrandstreifenprogramm (AUM),SL,5.20
+576,fallow,Erosionsschutzstreifen (AUM),SL,0.24
+583,fallow,Naturschutzfläche (2021/2115),SL,2.22
+590,fallow,Brache (einj. Blühmisch.),PA,0.67
+591,fallow,AL aus Erzeugung genommen,PA,1.82
+592,fallow,DGL aus Erzeugung genommen,PA,2.19
+593,fallow,DK aus der Erzeugung genommen,PA,0.11
+602,potato,Kartoffeln,HF,16.66
+603,sugar-beet,Zuckerrüben,HF,16.23
+604,other,Topinambur,HF,0.07
+610,vegetable,beetweiser Anbau Gemüse ab 5 K,SF,0.85
+611,vegetable,beetweiser Anbau Gemüse bis 4,GM,0.44
+613,vegetable,Gemüsekohl (auch Zierkohl),GM,1.33
+614,rapeseed,Brauner Senf,OE,0.00
+616,vegetable,Garten-Senkfrauke-, Rucola,GM,0.05
+618,vegetable,Gartenrettiche,GM,0.12
+619,rapeseed,Weißer Senf, Gelber Senf,OE,0.12
+620,vegetable,Gemüserübe,GM,0.00
+622,vegetable,Tomaten,GM,0.07
+623,vegetable,Auberginen,GM,0.00
+624,vegetable,Paprika, Chilli, Peperoni,GM,0.01
+627,vegetable,Gurken,GM,0.07
+628,vegetable,Zuckermelone,GM,0.00
+629,vegetable,Riesenkürbis,GM,0.57
+630,vegetable,Gartenkürbis,GM,0.85
+631,vegetable,Melone,GM,0.01
+633,vegetable,Zwiebeln/Lauch,GM,1.93
+634,vegetable,Möhre (auch Futtermöhre),GM,1.34
+635,vegetable,Gartenbohne,GM,0.34
+636,vegetable,Feldsalate (auch Rapunzel),GM,0.01
+637,vegetable,Salat (Garten, Lollo Rosso.),GM,0.30
+638,vegetable,Spinat,GM,0.25
+639,vegetable,Mangold, Rote Beete/Rote Rübe,GM,0.19
+641,vegetable,Sellerie (Knoll/Bleich/Stang),GM,0.15
+642,vegetable,Ampfer (Wiesen-Sauerampfer),GM,0.00
+643,vegetable,Pastinaken,GM,0.03
+644,vegetable,Zichorien/Wegwarten,GM,0.08
+645,vegetable,Kichererbsen,GM,0.01
+647,vegetable,Schwarzwurzeln,GM,0.03
+648,vegetable,Fenchel (Gemüse/Körner),GM,0.04
+649,vegetable,Gemüserübsen,GM,0.00
+650,vegetable,beetweise Kräuter/Gewürz ab 5,SF,0.07
+651,vegetable,Anethum (Dill, Gurkenkraut),HP,0.07
+652,vegetable,Kerbel (auch Wiesenkerbel),HP,0.00
+653,vegetable,Bibernellen (Anis),HP,0.00
+654,vegetable,Kümmel,HP,0.00
+656,vegetable,Schwarzkümmel,HP,0.01
+657,vegetable,Koriander,HP,0.04
+658,vegetable,Liebstöckel/Maggikraut,HP,0.01
+659,vegetable,Petersilie,HP,0.19
+660,vegetable,Basilikum,HP,0.01
+661,vegetable,Rosmarin,HP,0.00
+662,vegetable,Salbei (auch Buntschopf),HP,0.00
+664,vegetable,Oregano (Majoran, Dost),HP,0.01
+665,vegetable,Bohnenkräuter,HP,0.00
+667,vegetable,Verbenen (echtes Eisenkraut),HP,0.00
+668,vegetable,Lavendel,HP,0.01
+669,vegetable,Thymian (auch Gartenthymian),HP,0.01
+670,vegetable,Melissen (Zitronenmelisse),HP,0.00
+671,vegetable,Enziane,HP,0.00
+672,vegetable,Minzen (Pfefferm., Grüne M.),HP,0.03
+674,vegetable,Ringelblumen,HP,0.01
+675,vegetable,Sonnenhut (Schmalbl., Purpur),HP,0.01
+677,vegetable,Kamillen (Echte Kamille),HP,0.00
+678,vegetable,Schafgarben (Gelbe Schafgarbe),HP,0.00
+680,vegetable,Johanniskräuter (Echtes J.),HP,0.00
+681,vegetable,Frauenmantel,HP,0.00
+684,vegetable,Löwenzahn,HP,0.00
+685,vegetable,Engelwurzen,HP,0.00
+687,vegetable,echte Arnika (Arnica montana),HP,0.01
+690,vegetable,beetweise Küchenkräuter bis 4,SF,0.01
+701,other,Hanf,SF,0.03
+702,grassland,Rollrasen,SF,0.27
+704,grassland,Glanzgräser,SF,0.00
+706,other,Mohn (Schlafmohn, Backmohn),SF,0.03
+707,vegetable,Erdbeeren,SF,1.75
+708,other,Färberdisteln,SF,0.01
+709,other,Brennnesseln (Große Brennn.),SF,0.00
+710,other,Färberkrapp (Rubia tinctorum),SF,0.00
+718,vegetable,beetweise Zierpflanzen bis 4 K,SF,0.27
+720,vegetable,beetweise Zierpflanzen ab 5 K.,SF,0.27
+726,vegetable,Lilien (Türkenbund),ZP,0.00
+730,vegetable,Seidenpflanzen,ZP,0.00
+733,vegetable,Astern (Sommeraster),ZP,0.01
+734,vegetable,Chrysantheme, Winteraster,ZP,0.01
+735,vegetable,Strohblumen (Garten),ZP,0.00
+739,vegetable,Tagetes,ZP,0.10
+740,vegetable,Wucherblumen (Mutterkraut),ZP,0.00
+741,vegetable,Strandflieder (Geflügelter S.),ZP,0.00
+744,vegetable,Taubnesseln (Weiße Taubnessel),ZP,0.00
+745,vegetable,Gladiolen (Gartengladiole),ZP,0.04
+746,vegetable,Tulpen (Garten-Tulpe),ZP,0.01
+747,vegetable,Trauben-Silberkerze,ZP,0.01
+748,vegetable,Rittersporne,ZP,0.00
+750,vegetable,Dahlien (Garten-Dahlie),ZP,0.03
+751,vegetable,Rhodiola (Rosenwurz),ZP,0.01
+756,vegetable,Löwenmäulchen,ZP,0.01
+765,vegetable,Kapuzinerkresse,ZP,0.00
+766,vegetable,Pfingstrosen (auch Strauch),ZP,0.16
+768,vegetable,Wiesenknopf (Kl. W., Pimpine.),ZP,0.00
+772,vegetable,Nelken (Bartn., Land/Edel),ZP,0.02
+776,vegetable,Veilchen und Stiefmütterchen,ZP,0.00
+777,vegetable,Phacelia,ZP,0.09
+778,vegetable,Alpendistel,ZP,0.01
+782,vegetable,Glockenblumen (Campanula),ZP,0.01
+784,vegetable,Korischer Nieswurz, Rosen,ZP,0.00
+785,vegetable,Eukalyptus,ZP,0.02
+786,vegetable,Fingerhut,ZP,0.00
+789,vegetable,Veronica/Hebe/Ehrenpreis,ZP,0.01
+790,vegetable,Anemonen,ZP,0.00
+792,vegetable,Kornrade,ZP,0.00
+796,vegetable,Fetthenne, Mauerpfeffer,ZP,0.03
+802,maize,Silphium (Durchwachs., Becher),EP,0.36
+803,maize,Sudangras,EP,0.13
+804,maize,Sida (Virginiamalve),EP,0.01
+822,orchard,Streuobst (ohne Wiesennutzung),DA,0.09
+825,orchard,Kernobst z.B. Äpfel, Birnen,DA,1.57
+826,orchard,Steinobst z.B. Kirsche, Pflaum,DA,0.55
+827,orchard,Beerenobst,DA,0.88
+829,orchard,Sonstige Obstanlagen,DA,0.08
+833,orchard,Haselnüsse,DA,0.04
+834,orchard,Walnüsse,DA,0.08
+838,orchard,Baumschulen (ohne Beerenobst),DA,2.24
+839,orchard,Beerenobst zur Vermehrung,DA,0.01
+840,orchard,Korbweiden,DA,0.04
+841,orchard,Niederwald mit Kurzumtrieb,DA,0.34
+842,vineyard,Rebland,DA,0.07
+850,orchard,Sonstige Dauerkulturen,DA,0.20
+851,vegetable,Rhabarber,DA,0.64
+852,maize,Chinaschilf/Miscanthus,EP,1.32
+853,maize,Riesenweizengras/Szarvasi-Gras,EP,0.04
+860,vegetable,Spargel,DA,2.11
+861,vegetable,Artischocke,DA,0.00
+862,orchard,Heidekraut,DA,0.11
+863,vegetable,Rosen, Schnittrosen,DA,0.06
+865,orchard,Trüffel,DA,0.02
+871,fallow,Wildpflanzenmischung (AUM),SF,0.25
+910,fallow,Wildacker auf lw. Fläche,SF,3.44
+911,sugar-beet,Rübensamenvermehrung,SF,0.00
+912,grassland,Grassamenvermehrung,SF,0.23
+913,fallow,Wildsamenvermehrung,SF,0.39
+914,other,Versuchsflächen beihilfef. Kul,SF,0.54
+915,fallow,Randstreifen (Acker/DK),SF,31.20
+917,maize,Mais-Mischkulturen,SF,0.03
+918,fallow,Mehrjährige Buntbrachen (AUM),PA,15.63
+919,maize,Saatmais (Saatgutvermehrung),SF,0.00
+924,fallow,Vertragsnaturs. ohne DZ,SF,3.36
+956,other,Aufforstung,SF,0.05
+972,grassland,NFF: Dauergrünlandnutzung,SF,0.12
+973,other,NFF: Ackernutzung,SF,0.02
+983,orchard,Weihnachtsbäume,DA,1.24
+994,other,Unbefestigte Mieten DGL,SF,0.44
+995,other,Forstflächen,SF,0.37
+996,other,Unbefestigte Mieten AL,SF,0.84
+999,other,Gattung/Art (nicht in Liste),SF,0.02

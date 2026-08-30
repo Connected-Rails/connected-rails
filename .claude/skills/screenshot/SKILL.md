@@ -44,7 +44,7 @@ Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für gel
 | `--hud <stufe>` | `full`, `reduced` oder `off` — die drei Stufen der Anzeige (F7). Schreibt die Einstellungsdatei nicht. |
 | `--overlays` | Öffnet Tastenhilfe (F5) und Diagnose (F6) von Anfang an — sonst nur per Tastendruck erreichbar. |
 | `--menu [seite]` | Fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe), `line`, `loco`, `scenario`, `mods`, `settings`, `controls`. |
-| `--camera <modus>` | `outside` für die Außenkamera (Fahrzeugmodelle), `walk` für zu Fuß — beides sonst nur über F4. |
+| `--camera <modus>` | `outside` für die Außenkamera (Fahrzeugmodelle), `walk` für zu Fuß, `fly` für die Freikamera des Konsolenbefehls `fly` — alles sonst nur per Taste oder Konsole erreichbar. |
 | `--time HH:MM` | Startuhrzeit der Fahrt, etwa `21:40` für den Nachthimmel. |
 | `--date JJJJ-MM-TT` | Startdatum — entscheidet über die Jahreszeit von Boden und Bewuchs. |
 | `--weather <preset>` | `clear`, `cloudy`, `overcast`, `fog`, `drizzle`, `rain`, `storm`, `thunderstorm`, `sleet`, `snow`, `blizzard`, `hail`, `frost`. Zusammen mit `--screenshot` sofort gesetzt statt eingezogen. |

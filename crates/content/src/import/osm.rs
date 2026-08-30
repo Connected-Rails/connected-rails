@@ -14,9 +14,20 @@
 //! line (a few thousand nodes); a PBF reader would only be necessary if whole federal
 //! states had to be read in.
 
-use crate::route::MarkerSource;
+use crate::route::{MarkerSource, WaterSource};
 use serde::Deserialize;
 use std::collections::HashMap;
+
+/// One member of a relation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Member {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(rename = "ref")]
+    pub id: i64,
+    #[serde(default)]
+    pub role: String,
+}
 
 /// One element of the Overpass response (node, way or relation).
 #[derive(Debug, Clone, Deserialize)]
@@ -30,6 +41,8 @@ pub struct Element {
     pub lon: Option<f64>,
     #[serde(default)]
     pub nodes: Vec<i64>,
+    #[serde(default)]
+    pub members: Vec<Member>,
     #[serde(default)]
     pub tags: HashMap<String, String>,
 }
@@ -166,6 +179,337 @@ pub fn parse_forests(json: &str) -> Result<Vec<Vec<(f64, f64)>>, OsmError> {
         }
     }
     Ok(polygons)
+}
+
+/// Water bodies from an Overpass extract, as [`WaterSource`]s — the route
+/// editor's "Import water" reads them into the line's `waters`. An extract
+/// without any is fine (empty result, not an error).
+///
+/// Query, analogous to the track one:
+///
+/// ```overpassql
+/// [out:json];
+/// (
+///   way["natural"="water"](52.0,10.0,52.1,10.2);
+///   relation["natural"="water"](52.0,10.0,52.1,10.2);
+///   way["waterway"~"^(riverbank|dock)$"](52.0,10.0,52.1,10.2);
+///   way["landuse"~"^(reservoir|basin)$"](52.0,10.0,52.1,10.2);
+/// );
+/// (._;>;);
+/// out body;
+/// ```
+///
+/// Multipolygon relations are assembled: the `outer` members are chained over
+/// their shared end nodes into rings — one body per ring, a braided river
+/// therefore becomes several — and each `inner` ring (an island) becomes a
+/// hole of the smallest outer that contains it. Ways a relation claims are
+/// not read again on their own, so a lake is not imported twice.
+// ponytail: the chaining is the same greedy end-node walk the track import
+// does. A ring split over ways that share a node with *three* ways — the
+// extractor cut through a junction — chains greedily and may join the wrong
+// pair; the result is still a ring on the water, only with a kink where the
+// wrong turn was taken. A river mapped as a centre line (`waterway=river`)
+// is deliberately not read: a line has no width, and buffering it here would
+// invent banks the map does not vouch for.
+pub fn parse_water(json: &str) -> Result<Vec<WaterSource>, OsmError> {
+    let response: OverpassResponse =
+        serde_json::from_str(json).map_err(|e| OsmError::Json(e.to_string()))?;
+
+    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    // Ways by id, node list and tags — the relation members are usually
+    // untagged, the tags sit on the relation, but a standalone way carries
+    // its own.
+    let mut ways: HashMap<i64, (Vec<i64>, HashMap<String, String>)> = HashMap::new();
+    let mut relations: Vec<WaterRelation> = Vec::new();
+    for e in &response.elements {
+        match e.kind.as_str() {
+            "node" => {
+                if let (Some(lat), Some(lon)) = (e.lat, e.lon) {
+                    nodes.insert(e.id, (lat, lon));
+                }
+            }
+            "way" => {
+                ways.insert(e.id, (e.nodes.clone(), e.tags.clone()));
+            }
+            "relation" => {
+                if e.tags.get("type").map(String::as_str) != Some("multipolygon") {
+                    continue;
+                }
+                let Some((tag, name)) = water_tag(&e.tags) else {
+                    continue;
+                };
+                let (mut outer, mut inner) = (Vec::new(), Vec::new());
+                for member in &e.members {
+                    if member.kind != "way" {
+                        continue;
+                    }
+                    // No role means outer, by the multipolygon convention.
+                    match member.role.as_str() {
+                        "inner" | "enclave" => inner.push(member.id),
+                        _ => outer.push(member.id),
+                    }
+                }
+                relations.push(WaterRelation {
+                    outer,
+                    inner,
+                    tag,
+                    name,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // The ways the relations claim: they build the relation's rings, not
+    // bodies of their own.
+    let claimed: std::collections::HashSet<i64> = relations
+        .iter()
+        .flat_map(|relation| relation.outer.iter().chain(&relation.inner).copied())
+        .collect();
+
+    let mut waters = Vec::new();
+    // Standalone closed ways — a lake drawn as one way, still the common
+    // case. In id order, so the same extract always imports the same line.
+    let mut standalone: Vec<i64> = ways
+        .keys()
+        .copied()
+        .filter(|id| !claimed.contains(id))
+        .collect();
+    standalone.sort_unstable();
+    for id in standalone {
+        let (way, tags) = &ways[&id];
+        let Some((tag, name)) = water_tag(tags) else {
+            continue;
+        };
+        let Some(polygon) = ring_of(way, &nodes) else {
+            continue;
+        };
+        waters.push(WaterSource {
+            name: name.unwrap_or_default(),
+            polygon,
+            holes: Vec::new(),
+            tags: vec![tag.into()],
+        });
+    }
+    // Relations: outer rings chained, inners attached to the outer that
+    // holds them.
+    for relation in relations {
+        let outers = chain_rings(&relation.outer, &ways, &nodes);
+        if outers.is_empty() {
+            continue;
+        }
+        let inners = chain_rings(&relation.inner, &ways, &nodes);
+        for (i, polygon) in outers.iter().enumerate() {
+            let Some(seen) = polygon.first() else {
+                continue;
+            };
+            // The smallest containing outer wins, so an inner is not glued
+            // to the whole braided river when one braid holds it.
+            let owner = outers
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate)| contains_ring(candidate, seen))
+                .min_by(|a, b| ring_degree_area(a.1).total_cmp(&ring_degree_area(b.1)));
+            if owner.is_some_and(|(j, _)| j != i) {
+                // Inside another outer of the same relation: a lake on an
+                // island, which the multipolygon semantics would call an
+                // outer of its own — the extract said inner, and it is
+                // nobody's hole.
+                continue;
+            }
+            let holes: Vec<Vec<crate::route::WaterPoint>> = inners
+                .iter()
+                .filter(|hole| hole.first().is_some_and(|p| contains_ring(polygon, p)))
+                .cloned()
+                .collect();
+            // The relation's own name, else that of a member way.
+            let name = relation
+                .name
+                .clone()
+                .or_else(|| {
+                    relation.outer.iter().find_map(|id| {
+                        ways.get(id)
+                            .and_then(|(_, tags)| tags.get("name"))
+                            .filter(|n| !n.is_empty())
+                            .cloned()
+                    })
+                })
+                .unwrap_or_default();
+            waters.push(WaterSource {
+                name,
+                polygon: polygon.clone(),
+                holes,
+                tags: vec![relation.tag.into()],
+            });
+        }
+    }
+    Ok(waters)
+}
+
+/// Closes a way into a ring of points: the closing node dropped, the nodes
+/// resolved, three corners at least. `None` for an open or unresolvable way.
+fn ring_of(way: &[i64], nodes: &HashMap<i64, (f64, f64)>) -> Option<Vec<crate::route::WaterPoint>> {
+    let mut way = way.to_vec();
+    if way.len() > 1 && way.first() == way.last() {
+        way.pop();
+    }
+    let polygon: Vec<crate::route::WaterPoint> = way
+        .iter()
+        .filter_map(|id| nodes.get(id))
+        .map(|&(lat, lon)| crate::route::WaterPoint { lat, lon })
+        .collect();
+    (polygon.len() >= 3).then_some(polygon)
+}
+
+/// Chains ways over their shared end nodes into rings — the same greedy walk
+/// the track import uses, in both directions and without its preference. A
+/// ring the extract cut open at the bounding box does not close and is left
+/// out; the rest of the relation still imports.
+fn chain_rings(
+    members: &[i64],
+    ways: &HashMap<i64, (Vec<i64>, HashMap<String, String>)>,
+    nodes: &HashMap<i64, (f64, f64)>,
+) -> Vec<Vec<crate::route::WaterPoint>> {
+    let pool: Vec<&Vec<i64>> = members
+        .iter()
+        .filter_map(|id| ways.get(id).map(|(way, _)| way))
+        .collect();
+    if pool.is_empty() {
+        return Vec::new();
+    }
+    let end = |chain: &[(usize, bool)], at_end: bool| {
+        let &(index, reversed) = if at_end {
+            chain.last().expect("seeded")
+        } else {
+            chain.first().expect("seeded")
+        };
+        let way = pool[index];
+        let mut node = if at_end { way[way.len() - 1] } else { way[0] };
+        if reversed {
+            node = if at_end { way[0] } else { way[way.len() - 1] };
+        }
+        node
+    };
+    let closed = |chain: &[(usize, bool)]| end(chain, true) == end(chain, false);
+
+    let mut used = vec![false; pool.len()];
+    let mut rings = Vec::new();
+    for start in 0..pool.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let mut chain: Vec<(usize, bool)> = vec![(start, false)];
+        loop {
+            if closed(&chain) {
+                break;
+            }
+            // One step in either direction per pass, until the ring closes
+            // or neither end finds a partner.
+            let tail = end(&chain, true);
+            let forward = pool.iter().enumerate().find_map(|(i, way)| {
+                if used[i] {
+                    return None;
+                }
+                let (first, last) = (way[0], way[way.len() - 1]);
+                (first == tail)
+                    .then_some((i, false))
+                    .or((last == tail).then_some((i, true)))
+            });
+            if let Some((next, flip)) = forward {
+                used[next] = true;
+                chain.push((next, flip));
+                continue;
+            }
+            let head = end(&chain, false);
+            let backward = pool.iter().enumerate().find_map(|(i, way)| {
+                if used[i] {
+                    return None;
+                }
+                let (first, last) = (way[0], way[way.len() - 1]);
+                (last == head)
+                    .then_some((i, false))
+                    .or((first == head).then_some((i, true)))
+            });
+            if let Some((prev, flip)) = backward {
+                used[prev] = true;
+                chain.insert(0, (prev, flip));
+                continue;
+            }
+            break;
+        }
+        if !closed(&chain) {
+            continue;
+        }
+        let mut seq: Vec<i64> = Vec::new();
+        for &(index, reversed) in &chain {
+            let mut way = pool[index].clone();
+            if reversed {
+                way.reverse();
+            }
+            // The node a partner joins on appears twice.
+            let skip = usize::from(!seq.is_empty());
+            seq.extend(way.into_iter().skip(skip));
+        }
+        if let Some(polygon) = ring_of(&seq, nodes) {
+            rings.push(polygon);
+        }
+    }
+    rings
+}
+
+/// Whether the point `p` (degrees) lies inside the ring — the containment the
+/// inner-to-outer assignment and nothing else needs, so the cheap degree-space
+/// ray cast is enough.
+fn contains_ring(ring: &[crate::route::WaterPoint], p: &crate::route::WaterPoint) -> bool {
+    crate::terrain::point_in_polygon(
+        glam::DVec2::new(p.lat, p.lon),
+        &ring
+            .iter()
+            .map(|q| glam::DVec2::new(q.lat, q.lon))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Area of a ring in square degrees — only ever compared against a neighbour
+/// of the same relation, so the projection's latitude distortion cancels.
+fn ring_degree_area(ring: &[crate::route::WaterPoint]) -> f64 {
+    let mut total = 0.0;
+    let mut j = ring.len().saturating_sub(1);
+    for i in 0..ring.len() {
+        total += (ring[j].lat - ring[i].lat) * (ring[j].lon + ring[i].lon);
+        j = i;
+    }
+    (total / 2.0).abs()
+}
+
+/// One water multipolygon waiting for its rings: the member way ids by role,
+/// the water family the relation carries, and its own name.
+struct WaterRelation {
+    outer: Vec<i64>,
+    inner: Vec<i64>,
+    tag: &'static str,
+    name: Option<String>,
+}
+
+/// Which water family a way or relation belongs to — the first tag pair that
+/// matches wins, and `waterway=river` and friends name a centre line, not an
+/// area, so they are not read. The third element is what goes into
+/// `WaterSource::tags`.
+fn water_tag(tags: &HashMap<String, String>) -> Option<(&'static str, Option<String>)> {
+    const FAMILIES: &[(&str, &str, &str)] = &[
+        ("natural", "water", "water"),
+        ("waterway", "riverbank", "riverbank"),
+        ("waterway", "dock", "dock"),
+        ("landuse", "reservoir", "reservoir"),
+        ("landuse", "basin", "basin"),
+    ];
+    for (key, value, tag) in FAMILIES {
+        if tags.get(*key).map(String::as_str) == Some(*value) {
+            return Some((tag, tags.get("name").filter(|n| !n.is_empty()).cloned()));
+        }
+    }
+    None
 }
 
 /// Tags the marker import recognises, and the layer each one lands in.
@@ -437,6 +781,116 @@ mod tests {
 
         // A forest-free extract is empty, not an error.
         assert_eq!(parse_forests(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    #[test]
+    fn water_bodies_come_out_of_overpass_json() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.01},
+            {"type": "node", "id": 3, "lat": 52.01, "lon": 10.01},
+            {"type": "node", "id": 4, "lat": 52.01, "lon": 10.0},
+            {"type": "way", "id": 10, "nodes": [1, 2, 3, 4, 1],
+             "tags": {"natural": "water", "water": "pond", "name": "Mühlteich"}},
+            {"type": "way", "id": 11, "nodes": [1, 2, 3, 4, 1], "tags": {"waterway": "riverbank"}},
+            {"type": "way", "id": 12, "nodes": [1, 2, 3, 4, 1], "tags": {"waterway": "river"}},
+            {"type": "way", "id": 13, "nodes": [1, 2, 3, 4, 1], "tags": {"landuse": "reservoir"}},
+            {"type": "way", "id": 14, "nodes": [1, 2, 1], "tags": {"natural": "water"}}
+        ]}"#;
+        let waters = parse_water(json).expect("parses");
+
+        // The centre-line river is skipped, the two-point ring dropped, the
+        // closing node removed, the name and the matched family carried.
+        assert_eq!(waters.len(), 3);
+        assert_eq!(waters[0].name, "Mühlteich");
+        assert_eq!(waters[0].tags, vec!["water"]);
+        assert_eq!(waters[0].polygon.len(), 4);
+        assert_eq!(waters[1].tags, vec!["riverbank"]);
+        assert_eq!(waters[2].tags, vec!["reservoir"]);
+
+        // A water-free extract is empty, not an error.
+        assert_eq!(parse_water(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    /// A lake mapped as a multipolygon: the outer split over two ways, an
+    /// island as the inner. The members chain into one ring, the island
+    /// becomes a hole of it, and the member ways are not read again on
+    /// their own.
+    #[test]
+    fn a_multipolygon_assembles_into_a_body_with_its_island() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.00, "lon": 10.00},
+            {"type": "node", "id": 2, "lat": 52.00, "lon": 10.04},
+            {"type": "node", "id": 3, "lat": 52.02, "lon": 10.04},
+            {"type": "node", "id": 4, "lat": 52.02, "lon": 10.00},
+            {"type": "node", "id": 5, "lat": 52.005, "lon": 10.015},
+            {"type": "node", "id": 6, "lat": 52.015, "lon": 10.02},
+            {"type": "node", "id": 7, "lat": 52.005, "lon": 10.025},
+            {"type": "relation", "id": 90, "members": [
+                {"type": "way", "ref": 20, "role": "outer"},
+                {"type": "way", "ref": 21, "role": "outer"},
+                {"type": "way", "ref": 22, "role": "inner"}
+             ],
+             "tags": {"type": "multipolygon", "natural": "water", "name": "Plöner See"}},
+            {"type": "way", "id": 20, "nodes": [1, 2]},
+            {"type": "way", "id": 21, "nodes": [2, 3, 4, 1]},
+            {"type": "way", "id": 22, "nodes": [5, 6, 7, 5]}
+        ]}"#;
+        let waters = parse_water(json).expect("parses");
+
+        // One body, not three: the member ways belong to the relation.
+        assert_eq!(waters.len(), 1, "{waters:?}");
+        let lake = &waters[0];
+        assert_eq!(lake.name, "Plöner See");
+        // The outer chained over the shared node 2: 1, 2, 3, 4.
+        assert_eq!(lake.polygon.len(), 4);
+        assert_eq!(lake.polygon[0].lat, 52.00);
+        // The island is the lake's one hole, with the closing node dropped.
+        assert_eq!(lake.holes.len(), 1);
+        assert_eq!(lake.holes[0].len(), 3);
+        // And the hole is where the island is: open water is water, the
+        // island is not, and the outside is neither.
+        assert!(lake.contains(52.01, 10.005), "open water misses");
+        assert!(!lake.contains(52.01, 10.02), "the island centre is water");
+        assert!(!lake.contains(52.03, 10.02), "the outside is water");
+    }
+
+    /// A braided river mapped as one relation with two outer rings: two
+    /// bodies, and an inner is glued to the braid that holds it, not to
+    /// the other one.
+    #[test]
+    fn two_outers_are_two_bodies_and_inners_follow_their_braid() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.00, "lon": 10.00},
+            {"type": "node", "id": 2, "lat": 52.00, "lon": 10.01},
+            {"type": "node", "id": 3, "lat": 52.01, "lon": 10.01},
+            {"type": "node", "id": 4, "lat": 52.01, "lon": 10.00},
+            {"type": "node", "id": 5, "lat": 52.02, "lon": 10.00},
+            {"type": "node", "id": 6, "lat": 52.02, "lon": 10.01},
+            {"type": "node", "id": 7, "lat": 52.03, "lon": 10.01},
+            {"type": "node", "id": 8, "lat": 52.03, "lon": 10.00},
+            {"type": "node", "id": 9, "lat": 52.004, "lon": 10.005},
+            {"type": "node", "id": 10, "lat": 52.0045, "lon": 10.006},
+            {"type": "node", "id": 11, "lat": 52.0035, "lon": 10.006},
+            {"type": "relation", "id": 91, "members": [
+                {"type": "way", "ref": 30, "role": "outer"},
+                {"type": "way", "ref": 31, "role": "outer"},
+                {"type": "way", "ref": 32, "role": "inner"}
+             ],
+             "tags": {"type": "multipolygon", "waterway": "riverbank"}},
+            {"type": "way", "id": 30, "nodes": [1, 2, 3, 4, 1]},
+            {"type": "way", "id": 31, "nodes": [5, 6, 7, 8, 5]},
+            {"type": "way", "id": 32, "nodes": [9, 10, 11, 9]}
+        ]}"#;
+        let waters = parse_water(json).expect("parses");
+        assert_eq!(waters.len(), 2, "{waters:?}");
+        // The southern braid carries the (tiny) island; the northern one
+        // has none.
+        let with_island = waters
+            .iter()
+            .find(|w| !w.holes.is_empty())
+            .expect("one braid holds the island");
+        assert!((with_island.polygon[0].lat - 52.00).abs() < 1e-9);
     }
 
     #[test]

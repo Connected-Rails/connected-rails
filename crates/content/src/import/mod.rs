@@ -9,7 +9,7 @@ pub mod dgm;
 pub mod fit;
 pub mod osm;
 
-pub use osm::{parse_forests, parse_markers};
+pub use osm::{parse_forests, parse_markers, parse_water};
 
 use crate::route::{EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource};
 use alignment::AlignmentOptions;
@@ -184,6 +184,7 @@ pub fn import_line(
             // The wire belongs to the track: every imported edge starts out
             // saying so itself, so it can be changed one edge at a time.
             electrification: vec![(0.0, options.electrification.clone())],
+            formation: true,
         });
         offset += len;
     }

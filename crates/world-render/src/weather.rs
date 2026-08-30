@@ -163,6 +163,7 @@ fn update(
     mut objects: ResMut<Assets<WeatherMaterial>>,
     mut terrain: ResMut<Assets<TerrainMaterial>>,
     mut fields: ResMut<Assets<crate::farmland::FieldMaterial>>,
+    mut water: ResMut<Assets<crate::water::WaterMaterial>>,
     mut last: Local<Option<WeatherParams>>,
 ) {
     let params = WeatherParams::of(&sky);
@@ -179,6 +180,10 @@ fn update(
     // The farmland takes the same rain and the same cloud shadow as the ground
     // it lies on — anything else and a field would stay dry in a downpour.
     for (_, material) in fields.iter_mut() {
+        material.extension.weather = params;
+    }
+    // The water most of all: its waves are the wind, its rings are the rain.
+    for (_, material) in water.iter_mut() {
         material.extension.weather = params;
     }
 }

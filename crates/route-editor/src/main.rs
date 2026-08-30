@@ -125,6 +125,43 @@ pub struct TrackObjects {
     pub map: std::collections::BTreeMap<String, track_model::TrackObject>,
 }
 
+/// The prefix that makes a tag a stand type: an object tagged `stand-mischwald`
+/// is one of the species a mixed wood is drawn from.
+pub const STAND_TAG: &str = "stand-";
+
+impl TrackObjects {
+    /// The stand types the installed mods describe, each with the objects that
+    /// belong to it. There is no file for this and no registry — a mod says
+    /// which woods a tree grows in by tagging it, and a mod that adds a species
+    /// to an existing stand needs nothing but the tag the others carry.
+    pub fn stands(&self) -> std::collections::BTreeMap<String, Vec<String>> {
+        let mut stands: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (name, object) in &self.map {
+            for tag in &object.tags {
+                if let Some(stand) = tag.strip_prefix(STAND_TAG) {
+                    stands
+                        .entry(stand.to_string())
+                        .or_default()
+                        .push(name.clone());
+                }
+            }
+        }
+        stands
+    }
+
+    /// What `pick` stands for: the members of a stand (`stand-mischwald`), or
+    /// the one object it names. Empty for an empty pick — the placeholder tree.
+    pub fn species_of(&self, pick: Option<&String>) -> Vec<String> {
+        match pick {
+            None => Vec::new(),
+            Some(pick) => match pick.strip_prefix(STAND_TAG) {
+                Some(stand) => self.stands().remove(stand).unwrap_or_default(),
+                None => vec![pick.clone()],
+            },
+        }
+    }
+}
+
 /// Everything the installed mods brought, as one system parameter. Four
 /// separate resources would put `draw` over Bevy's parameter limit, and they
 /// are read together anyway — the content drawer lists all of them.
@@ -760,6 +797,37 @@ fn diff(
                 }
             }
         }
+        // A water body is cut into the tiles it covers, like a field — and
+        // its surface rides on the raw elevation data, so a change reaches
+        // the ground under it and no further.
+        if last.waters != now.waters {
+            const MANY: usize = 32;
+            let touched: Vec<&content::route::WaterSource> =
+                changed(&last.waters, &now.waters).take(MANY + 1).collect();
+            if touched.len() > MANY {
+                change = TerrainChange::all();
+            } else {
+                for water in touched {
+                    let corners: Vec<glam::DVec2> = water
+                        .polygon
+                        .iter()
+                        .chain(water.holes.iter().flatten())
+                        .map(|p| utm(p.lat, p.lon))
+                        .collect();
+                    let Some(lo) = corners.iter().copied().reduce(glam::DVec2::min) else {
+                        continue;
+                    };
+                    let hi = corners
+                        .iter()
+                        .copied()
+                        .reduce(glam::DVec2::max)
+                        .unwrap_or(lo);
+                    change
+                        .ground
+                        .add_disc((lo + hi) / 2.0, (hi - lo).length() / 2.0 + 1.0);
+                }
+            }
+        }
     }
     if !matches!(change.ground, Region::None) && !matches!(change.ground, Region::All) {
         // Ground that moves takes what stands on it along — the rebuilt tile
@@ -789,6 +857,7 @@ fn rebuild(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut rail_materials: ResMut<Assets<world_render::RailMaterial>>,
     mut origin: ResMut<Origin>,
     mut focus: ResMut<Focus>,
     mut overlay: ResMut<Overlay>,
@@ -831,6 +900,7 @@ fn rebuild(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut rail_materials,
         &assets,
         &line.net,
         &origin.0,
@@ -1419,6 +1489,72 @@ mod tests {
         let (scene, change) = diff(&source, &relaid, &net, zone);
         assert!(scene);
         assert_eq!(change, terrain::TerrainChange::all());
+    }
+
+    /// A `stand-…` tag makes an object a member of that stand; an object may
+    /// be in several, and a stand collects everything tagged with it whichever
+    /// mod it came from. `species_of` then resolves a pick to what the forest
+    /// brush plants: a stand's members, one object, or nothing.
+    #[test]
+    fn stands_come_out_of_the_objects_tags() {
+        let object = |tags: &[&str]| track_model::TrackObject {
+            name: "x".into(),
+            model: "x/x.gltf".into(),
+            lateral_offset: 0.0,
+            yaw_deg: 0.0,
+            height: 0.0,
+            autumn_model: None,
+            winter_model: None,
+            lod_distances: Vec::new(),
+            tags: tags.iter().map(|t| (*t).to_string()).collect(),
+        };
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "trees:fichte_a".to_string(),
+            object(&["nadelbaum", "stand-nadelwald", "stand-mischwald"]),
+        );
+        map.insert(
+            "trees:rotbuche_a".to_string(),
+            object(&["laubbaum", "stand-mischwald"]),
+        );
+        // Another mod joining an existing stand needs nothing but the tag.
+        map.insert("fremd:tanne".to_string(), object(&["stand-nadelwald"]));
+        map.insert("example:mast".to_string(), object(&["mast"]));
+        let objects = TrackObjects { map };
+
+        let stands = objects.stands();
+        assert_eq!(
+            stands.get("nadelwald").map(Vec::as_slice),
+            Some(&["fremd:tanne".to_string(), "trees:fichte_a".to_string()][..]),
+        );
+        assert_eq!(
+            stands.get("mischwald").map(Vec::len),
+            Some(2),
+            "a species may be in several stands"
+        );
+        assert!(
+            !stands.contains_key("mast"),
+            "only `stand-…` tags are stands"
+        );
+
+        assert_eq!(objects.species_of(None), Vec::<String>::new());
+        assert_eq!(
+            objects.species_of(Some(&"trees:rotbuche_a".to_string())),
+            vec!["trees:rotbuche_a".to_string()],
+        );
+        assert_eq!(
+            objects
+                .species_of(Some(&"stand-nadelwald".to_string()))
+                .len(),
+            2
+        );
+        // A stand no mod fills plants nothing rather than a tree called
+        // "stand-obstgarten".
+        assert!(
+            objects
+                .species_of(Some(&"stand-obstgarten".to_string()))
+                .is_empty()
+        );
     }
 
     /// A field *is* the ground, so adding one has to rebuild the tiles under

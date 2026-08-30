@@ -438,14 +438,35 @@ fn main() {
 
 /// Exits the app after the given number of frames — with `--screenshot` the window is
 /// captured beforehand.
+///
+/// The last frame's diagnostics go into the log on the way out. A `--frames`
+/// run is how the rendering is measured (the forest test of
+/// `tools/trees/bench_forest.mjs` is one), and reading them off a screenshot of
+/// the F6 overlay is neither scriptable nor precise.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    terrain: Res<TerrainInfo>,
     mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     *count += 1;
+    if *count == limit.0 {
+        let perf = hud::Perf::read(&diagnostics);
+        info!(
+            "after {} frames: {:.0} fps, {:.1} ms, {} entities; \
+             terrain {} tiles, {} triangles, {:.1} MB",
+            limit.0,
+            perf.fps,
+            perf.frame_ms,
+            perf.entities,
+            terrain.0.tiles,
+            terrain.0.triangles,
+            terrain.0.memory() as f64 / (1024.0 * 1024.0),
+        );
+    }
     let Some(shot) = shot else {
         if *count >= limit.0 {
             exit.write(AppExit::Success);
@@ -595,7 +616,7 @@ fn log_mods(mods: Res<Mods>) {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    world_materials: render::WorldMaterials,
     mut images: ResMut<Assets<Image>>,
     mut terrain_materials: ResMut<Assets<render::TerrainMaterial>>,
     mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
@@ -610,6 +631,12 @@ fn setup(
     binds: Res<bindings::Binds>,
     fonts: Res<theme::Fonts>,
 ) {
+    // Back to the names the body has always used.
+    let render::WorldMaterials {
+        standard: mut materials,
+        rail: mut rail_materials,
+    } = world_materials;
+
     // `--hud full|reduced|off` puts the display in one of its three steps for a
     // screenshot, which cannot press a key. It goes into a resource of its own rather than
     // into the setting: the settings file is written on exit whether anything changed or
@@ -783,6 +810,14 @@ fn setup(
         terrain_options.tile_size,
     );
     info!("fields: {} on the line", farmland.len());
+    // The line's waters, their surfaces laid over the terrain at build time
+    // (see `content::water`).
+    let waters = content::water::Waters::from_line(
+        &line_source,
+        terrain_options.zone,
+        terrain_options.tile_size,
+    );
+    info!("water: {} on the line", waters.len());
     // Trees, scenery objects and people come with the tiles: each stands on
     // the ground of the tile it lands on, and streams in and out with it.
     let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
@@ -794,12 +829,14 @@ fn setup(
         ))
         .with_crowd(crowd)
         .with_fields(farmland)
+        .with_waters(waters)
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut rail_materials,
         &assets,
         &sim.net,
         &origin,
@@ -1041,8 +1078,9 @@ fn setup(
     }
 
     // `--camera outside` starts on the external camera — handy for screenshots of a
-    // vehicle model — and `--camera walk` on foot, which a screenshot cannot reach
-    // otherwise (F4 needs a key press).
+    // vehicle model — `--camera walk` on foot, which a screenshot cannot reach
+    // otherwise (F4 needs a key press), and `--camera fly` in the free camera of the
+    // console's `fly` command.
     match arg("--camera").as_deref() {
         Some("outside") => {
             commands.insert_resource(ui::CameraState {
@@ -1057,6 +1095,29 @@ fn setup(
                 mode: ui::CameraMode::Walk,
                 ..default()
             });
+        }
+        Some("fly") => {
+            // Seeded where the wayside camera would put itself — beside the track,
+            // looking at the train. Without it the free camera would wake at the raw
+            // origin: rail-head height, inside the lead vehicle.
+            let mut state = ui::CameraState {
+                mode: ui::CameraMode::Fly,
+                ..default()
+            };
+            if let Some(front) = sim.trains[player].vehicles.first() {
+                let pose = front.pos.pose(&sim.net);
+                let pos = origin.to_render(pose.pos);
+                let up = origin.dir_to_render(pose.up);
+                let forward = origin.dir_to_render(pose.tangent);
+                let right = forward.cross(up).normalize_or_zero();
+                state.fly = Some(pos + right * 25.0 + up * 6.0);
+                let at = (pos + up * 2.0 - state.fly.unwrap()).normalize();
+                state.pitch = at.y.asin();
+                // The angles of the walk's view convention: forward is
+                // (−sin yaw · cos pitch, sin pitch, −cos yaw · cos pitch).
+                state.yaw = (-at.x).atan2(-at.z);
+            }
+            commands.insert_resource(state);
         }
         _ => {}
     }

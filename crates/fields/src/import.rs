@@ -81,8 +81,8 @@ pub struct ImportOptions {
     /// them.
     pub min_area: f64,
     /// Half-width of the strip kept clear of the track [m]. The default is the
-    /// terrain's own blend zone, so no field lies on the embankment the ground
-    /// pulls up to rail height.
+    /// terrain's own blend zone — the foot of the embankment — plus a margin,
+    /// so no field lies on the embankment the ground pulls up to rail height.
     pub track_clearance: f64,
     /// Upper bound on what one import may produce. A whole state through a
     /// mis-drawn envelope is a hung editor, not a feature.
@@ -98,7 +98,7 @@ impl Default for ImportOptions {
             clip: Clip::Cut,
             simplify: 1.5,
             min_area: 5_000.0,
-            track_clearance: 45.0,
+            track_clearance: 15.0,
             max_fields: 20_000,
             zone: 32,
             request: RequestConfig::default(),

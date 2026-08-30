@@ -376,6 +376,10 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
     // The same for reference markers — geo-positioned, and their layer name is
     // the same string in every module.
     merged.markers.extend(module.markers.iter().cloned());
+    // Water bodies too: geo-positioned polygons, and a body crossing a module
+    // boundary is kept whole by each side — the terrain each module builds
+    // covers only its own corridor.
+    merged.waters.extend(module.waters.iter().cloned());
     // Terrain strokes likewise; they keep their order, so a stroke of a later
     // module wins where two modules shape the same ground.
     merged.terrain.extend(module.terrain.iter().cloned());
@@ -485,6 +489,7 @@ mod tests {
                 speed: vec![(0.0, 120.0)],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             }],
             devices: vec![
                 DeviceSource {

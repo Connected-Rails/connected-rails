@@ -5,16 +5,38 @@
 // `max_speed` caps the line's speed profile wherever the type is assigned,
 // `roughness` scales the rolling noise (1.0 = welded main-line rail),
 // `reverb` is how much the surroundings ring (0 = open line, 1 = tunnel),
-// `texture` (mods://<mod>/assets/…) skins the ballast bed in the simulator,
+// `texture` / `normal_map` (mods://<mod>/assets/…) skin the ballast bed,
 // `color` is the untextured fallback and the route editor's section tint,
 // `lzb: true` makes the editor's rule check demand a line conductor device.
+//
+// `oberbau` is the physical build in real dimensions: rail section, sleepers
+// and ballast bed. The types in this mod cover what the DB InfraGO network
+// actually lays — the welded standard track on B 90 sleepers, the older
+// Regeloberbau on B 70, jointed branch-line track on wooden sleepers, and the
+// Feste Fahrbahn of the high-speed lines.
 (
-    name: "Hauptbahn",
+    name: "Hauptbahn (B90)",
+    texture: Some("example/assets/track/ballast.jpg"),
+    normal_map: Some("example/assets/track/ballast_nor.jpg"),
     color: (0.32, 0.30, 0.28),
     roughness: 1.0,
     reverb: 0.0,
     max_speed: 250.0,
     lzb: false,
+    // The current DB Regeloberbau: UIC 60 rails on B 90 sleepers at 60 cm,
+    // 30 cm of ballast — `W14K-60-B90-1667` in the DB's own notation.
+    oberbau: (
+        rail: R60,
+        sleeper: Concrete,
+        sleeper_length: 2.6,
+        sleeper_width: 0.32,
+        sleeper_height: 0.21,
+        sleeper_spacing: 0.60,
+        ballast_overhang: 0.70,
+        ballast_depth: 0.30,
+        sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
+        sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+    ),
     // Tags: free, lower case — the route editor's content drawer filters on them.
-    tags: ["main-line", "welded"],
+    tags: ["main-line", "welded", "b90"],
 )

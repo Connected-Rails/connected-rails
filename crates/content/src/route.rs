@@ -205,6 +205,98 @@ impl FieldSource {
     }
 }
 
+/// A corner of a water polygon. Degrees like every other geo-positioned
+/// entry; the surface height comes from the terrain.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WaterPoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// A body of water: a lake, a pond, a reservoir, a stretch of river between
+/// its banks — the closed OSM polygons of the `natural=water` family, or one
+/// drawn by hand.
+///
+/// The polygon is the waterline. Where the surface lies is decided at terrain
+/// build time, from the elevation data around the outline — a lake settles
+/// flat into its basin, a river follows its fall — see [`crate::water`].
+/// Nothing is stored about the look of the water: the shader makes its waves
+/// out of the wind and the weather, which the scenario already knows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaterSource {
+    /// Name from OSM (`name=*`), shown in the editor; empty is fine.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The outline in either winding — three corners at least, and not closed
+    /// (the last corner joins the first).
+    pub polygon: Vec<WaterPoint>,
+    /// Islands and other ground the water goes around — holes in the surface,
+    /// each an outline like `polygon`. An outline that is not inside the
+    /// water is ignored, so a hand-edited file cannot tear the surface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holes: Vec<Vec<WaterPoint>>,
+    /// Free-form tags, lower-case kebab like everywhere else. The OSM import
+    /// records what it matched (`water`, `waterway`) so a hand-edited file can
+    /// still tell a lake from a riverbank.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl WaterSource {
+    /// Middle of the outline [deg] — where the editor's list jumps to.
+    pub fn centre(&self) -> (f64, f64) {
+        if self.polygon.is_empty() {
+            return (0.0, 0.0);
+        }
+        let n = self.polygon.len() as f64;
+        (
+            self.polygon.iter().map(|p| p.lat).sum::<f64>() / n,
+            self.polygon.iter().map(|p| p.lon).sum::<f64>() / n,
+        )
+    }
+
+    /// Area of the outline less its holes [m²], measured in the UTM zone
+    /// `zone` — what the editor's panel reports, and how a click tells the
+    /// big lake from the ditch beside it.
+    pub fn area(&self, zone: u8) -> f64 {
+        let utm = |p: &WaterPoint| {
+            let (e, n) = world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
+            glam::DVec2::new(e, n)
+        };
+        let ring_area = |ring: &[WaterPoint]| -> f64 {
+            if ring.len() < 3 {
+                return 0.0;
+            }
+            let ring: Vec<glam::DVec2> = ring.iter().map(utm).collect();
+            let mut total = 0.0;
+            let mut j = ring.len() - 1;
+            for i in 0..ring.len() {
+                total += (ring[j].x - ring[i].x) * (ring[j].y + ring[i].y);
+                j = i;
+            }
+            (total / 2.0).abs()
+        };
+        let outer = ring_area(&self.polygon);
+        let holes: f64 = self.holes.iter().map(|h| ring_area(h)).sum();
+        (outer - holes).max(0.0)
+    }
+
+    /// Whether the point [deg] lies on the water — inside the outline and
+    /// outside every hole. What a click in the editor asks.
+    pub fn contains(&self, lat: f64, lon: f64) -> bool {
+        use crate::terrain::point_in_polygon;
+        let p = glam::DVec2::new(lat, lon);
+        let ring = |points: &[WaterPoint]| {
+            points
+                .iter()
+                .map(|q| glam::DVec2::new(q.lat, q.lon))
+                .collect::<Vec<_>>()
+        };
+        point_in_polygon(p, &ring(&self.polygon))
+            && !self.holes.iter().any(|h| point_in_polygon(p, &ring(h)))
+    }
+}
+
 /// What a field import drew on: one row per state it asked, with the state of
 /// the register it got (plan ch. 4, ch. 9).
 ///
@@ -294,6 +386,16 @@ pub struct EdgeSource {
     /// [`LineSource::electrification`].
     #[serde(default)]
     pub electrification: Vec<(f64, String)>,
+    /// Whether this edge carries a formation — ballast bed, and the embankment
+    /// or cutting the terrain builds under it (`true` unless the file says
+    /// otherwise). `false` for track on the builder's own constructions:
+    /// bridges, platforms, ground they shaped themselves.
+    #[serde(default = "default_formation")]
+    pub formation: bool,
+}
+
+fn default_formation() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -801,6 +903,11 @@ pub struct LineSource {
     /// that drives a train (see [`MarkerSource`]).
     #[serde(default)]
     pub markers: Vec<MarkerSource>,
+    /// Bodies of water (see [`WaterSource`]) — imported from OSM or drawn by
+    /// hand. The surfaces are laid over the terrain when the tiles are built,
+    /// like the fields are draped on it.
+    #[serde(default)]
+    pub waters: Vec<WaterSource>,
     /// Terrain brush strokes on top of the elevation data (see
     /// [`TerrainEditSource`]).
     #[serde(default)]
@@ -861,6 +968,7 @@ impl Default for LineSource {
             fields: Vec::new(),
             field_sources: Vec::new(),
             markers: Vec::new(),
+            waters: Vec::new(),
             terrain: Vec::new(),
             heights: Vec::new(),
             sections: Vec::new(),
@@ -2098,6 +2206,7 @@ impl LineSource {
         let joint = self.nodes.len() as u32;
         self.nodes.push(NodeSource::Joint);
         let old_to = self.edges[index].to;
+        let formation = self.edges[index].formation;
         self.edges[index].to = joint;
         self.edges[index].segments = first;
         self.edges[index].grade = grade_a;
@@ -2115,6 +2224,7 @@ impl LineSource {
             speed: speed_b,
             track_type: type_b,
             electrification: power_b,
+            formation,
         });
 
         // Followers continued from the old end, which now belongs to the second
@@ -2474,7 +2584,8 @@ impl LineSource {
             let to = *node_ids
                 .get(e.to as usize)
                 .ok_or(CompileError::UnknownNode(e.to))?;
-            let mut edge = TrackEdge::new(EdgeId(0), from, to, anchor, heading, e.segments.clone());
+            let mut edge = TrackEdge::new(EdgeId(0), from, to, anchor, heading, e.segments.clone())
+                .with_formation(e.formation);
             // Marked areas are laid over the edge's own profiles, in file order, so a
             // later area wins where two of them overlap.
             let length: f64 = e.segments.iter().map(|g| g.len).sum();
@@ -2992,6 +3103,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: Vec::new(),
+            formation: true,
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -3109,6 +3221,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: Vec::new(),
+            formation: true,
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -3152,6 +3265,7 @@ mod tests {
                 speed: vec![],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             });
         }
         line.nodes[buffer as usize] = NodeSource::Switch {
@@ -3213,6 +3327,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: Vec::new(),
+            formation: true,
         });
         line.nodes[joint as usize] = NodeSource::Switch {
             root: (0, true),
@@ -3347,6 +3462,7 @@ mod tests {
                     speed: vec![],
                     track_type: vec![],
                     electrification: Vec::new(),
+                    formation: true,
                 },
                 EdgeSource {
                     from: 1,
@@ -3358,6 +3474,7 @@ mod tests {
                     speed: vec![],
                     track_type: vec![],
                     electrification: Vec::new(),
+                    formation: true,
                 },
                 EdgeSource {
                     from: 1,
@@ -3369,6 +3486,7 @@ mod tests {
                     speed: vec![],
                     track_type: vec![],
                     electrification: Vec::new(),
+                    formation: true,
                 },
             ],
             devices: vec![],
@@ -3607,6 +3725,7 @@ mod tests {
                 height: 0.0,
                 autumn_model: None,
                 winter_model: None,
+                lod_distances: Vec::new(),
                 tags: Vec::new(),
             },
         );

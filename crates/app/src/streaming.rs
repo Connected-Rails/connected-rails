@@ -154,6 +154,12 @@ pub fn stream_terrain(
         ResMut<Assets<world_render::FieldMaterial>>,
         Res<world_render::sky::Sky>,
     ),
+    // The water of a tile — one material shared by every surface of the line
+    // (see `world_render::water`).
+    (mut water_materials, mut water_assets): (
+        ResMut<world_render::WaterMaterials>,
+        ResMut<Assets<world_render::WaterMaterial>>,
+    ),
 ) {
     let options = streamer.options;
     // Every train counts, not just the player's — otherwise an AI train would drive
@@ -258,6 +264,15 @@ pub fn stream_terrain(
             },
             entity,
             &tile.fields,
+        );
+        // The water hangs under the tile with it.
+        world_render::spawn_waters(
+            &mut commands,
+            &mut meshes,
+            &mut water_materials,
+            &mut water_assets,
+            entity,
+            &tile.waters,
         );
         streamer.missing += stats.missing;
         streamer.tile_loads = stats.tile_loads;

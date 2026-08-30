@@ -4225,7 +4225,13 @@ fn issue_target(
                 .roads
                 .get(*road as usize)
                 .and_then(|road| road.points.first())
-                .map(|p| world_coords::geo::to_ecef_deg(p.lat, p.lon, crate::envelope::height(line, focus))),
+                .map(|p| {
+                    world_coords::geo::to_ecef_deg(
+                        p.lat,
+                        p.lon,
+                        crate::envelope::height(line, focus),
+                    )
+                }),
             Selection::Road(*road as usize),
         ),
     }

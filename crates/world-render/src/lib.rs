@@ -193,6 +193,11 @@ pub fn mod_asset_source() -> AssetSourceBuilder {
 pub struct WorldAnchored {
     pub anchor: EcefPos,
     frame: EnuFrame,
+    /// Fixed offset in the frame's own axes, applied on top of the frame
+    /// transform. A sleeper chunk is placed at its own centre this way — the
+    /// distance cull measures to the entity's translation, and a chunk at the
+    /// edge anchor would vanish with the whole edge's anchor out of range.
+    offset: Vec3,
 }
 
 impl WorldAnchored {
@@ -200,6 +205,7 @@ impl WorldAnchored {
         Self {
             anchor,
             frame: EnuFrame::at(anchor),
+            offset: Vec3::ZERO,
         }
     }
 
@@ -208,12 +214,24 @@ impl WorldAnchored {
         Self {
             anchor: EcefPos(frame.origin),
             frame,
+            offset: Vec3::ZERO,
+        }
+    }
+
+    /// Like [`Self::in_frame`], but the object sits at `offset` within the
+    /// frame (in mesh axes) — its mesh is built around that point.
+    pub fn offset_in_frame(frame: EnuFrame, offset: Vec3) -> Self {
+        Self {
+            anchor: EcefPos(frame.origin),
+            frame,
+            offset,
         }
     }
 
     /// Translation and rotation under the given render origin.
     pub fn transform(&self, origin: &RenderOrigin) -> (Vec3, Quat) {
-        origin.frame_transform(&self.frame)
+        let (translation, rotation) = origin.frame_transform(&self.frame);
+        (translation + rotation * self.offset, rotation)
     }
 }
 
@@ -1429,6 +1447,34 @@ fn rescale_alpha(level: &mut [u8], cutoff: f32, target: f32) {
 mod tests {
     use super::*;
     use sim_core::interlock::SignalPart;
+
+    /// An offset anchored object keeps its offset across an origin rebase —
+    /// the sleeper chunks hang at their own centre mid-edge, and the rebase's
+    /// `resync_anchored` must not pull them back to the edge anchor.
+    #[test]
+    fn an_offset_survives_an_origin_rebase() {
+        use glam::DVec3;
+        let anchor = world_coords::geo::to_ecef_deg(52.0, 10.0, 100.0);
+        let frame = EnuFrame::at(anchor);
+        let offset = Vec3::new(0.0, 0.0, -38.1);
+        let anchored = WorldAnchored::offset_in_frame(frame, offset);
+
+        // At the frame's own anchor the offset is all there is.
+        let origin = RenderOrigin::new(anchor);
+        let (t, r) = anchored.transform(&origin);
+        assert!((t - r * offset).length() < 1e-4, "offset lost: {t}");
+
+        // Under a rebased origin the entity travels with its edge — and the
+        // offset is applied anew in the frame's axes.
+        let far = frame.to_ecef(DVec3::new(3_000.0, 500.0, 0.0));
+        let (t2, _) = anchored.transform(&RenderOrigin::new(far));
+        let (t_edge, _) = RenderOrigin::new(far).frame_transform(&frame);
+        assert!(
+            (t2 - (t_edge + r * offset)).length() < 0.1,
+            "offset not reapplied after the rebase: {t2} vs {t_edge} + {}",
+            r * offset
+        );
+    }
 
     /// A plain image gets its chain and a mipmapped sampler; one that has a
     /// chain, or is not RGBA8, is left alone.

@@ -14,7 +14,7 @@
 //! line (a few thousand nodes); a PBF reader would only be necessary if whole federal
 //! states had to be read in.
 
-use crate::route::{MarkerSource, WaterSource};
+use crate::route::{CenterLine, MarkerSource, RoadSource, RoadSurface, WaterSource};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -512,6 +512,194 @@ fn water_tag(tags: &HashMap<String, String>) -> Option<(&'static str, Option<Str
     None
 }
 
+/// The `highway=*` classes the road import reads, and the editor preset each
+/// lands on (see [`crate::roads::PRESETS`] — width, surface and markings come
+/// from there, and every one of them stays editable afterwards).
+///
+/// The order decides nothing — the pairs are distinct keys — but the classes
+/// a German road network is made of are all here: the divided roads come in
+/// as one way per carriageway, so the motorway presets are one *Fahrbahn*;
+/// `trunk` and `primary` name the same built road (Bundesstraße) for OSM's
+/// purposes and land on the same preset; `footway`, `cycleway`, `path` and
+/// `steps` are deliberately absent — a line's footpaths are the people
+/// module's business, not the road surface's.
+const ROAD_CLASSES: &[(&str, &str)] = &[
+    ("motorway", "motorway"),
+    ("motorway_link", "motorway"),
+    ("trunk", "federal"),
+    ("trunk_link", "federal"),
+    ("primary", "federal"),
+    ("primary_link", "federal"),
+    ("secondary", "secondary"),
+    ("secondary_link", "secondary"),
+    ("tertiary", "secondary"),
+    ("tertiary_link", "secondary"),
+    ("unclassified", "residential"),
+    ("residential", "residential"),
+    ("living_street", "living"),
+    ("pedestrian", "living"),
+    ("road", "residential"),
+    ("service", "service"),
+    ("track", "farm-concrete"),
+];
+
+/// Roads from an Overpass extract, as [`RoadSource`]s — the route editor's
+/// "Import roads" reads them into the line's `roads`. An extract without any
+/// is fine (empty result, not an error).
+///
+/// Query, analogous to the track one:
+///
+/// ```overpassql
+/// [out:json];
+/// way["highway"](52.0,10.0,52.1,10.2);
+/// (._;>;);
+/// out body;
+/// ```
+///
+/// OSM maps a street as its centre line, so that is what a road is here: the
+/// class decides the preset — width, surface and markings, all editable —
+/// and where the mapper said more, it wins: `surface=*` over the preset's
+/// surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the
+/// centre line out. A carriageway of a divided road (`oneway=yes`) carries
+/// no centre line, which is what makes an Autobahn read as two carriageways
+/// rather than one striped one.
+// ponytail: the OSM `width` tag is often absent and occasionally nonsense
+// (a lane count, a feet figure). What is parsed here is the plain metres
+// number; everything else falls back to the class preset, which is a
+// planning value a builder can correct in the panel. Kerbs, parking lanes
+// and `sidewalk=*` are not read: the carriageway is what the road *is*.
+pub fn parse_roads(json: &str) -> Result<Vec<RoadSource>, OsmError> {
+    let response: OverpassResponse =
+        serde_json::from_str(json).map_err(|e| OsmError::Json(e.to_string()))?;
+
+    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    let mut roads = Vec::new();
+    for e in &response.elements {
+        if let (Some(lat), Some(lon)) = (e.lat, e.lon) {
+            nodes.insert(e.id, (lat, lon));
+        }
+    }
+    for e in &response.elements {
+        if e.kind != "way" {
+            continue;
+        }
+        let Some(class) = e.tags.get("highway") else {
+            continue;
+        };
+        // Unpaved tracks and paths are not roads; the classes above are.
+        let Some(preset) = road_preset_id(class).and_then(crate::roads::preset) else {
+            continue;
+        };
+        let points: Vec<crate::route::RoadPoint> = e
+            .nodes
+            .iter()
+            .filter_map(|id| nodes.get(id))
+            .map(|&(lat, lon)| crate::route::RoadPoint { lat, lon })
+            .collect();
+        if points.len() < 2 {
+            continue;
+        }
+        let surface = match e.tags.get("surface").map(String::as_str) {
+            Some(s) if s.starts_with("concrete") => RoadSurface::Concrete,
+            _ => RoadSurface::Asphalt,
+        };
+        let width = width_of(&e.tags)
+            .or_else(|| lanes_width(&e.tags))
+            .unwrap_or(preset.width);
+        // A one-way way is one carriageway — no centre line, however wide —
+        // and the narrowest classes never had one.
+        let center_line = if two_way(class, &e.tags) {
+            preset.center_line
+        } else {
+            CenterLine::None
+        };
+        roads.push(RoadSource {
+            name: name_of(&e.tags),
+            points,
+            width,
+            surface,
+            center_line,
+            edge_lines: preset.edge_lines,
+            tags: vec![format!("highway-{}", e.tags["highway"])],
+        });
+    }
+    Ok(roads)
+}
+
+/// The Overpass QL for the roads of a box — exactly the classes
+/// [`ROAD_CLASSES`] reads, so the editor's live fetch and a hand-downloaded
+/// extract agree on what comes back.
+pub fn roads_query(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> String {
+    // Overpass takes its box south, west, north, east.
+    let bbox = format!("{min_lat:.6},{min_lon:.6},{max_lat:.6},{max_lon:.6}");
+    let classes = ROAD_CLASSES
+        .iter()
+        .map(|(class, _)| *class)
+        .collect::<Vec<_>>()
+        .join("|");
+    format!(
+        "[out:json][timeout:120];\
+         way[\"highway\"~\"^({classes})$\"]({bbox});\
+         (._;>;);out body;"
+    )
+}
+
+/// The preset id a `highway=*` class lands on.
+fn road_preset_id(class: &str) -> Option<&'static str> {
+    ROAD_CLASSES
+        .iter()
+        .find(|(key, _)| *key == class)
+        .map(|(_, preset)| *preset)
+}
+
+/// The carriageway width the mapper wrote [m], if it parses: a plain number
+/// (`width=6.5`), else nothing — the preset answers for everything else.
+fn width_of(tags: &HashMap<String, String>) -> Option<f64> {
+    tags.get("width")
+        .and_then(|w| {
+            // `width=6`, `width=6.5`, `width=6 m` — anything after the number
+            // (and its comma) is a unit the tag does not vouch for.
+            let text = &w[..w.len().min(8)];
+            let number: String = text
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+                .collect();
+            number.replace(',', ".").trim().parse().ok()
+        })
+        .filter(|w| (1.0..=30.0).contains(w))
+}
+
+/// The width from a `lanes=*` count [m]: 3.5 m the lane, and the centre line
+/// is not on the carriageway — it is painted *on* it, so the lanes make the
+/// whole width. A lane count the tag does not vouch for (missing, absurd)
+/// leaves the preset in charge.
+fn lanes_width(tags: &HashMap<String, String>) -> Option<f64> {
+    tags.get("lanes")
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|lanes| (1..=8).contains(lanes))
+        .map(|lanes| lanes as f64 * 3.5)
+}
+/// Whether a road runs in both directions and is wide enough to stripe: a
+/// one-way way is one carriageway, and a farm track nobody stripes.
+fn two_way(class: &str, tags: &HashMap<String, String>) -> bool {
+    let one_way = tags.get("oneway").is_some_and(|v| v == "yes" || v == "-1")
+        || class.ends_with("_link")
+        || tags.get("lanes").and_then(|v| v.parse::<u32>().ok()) == Some(1);
+    let narrow = matches!(class, "service" | "living_street" | "pedestrian" | "track");
+    !one_way && !narrow
+}
+
+fn name_of(tags: &HashMap<String, String>) -> String {
+    for key in ["name", "ref"] {
+        if let Some(value) = tags.get(key)
+            && !value.is_empty()
+        {
+            return value.clone();
+        }
+    }
+    String::new()
+}
+
 /// Tags the marker import recognises, and the layer each one lands in.
 /// `"*"` matches any value — a way tagged `bridge=viaduct` is a bridge like
 /// any other.
@@ -922,5 +1110,66 @@ mod tests {
         assert!((platform.lon - 10.1).abs() < 1e-9, "{}", platform.lon);
 
         assert_eq!(parse_markers(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    /// A Bundesstraße, a one-way motorway carriageway and a farm track come
+    /// out as three roads with their own widths, surfaces and markings; the
+    /// footway is not a road at all.
+    #[test]
+    fn roads_come_out_of_overpass_json() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.01},
+            {"type": "node", "id": 3, "lat": 52.01, "lon": 10.01},
+            {"type": "node", "id": 4, "lat": 52.01, "lon": 10.0},
+            {"type": "way", "id": 10, "nodes": [1, 2],
+             "tags": {"highway": "primary", "name": "Bördestraße", "surface": "asphalt"}},
+            {"type": "way", "id": 11, "nodes": [2, 3],
+             "tags": {"highway": "motorway", "oneway": "yes", "lanes": "3"}},
+            {"type": "way", "id": 12, "nodes": [3, 4],
+             "tags": {"highway": "track", "surface": "concrete:plates", "width": "3"}},
+            {"type": "way", "id": 13, "nodes": [1, 4],
+             "tags": {"highway": "footway"}},
+            {"type": "way", "id": 14, "nodes": [1, 4],
+             "tags": {"highway": "residential", "width": "7 m"}}
+        ]}"#;
+        let roads = parse_roads(json).expect("parses");
+
+        // The footway is not a road; the other four are.
+        assert_eq!(roads.len(), 4);
+        let primary = &roads[0];
+        assert_eq!(primary.name, "Bördestraße");
+        assert_eq!(primary.tags, vec!["highway-primary"]);
+        assert_eq!(primary.surface, RoadSurface::Asphalt);
+        assert_eq!(primary.center_line, CenterLine::Dashed);
+        assert!((primary.width - 7.5).abs() < 1e-9, "the preset's width");
+
+        let motorway = &roads[1];
+        // One-way: one carriageway, three lanes of 3.5 m, no centre line.
+        assert_eq!(motorway.center_line, CenterLine::None);
+        assert!((motorway.width - 10.5).abs() < 1e-9, "{}", motorway.width);
+
+        let track = &roads[2];
+        assert_eq!(track.surface, RoadSurface::Concrete, "the plates");
+        assert!((track.width - 3.0).abs() < 1e-9, "the mapper's width");
+
+        let residential = &roads[3];
+        assert!((residential.width - 7.0).abs() < 1e-9, "{}", residential.width);
+
+        assert_eq!(parse_roads(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    /// A road cut by the extract at the box stays whole — the two corners
+    /// the extract carried are the road, and the neighbour imports the rest.
+    #[test]
+    fn a_road_cut_at_the_box_is_whole_by_the_corner_it_has() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.01},
+            {"type": "way", "id": 20, "nodes": [1, 2], "tags": {"highway": "primary"}}
+        ]}"#;
+        let roads = parse_roads(json).expect("parses");
+        assert_eq!(roads.len(), 1);
+        assert_eq!(roads[0].points.len(), 2);
     }
 }

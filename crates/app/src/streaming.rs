@@ -160,6 +160,13 @@ pub fn stream_terrain(
         ResMut<world_render::WaterMaterials>,
         ResMut<Assets<world_render::WaterMaterial>>,
     ),
+    // The roads of a tile — one material per surface kind (see
+    // `world_render::roads`).
+    (mut road_materials, mut road_assets, server): (
+        ResMut<world_render::RoadMaterials>,
+        ResMut<Assets<world_render::RoadMaterial>>,
+        Res<AssetServer>,
+    ),
 ) {
     let options = streamer.options;
     // Every train counts, not just the player's — otherwise an AI train would drive
@@ -273,6 +280,18 @@ pub fn stream_terrain(
             &mut water_assets,
             entity,
             &tile.waters,
+        );
+        // The carriageways hang under the tile with it.
+        world_render::spawn_roads(
+            &mut commands,
+            &mut meshes,
+            &mut world_render::RoadDraw {
+                materials: &mut road_materials,
+                assets: &mut road_assets,
+                server: &server,
+            },
+            entity,
+            &tile.roads,
         );
         streamer.missing += stats.missing;
         streamer.tile_loads = stats.tile_loads;

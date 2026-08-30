@@ -1889,6 +1889,68 @@ it is read over the built-in table the next time the dialog opens; `groups.csv` 
 `arable.csv` override the weights the draws use. Only the first two columns are read —
 the rest is there so a human can see what a row is about.
 
+### Roads
+
+The streets beside the track are roads — `roads:` on the line, one entry per
+carriageway:
+
+```ron
+roads: [
+    (
+        name: "Gabrechten",
+        points: [(lat: 51.598, lon: 8.160), (lat: 51.599, lon: 8.161)],
+        width: 7.5,
+        surface: Asphalt,          // or Concrete
+        center_line: Dashed,       // None, Dashed, Solid
+        edge_lines: true,
+        tags: ["highway-primary"],
+    ),
+],
+```
+
+The `points` are the **centre line** OSM maps a street with; the carriageway is the
+`width` either side of it, draped on the terrain when the tiles are built. `width`,
+`surface`, `center_line` and `edge_lines` carry defaults, so a hand-written entry can be
+as short as `points` alone.
+
+**Import.** File ▸ Import roads asks Overpass for every `highway=*` way inside the
+module envelope — the same extract a hand-downloaded Overpass Turbo query returns, so a
+file picked with the dialog works too. The OSM class decides what the road is made of,
+and the mapper's own tags win where they say more: `surface=*` over the preset's
+surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the centre line out (a
+divided road is two one-way carriageways, and an Autobahn reads as two of these rather
+than as one striped one). The dialog's two checkboxes opt the many-and-thin classes in:
+**field tracks** (`highway=track` — what an agricultural module is stitched with) and
+**access ways** (`service`, `living_street`, `pedestrian`). Nothing is written before
+the summary's Commit, and Commit is one undo step.
+
+**The presets** are the German road system's widths, and the road tool stamps them:
+
+| Preset | Width | Markings |
+| --- | --- | --- |
+| Autobahn, 2/3 lanes + shoulder (asphalt or concrete) | 11 / 15 m | edge lines only — one carriageway |
+| Bundes-/Landstraße außerorts | 7.5 m | dashed centre, edge lines |
+| Landstraße with overtaking ban | 7.0 m | solid centre, edge lines |
+| Kreisstraße | 6.5 m | dashed centre, edge lines |
+| Gemeindestraße | 5.5 m | dashed centre, edge lines |
+| Anliegerstraße | 4.5 m | edge lines only |
+| Spielstraße | 3.0 m | none |
+| Wirtschaftsweg (asphalt) | 3.5 m | none |
+| Feldweg (concrete slabs) | 3.0 m | none |
+| Fußweg | 2.0 m | none |
+
+**The road tool** (landscape category) draws one by hand for the track the import did
+not carry: clicks lay the centre line, Enter or a right click paves it, the preset combo
+and the width decide what it is made of, and a click on a drawn road takes it. The
+panel edits width, surface and markings of the selected road afterwards.
+
+The look is **the program's, not the module's**: two surface scans (asphalt, concrete —
+ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`) and the markings drawn by the shader in
+real metres (12 cm strokes, edge lines 25 cm off the kerb, the centre dash running 6 m
+on and 12 m off). A module carries no road bitmaps, and two clients of a multiplayer run
+agree on what a road looks like without a byte crossing the network — roads are static
+module content, a pure function of the line file and the elevation data.
+
 ### Height data (DGM)
 
 A module can carry its own ground, so it runs without `--dgm` on the command line:

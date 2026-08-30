@@ -297,6 +297,164 @@ impl WaterSource {
     }
 }
 
+/// What a road's surface is made of. It decides the material the surface is
+/// drawn with — asphalt everywhere, and the concrete of the motorway
+/// carriageways and the farm roads' slabs. The markings are not part of it:
+/// they travel on their own (see [`CenterLine`]), so every combination of
+/// surface and markings is one road, not four kinds of road.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+pub enum RoadSurface {
+    /// `surface=asphalt`, the default — the commonest German carriageway.
+    #[default]
+    Asphalt,
+    /// `surface=concrete` and friends — motorway sections, farm slabs.
+    Concrete,
+}
+
+impl RoadSurface {
+    /// The id a line file stores (`"asphalt"` / `"concrete"`).
+    pub fn id(self) -> &'static str {
+        match self {
+            RoadSurface::Asphalt => "asphalt",
+            RoadSurface::Concrete => "concrete",
+        }
+    }
+
+    /// The surface an id names; an unknown one reads as asphalt rather than
+    /// dropping the road.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "concrete" => RoadSurface::Concrete,
+            _ => RoadSurface::Asphalt,
+        }
+    }
+}
+
+/// What runs along the middle of a road. A centre line exists only on a
+/// two-way road wide enough to stripe — a motorway carriageway carries none
+/// (it is one direction; the next carriageway is its neighbour's business),
+/// and a field track is nobody's to overtake on. The dashes are the German
+/// 6 m stroke with a 12 m gap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CenterLine {
+    /// Nothing — one-way roads, field tracks, the narrowest streets.
+    #[default]
+    None,
+    /// Gestrichelte Mittellinie — overtaking allowed, the usual case.
+    Dashed,
+    /// Durchgezogene Mittellinie — the Überholverbot line.
+    Solid,
+}
+
+impl CenterLine {
+    /// The id a line file stores.
+    pub fn id(self) -> &'static str {
+        match self {
+            CenterLine::None => "none",
+            CenterLine::Dashed => "dashed",
+            CenterLine::Solid => "solid",
+        }
+    }
+
+    /// The centre line an id names; unknown reads as none.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "dashed" => CenterLine::Dashed,
+            "solid" => CenterLine::Solid,
+            _ => CenterLine::None,
+        }
+    }
+}
+
+/// A corner of a road's centre line. Degrees like every other geo-positioned
+/// entry; the surface height comes from the terrain.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RoadPoint {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// A road: the centre line OSM maps a street with, and the width, surface and
+/// markings that turn it into a carriageway.
+///
+/// The centre line is what the import gets (`highway=*` ways), so it is what
+/// the file stores; the surface is cut to the terrain tiles at build time and
+/// draped on the ground a road-width either side of the line (see
+/// [`crate::roads`]). Roads do not carry their look: the textures are the
+/// program's, the markings are drawn by the shader, so a module carries no
+/// road bitmaps and a multiplayer run agrees on what a road looks like
+/// without a byte crossing the network.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoadSource {
+    /// Name from OSM (`name=*`, else `ref=*`), shown in the editor; empty is
+    /// fine.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The centre line, open — two points at least. A way OSM cut at the
+    /// module boundary stays whole: the neighbour imports the same way and
+    /// draws only what its own ground covers, like the waters.
+    pub points: Vec<RoadPoint>,
+    /// Carriageway width [m], kerb to kerb — what the ribbon is laid either
+    /// side of the centre line.
+    #[serde(default = "default_road_width")]
+    pub width: f64,
+    /// What the carriageway is made of.
+    #[serde(default)]
+    pub surface: RoadSurface,
+    /// What runs along the middle.
+    #[serde(default)]
+    pub center_line: CenterLine,
+    /// Whether the solid white edge lines (Seitenlinien) run along the kerbs.
+    #[serde(default = "default_edge_lines")]
+    pub edge_lines: bool,
+    /// Free-form tags, lower-case kebab like everywhere else. The OSM import
+    /// records the `highway=*` class it matched, so a hand-edited file can
+    /// still tell a motorway from a field track.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_road_width() -> f64 {
+    6.0
+}
+
+fn default_edge_lines() -> bool {
+    true
+}
+
+impl RoadSource {
+    /// Middle of the centre line [deg] — where the editor's panel jumps to.
+    pub fn centre(&self) -> (f64, f64) {
+        if self.points.is_empty() {
+            return (0.0, 0.0);
+        }
+        let n = self.points.len() as f64;
+        (
+            self.points.iter().map(|p| p.lat).sum::<f64>() / n,
+            self.points.iter().map(|p| p.lon).sum::<f64>() / n,
+        )
+    }
+
+    /// Length of the centre line [m], measured in the UTM zone `zone` — what
+    /// the editor's panel reports.
+    pub fn length(&self, zone: u8) -> f64 {
+        let utm = |p: &RoadPoint| {
+            let (e, n) = world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
+            glam::DVec2::new(e, n)
+        };
+        let mut total = 0.0;
+        if let Some(first) = self.points.first() {
+            let mut prev = utm(first);
+            for point in &self.points[1..] {
+                let next = utm(point);
+                total += prev.distance(next);
+                prev = next;
+            }
+        }
+        total
+    }
+}
+
 /// What a field import drew on: one row per state it asked, with the state of
 /// the register it got (plan ch. 4, ch. 9).
 ///
@@ -908,6 +1066,11 @@ pub struct LineSource {
     /// like the fields are draped on it.
     #[serde(default)]
     pub waters: Vec<WaterSource>,
+    /// Roads (see [`RoadSource`]) — imported from OSM or drawn by hand. The
+    /// carriageways are draped on the terrain when the tiles are built, like
+    /// the fields are.
+    #[serde(default)]
+    pub roads: Vec<RoadSource>,
     /// Terrain brush strokes on top of the elevation data (see
     /// [`TerrainEditSource`]).
     #[serde(default)]
@@ -969,6 +1132,7 @@ impl Default for LineSource {
             field_sources: Vec::new(),
             markers: Vec::new(),
             waters: Vec::new(),
+            roads: Vec::new(),
             terrain: Vec::new(),
             heights: Vec::new(),
             sections: Vec::new(),
@@ -1167,6 +1331,9 @@ pub enum RuleIssue {
     /// A field whose crop is not one the installed tables know. It is drawn as
     /// bare ground; the row says which id to correct.
     FieldUnknownCrop { field: u32 },
+    /// A road with fewer than two points on its centre line — nothing to
+    /// pave.
+    RoadTooShort { road: u32 },
     /// The envelope crosses itself — see [`envelope_self_intersects`].
     EnvelopeSelfIntersects,
     /// Landscape outside the module envelope. Placing it is refused by the
@@ -2338,6 +2505,15 @@ impl LineSource {
         for (i, area) in self.walk_areas.iter().enumerate() {
             if area.polygon.len() < 3 {
                 issues.push(RuleIssue::WalkAreaTooSmall { area: i as u32 });
+            }
+        }
+
+        // Roads: a centre line of two points at least. Width and markings are
+        // clamped by the builder rather than checked — a road of odd width is
+        // odd-looking, not broken.
+        for (i, road) in self.roads.iter().enumerate() {
+            if road.points.len() < 2 {
+                issues.push(RuleIssue::RoadTooShort { road: i as u32 });
             }
         }
 

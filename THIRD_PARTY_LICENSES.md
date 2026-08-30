@@ -218,6 +218,21 @@ CC0 needs none, but the sources are recorded here:
   [dark_wooden_planks](https://polyhaven.com/a/dark_wooden_planks)
   (Poly Haven, CC0).
 
+## Road textures in `crates/world-render/src/roads/`
+
+The roads the simulator and the editors drape over the terrain are skinned
+with the same kind of scans as the track, from the same CC0 source. They are
+**program assets** — a module carries no road bitmaps, the look is the
+program's, so every module and every client of a multiplayer run draws the
+same carriageway. Recompressed from the ambientCG 1K JPEGs (resize, quality
+80–82); CC0 needs no attribution, but the sources are recorded here:
+
+- `roads/asphalt.jpg` and `roads/asphalt_nor.jpg` —
+  [Asphalt010](https://ambientcg.com/a/Asphalt010) from
+  [ambientCG](https://ambientcg.com) (photogrammetry, CC0 1.0).
+- `roads/concrete.jpg` and `roads/concrete_nor.jpg` —
+  [Concrete030](https://ambientcg.com/a/Concrete030) (ambientCG, CC0).
+
 ## Trees in `mods/trees/`
 
 The vegetation is generated out of

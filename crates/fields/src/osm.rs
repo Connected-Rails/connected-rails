@@ -227,6 +227,41 @@ fn is_farmed(tags: &HashMap<String, String>) -> bool {
     ) || tags.get("natural").map(String::as_str) == Some("grassland")
 }
 
+/// Asks Overpass with a raw query and hands the JSON body back — what a
+/// reader of another OSM layer (the route editor's road import, say) needs
+/// when it has its own query and its own parser. One retry after a wait if
+/// the first answer was "busy", the same etiquette [`fetch`] follows.
+pub fn fetch_raw(query: &str, config: &RequestConfig) -> Result<String, ServiceError> {
+    match fetch_raw_once(query, config) {
+        Err(e) if busy(&e) => {
+            std::thread::sleep(BUSY_WAIT);
+            fetch_raw_once(query, config)
+        }
+        other => other,
+    }
+}
+
+fn fetch_raw_once(query: &str, config: &RequestConfig) -> Result<String, ServiceError> {
+    let url = format!("{OVERPASS}?data={}", encode(query));
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(config.timeout))
+        .user_agent(&config.user_agent)
+        .build()
+        .into();
+    let mut response = agent
+        .get(&url)
+        .call()
+        .map_err(|e| ServiceError::Network(e.to_string()))?;
+    let mut body = Vec::new();
+    let read = std::io::Read::take(response.body_mut().as_reader(), config.max_bytes as u64 + 1);
+    std::io::copy(&mut std::io::BufReader::new(read), &mut body)
+        .map_err(|e| ServiceError::Network(e.to_string()))?;
+    if body.len() > config.max_bytes {
+        return Err(ServiceError::TooMuch);
+    }
+    String::from_utf8(body).map_err(|e| ServiceError::NotGeoJson(e.to_string()))
+}
+
 /// The parcel's ring in a UTM zone's metres.
 pub fn ring_in_zone(parcel: &Parcel, zone: u8) -> Vec<DVec2> {
     parcel

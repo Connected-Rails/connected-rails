@@ -17,6 +17,7 @@ mod fields;
 mod gizmo;
 mod new_module;
 mod overlay;
+mod roads;
 mod settings;
 mod signals;
 mod stake;
@@ -336,6 +337,8 @@ pub struct Request {
     pub clear_cache: bool,
     /// Open the field import dialog (menu, see [`fields`]).
     pub import_fields: bool,
+    /// Open the road import dialog (menu, see [`roads`]).
+    pub import_roads: bool,
     pub retry_failed: bool,
     pub load_config: bool,
     pub save_config: bool,
@@ -454,6 +457,7 @@ fn main() {
     .init_resource::<thumbnails::Thumbnails>()
     .init_resource::<new_module::NewModule>()
     .init_resource::<fields::FieldImport>()
+    .init_resource::<roads::RoadImport>()
     .init_resource::<terrain::Marks>()
     .init_resource::<tools::GhostPreview>()
     // A glTF spawns its own children, and a render layer does not reach them by
@@ -466,7 +470,7 @@ fn main() {
     // top of the panels anyway.
     .add_systems(
         EguiPrimaryContextPass,
-        (ui::draw, new_module::draw, fields::draw).chain(),
+        (ui::draw, new_module::draw, fields::draw, roads::draw).chain(),
     )
     .add_systems(
         Update,
@@ -794,6 +798,33 @@ fn diff(
                     change
                         .ground
                         .add_disc((lo + hi) / 2.0, (hi - lo).length() / 2.0 + 1.0);
+                }
+            }
+        }
+        // A road is draped into the tiles it covers, like a field — a
+        // change reaches the ground under its carriageway and no further.
+        if last.roads != now.roads {
+            const MANY: usize = 32;
+            let touched: Vec<&content::route::RoadSource> =
+                changed(&last.roads, &now.roads).take(MANY + 1).collect();
+            if touched.len() > MANY {
+                change = TerrainChange::all();
+            } else {
+                for road in touched {
+                    let corners: Vec<glam::DVec2> =
+                        road.points.iter().map(|p| utm(p.lat, p.lon)).collect();
+                    let Some(lo) = corners.iter().copied().reduce(glam::DVec2::min) else {
+                        continue;
+                    };
+                    let hi = corners
+                        .iter()
+                        .copied()
+                        .reduce(glam::DVec2::max)
+                        .unwrap_or(lo);
+                    let half = road.width / 2.0 + 1.0;
+                    change
+                        .ground
+                        .add_disc((lo + hi) / 2.0, (hi - lo).length() / 2.0 + half);
                 }
             }
         }

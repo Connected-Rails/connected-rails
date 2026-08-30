@@ -360,6 +360,12 @@ pub fn update(
         ResMut<world_render::WaterMaterials>,
         ResMut<Assets<world_render::WaterMaterial>>,
     ),
+    // The roads of a tile: one material per surface kind (see
+    // `world_render::roads`).
+    (mut road_materials, mut road_assets): (
+        ResMut<world_render::RoadMaterials>,
+        ResMut<Assets<world_render::RoadMaterial>>,
+    ),
 ) {
     // Taken only when there is something to take: a write through `ResMut`
     // marks the line changed, and the marks and the title watch for that.
@@ -538,6 +544,18 @@ pub fn update(
             entity,
             &tile.waters,
         );
+        // The carriageways hang under the tile with it.
+        world_render::spawn_roads(
+            &mut commands,
+            &mut meshes,
+            &mut world_render::RoadDraw {
+                materials: &mut road_materials,
+                assets: &mut road_assets,
+                server: &assets,
+            },
+            entity,
+            &tile.roads,
+        );
         // The mesh is on its way to the GPU; what stays is the height grid.
         tile.positions = Vec::new();
         tile.indices = Vec::new();
@@ -546,6 +564,7 @@ pub fn update(
         tile.objects = Vec::new();
         tile.fields = Vec::new();
         tile.waters = Vec::new();
+        tile.roads = Vec::new();
         let replaced = view.loaded.insert(
             k,
             LoadedTile {
@@ -771,6 +790,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
     let edits = TerrainEdits::from_line(&line.source, options.zone);
     let farmland =
         content::farmland::Fields::from_line(&line.source, options.zone, options.tile_size);
+    let roads = content::roads::Roads::from_line(&line.source, options.zone, options.tile_size);
     // The waters of the line, indexed for the tile builds. Their shoreline
     // levels are sampled against the elevation data when the builder takes
     // them in — a pass over a few thousand points, cheap but not free, so it
@@ -790,9 +810,9 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
             waters
         };
         view.waters_fingerprint = Some(waters_fingerprint);
-        view.builder = Some(Arc::new(
-            builder.with_line(&line.net, vegetation, scenery, farmland, waters, edits),
-        ));
+        view.builder = Some(Arc::new(builder.with_line(
+            &line.net, vegetation, scenery, farmland, waters, roads, edits,
+        )));
         return;
     }
 
@@ -824,6 +844,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
             .with_scenery(scenery)
             .with_fields(farmland)
             .with_waters(waters)
+            .with_roads(roads)
             .with_edits(edits),
     ));
     view.stale.all(view.generation);

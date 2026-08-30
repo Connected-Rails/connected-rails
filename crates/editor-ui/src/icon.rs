@@ -71,6 +71,8 @@ pub enum Icon {
     WalkArea,
     /// Field — a parcel with the furrows running across it.
     Field,
+    /// Road — a carriageway in perspective with the centre dashes on it.
+    Road,
     /// Module — a jigsaw piece: what plugs into its neighbours.
     Module,
     /// Split track — a rail with a cut through it.
@@ -483,6 +485,23 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             }
             shapes
         }
+        // A road as one draws it: the carriageway in a shallow perspective,
+        // its centre dashes on it — what tells a road from a field is the
+        // vanishing ribbon, not the shape.
+        Icon::Road => vec![
+            Shape::closed_line(
+                vec![
+                    at(0.14, 0.92),
+                    at(0.36, 0.14),
+                    at(0.64, 0.14),
+                    at(0.86, 0.92),
+                ],
+                stroke,
+            ),
+            line(vec![at(0.50, 0.22), at(0.47, 0.30)]),
+            line(vec![at(0.47, 0.34), at(0.53, 0.36)]),
+            line(vec![at(0.52, 0.50), at(0.53, 0.52)]),
+        ],
         Icon::WalkArea => {
             let mut shapes = vec![Shape::closed_line(
                 vec![

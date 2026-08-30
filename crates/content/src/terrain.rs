@@ -161,6 +161,9 @@ pub struct TerrainTile {
     /// lakes and rivers whose waterline reaches it, standing at the height
     /// the elevation data gives them.
     pub waters: Vec<crate::water::WaterPatch>,
+    /// The roads on this tile (see [`crate::roads`]) — one surface per
+    /// surface kind, draped on this tile's own ground like the fields.
+    pub roads: Vec<crate::roads::RoadPatch>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
@@ -823,6 +826,7 @@ pub struct TerrainBuilder {
     crowd: Crowd,
     fields: crate::farmland::Fields,
     waters: crate::water::Waters,
+    roads: crate::roads::Roads,
     edits: TerrainEdits,
 }
 
@@ -837,6 +841,7 @@ impl TerrainBuilder {
             crowd: Crowd::default(),
             fields: crate::farmland::Fields::default(),
             waters: crate::water::Waters::default(),
+            roads: crate::roads::Roads::default(),
             edits: TerrainEdits::default(),
         }
     }
@@ -887,6 +892,13 @@ impl TerrainBuilder {
         self
     }
 
+    /// The roads of the line — tiles built afterwards carry their
+    /// carriageways, draped on their ground.
+    pub fn with_roads(mut self, roads: crate::roads::Roads) -> Self {
+        self.roads = roads;
+        self
+    }
+
     pub fn with_edits(mut self, edits: TerrainEdits) -> Self {
         self.edits = edits;
         self
@@ -899,6 +911,7 @@ impl TerrainBuilder {
     /// delivery off disk again, and replacing the builder in place would
     /// make every worker wait for a lock. The editor shows no crowd, so
     /// none is carried over.
+    #[allow(clippy::too_many_arguments)] // the builder's inputs, one by one
     pub fn with_line(
         &self,
         net: &TrackNetwork,
@@ -906,6 +919,7 @@ impl TerrainBuilder {
         scenery: Scenery,
         fields: crate::farmland::Fields,
         waters: crate::water::Waters,
+        roads: crate::roads::Roads,
         edits: TerrainEdits,
     ) -> Self {
         Self {
@@ -917,11 +931,19 @@ impl TerrainBuilder {
             crowd: Crowd::default(),
             fields,
             waters: crate::water::Waters::default(),
+            roads: crate::roads::Roads::default(),
             edits,
         }
         .with_vegetation(vegetation)
         .with_scenery(scenery)
         .with_waters(waters)
+        .with_roads(roads)
+    }
+
+    /// The roads the line carries — what the editor hands from one builder
+    /// generation to the next when the road list has not changed.
+    pub fn roads(&self) -> &crate::roads::Roads {
+        &self.roads
     }
 
     /// The waters the line carries, with their sampled shoreline levels —
@@ -981,6 +1003,7 @@ impl TerrainBuilder {
             &self.crowd,
             &self.fields,
             &self.waters,
+            &self.roads,
             &self.edits,
             stats,
         )
@@ -1103,6 +1126,7 @@ fn build_key(
     crowd: &Crowd,
     farmland: &crate::farmland::Fields,
     waters: &crate::water::Waters,
+    roads: &crate::roads::Roads,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -1116,7 +1140,7 @@ fn build_key(
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
         k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, farmland, waters,
-        &edits, stats,
+        roads, &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -1156,6 +1180,7 @@ pub fn build(
             &Crowd::default(),
             &crate::farmland::Fields::default(),
             &crate::water::Waters::default(),
+            &crate::roads::Roads::default(),
             &TerrainEdits::default(),
             &mut stats,
         ) {
@@ -1243,6 +1268,7 @@ fn build_tile(
     crowd: &Crowd,
     farmland: &crate::farmland::Fields,
     waters: &crate::water::Waters,
+    roads: &crate::roads::Roads,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
@@ -1313,6 +1339,13 @@ fn build_tile(
     } else {
         crate::water::patches(k, sampler, &frame, options, options.tile_size, waters)
     };
+    // The carriageways of the tile, cut to it and draped on the same grid
+    // the fields are — so a road follows every hollow the ground has.
+    let roads = if roads.is_empty() || !roads.touches(k) {
+        Vec::new()
+    } else {
+        crate::roads::patches(k, &grid, &frame, options.zone, options.tile_size, roads)
+    };
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
@@ -1346,6 +1379,7 @@ fn build_tile(
         walkways,
         fields,
         waters,
+        roads,
         step,
         lod,
         radius,
@@ -1806,6 +1840,7 @@ mod tests {
             Scenery::default(),
             crate::farmland::Fields::default(),
             crate::water::Waters::default(),
+            crate::roads::Roads::default(),
             TerrainEdits::from_parts(
                 &[TerrainEditSource {
                     lat: hill_lat,

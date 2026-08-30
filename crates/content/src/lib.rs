@@ -8,6 +8,7 @@ pub mod demo;
 pub mod farmland;
 pub mod import;
 pub mod people;
+pub mod roads;
 pub mod route;
 pub mod scenarios;
 pub mod terrain;
@@ -24,6 +25,7 @@ pub use people::{
     embedded_walkways, stroll_pose,
 };
 pub use route::{CompiledLine, FieldSource, LineSource, TreeSource};
+pub use roads::{RoadPatch, Roads};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{
     Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,

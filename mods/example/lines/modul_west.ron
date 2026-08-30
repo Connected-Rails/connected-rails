@@ -18,6 +18,9 @@
             segments: [(len: 2000.0, k0: 0.0, dk: 0.0)],
             grade: [(0.0, 0.0)],
             speed: [(0.0, 120.0)],
+            // Welded main line on B 90 — the composition shows the standard
+            // DB Regeloberbau over both modules.
+            track_type: [(0.0, "example:hauptbahn")],
             // 15 kV 16.7 Hz over the whole edge — an edge that says nothing carries no wire.
             electrification: [(0.0, "ac-15kv")],
         ),

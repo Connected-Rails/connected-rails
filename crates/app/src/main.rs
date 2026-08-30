@@ -616,7 +616,7 @@ fn log_mods(mods: Res<Mods>) {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    world_materials: render::WorldMaterials,
     mut images: ResMut<Assets<Image>>,
     mut terrain_materials: ResMut<Assets<render::TerrainMaterial>>,
     mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
@@ -631,6 +631,12 @@ fn setup(
     binds: Res<bindings::Binds>,
     fonts: Res<theme::Fonts>,
 ) {
+    // Back to the names the body has always used.
+    let render::WorldMaterials {
+        standard: mut materials,
+        rail: mut rail_materials,
+    } = world_materials;
+
     // `--hud full|reduced|off` puts the display in one of its three steps for a
     // screenshot, which cannot press a key. It goes into a resource of its own rather than
     // into the setting: the settings file is written on exit whether anything changed or
@@ -821,6 +827,7 @@ fn setup(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut rail_materials,
         &assets,
         &sim.net,
         &origin,

@@ -1,12 +1,22 @@
 //! Floating-origin synchronisation of what the simulator draws itself
 //! (plan ch. 4, 12) — the world outside the cab comes from `world-render`.
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use world_coords::RenderOrigin;
 pub use world_render::{
-    Season, TerrainMaterial, WorldAnchored, WorldCatalog, spawn_terrain_tile, spawn_track,
-    terrain_material,
+    RailMaterial, Season, TerrainMaterial, WorldAnchored, WorldCatalog, spawn_terrain_tile,
+    spawn_track, terrain_material,
 };
+
+/// The material stores the run's world is skinned from — the plain PBR of
+/// models, terrain and sleepers, and the rails' own steel. One parameter so
+/// `setup` stays within the system-parameter arity.
+#[derive(SystemParam)]
+pub struct WorldMaterials<'w> {
+    pub standard: ResMut<'w, Assets<StandardMaterial>>,
+    pub rail: ResMut<'w, Assets<RailMaterial>>,
+}
 
 /// Reference point of the rendering as a Bevy resource.
 #[derive(Resource)]

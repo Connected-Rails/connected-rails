@@ -641,6 +641,42 @@ pub fn corridor(points: &[DVec2], half_width: f64) -> Vec<Vec<DVec2>> {
     out
 }
 
+/// How many times two rings properly cross — not touch, cross. The punch uses
+/// it to tell a corridor quad that cuts through a field from one that stands
+/// wholly inside it.
+pub fn crossings(ring: &[DVec2], other: &[DVec2]) -> usize {
+    if ring.is_empty() || other.is_empty() {
+        return 0;
+    }
+    let mut n = 0;
+    for pair in edges(ring) {
+        for (c0, c1) in edges(other) {
+            if segment_intersection(pair.0, pair.1, c0, c1).is_some() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// The edges of a ring as point pairs, last to first closed.
+fn edges(ring: &[DVec2]) -> impl Iterator<Item = (DVec2, DVec2)> + '_ {
+    ring.iter()
+        .copied()
+        .zip(ring.iter().skip(1).copied().chain(std::iter::once(ring[0])))
+}
+
+/// Stretches a corridor quad along its own axis, `length` further at its start
+/// — the way the track came. The punch uses it to reach a quad that stands
+/// wholly inside a field out past the field's boundary: its cut then crosses
+/// the boundary after all, and the field is split or notched the normal way.
+/// Only the start end moves, so a siding's end inside a field is not followed
+/// by a phantom strip on the far side of the buffer stop.
+pub fn stretch(quad: &[DVec2], length: f64) -> Vec<DVec2> {
+    let along = (quad[1] - quad[0]).normalize_or_zero() * length;
+    vec![quad[0] - along, quad[1], quad[2], quad[3] - along]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,5 +876,38 @@ mod tests {
         let total: f64 = pieces.iter().map(|r| area(r).abs()).sum();
         // 400 x 400 less a 50 m wide swathe straight across.
         assert!((total - (160_000.0 - 20_000.0)).abs() < 1.0, "{total}");
+    }
+
+    #[test]
+    fn crossings_tell_a_cut_from_an_enclosure() {
+        let ring = square(0.0, 0.0, 100.0);
+        // A band across the field: each long edge crosses the field's two
+        // sides, so four crossings in all ...
+        let band = vec![
+            DVec2::new(-10.0, 40.0),
+            DVec2::new(110.0, 40.0),
+            DVec2::new(110.0, 60.0),
+            DVec2::new(-10.0, 60.0),
+        ];
+        assert_eq!(crossings(&ring, &band), 4);
+        // ... a quad inside it never crosses.
+        let inner = square(40.0, 40.0, 20.0);
+        assert_eq!(crossings(&ring, &inner), 0);
+        assert_eq!(crossings(&inner, &ring), 0);
+        // Disjoint rings neither.
+        assert_eq!(crossings(&ring, &square(200.0, 200.0, 10.0)), 0);
+    }
+
+    #[test]
+    fn stretch_reaches_back_without_touching_the_far_end() {
+        let line = [DVec2::new(0.0, 0.0), DVec2::new(100.0, 0.0)];
+        let quad = &corridor(&line, 10.0)[0];
+        let stretched = stretch(quad, 50.0);
+        // The start end moves back the way the track came ...
+        assert!((stretched[0].x - (-60.0)).abs() < 1e-9, "{stretched:?}");
+        assert!((stretched[3].x - (-60.0)).abs() < 1e-9);
+        // ... and the far end stays where it was.
+        assert!((stretched[1].x - 110.0).abs() < 1e-9, "{stretched:?}");
+        assert!((stretched[2].x - 110.0).abs() < 1e-9);
     }
 }

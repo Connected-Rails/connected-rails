@@ -2618,5 +2618,6 @@ field-licence-unclear-land = { $land }: Lizenz vor der Veröffentlichung schrift
 
 status-fields-imported = { $count } Felder übernommen
 status-field-points = Ein Feld braucht mindestens drei Ecken — die nächste anklicken
+status-field-on-track = Das Feld liegt ganz innerhalb des Gleisabstands und wurde nicht angelegt
 check-field-small = Feld { $field } hat weniger als drei Ecken
 check-field-crop = Feld { $field } nennt eine Kultur, die keine Tabelle kennt — es wird als nackter Boden gezeichnet

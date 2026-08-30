@@ -68,6 +68,10 @@ pub enum Clip {
     Whole,
 }
 
+/// How far the fields stay clear of the track [m], when nothing else says so —
+/// the terrain's own blend zone, the foot of the embankment, plus a margin.
+pub const TRACK_CLEARANCE: f64 = 15.0;
+
 /// How the import is to be run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportOptions {
@@ -98,7 +102,7 @@ impl Default for ImportOptions {
             clip: Clip::Cut,
             simplify: 1.5,
             min_area: 5_000.0,
-            track_clearance: 15.0,
+            track_clearance: TRACK_CLEARANCE,
             max_fields: 20_000,
             zone: 32,
             request: RequestConfig::default(),
@@ -944,6 +948,55 @@ fn box_in_zone(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64, zone: u8)
     geometry::bounds(&points)
 }
 
+/// Punches the track corridors out of one ring, and returns the pieces. Every
+/// corridor quad in turn, over whatever is left — the same pass the import
+/// runs, and the one a hand-drawn field goes through on closing.
+pub fn punch(piece: &[DVec2], corridors: &[Vec<DVec2>]) -> Vec<Vec<DVec2>> {
+    let mut pieces = vec![piece.to_vec()];
+    for quad in corridors {
+        if pieces.is_empty() {
+            break;
+        }
+        pieces = pieces
+            .iter()
+            .flat_map(|piece| punch_one(piece, quad))
+            .collect();
+    }
+    pieces
+}
+
+/// One corridor quad out of one piece.
+///
+/// A quad the punch leaves standing — the difference found no usable crossing
+/// and fell back to containment — with its middle inside the piece is the end
+/// of a siding standing in a field, and it is exactly where the crop then
+/// draws over the rails. Such a quad is stretched along its own axis, the way
+/// the track came, until the cut crosses the piece's boundary; the field is
+/// then notched or split the normal way.
+fn punch_one(piece: &[DVec2], quad: &[DVec2]) -> Vec<Vec<DVec2>> {
+    let punched = geometry::clip(piece, quad, Op::Difference);
+    let untouched = punched.len() == 1
+        && ((geometry::area(&punched[0]) - geometry::area(piece)).abs()
+            < 1e-6 * geometry::area(piece).abs().max(1.0));
+    if !untouched || !geometry::contains(piece, geometry::centroid(quad)) {
+        return punched;
+    }
+    // Enclosed. A step of the quad's own width is enough for consecutive quads
+    // to overlap; the piece's diagonal bounds the walk.
+    let (min, max) = geometry::bounds(piece);
+    let width = quad[0].distance(quad[3]).max(1.0);
+    let steps = (min.distance(max) / width).ceil() as usize + 1;
+    let mut stretched = quad.to_vec();
+    for _ in 0..steps {
+        stretched = geometry::stretch(&stretched, width);
+        if geometry::crossings(piece, &stretched) > 0 {
+            return geometry::clip(piece, &stretched, Op::Difference);
+        }
+    }
+    // No exit found: leave the field whole rather than invent geometry.
+    punched
+}
+
 /// Thins, clips and measures one field — the pieces of it that survive.
 fn shape(
     field: &FieldFeature,
@@ -959,7 +1012,7 @@ fn shape(
 
     // Against the area first: most fields of a fetched tile are outside it, and
     // there is no point punching a track out of those.
-    let mut pieces = match options.clip {
+    let pieces = match options.clip {
         Clip::Cut => geometry::clip(&ring, boundary, Op::Intersect),
         Clip::Whole => {
             if geometry::contains(boundary, geometry::centroid(&ring)) {
@@ -975,15 +1028,10 @@ fn shape(
     }
 
     // Then the track. Each corridor quad in turn, over whatever is left.
-    for quad in corridors {
-        if pieces.is_empty() {
-            break;
-        }
-        pieces = pieces
-            .iter()
-            .flat_map(|piece| geometry::clip(piece, quad, Op::Difference))
-            .collect();
-    }
+    let pieces: Vec<Vec<DVec2>> = pieces
+        .iter()
+        .flat_map(|piece| punch(piece, corridors))
+        .collect();
 
     let mut out = Vec::new();
     for (index, piece) in pieces.into_iter().enumerate() {
@@ -1513,6 +1561,141 @@ mod tests {
             vec![(CropClass::WinterCereal, 2), (CropClass::Maize, 1)]
         );
         assert!((report.hectares() - 3.0).abs() < 1e-9);
+    }
+
+    /// Centreline samples still inside a surviving piece: the crop then draws
+    /// over the rails.
+    fn covered<'a>(pieces: impl IntoIterator<Item = &'a [DVec2]>, line: &[DVec2]) -> Vec<DVec2> {
+        let pieces: Vec<&[DVec2]> = pieces.into_iter().collect();
+        let mut hits = Vec::new();
+        for pair in line.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let len = a.distance(b);
+            let n = (len / 3.0).ceil() as usize;
+            for i in 0..=n {
+                let p = a + (b - a) * (i as f64 / n as f64);
+                for piece in &pieces {
+                    if geometry::contains(piece, p) {
+                        hits.push(p);
+                        break;
+                    }
+                }
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn a_siding_ending_inside_a_field_is_carved_out() {
+        // The track comes in from the west and stops 150 m inside the field —
+        // a buffer stop in the middle of the crop. The last corridor quads
+        // never cross the boundary, and without the repair pass the
+        // containment fallback would keep the whole parcel, rails and all.
+        let field = a_field(square(0.0, 0.0, 300.0));
+        let track = [DVec2::new(-100.0, 150.0), DVec2::new(150.0, 150.0)];
+        let corridors = geometry::corridor(&track, TRACK_CLEARANCE);
+        let mut report = no_report();
+        let pieces = shape(
+            &field,
+            &square(-1_000.0, -1_000.0, 2_600.0),
+            &corridors,
+            &ImportOptions::default(),
+            &mut report,
+        );
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        // 300 x 300 less the 30 m wide swathe from the boundary to the stop.
+        let area: f64 = pieces.iter().map(|f| f.area()).sum();
+        assert!((area - (90_000.0 - 30.0 * 165.0)).abs() < 1.0, "{area}");
+        assert!(
+            covered(pieces.iter().map(|f| f.polygon.as_slice()), &track).is_empty(),
+            "crop over the rails"
+        );
+    }
+
+    #[test]
+    fn a_track_wholly_inside_a_field_carves_a_dead_end() {
+        // Both ends inside, no boundary crossing anywhere: the corridor has to
+        // be notched in from the field's edge all the same.
+        let field = a_field(square(0.0, 0.0, 300.0));
+        let track = [DVec2::new(50.0, 150.0), DVec2::new(250.0, 150.0)];
+        let corridors = geometry::corridor(&track, TRACK_CLEARANCE);
+        let mut report = no_report();
+        let pieces = shape(
+            &field,
+            &square(-1_000.0, -1_000.0, 2_600.0),
+            &corridors,
+            &ImportOptions::default(),
+            &mut report,
+        );
+        assert_eq!(pieces.len(), 1, "{pieces:?}");
+        let area: f64 = pieces.iter().map(|f| f.area()).sum();
+        // The swathe runs from the field's edge — the notch has to reach the
+        // boundary to be connected — to the corridor's far end.
+        assert!((area - (90_000.0 - 30.0 * 265.0)).abs() < 1.0, "{area}");
+        assert!(
+            covered(pieces.iter().map(|f| f.polygon.as_slice()), &track).is_empty(),
+            "crop over the rails"
+        );
+    }
+
+    /// Irregular fields and wandering tracks, the way the registers and a real
+    /// line produce them: no surviving piece may still cover its track.
+    #[test]
+    fn no_stress_case_leaves_the_track_under_the_crop() {
+        let mut rng = Lcg(2024);
+        let mut untouched = 0;
+        for case in 0..200 {
+            let n = 30 + case % 40;
+            let field: Vec<DVec2> = (0..n)
+                .map(|i| {
+                    let a = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
+                    let r = 180.0 * rng.range(0.7, 1.3);
+                    DVec2::new(200.0 + r * a.cos(), 200.0 + r * a.sin())
+                })
+                .collect();
+            let mut line = Vec::new();
+            let mut x = rng.range(-100.0, 50.0);
+            let mut y = rng.range(0.0, 400.0);
+            let dir = rng.range(-0.4, 0.4);
+            let legs = 2 + case % 4;
+            for _ in 0..=legs * 10 {
+                line.push(DVec2::new(x, y));
+                x += 20.0;
+                y += dir * 20.0 + rng.range(-6.0, 6.0);
+            }
+            let pieces = punch(&field, &geometry::corridor(&line, TRACK_CLEARANCE));
+            assert!(
+                covered(pieces.iter().map(|p| p.as_slice()), &line).is_empty(),
+                "case {case} leaves the track under the crop"
+            );
+            // Where the track runs through the field at all, the punch has to
+            // take the corridor away, not leave it standing.
+            if !covered([field.as_slice()], &line).is_empty()
+                && pieces.len() == 1
+                && (geometry::area(&pieces[0]).abs() - geometry::area(&field).abs()).abs() < 1.0
+            {
+                untouched += 1;
+            }
+        }
+        assert_eq!(untouched, 0, "cases where the punch did nothing at all");
+    }
+
+    /// A small deterministic generator, so a failure says which case to look
+    /// at and the same seed brings it back.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 11) as f64) / (1u64 << 53) as f64
+        }
+
+        fn range(&mut self, a: f64, b: f64) -> f64 {
+            a + (b - a) * self.next()
+        }
     }
 }
 

@@ -485,6 +485,7 @@ mod tests {
                 speed: vec![(0.0, 120.0)],
                 track_type: vec![],
                 electrification: Vec::new(),
+                formation: true,
             }],
             devices: vec![
                 DeviceSource {

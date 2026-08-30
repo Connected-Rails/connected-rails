@@ -1491,12 +1491,36 @@ way: an object is placed by the terrain tile it stands on, so it streams in and 
 that tile and its feet meet the ground the tile actually has.
 
 **Levels of detail** work as for vehicles and signals: nodes named `<name>_LOD0`,
-`_LOD1`, … are shown by camera distance (the bands are 200, 700 and 1 500 m; the last
-level a model ships runs to the cull distance — 2.5 km for trees, 3 km for objects).
-A model without the suffix is one level, drawn up to that distance. This matters most
-for trees: every tree of a wood is drawn as an **instance** of its model's mesh parts —
-not as its own scene — so a thousand firs sharing one glTF are a handful of draw calls,
-and a low-poly `_LOD1` is what keeps a whole hillside cheap.
+`_LOD1`, … are shown by camera distance. A model without the suffix is one level, drawn
+up to the cull distance. This matters most for trees: every tree of a wood is drawn as an
+**instance** of its model's mesh parts — not as its own scene — so a thousand firs
+sharing one glTF are a handful of draw calls, and a coarse `_LOD2` is what keeps a whole
+hillside cheap. Keep a level to **one material** where you can: the renderer spawns one
+entity per mesh part per level, so bark and leaves in one atlas is half the entities and
+half the draw calls of two separate materials.
+
+The bands are 80, 260 and 800 m, and an object is culled at 2.5 km (3 km for scenery
+objects). An object may name **its own**, which is what vegetation does:
+
+```ron
+// Visible in full to 20 m, then coarser twice, gone at 700 m.
+lod_distances: [20, 60, 120, 700],
+```
+
+The list is finest first and its **last entry is the cull distance**. A model with fewer
+levels than the list has entries runs its last level on to the cull distance. Scale them
+to how big the plant is: a level pays for its triangles only while the plant covers
+enough pixels, so a forty metre fir hands over at a hundred metres and is drawn to two and
+a half kilometres, while a two metre blackthorn hands over at twenty and is gone at seven
+hundred — and a hedge of blackthorn drawn to two kilometres is tens of thousands of draw
+calls for nothing.
+
+A **crossed-quad impostor as the coarsest level wants a late hand-over**, not an early
+one. Two quads at a right angle are the least that works — a single fixed billboard
+vanishes the moment the camera looks along it — and the pair has a seam: whichever blade
+is edge-on is drawn as a narrow strip through the other. Hand over where the plant is a
+few dozen pixels tall and the strip is under a pixel; hand over early and the tree looks
+sliced. `mods/trees` uses about eighteen times the plant's height.
 
 **Lit windows at night.** A node whose name ends in **`_NIGHT`** is shown after dusk and
 hidden by day — lit windows in a house, a glowing sign, the light pool under a platform
@@ -1633,9 +1657,41 @@ height always from the terrain):
 ```ron
 trees: [
     // Empty object = the app's built-in placeholder tree.
-    (object: "example:fichte", lat: 52.0006, lon: 10.004, yaw_deg: 0.0, scale: 1.3),
+    (object: "trees:fichte_b", lat: 52.0006, lon: 10.004, yaw_deg: 0.0, scale: 1.3),
 ],
 ```
+
+The **`trees` mod** ships the vegetation of Central Europe: twenty-eight species — spruce,
+pine, silver fir, larch, Douglas fir, juniper; beech, oak, hornbeam, birch, alder, two
+maples, ash, lime, aspen, Lombardy poplar, two willows, elm, horse chestnut, rowan, wild
+cherry, black locust; hazel, hawthorn, elder, blackthorn — each in three individually
+shaped variants (`_a`, `_b`, `_c`), four levels of detail, and summer, autumn and winter
+models. It is generated, not modelled: `tools/trees/species.json` describes the species,
+`tools/trees/build_trees.mjs` grows them with
+[ez-tree](https://github.com/dgreenheck/ez-tree), and the leaves on their cards are
+photographed leaves out of the CC0 libraries of [ambientCG](https://ambientcg.com) and
+[Poly Haven](https://polyhaven.com), cut out and arranged by the pipeline. See
+`tools/trees/README.md` to add one.
+
+#### Stands
+
+A wood is rarely one species. Any tree object may carry **`stand-…` tags** saying which
+kinds of wood it grows in:
+
+```ron
+tags: ["laubbaum", "stand-laubwald", "stand-mischwald", "stand-allee"],
+```
+
+The route editor collects every `stand-…` tag the installed mods carry and offers them
+above the single species in the tree and forest tools. Picking one has the forest brush
+draw from all the species tagged with it, so a painted wood comes out mixed and no two
+trees in it are the same shape. There is no stand file and no registry — a mod that adds
+a species to an existing wood needs nothing but the tag the others already have, and one
+that invents `stand-obstgarten` gets a new entry in the list for free.
+
+The stands the `trees` mod brings: `mischwald`, `laubwald`, `nadelwald`, `bergwald`,
+`auwald`, `bach`, `heide`, `pionier`, `bahndamm`, `boeschung`, `hecke`, `feld`, `allee`,
+`park`, `stadt`.
 
 There is no separate forest construct: a wood is many tree entries. That is deliberate —
 whether a tree was hand-set, painted or imported, it is the same kind of row, so any tree

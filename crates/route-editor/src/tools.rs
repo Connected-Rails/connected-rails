@@ -356,6 +356,11 @@ pub struct LayOptions {
     pub grade: f64,
     /// Electrification id (`"ac-15kv"`, `"none"`, …); `None` = nothing said.
     pub electrification: Option<String>,
+    /// Whether the piece carries a formation — ballast bed and the embankment
+    /// or cutting the terrain builds under it. Off, the piece lays bare rails:
+    /// for track on the builder's own constructions (bridges, platforms,
+    /// ground they shaped themselves).
+    pub formation: bool,
     /// How many tracks one lay puts down — yards are laid several at a time.
     pub parallel: u32,
     /// Centre distance of parallel tracks [m]; 4 m is the German main line.
@@ -380,6 +385,7 @@ impl Default for LayOptions {
             speed: None,
             grade: 0.0,
             electrification: None,
+            formation: true,
             parallel: 1,
             spacing: 4.0,
             snap_radius: false,
@@ -411,6 +417,7 @@ impl LayOptions {
                 .clone()
                 .map(|e| vec![(0.0, e)])
                 .unwrap_or_default(),
+            formation: self.formation,
         }
     }
 }
@@ -452,6 +459,7 @@ struct Profiles {
     speed: Vec<(f64, f64)>,
     track_type: Vec<(f64, String)>,
     electrification: Vec<(f64, String)>,
+    formation: bool,
 }
 
 impl Profiles {
@@ -466,6 +474,7 @@ impl Profiles {
             speed: self.speed,
             track_type: self.track_type,
             electrification: self.electrification,
+            formation: self.formation,
         }
     }
 }
@@ -568,8 +577,14 @@ pub struct EditorState {
     /// Signal model (`"<mod>:<name>"`) that overrides the type's default on a
     /// signal placed from here.
     pub signal_model: Option<String>,
-    /// Tree object the tree and forest tools use; `None` = placeholder tree.
+    /// What the tree and forest tools plant: an object name, a `stand-…` tag
+    /// standing for a mixture of them, or `None` for the placeholder tree.
     pub tree_object: Option<String>,
+    /// [`Self::tree_object`] resolved against the installed mods — one entry
+    /// for a single species, all its members for a stand. Kept beside the pick
+    /// because the forest brush and the Overpass import run where the object
+    /// catalogue is not a parameter.
+    pub tree_species: Vec<String>,
     /// Crop the field tool gives the next field it closes; `None` = winter
     /// cereal, the commonest crop in the country.
     pub field_crop: Option<fields::CropClass>,
@@ -1989,7 +2004,7 @@ pub fn finish_forest(
             (lat.to_degrees(), lon.to_degrees())
         })
         .collect();
-    let objects: Vec<String> = state.tree_object.iter().cloned().collect();
+    let objects = state.tree_species.clone();
     let trees = content::terrain::fill_polygon(
         &polygon,
         &objects,
@@ -2481,6 +2496,7 @@ pub fn offset_edge(line: &mut Line, index: usize, distance: f64) -> Option<usize
         speed: source.speed,
         track_type: source.track_type,
         electrification: source.electrification,
+        formation: source.formation,
     });
     Some(new)
 }
@@ -3166,8 +3182,14 @@ pub fn tool_input(
         }
         Tool::PlaceTree => {
             let (lat, lon, _) = geo::from_ecef(p);
+            // A stand plants one of its species, taken in turn — painting
+            // single trees out of a mixture is how a wood edge is made.
+            let object = match state.tree_species.len() {
+                0 => String::new(),
+                n => state.tree_species[line.source.trees.len() % n].clone(),
+            };
             line.source.trees.push(TreeSource {
-                object: state.tree_object.clone().unwrap_or_default(),
+                object,
                 lat: lat.to_degrees(),
                 lon: lon.to_degrees(),
                 yaw_deg: 0.0,
@@ -4289,7 +4311,13 @@ pub fn placement_preview(
             .object
             .clone()
             .or_else(|| objects.map.keys().next().cloned()),
-        Tool::PlaceTree => state.tree_object.clone(),
+        // A stand has no one model to show; the first of its species stands
+        // in for it.
+        Tool::PlaceTree => state
+            .tree_species
+            .first()
+            .cloned()
+            .or_else(|| state.tree_object.clone()),
         _ => None,
     };
     let spec = name.as_deref().and_then(|name| objects.map.get(name));
@@ -4750,6 +4778,7 @@ mod tests {
                 speed: vec![],
                 track_type: vec![],
                 electrification: vec![],
+                formation: true,
             }],
             ..Default::default()
         }
@@ -4797,6 +4826,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);
@@ -4852,6 +4882,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);
@@ -4906,6 +4937,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);
@@ -5164,6 +5196,7 @@ mod tests {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         });
         let mut doc = line_of(source);
         let ends = open_ends(&doc);

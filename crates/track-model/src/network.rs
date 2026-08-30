@@ -199,6 +199,12 @@ pub struct TrackEdge {
     /// electrification once and only names the exceptions.
     #[serde(default)]
     pub electrification: Option<StepProfile<Electrification>>,
+    /// Whether the edge carries a formation: ballast bed, and the embankment or
+    /// cutting the terrain builds under it. `false` for track laid on the
+    /// builder's own constructions — bridges, platforms, self-shaped ground —
+    /// where the rails stand without either.
+    #[serde(default = "default_formation")]
+    pub formation: bool,
     #[serde(skip)]
     frame: Option<EnuFrame>,
     #[serde(skip)]
@@ -207,6 +213,10 @@ pub struct TrackEdge {
 
 fn default_track_type() -> StepProfile<u32> {
     StepProfile::constant(0)
+}
+
+fn default_formation() -> bool {
+    true
 }
 
 impl TrackEdge {
@@ -230,6 +240,7 @@ impl TrackEdge {
             speed: StepProfile::constant(160.0),
             track_type: default_track_type(),
             electrification: None,
+            formation: true,
             frame: None,
             length: 0.0,
         };
@@ -259,6 +270,11 @@ impl TrackEdge {
 
     pub fn with_electrification(mut self, electrification: StepProfile<Electrification>) -> Self {
         self.electrification = Some(electrification);
+        self
+    }
+
+    pub fn with_formation(mut self, formation: bool) -> Self {
+        self.formation = formation;
         self
     }
 

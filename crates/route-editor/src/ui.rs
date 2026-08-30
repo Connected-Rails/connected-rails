@@ -793,7 +793,7 @@ fn forest_imported(path: PathBuf, line: &mut Line, state: &mut EditorState, over
         }
         Ok(polygons) => {
             let areas = polygons.len();
-            let objects: Vec<String> = state.tree_object.iter().cloned().collect();
+            let objects = state.tree_species.clone();
             let mut baked = 0;
             let mut dropped = 0;
             for polygon in polygons {
@@ -1703,7 +1703,16 @@ fn detail_panel(
                                 row(ui, "veg-species", |ui| {
                                     let mut species = state.tree_object.clone().unwrap_or_default();
                                     species_combo(ui, "place-tree-kind", objects, &mut species);
-                                    state.tree_object = (!species.is_empty()).then_some(species);
+                                    let pick = (!species.is_empty()).then_some(species);
+                                    if pick != state.tree_object {
+                                        state.tree_object = pick;
+                                        // Resolved once here, where the mods'
+                                        // objects are at hand: the brush, the
+                                        // forest import and the single-tree
+                                        // tool all draw from the same list.
+                                        state.tree_species =
+                                            objects.species_of(state.tree_object.as_ref());
+                                    }
                                 });
                                 if state.tool == Tool::PlaceForest {
                                     row(ui, "forest-area", |ui| {
@@ -2172,6 +2181,9 @@ fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
                     }
                 });
         });
+        row(ui, "lay-formation", |ui| {
+            ui.checkbox(&mut lay.formation, "");
+        });
         row(ui, "lay-parallel", |ui| {
             editor_ui::field(ui, &mut lay.parallel, 1.0, 1.0..=8.0, "");
         });
@@ -2199,6 +2211,23 @@ fn species_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, value: &mu
         .show_ui(ui, |ui| {
             if ui.selectable_label(value.is_empty(), placeholder).clicked() {
                 value.clear();
+            }
+            // The stands first: a wood is mixed far more often than it is
+            // planted with one species, and eighty-four single trees are a
+            // long list to scroll past to get to them.
+            let stands = objects.stands();
+            if !stands.is_empty() {
+                ui.separator();
+                ui.small(t!("veg-stands"));
+                for (stand, members) in &stands {
+                    let tag = format!("{}{stand}", crate::STAND_TAG);
+                    let label = format!("{stand} ({})", members.len());
+                    if ui.selectable_label(*value == tag, label).clicked() {
+                        *value = tag;
+                    }
+                }
+                ui.separator();
+                ui.small(t!("veg-single"));
             }
             for name in objects.map.keys() {
                 if ui.selectable_label(value == name, name).clicked() {
@@ -2299,6 +2328,17 @@ fn selection_panel(
                         .color(colors::TEXT_SECONDARY),
                 );
             }
+            // The formation is the edge's own — an area cannot lay one over a
+            // stretch, and switching it off leaves bare rails on ground the
+            // terrain leaves alone. The change detector rebuilds track and
+            // terrain from the flipped bit, undo included.
+            editor_ui::form_grid(&format!("edge-formation-{i}")).show(ui, |ui| {
+                row(ui, "sel-edge-formation", |ui| {
+                    if let Some(edge) = line.source.edges.get_mut(i) {
+                        ui.checkbox(&mut edge.formation, "");
+                    }
+                });
+            });
             track_type_rows(ui, line, i, length, types);
             electrification_rows(ui, line, i, length);
             grade_rows(ui, line, i, length);

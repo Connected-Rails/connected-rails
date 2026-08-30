@@ -29,6 +29,7 @@ fn line() -> LineSource {
             speed: vec![],
             track_type: vec![],
             electrification: vec![],
+            formation: true,
         }],
         devices: vec![],
         objects: vec![],
@@ -201,6 +202,7 @@ fn removing_a_track_takes_its_spans_with_it() {
         speed: vec![],
         track_type: vec![],
         electrification: vec![],
+        formation: true,
     });
     line.areas.push(TrackAreaSource {
         speed: Some(40.0),

@@ -136,30 +136,35 @@ pub fn spawn_track(
         let frame = EnuFrame::at(edge.anchor);
         let (translation, rotation) = origin.frame_transform(&frame);
 
-        for (s0, s1, index) in edge.track_type_runs() {
-            let ty = types.get(index as usize);
-            let mats = per_type.get(index as usize).unwrap_or(&per_type[0]);
-            let oberbau = ty.map_or_else(Oberbau::default, |ty| ty.oberbau.clone());
+        // Bed and sleepers belong to the formation — track on the builder's
+        // own constructions (platforms, yards, bridges) has none, only the
+        // rails stand; the bed there is the builder's to model.
+        if edge.formation {
+            for (s0, s1, index) in edge.track_type_runs() {
+                let ty = types.get(index as usize);
+                let mats = per_type.get(index as usize).unwrap_or(&per_type[0]);
+                let oberbau = ty.map_or_else(Oberbau::default, |ty| ty.oberbau.clone());
 
-            let bed = match oberbau.sleeper {
-                SleeperKind::Slab => build_slab(edge, &frame, s0, s1, &oberbau),
-                _ => build_ballast(edge, &frame, s0, s1, &oberbau),
-            };
-            commands.spawn((
-                Mesh3d(meshes.add(bed)),
-                MeshMaterial3d(mats.bed.clone()),
-                Transform::from_translation(translation).with_rotation(rotation),
-                WorldAnchored::in_frame(frame),
-            ));
-            if oberbau.sleeper != SleeperKind::Slab {
-                for mesh in build_sleepers(edge, &frame, s0, s1, &oberbau) {
-                    commands.spawn((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(mats.sleeper.clone()),
-                        Transform::from_translation(translation).with_rotation(rotation),
-                        WorldAnchored::in_frame(frame),
-                        VisibilityRange::abrupt(0.0, SLEEPER_CULL),
-                    ));
+                let bed = match oberbau.sleeper {
+                    SleeperKind::Slab => build_slab(edge, &frame, s0, s1, &oberbau),
+                    _ => build_ballast(edge, &frame, s0, s1, &oberbau),
+                };
+                commands.spawn((
+                    Mesh3d(meshes.add(bed)),
+                    MeshMaterial3d(mats.bed.clone()),
+                    Transform::from_translation(translation).with_rotation(rotation),
+                    WorldAnchored::in_frame(frame),
+                ));
+                if oberbau.sleeper != SleeperKind::Slab {
+                    for mesh in build_sleepers(edge, &frame, s0, s1, &oberbau) {
+                        commands.spawn((
+                            Mesh3d(meshes.add(mesh)),
+                            MeshMaterial3d(mats.sleeper.clone()),
+                            Transform::from_translation(translation).with_rotation(rotation),
+                            WorldAnchored::in_frame(frame),
+                            VisibilityRange::abrupt(0.0, SLEEPER_CULL),
+                        ));
+                    }
                 }
             }
         }

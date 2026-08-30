@@ -96,7 +96,7 @@ fn tramline_spacing(crop: CropClass) -> f32 {
 /// is picked in and read back in. A material's `base_color` is linear, and
 /// handing it 0.28 where 0.06 was meant is why an early attempt drew the whole
 /// countryside in pale sage.
-fn linear(channel: f32) -> f32 {
+pub(crate) fn linear(channel: f32) -> f32 {
     if channel <= 0.04045 {
         channel / 12.92
     } else {
@@ -272,6 +272,10 @@ pub fn spawn_fields(
                     crop: patch.crop,
                     sources: patch.sources.clone(),
                 },
+                // The standing crop grows out of this surface, on its own
+                // level meshes with their own distances — the patch grows it
+                // when a camera comes near, and takes it back when none does.
+                crate::plants::FieldPlants::default(),
             ));
         }
     });

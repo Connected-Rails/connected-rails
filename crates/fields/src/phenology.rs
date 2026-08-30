@@ -295,11 +295,34 @@ pub fn growth(crop: CropClass, month: u32, day: u32, seed: u64) -> Growth {
     growth_on(crop, day_of_year(month, day), seed)
 }
 
+/// The day offset a field's seed gives, in days: −7 … 7.
+///
+/// [`growth`] applies it to the day before it reads the calendar. The offset
+/// is published on its own because the renderer needs it twice: the material
+/// uniforms and the standing crop both have to see the same shifted year, and
+/// the second one reads it back out of the field's own vertex colour rather
+/// than out of the seed it does not know.
+pub fn offset_of(seed: u64) -> f64 {
+    const SPREAD: f64 = 7.0;
+    (vary(seed, 0x5EED) * 2.0 - 1.0) * SPREAD
+}
+
 /// The same, from a day of the year.
 pub fn growth_on(crop: CropClass, day: u16, seed: u64) -> Growth {
-    const SPREAD: f64 = 7.0;
-    let offset = (vary(seed, 0x5EED) * 2.0 - 1.0) * SPREAD;
-    let day = wrap(day as f64 - offset);
+    growth_offset(crop, day, offset_of(seed) as f32)
+}
+
+/// Growth at a day offset the caller already has — a field whose offset rides
+/// in its vertex colour instead of in a seed the renderer never sees. The
+/// offset is in days, −7 … 7, as [`offset_of`] gives it.
+pub fn growth_offset(crop: CropClass, day: u16, offset_days: f32) -> Growth {
+    let day = (day as f64 - offset_days as f64).rem_euclid(365.0) as u16;
+    growth_on_day(crop, day)
+}
+
+/// The calendar itself, on a plain day of the year.
+fn growth_on_day(crop: CropClass, day: u16) -> Growth {
+    let day = day as f64;
     let keys = calendar(crop);
 
     // The span the day falls in. The table is short enough that a scan beats
@@ -434,5 +457,17 @@ mod tests {
             stages.insert(growth(CropClass::WinterCereal, 7, 28, seed).stage);
         }
         assert!(stages.len() > 1, "every field ripens on the same day");
+    }
+
+    #[test]
+    fn an_explicit_offset_is_the_seed_its_own() {
+        // The standing crop reads a field's offset back out of its vertex
+        // colour and lands in `growth_offset`; it must not be able to tell
+        // the difference from the seed itself.
+        for seed in 0..20u64 {
+            let direct = growth_on(CropClass::WinterCereal, 200, seed);
+            let via_colour = growth_offset(CropClass::WinterCereal, 200, offset_of(seed) as f32);
+            assert_eq!(direct, via_colour, "seed {seed}");
+        }
     }
 }

@@ -17,11 +17,12 @@
 //! without being built twice — and so two clients of a multiplayer run agree on
 //! what a field looks like without a byte crossing the network.
 //
-// ponytail: the surface lies on the ground, and the crop's height is colour and
-// row contrast rather than geometry. A maize field in August really does stand
-// two and a half metres above the track, and standing crop wants its own pass —
-// a shell over the surface with sides, or instanced cards. This is the ground
-// it would stand on.
+// The surface lies on the ground, and the crop's height rides in its colour
+// and row contrast — but the standing crop is geometry now: world_render::plants
+// grows the plant cards out of this very mesh (its triangles are the ground the
+// cards stand on, its vertex colours the field's tint and its week of the crop
+// year). This is still the ground it stands on, and the paint the cards stand
+// over.
 
 use crate::route::{FieldSource, LineSource};
 use crate::terrain::{HeightGrid, TileKey};
@@ -135,8 +136,9 @@ pub struct FieldPatch {
     /// the rows of one field line up across the tile boundaries it crosses.
     pub uvs: Vec<[f32; 2]>,
     /// Per-vertex tint, from the field's seed: two wheat fields side by side
-    /// are never quite the same green. `a` carries the seed as a fraction, so
-    /// the shader can vary the row phase per field too.
+    /// are never quite the same green. `g` carries the row phase, `b` the
+    /// field's own week of the year (the standing crop's phenology reads it
+    /// back), `a` is opaque.
     pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     /// The fields that went into this patch, in line order — what a click on
@@ -229,6 +231,11 @@ fn add_piece(
     // A tint and a row phase per field, steady from its seed.
     let tint = fields::stats::vary(field.seed, 0xC0107) as f32;
     let phase = fields::stats::vary(field.seed, 0x9042E) as f32;
+    // The field's own place in the crop year, as a half of the ±7-day spread
+    // the seed gives: the standing crop (world_render::plants) reads it back
+    // and knows this field is a week behind its neighbour without ever having
+    // seen the seed.
+    let year = (fields::phenology::offset_of(field.seed) / 7.0 + 1.0) as f32 * 0.5;
     let base = patch.positions.len() as u32;
 
     for p in &points {
@@ -241,8 +248,10 @@ fn add_piece(
         patch
             .uvs
             .push([offset.dot(across) as f32, offset.dot(along) as f32]);
-        // r, g: the tint and the row phase. b is spare, a is opaque.
-        patch.colors.push([tint, phase, 0.0, 1.0]);
+        // r, g: the tint and the row phase. b is the field's own week of the
+        // year, 0 … 1 — the standing crop's phenology reads it back. a is
+        // opaque.
+        patch.colors.push([tint, phase, year, 1.0]);
     }
     for [a, b, c] in tris {
         patch
@@ -536,6 +545,21 @@ mod tests {
         let count = sorted.len();
         sorted.dedup();
         assert_eq!(sorted.len(), count, "a midpoint was made twice");
+    }
+
+    #[test]
+    fn the_vertex_colour_carries_the_field_s_week() {
+        // Channel b is the field's place in the crop year, 0 … 1, from its
+        // seed. The standing crop maps it back onto ±7 days; the round trip
+        // has to land on the growth the seed itself gives.
+        let patches = patches_of(
+            &[source(440_000.0, 5_715_000.0, 100.0, "maize")],
+            (859, 11162),
+        );
+        let b = patches[0].colors[0][2];
+        assert!((0.0..=1.0).contains(&b), "{b}");
+        let expected = (fields::phenology::offset_of(42) / 7.0 + 1.0) * 0.5;
+        assert!((b - expected as f32).abs() < 1e-6);
     }
 
     #[test]

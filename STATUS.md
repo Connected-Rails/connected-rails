@@ -451,6 +451,40 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   rails sit below the terrain's fallback height runs down a cutting for its whole length,
   and from a cab that is banks rather than countryside. Invisible from a top-down editor
   view; obvious at two and a half metres.
+- **The standing crop (2026-08-30, `world_render::plants`):** the painted surface sells a
+  field at any distance but one — close up a crop is not a colour on the ground but things
+  standing on it, and a maize field in August really does stand two and a half metres above
+  the ballast. So each field patch grows **plants**: real low-poly crop models —
+  **Quaternius' Ultimate Crops pack, CC0** (fetched via Poly Pizza, normalised by
+  `tools/plants`, credited in `THIRD_PARTY_LICENSES.md`) — where the camera is close, painted
+  cards under and between them, and nothing where the paint alone carries the field. One
+  model per crop group (wheat for the cereals, corn for maize, flowers for the rape,
+  turnip for the beet, clover for potato and legume, lettuce for vegetables, grass for the
+  meadow, vines for the vineyard, a tree for the orchard); what a plant looks like is still
+  a function of the crop, the day and the field's seed — an untextured part is repainted in
+  the day's stand colour through its vertices, so the wheat model is blue-green in May and
+  gold in July, one model serving every stage from sprout to ripe. The
+  geometry is the field's own surface mesh: cards sample its triangles, so they are never
+  under the track, never off the field, and draped like the ground is, for free. Each
+  field's week of the crop year rides in the surface's vertex colour (`b`, new —
+  `phenology::offset_of` publishes the seed's shift), so one wheat field stands in stubble
+  while its neighbour is still gold and the cards know it without ever having seen a seed.
+  **The budget**: the models are capped at a few hundred per patch — a heavy model thins
+  itself out against a 120 000-triangle purse, the light ones against 400 plants — and the
+  painted cards under them at 3 000. Three levels: models and crossed cards to 90 m, every
+  third card as one quad out to 420 m, the paint alone beyond — and the meshes exist only
+  within 480 m of the camera, dropped again past 560 m, two patches rebuilt to a frame (the
+  dropped geometry goes with them; the mesh assets are freed once the despawn has landed).
+  A card is eight vertices with one horizontal normal per quad (the seam the trees taught),
+  double-sided, no shadow: the day's colour rides in one material per crop, dressed with
+  the weather like every other outdoor material, and only a stage or height step of a
+  quarter metre rebuilds geometry — budgeted at two patches a frame. Deep winter takes the
+  crop away entirely; stubble keeps a third of the tufts. All of it is a function of the
+  patch mesh and the scenario clock, so two clients of a multiplayer run grow the same
+  field without a byte crossing the network. The editor's aerial imagery was moved under
+  the crop with it: its plane sat a metre above the ground (`height_offset: 1.0`), which
+  covered every field surface and everything standing on it — it now sits 4 cm up, above
+  the terrain it textures and below what grows there.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
@@ -1315,13 +1349,12 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
 
 Every simplification is marked with a `ponytail:` comment at the code site, with an upgrade path:
 
-- **A field has no holes and no standing crop.** `fields::geometry::clip` keeps outer rings
-  only, so a pond or a copse in the middle of a field is drawn over rather than cut out; a
-  polygon type with holes would have to run all the way through the mesh builder, and a hole
-  in a German field block is rare enough to wait for that. And the surface lies on the
-  ground: a maize field in August really does stand two and a half metres above the track,
-  but the crop's height is colour and row contrast, not geometry. Standing crop wants its own
-  pass — a shell over the surface with sides, or instanced cards.
+- **A field has no holes.** `fields::geometry::clip` keeps outer rings only, so a
+  pond or a copse in the middle of a field is drawn over rather than cut out; a
+  polygon type with holes would have to run all the way through the mesh builder, and a
+  hole in a German field block is rare enough to wait for that. The standing crop is no
+  longer deferred: the fields grow plants now (2026-08-30, world-render::plants) — see the
+  feature list.
 - **The cropping statistics are national, not per district.** A state that publishes only
   field blocks has its crop drawn from `crops/arable.csv`, which is North Rhine-Westphalia's
   own area shares standing in for the country. The mechanism is per region already — the

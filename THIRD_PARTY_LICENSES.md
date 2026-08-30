@@ -395,6 +395,27 @@ so the notice travels with the file a mod would copy out. What the table
 still generates — brake squeal and rail joints — it generates because no
 free recording of the 101 doing either turned up.
 
+## Plant models in `crates/world-render/src/plants/`
+
+The standing crop's near level — the wheat, corn, lettuce, grass, clover,
+turnip, flower, hay, vine and tree models the fields grow — comes from the
+**Ultimate Crops** and **Nature** packs by
+[Quaternius](https://quaternius.com), fetched through
+[Poly Pizza](https://poly.pizza) and published under the **Creative Commons
+CC0 1.0 Universal** licence
+(<https://creativecommons.org/publicdomain/zero/1.0/>): public domain, they
+may be copied, modified and redistributed with the repository for any
+purpose, including commercially, with no attribution required. The credit
+here is given because it is deserved.
+
+The files in the directory are **adaptations**: `tools/plants/normalise.mjs`
+bakes the node transforms in, puts the origin at the foot, scales every model
+to exactly one metre tall, re-indexes the vertices and writes one compact GLB
+per crop (see `tools/plants/README.md` and the `fetch.mjs` that re-downloads
+the sources). At runtime the renderer scales each model by the phenology's
+stand height and repaints its untextured parts in the day's stand colour, so
+one wheat model serves every stage from sprout to ripe.
+
 ## Rust dependencies
 
 Crates pulled in by Cargo are not vendored here; their licences are those

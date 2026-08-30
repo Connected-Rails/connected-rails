@@ -233,7 +233,10 @@ pub struct ImageryConfig {
     pub offset: (f64, f64),
     /// Lift of the overlay above the terrain surface [m]. The drape grid is
     /// coarser than the terrain mesh, so without a little air its secants cut
-    /// through the ridges in between.
+    /// through the ridges in between — but the lift also decides what the
+    /// picture covers: the fields drape at a height of their own (a hand's
+    /// width above the ground), and the photo has to stay under what grows
+    /// there. A little air over the terrain, and under the crops.
     pub height_offset: f64,
     pub cache: CacheConfig,
     pub request: RequestConfig,
@@ -250,7 +253,7 @@ impl Default for ImageryConfig {
             radius: 1_200.0,
             max_tiles: 1_024,
             offset: (0.0, 0.0),
-            height_offset: 1.0,
+            height_offset: 0.04,
             cache: CacheConfig::default(),
             request: RequestConfig::default(),
             providers: predefined_providers(),

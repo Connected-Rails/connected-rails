@@ -29,6 +29,7 @@ pub mod clouds;
 pub mod farmland;
 pub mod mist;
 pub mod people;
+pub mod plants;
 pub mod precipitation;
 pub mod roads;
 pub mod scatter;
@@ -41,6 +42,7 @@ pub mod windscreen;
 pub use farmland::{
     CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
 };
+pub use plants::{FieldPlants, PlantMaterials, update_field_plants};
 pub use people::{
     CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
     PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
@@ -64,11 +66,25 @@ impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "terrain_splat.wgsl");
         embedded_asset!(app, "fields.wgsl");
+        // The standing crop's near level: real plant models (Quaternius, CC0 —
+        // see tools/plants and THIRD_PARTY_LICENSES.md).
+        embedded_asset!(app, "plants/wheat.glb");
+        embedded_asset!(app, "plants/corn.glb");
+        embedded_asset!(app, "plants/lettuce.glb");
+        embedded_asset!(app, "plants/grass.glb");
+        embedded_asset!(app, "plants/clover.glb");
+        embedded_asset!(app, "plants/turnip.glb");
+        embedded_asset!(app, "plants/flowers.glb");
+        embedded_asset!(app, "plants/hay.glb");
+        embedded_asset!(app, "plants/vines.glb");
+        embedded_asset!(app, "plants/tree.glb");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<farmland::FieldMaterial>::default())
             .add_plugins(water::plugin)
             .add_plugins(roads::plugin)
             .init_resource::<farmland::FieldMaterials>()
+            .init_resource::<plants::PlantMaterials>()
+            .init_resource::<plants::PlantModels>()
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()
             .init_resource::<people::CharacterGraphs>()
@@ -90,6 +106,11 @@ impl Plugin for WorldRenderPlugin {
                     materialise_trees,
                     scatter::cull_distant_woods,
                     farmland::follow_date,
+                    // The standing crop follows the same calendar as the
+                    // paint under it: the material turns with the day, and a
+                    // moved stage regrows the cards on a budget.
+                    plants::follow_date,
+                    plants::update_field_plants,
                     // A walker dressed this frame gets its gait the same frame.
                     (people::dress_people, people::move_strollers, mip_textures).chain(),
                     people::bind_walkways,

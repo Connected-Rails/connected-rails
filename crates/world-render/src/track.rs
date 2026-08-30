@@ -156,12 +156,17 @@ pub fn spawn_track(
                     WorldAnchored::in_frame(frame),
                 ));
                 if oberbau.sleeper != SleeperKind::Slab {
-                    for mesh in build_sleepers(edge, &frame, s0, s1, &oberbau) {
+                    for (mesh, offset) in build_sleepers(edge, &frame, s0, s1, &oberbau) {
+                        // Each chunk sits at its own centre, not at the edge
+                        // anchor: the visibility range measures to the entity
+                        // translation, and an anchor out of range must not
+                        // take the sleepers under the camera with it.
                         commands.spawn((
                             Mesh3d(meshes.add(mesh)),
                             MeshMaterial3d(mats.sleeper.clone()),
-                            Transform::from_translation(translation).with_rotation(rotation),
-                            WorldAnchored::in_frame(frame),
+                            Transform::from_translation(translation + rotation * offset)
+                                .with_rotation(rotation),
+                            WorldAnchored::offset_in_frame(frame, offset),
                             VisibilityRange::abrupt(0.0, SLEEPER_CULL),
                         ));
                     }
@@ -492,27 +497,46 @@ fn build_rails(e: &TrackEdge, frame: &EnuFrame, profile: RailProfile) -> Mesh {
 
 /// The sleepers of a type run, merged into chunk meshes of
 /// [`SLEEPERS_PER_CHUNK`] — one entity per chunk keeps the spawn cheap and
-/// gives the distance cull something to work with.
-fn build_sleepers(e: &TrackEdge, frame: &EnuFrame, s0: f64, s1: f64, ob: &Oberbau) -> Vec<Mesh> {
+/// gives the distance cull something to work with. Each mesh is built around
+/// its own centre (the mid cross-section of the chunk) and comes with that
+/// centre in mesh axes, so the entity can sit there and the distance cull
+/// measures to the chunk instead of to the edge anchor.
+fn build_sleepers(
+    e: &TrackEdge,
+    frame: &EnuFrame,
+    s0: f64,
+    s1: f64,
+    ob: &Oberbau,
+) -> Vec<(Mesh, Vec3)> {
     let spacing = ob.sleeper_spacing.max(0.01);
     let count = (((s1 - s0) / spacing).floor() as usize) + 1;
-    let mut chunks: Vec<Mesh> = Vec::new();
+    let mut chunks: Vec<(Mesh, Vec3)> = Vec::new();
     let mut builder = SleeperBuilder::default();
+    let mut s_first = s0;
+    let mut s_last = s0;
     for k in 0..count {
         let s = s0 + k as f64 * spacing;
         if s > s1 {
             break;
         }
         builder.push(cross_section(e, frame, s), ob);
+        s_last = s;
         if builder.sleepers() == SLEEPERS_PER_CHUNK {
-            chunks.push(builder.build());
+            chunks.push(builder.build(mid_section(e, frame, s_first, s_last)));
             builder = SleeperBuilder::default();
+            s_first = s + spacing;
         }
     }
     if builder.sleepers() > 0 {
-        chunks.push(builder.build());
+        chunks.push(builder.build(mid_section(e, frame, s_first, s_last)));
     }
     chunks
+}
+
+/// ENU position of the cross-section midway between two sleeper rows — the
+/// point a chunk is hung on.
+fn mid_section(e: &TrackEdge, frame: &EnuFrame, s0: f64, s1: f64) -> DVec3 {
+    cross_section(e, frame, (s0 + s1) / 2.0).0
 }
 
 /// One quad: four ring vertices in wind order, four texture coordinates. The
@@ -661,7 +685,14 @@ impl SleeperBuilder {
         self.count += 1;
     }
 
-    fn build(self) -> Mesh {
+    /// Finishes the chunk: every vertex moves into the frame of `origin` (the
+    /// chunk's own centre, ENU in the edge frame), and the render-space offset
+    /// of that centre comes back with the mesh — the entity has to sit there.
+    fn build(mut self, origin: DVec3) -> (Mesh, Vec3) {
+        let o = to_render(origin);
+        for p in &mut self.positions {
+            *p = [p[0] - o[0], p[1] - o[1], p[2] - o[2]];
+        }
         let mut mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::default(),
@@ -674,7 +705,7 @@ impl SleeperBuilder {
         // call only fails on a mesh without normals or uvs — both are above.
         mesh.generate_tangents()
             .expect("sleeper mesh has normals and uvs");
-        mesh
+        (mesh, Vec3::from(o))
     }
 }
 
@@ -859,10 +890,10 @@ mod tests {
         let ob = Oberbau::default();
         let chunks = build_sleepers(&edge, &frame, 0.0, 10.0, &ob);
         // 10 m / 0.6 m = 16 full gaps, plus the first sleeper = 17.
-        let count: usize = chunks.iter().map(|m| positions_of(m).len() / 24).sum();
+        let count: usize = chunks.iter().map(|(m, _)| positions_of(m).len() / 24).sum();
         assert_eq!(count, 17, "sleepers in 10 m at 60 cm");
 
-        let positions = positions_of(&chunks[0]);
+        let positions = positions_of(&chunks[0].0);
         let (rail_h, _, _) = RailProfile::R60.section();
         let want_top = -(rail_h + PAD);
         let top = positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
@@ -882,6 +913,48 @@ mod tests {
             ((positions[24][2] - positions[0][2]).abs() - ob.sleeper_spacing as f32).abs() < 1e-3,
             "sleeper spacing along the edge"
         );
+    }
+
+    /// Every chunk hangs on its own centre, not on the edge anchor: only then
+    /// does the distance cull measure to the chunk the camera is passing. A
+    /// chunk built around the anchor vanishes as soon as the anchor is out of
+    /// range — with all its neighbours, mid-edge.
+    #[test]
+    fn chunks_are_hung_on_their_own_centre() {
+        let edge = straight_edge();
+        let frame = EnuFrame::at(edge.anchor);
+        let ob = Oberbau::default();
+        // 300 sleepers — two full chunks of 128 and one of 44.
+        let chunks = build_sleepers(&edge, &frame, 0.0, 179.4, &ob);
+        assert_eq!(chunks.len(), 3, "128 sleepers per chunk");
+
+        for (mesh, offset) in &chunks {
+            let positions = positions_of(mesh);
+            // The rows straddle the mesh origin evenly: the cull measuring to
+            // the entity translation (the offset) measures to the middle.
+            let (min_z, max_z) = positions.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+                (lo.min(p[2]), hi.max(p[2]))
+            });
+            assert!(
+                (min_z + max_z).abs() < 1e-3,
+                "chunk not centred: {min_z}..{max_z}"
+            );
+            // The offset hangs the mesh where it was built: back in edge
+            // coordinates (render z = −north) the rows reach their sleepers.
+            assert!((offset[0] as f64).abs() < 1e-3, "centre off the track");
+            // The up component carries the curvature dip of the test edge
+            // (d²/2R ≈ 2.2 mm at 166 m) — flat it would be zero.
+            assert!((offset[1] as f64).abs() < 5e-3, "centre off the rail top");
+        }
+
+        // Consecutive chunk centres sit a chunk apart along the edge.
+        for pair in chunks.windows(2) {
+            let gap = (pair[0].1[2] - pair[1].1[2]) as f64;
+            assert!(
+                gap > 0.0 && gap <= 128.0 * ob.sleeper_spacing + 1e-3,
+                "chunk centres {gap} m apart"
+            );
+        }
     }
 
     /// The bed's strip is wound to face upwards — the other way round it is
@@ -926,7 +999,9 @@ mod tests {
         let tangent = DVec3::X;
         let right = tangent.cross(up);
         builder.push((DVec3::ZERO, right, tangent, up), &ob);
-        let mesh = builder.build();
+        // Hung on its own centre — here the sleeper itself, at the origin.
+        let (mesh, offset) = builder.build(DVec3::ZERO);
+        assert!(offset == Vec3::ZERO, "centred chunk has no offset");
         let positions = positions_of(&mesh);
         let normals = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
             Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) => normals.to_vec(),

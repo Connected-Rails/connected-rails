@@ -9,6 +9,7 @@ mod cab;
 mod console;
 mod crew;
 mod displays;
+mod fsr;
 mod glyphs;
 mod hud;
 mod menu;
@@ -217,182 +218,197 @@ fn main() {
     // stored language translates the title and the stored window mode creates the
     // window — no flip on the first frame.
     app.add_plugins((settings::plugin, bindings::plugin));
+    // Decides whether this machine may touch NVIDIA's NGX at all — and `main` acts on
+    // the answer below, because a probe by the SDK itself ends in a segfault on any
+    // other vendor's card.
+    #[cfg_attr(not(feature = "dlss"), allow(unused_variables))]
+    let dlss = settings::pre_render_plugins(&mut app);
     let graphics = app.world().resource::<settings::Graphics>().clone();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: i18n::t!("window-simulator"),
-                    mode: settings::window_mode(&graphics),
-                    present_mode: settings::present_mode(&graphics),
-                    ..default()
-                }),
+    let default_plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: i18n::t!("window-simulator"),
+                mode: settings::window_mode(&graphics),
+                present_mode: settings::present_mode(&graphics),
                 ..default()
-            })
-            // The mixer is kira's (`audio.rs`); Bevy's own audio would open a second output
-            // device and hold it for nothing.
-            .disable::<bevy::audio::AudioPlugin>(),
-    )
-    .add_plugins(app_icon::plugin)
-    // Terrain splatting (plan ch. 14): shader and material, shared with the
-    // route editor, which draws the same ground.
-    .add_plugins(world_render::WorldRenderPlugin)
-    // Frame time and entity count for the F6 panel — the two numbers that say
-    // whether the streaming keeps up.
-    .add_plugins((
-        bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
-        bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
-    ))
-    // The mixer (`audio.rs`) — opened here rather than in `Startup`, because the initial
-    // state transition into `Driving` runs before any startup schedule.
-    .add_plugins(audio::plugin)
-    // The atmosphere covers every pixel the world does not; this is only what
-    // shows before the first sky pass.
-    .insert_resource(ClearColor(Color::BLACK))
-    // Mouse picking for the 3D cab: only marked control meshes catch the ray —
-    // without the marker requirement every terrain tile would compete for it.
-    .add_plugins(MeshPickingPlugin)
-    .insert_resource(MeshPickingSettings {
-        require_markers: true,
-        ..default()
-    })
-    // Multiplayer, if the command line asked for it — otherwise this adds nothing.
-    .add_plugins(net::plugin)
-    // The command console (F8): its panel exists for the whole process, its typing runs
-    // in the driving chain, and its weather wishes travel as a message whether a socket
-    // does or not.
-    .add_plugins(console::plugin)
-    .init_resource::<ui::CameraState>()
-    .init_resource::<walk::Walker>()
-    .init_resource::<cab::CabMouse>()
-    .init_resource::<mods_ui::ModManager>()
-    .init_resource::<hud::Overlays>()
-    .init_resource::<menu::MenuState>()
-    .init_resource::<menu::Selection>()
-    // HTML cab screens hold a boa script context, which is `!Send` — a non-send
-    // resource keeps them on the main thread, where the display chain runs anyway.
-    .init_non_send::<displays::HtmlGauges>()
-    // Mods before menu and world — both read the resource. Inserted while the app is
-    // built: the initial state transition runs before every startup schedule, so a
-    // loading system would come too late for `setup`.
-    .insert_resource(Mods(ModRuntime::load("mods")))
-    .insert_state(if autostart {
-        GameState::Driving
+            }),
+            ..default()
+        })
+        // The mixer is kira's (`audio.rs`); Bevy's own audio would open a second output
+        // device and hold it for nothing.
+        .disable::<bevy::audio::AudioPlugin>();
+    // Bevy registers its DLSS init with `DefaultPlugins` itself; on a machine without
+    // an NVIDIA card it is left out, and DLSS stays off (see `pre_render_plugins`).
+    #[cfg(feature = "dlss")]
+    let default_plugins = if dlss {
+        default_plugins
     } else {
-        GameState::Menu
-    })
-    // The wish to take a train over. It is written in single player too and read only by
-    // the network layer, so the type has to exist whether a socket does or not.
-    .add_message::<net::TakeOverRequest>()
-    // The console's weather wish, the same shape of thing: written in single player,
-    // posted only where a socket exists (`net::client_send`).
-    .add_message::<net::WeatherRequest>()
-    .add_systems(Startup, log_mods)
-    // The world the last run built goes first — otherwise the next `setup` would put a
-    // second one on top of it.
-    .add_systems(
-        OnEnter(GameState::Menu),
-        (tear_down_run, menu::spawn_menu).chain(),
-    )
-    // The same menu, as an overlay over the standing world.
-    .add_systems(OnEnter(GameState::Paused), menu::spawn_pause)
-    .add_systems(
-        Update,
-        (menu::menu, menu::scroll_menu)
-            .chain()
-            .run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
-    )
-    .add_systems(
-        Update,
-        pause_on_escape
-            .after(console::console)
-            .run_if(in_state(GameState::Driving)),
-    )
-    // Both run in every state: the pause menu needs its cursor back, and the HUD has to
-    // go away behind the overlay rather than shine through it. The console's panel goes
-    // with them — it hides behind the pause overlay like the HUD does.
-    .add_systems(
-        Update,
-        (ui::grab_cursor, hud::hud_visibility, hud::refresh_help_caps),
-    )
-    // The sound table and the display cameras need the trains, which `setup` only
-    // creates when its commands are applied — the chain inserts that sync point. It runs
-    // when there is no run yet: coming back from the pause overlay enters `Driving` too,
-    // and building the world a second time is not what resuming means (`RunBuilt`).
-    .add_systems(
-        OnEnter(GameState::Driving),
-        (
-            remember_before_run,
-            setup,
-            audio::setup_audio,
-            displays::setup_displays,
-            mark_run_built,
+        default_plugins.disable::<bevy::anti_alias::dlss::DlssInitPlugin>()
+    };
+    app.add_plugins(default_plugins)
+        .add_plugins(app_icon::plugin)
+        // FSR 3 upscaling (`fsr.rs`): its render-side systems and pipelines, next to
+        // the anti-aliasing Bevy's own plugins put up.
+        .add_plugins(fsr::FsrPlugin)
+        // Terrain splatting (plan ch. 14): shader and material, shared with the
+        // route editor, which draws the same ground.
+        .add_plugins(world_render::WorldRenderPlugin)
+        // Frame time and entity count for the F6 panel — the two numbers that say
+        // whether the streaming keeps up.
+        .add_plugins((
+            bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+            bevy::diagnostic::EntityCountDiagnosticsPlugin::default(),
+        ))
+        // The mixer (`audio.rs`) — opened here rather than in `Startup`, because the initial
+        // state transition into `Driving` runs before any startup schedule.
+        .add_plugins(audio::plugin)
+        // The atmosphere covers every pixel the world does not; this is only what
+        // shows before the first sky pass.
+        .insert_resource(ClearColor(Color::BLACK))
+        // Mouse picking for the 3D cab: only marked control meshes catch the ray —
+        // without the marker requirement every terrain tile would compete for it.
+        .add_plugins(MeshPickingPlugin)
+        .insert_resource(MeshPickingSettings {
+            require_markers: true,
+            ..default()
+        })
+        // Multiplayer, if the command line asked for it — otherwise this adds nothing.
+        .add_plugins(net::plugin)
+        // The command console (F8): its panel exists for the whole process, its typing runs
+        // in the driving chain, and its weather wishes travel as a message whether a socket
+        // does or not.
+        .add_plugins(console::plugin)
+        .init_resource::<ui::CameraState>()
+        .init_resource::<walk::Walker>()
+        .init_resource::<cab::CabMouse>()
+        .init_resource::<mods_ui::ModManager>()
+        .init_resource::<hud::Overlays>()
+        .init_resource::<menu::MenuState>()
+        .init_resource::<menu::Selection>()
+        // HTML cab screens hold a boa script context, which is `!Send` — a non-send
+        // resource keeps them on the main thread, where the display chain runs anyway.
+        .init_non_send::<displays::HtmlGauges>()
+        // Mods before menu and world — both read the resource. Inserted while the app is
+        // built: the initial state transition runs before every startup schedule, so a
+        // loading system would come too late for `setup`.
+        .insert_resource(Mods(ModRuntime::load("mods")))
+        .insert_state(if autostart {
+            GameState::Driving
+        } else {
+            GameState::Menu
+        })
+        // The wish to take a train over. It is written in single player too and read only by
+        // the network layer, so the type has to exist whether a socket does or not.
+        .add_message::<net::TakeOverRequest>()
+        // The console's weather wish, the same shape of thing: written in single player,
+        // posted only where a socket exists (`net::client_send`).
+        .add_message::<net::WeatherRequest>()
+        .add_systems(Startup, log_mods)
+        // The world the last run built goes first — otherwise the next `setup` would put a
+        // second one on top of it.
+        .add_systems(
+            OnEnter(GameState::Menu),
+            (tear_down_run, menu::spawn_menu).chain(),
         )
-            .chain()
-            .run_if(not(resource_exists::<RunBuilt>)),
-    )
-    .add_systems(
-        Update,
-        (
-            // The simulation, in the order one step of it happens: the console first —
-            // it holds the keyboard while it is open, and its answer to Enter lands
-            // before the step reads the world — then the levers, who is on them, what
-            // the plan puts on the line, the AI, and the step itself. A group of its
-            // own because Bevy's tuples end at twenty.
+        // The same menu, as an overlay over the standing world.
+        .add_systems(OnEnter(GameState::Paused), menu::spawn_pause)
+        .add_systems(
+            Update,
+            (menu::menu, menu::scroll_menu)
+                .chain()
+                .run_if(in_state(GameState::Menu).or_else(in_state(GameState::Paused))),
+        )
+        .add_systems(
+            Update,
+            pause_on_escape
+                .after(console::console)
+                .run_if(in_state(GameState::Driving)),
+        )
+        // Both run in every state: the pause menu needs its cursor back, and the HUD has to
+        // go away behind the overlay rather than shine through it. The console's panel goes
+        // with them — it hides behind the pause overlay like the HUD does.
+        .add_systems(
+            Update,
+            (ui::grab_cursor, hud::hud_visibility, hud::refresh_help_caps),
+        )
+        // The sound table and the display cameras need the trains, which `setup` only
+        // creates when its commands are applied — the chain inserts that sync point. It runs
+        // when there is no run yet: coming back from the pause overlay enters `Driving` too,
+        // and building the world a second time is not what resuming means (`RunBuilt`).
+        .add_systems(
+            OnEnter(GameState::Driving),
             (
-                console::console,
-                ui::player_input,
-                cab::apply_mouse,
-                crew::crew_change,
-                dispatch_services,
-                drive_ai,
-                step_simulation,
+                remember_before_run,
+                setup,
+                audio::setup_audio,
+                displays::setup_displays,
+                mark_run_built,
             )
-                .chain(),
-            feed_people_clock,
-            run_mod_scripts,
-            displays::update_displays,
-            rebase_origin,
-            sync_vehicles,
-            feed_sky,
-            update_headlights,
-            walk::walk_player,
-            ui::camera_control,
-            walk::place_character,
-            walk::animate_walker,
-            update_precipitation,
-            streaming::stream_terrain,
-            terrain_visibility,
-            hud::update_hud,
-            audio::update_audio,
-            mods_ui::mod_manager,
+                .chain()
+                .run_if(not(resource_exists::<RunBuilt>)),
         )
-            .chain()
-            .run_if(in_state(GameState::Driving)),
-    )
-    // Vehicle models from mods: bind glTF nodes, switch LODs, move parts (plan ch. 15.3).
-    .add_systems(
-        Update,
-        (
-            models::bind_nodes,
-            models::update_lod,
-            models::animate_parts,
-            models::animate_backlight,
-            models::animate_controls,
-            models::animate_digits,
-            models::update_windscreens,
-            displays::bind_display_nodes,
-            cab::update_highlight,
-            world_render::mount_parts,
-            world_render::bind_lamps,
-            signals::update_lamps,
-            signals::animate_motions,
-            signals::update_signal_lods,
-            signals::update_placeholders,
+        .add_systems(
+            Update,
+            (
+                // The simulation, in the order one step of it happens: the console first —
+                // it holds the keyboard while it is open, and its answer to Enter lands
+                // before the step reads the world — then the levers, who is on them, what
+                // the plan puts on the line, the AI, and the step itself. A group of its
+                // own because Bevy's tuples end at twenty.
+                (
+                    console::console,
+                    ui::player_input,
+                    cab::apply_mouse,
+                    crew::crew_change,
+                    dispatch_services,
+                    drive_ai,
+                    step_simulation,
+                )
+                    .chain(),
+                feed_people_clock,
+                run_mod_scripts,
+                displays::update_displays,
+                rebase_origin,
+                sync_vehicles,
+                feed_sky,
+                update_headlights,
+                walk::walk_player,
+                ui::camera_control,
+                walk::place_character,
+                walk::animate_walker,
+                update_precipitation,
+                streaming::stream_terrain,
+                terrain_visibility,
+                hud::update_hud,
+                audio::update_audio,
+                mods_ui::mod_manager,
+            )
+                .chain()
+                .run_if(in_state(GameState::Driving)),
         )
-            .after(sync_vehicles)
-            .run_if(in_state(GameState::Driving)),
-    );
+        // Vehicle models from mods: bind glTF nodes, switch LODs, move parts (plan ch. 15.3).
+        .add_systems(
+            Update,
+            (
+                models::bind_nodes,
+                models::update_lod,
+                models::animate_parts,
+                models::animate_backlight,
+                models::animate_controls,
+                models::animate_digits,
+                models::update_windscreens,
+                displays::bind_display_nodes,
+                cab::update_highlight,
+                world_render::mount_parts,
+                world_render::bind_lamps,
+                signals::update_lamps,
+                signals::animate_motions,
+                signals::update_signal_lods,
+                signals::update_placeholders,
+            )
+                .after(sync_vehicles)
+                .run_if(in_state(GameState::Driving)),
+        );
     // Bevy ships an ASCII subset of Fira Mono as the default font, which leaves every
     // umlaut and every arrow in the German UI as a box. Overwriting the asset the empty
     // `TextFont` handle points at swaps it for the full face everywhere at once — HUD,
@@ -447,7 +463,9 @@ fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
-    terrain: Res<TerrainInfo>,
+    // None in the menu: there is no terrain there, and `--menu <page> --screenshot`
+    // is exactly how its pages get photographed.
+    terrain: Option<Res<TerrainInfo>>,
     mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
@@ -455,6 +473,7 @@ fn exit_after_frames(
     *count += 1;
     if *count == limit.0 {
         let perf = hud::Perf::read(&diagnostics);
+        let terrain = terrain.as_deref().map(|t| &t.0);
         info!(
             "after {} frames: {:.0} fps, {:.1} ms, {} entities; \
              terrain {} tiles, {} triangles, {:.1} MB",
@@ -462,9 +481,9 @@ fn exit_after_frames(
             perf.fps,
             perf.frame_ms,
             perf.entities,
-            terrain.0.tiles,
-            terrain.0.triangles,
-            terrain.0.memory() as f64 / (1024.0 * 1024.0),
+            terrain.map_or(0, |t| t.tiles),
+            terrain.map_or(0, |t| t.triangles),
+            terrain.map_or(0.0, |t| t.memory() as f64 / (1024.0 * 1024.0)),
         );
     }
     let Some(shot) = shot else {
@@ -627,7 +646,7 @@ fn setup(
     mut mods: ResMut<Mods>,
     mut manager: ResMut<mods_ui::ModManager>,
     selection: Res<menu::Selection>,
-    graphics: Res<settings::Graphics>,
+    settings: settings::GraphicsRead,
     binds: Res<bindings::Binds>,
     fonts: Res<theme::Fonts>,
 ) {
@@ -907,10 +926,10 @@ fn setup(
             &mut images,
             &mut terrain_materials,
             season,
-            settings::ground_quality(&graphics),
+            settings::ground_quality(&settings.graphics),
         ),
         catalog,
-        f64::from(graphics.view_distance),
+        f64::from(settings.graphics.view_distance),
     );
 
     // Vehicles as simple bodies — the 3D cab comes in M6.
@@ -956,7 +975,7 @@ fn setup(
         &mut media,
         &mut star_materials,
         &mut moon_materials,
-        graphics.shadows,
+        settings.graphics.shadows,
     );
     let camera = commands
         .spawn((
@@ -988,12 +1007,18 @@ fn setup(
             ui::CabCamera,
         ))
         .id();
-    if graphics.bloom {
+    if settings.graphics.bloom {
         commands.entity(camera).insert(Bloom::NATURAL);
     }
     // `apply_scene` only fires on a changed setting, and starting a run does not change
-    // one — so the camera is dressed here as well as there.
-    settings::apply_anti_aliasing(&mut commands.entity(camera), &graphics);
+    // one — so the camera is dressed here as well as there. Upscaling before the
+    // anti-aliasing: the latter reads it, because an upscaler wants MSAA off.
+    settings::apply_upscaling(
+        &mut commands.entity(camera),
+        &settings.graphics,
+        *settings.upscaling,
+    );
+    settings::apply_anti_aliasing(&mut commands.entity(camera), &settings.graphics);
 
     // Rain and snow: a particle column of crossed quads that follows the camera
     // and scrolls downwards (`update_precipitation`). Both fields exist from the
@@ -1131,7 +1156,7 @@ fn setup(
 
     commands.insert_resource(TerrainInfo::default());
     commands.insert_resource(streamer);
-    commands.insert_resource(ViewDistance(graphics.view_distance));
+    commands.insert_resource(ViewDistance(settings.graphics.view_distance));
     commands.insert_resource(Origin(origin));
     commands.insert_resource(net::WorldId(fingerprint));
     commands.insert_resource(PlayerTrain(player));

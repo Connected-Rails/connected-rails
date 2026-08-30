@@ -26,6 +26,20 @@ world-render = { workspace = true }
 glam = { workspace = true }
 # `jpeg`: the menu wallpaper is a compiled-in JPEG (`images/`).
 bevy = { workspace = true, features = ["jpeg", "bevy_settings"] }
+# FSR 3 upscaling (`fsr.rs`): AMD's FidelityFX upscaler, pure Rust on top of the
+# same wgpu the renderer already uses — no SDK, no download, every GPU.
+# `wgpu` is only named for its types; it unifies with the version Bevy pins.
+wgpu = { version = "29", default-features = false }
+wgpu-ffx = "0.1"
+# DLSS (`settings.rs`): NVIDIA's upscaler, off by default in more ways than one —
+# the `dlss` feature also has to be compiled in, and that needs the NVIDIA DLSS
+# SDK (env `DLSS_SDK`, version 310.5.3 — see github.com/bevyengine/dlss_wgpu),
+# the Vulkan SDK (`VULKAN_SDK`) and clang. Default builds stay SDK-free.
+# The release pipeline (`.github/workflows/release.yml`) builds with this feature
+# on Windows and Linux and ships the NGX runtime beside the binary; a local
+# `cargo build --release --features dlss` with the two environment variables set
+# does the same.
+uuid = { version = "1", optional = true }
 # The mixer (plan ch. 13): buses, sends, per-track filters, reverb and a compressor —
 # none of which Bevy's own audio has. `symphonia` and the format features are what lets a
 # mod ship recorded samples; the generated sources need no decoder at all.
@@ -42,6 +56,11 @@ kira = { version = "0.12", default-features = false, features = [
 # Links Bevy as a shared library instead of statically: much faster relinks.
 # Local development only, the resulting binary needs the Bevy DLL next to it.
 dev = ["bevy/dynamic_linking"]
+# Compiles in DLSS support (`bevy/dlss`). See the `uuid` comment above for the
+# SDKs a build with this feature needs and for how the release pipeline uses it.
+# The setting stays available but inert without it — and without an NVIDIA card
+# at runtime, where the NGX machinery is simply not registered (`settings.rs`).
+dlss = ["bevy/dlss", "dep:uuid"]
 
 [target.'cfg(windows)'.build-dependencies]
 # Compiles `icon.ico` into the executable's resource — see `build.rs`.

@@ -7,6 +7,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The DLSS SDK the release binaries are built against. One SDK version per
+  # `dlss_wgpu`'s own chart — bevy 0.19 pulls dlss_wgpu v4.0.0, which wants
+  # DLSS v310.5.3 (github.com/NVIDIA/DLSS). Bump both together.
+  DLSS_VERSION: v310.5.3
+  # Headers only, for bindgen on Windows; Linux takes them from libvulkan-dev.
+  VULKAN_HEADERS_VERSION: v1.4.361
 
 jobs:
   build:
@@ -16,14 +22,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # DLSS is a Windows/Linux technique: dlss_wgpu has no macOS libraries,
+          # so the mac builds ship without it and work exactly as before.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            dlss: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            dlss: true
           - os: macos-latest
             target: x86_64-apple-darwin
+            dlss: false
           - os: macos-latest
             target: aarch64-apple-darwin
+            dlss: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -35,11 +47,12 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}${{ matrix.dlss && '-dlss' || '' }}
 
       - name: Build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+        # libvulkan-dev: the headers bindgen reads while wrapping the NGX api.
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libvulkan-dev
 
       # A tag that disagrees with Cargo.toml would ship binaries reporting the wrong
       # version. One runner checks it; the release job waits for all three.
@@ -53,8 +66,42 @@ jobs:
             exit 1
           fi
 
+      # dlss_wgpu's build script binds the NGX headers and links the static
+      # nvsdk_ngx library out of this tree; it cannot be redistributed, so the
+      # release builds fetch it straight from NVIDIA's repository.
+      - name: Download the DLSS SDK
+        if: matrix.dlss
+        shell: bash
+        run: |
+          curl -sL "https://github.com/NVIDIA/DLSS/archive/refs/tags/${DLSS_VERSION}.tar.gz" -o dlss-sdk.tar.gz
+          tar xzf dlss-sdk.tar.gz
+          echo "DLSS_SDK=$PWD/DLSS-${DLSS_VERSION#v}" >> "$GITHUB_ENV"
+
+      # The LunarG SDK is a heavyweight install whose libs the build never uses —
+      # Khronos' bare headers are everything bindgen and the static-fn wrapper need.
+      - name: Fetch the Vulkan headers
+        if: matrix.dlss && runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -sL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/${VULKAN_HEADERS_VERSION}.tar.gz" -o vulkan-headers.tar.gz
+          tar xzf vulkan-headers.tar.gz
+          mkdir -p vulkan-sdk/Include
+          cp -r "Vulkan-Headers-${VULKAN_HEADERS_VERSION#v}/include/." vulkan-sdk/Include/
+          echo "VULKAN_SDK=$PWD/vulkan-sdk" >> "$GITHUB_ENV"
+
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p app -p route-editor -p vehicle-editor
+        shell: bash
+        run: |
+          args=(--release --locked --target ${{ matrix.target }} -p app -p route-editor -p vehicle-editor)
+          if [ "${{ matrix.dlss }}" = "true" ]; then
+            # Linux: libvulkan-dev puts the headers under /usr/include. Windows
+            # takes the variable from the header-fetch step above.
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              export VULKAN_SDK=/usr
+            fi
+            args+=(--features app/dlss)
+          fi
+          cargo build "${args[@]}"
 
       - name: Stage
         shell: bash
@@ -67,6 +114,21 @@ jobs:
           for bin in train-sim trainsim-route-editor trainsim-vehicle-editor; do
             cp "target/${{ matrix.target }}/release/$bin$ext" "dist/$name/"
           done
+          # The NGX library linked into the binary is a loader; the neural network
+          # itself ships as this runtime binary beside the executable (dlss_wgpu's
+          # README, "Distributing Your App"). Only Super Resolution is used, so the
+          # ray-reconstruction and frame-generation variants stay out.
+          if [ "${{ matrix.dlss }}" = "true" ]; then
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cp "$DLSS_SDK/lib/Windows_x86_64/rel/nvngx_dlss.dll" "dist/$name/"
+            else
+              cp "$DLSS_SDK"/lib/Linux_x86_64/rel/libnvidia-ngx-dlss.so.* "dist/$name/"
+            fi
+            cp "$DLSS_SDK/LICENSE.txt" "dist/$name/DLSS-LICENSE.txt"
+            # ponytail: NVIDIA's programming guide (§9.5) also names blurbs to
+            # ship with the binaries; they live in $DLSS_SDK/doc/*.pdf and nobody
+            # has lifted them into plain text. Do that the day a lawyer asks.
+          fi
 
       - name: Archive
         if: runner.os != 'Windows'

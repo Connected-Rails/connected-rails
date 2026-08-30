@@ -331,9 +331,10 @@ fn prepare_fsr(
         }
         let render = render_size(upscale, fsr.quality);
 
-        // Halton jitter, in pixels of the *render* resolution: the same value goes
-        // into the projection through `TemporalJitter` and into the dispatch, so
-        // the upscaler knows exactly how the frame was shaken.
+        // Halton jitter, in pixels of the *render* resolution: the offset shakes
+        // the projection through `TemporalJitter`, and the dispatch gets the
+        // displacement the content received — the negated value, see the comment
+        // where it is passed on — so the upscaler knows how the frame was shaken.
         let phases = get_jitter_phase_count(
             i32::try_from(render.x).unwrap_or(1),
             i32::try_from(upscale.x).unwrap_or(1),
@@ -444,7 +445,12 @@ fn fsr_super_resolution(
         reconstructed_previous_depth: context.reconstructed_previous_depth.clone(),
         // `output` is Bevy's wrapped texture; the field wants the wgpu one beneath it.
         output: view_target.destination_texture.deref().clone(),
-        jitter_offset: jitter.offset.to_array(),
+        // Bevy's `TemporalJitter` jitters the projection the same way AMD's pseudo
+        // code prescribes — `(offset * vec2(2.0, -2.0)) / view_size` on the
+        // translation columns — which displaces the content by *minus* the offset
+        // in pixels. The dispatch wants that displacement, so the sign flips here,
+        // the same negation Bevy's own DLSS node applies.
+        jitter_offset: (-jitter.offset).to_array(),
         // Bevy's motion vectors are normalised; scaling by the negative render
         // size turns them into the pixel units, current- to previous-frame, that
         // the upscaler reads — the same convention DLSS is fed with.

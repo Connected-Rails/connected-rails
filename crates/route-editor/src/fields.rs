@@ -23,11 +23,11 @@ use crate::tools::{EditorState, Selection};
 use crate::{Focus, Line};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use content::route::{FieldPoint, FieldSource, FieldSourceStamp};
+use content::route::{FieldPoint, FieldSource};
 use editor_ui::{colors, space};
 use fields::{
-    Area, Clip, CropClass, CropTable, FieldCache, FieldFeature, ImportOptions, ImportProgress,
-    ImportReport, Land, Stage,
+    Area, Clip, CropClass, CropTable, FieldCache, ImportOptions, ImportProgress, ImportReport,
+    Land, Stage,
 };
 use i18n::t;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -276,6 +276,7 @@ pub fn commit(line: &mut Line, report: &ImportReport, scope: Scope, selection: &
     // Re-importing one field replaces that field; importing the module
     // replaces every field that came from an import, and leaves hand-drawn
     // ones alone — those are somebody's work, not the register's.
+    let replace = scope == Scope::Module;
     match scope {
         Scope::Selection => {
             if let Selection::Field(index) = *selection
@@ -286,57 +287,12 @@ pub fn commit(line: &mut Line, report: &ImportReport, scope: Scope, selection: &
             }
         }
         Scope::Module => {
-            line.source.fields.retain(|f| f.source.is_empty());
             if matches!(selection, Selection::Field(_)) {
                 *selection = Selection::None;
             }
         }
     }
-    for field in &report.fields {
-        line.source.fields.push(to_source(field));
-    }
-    for stamp in &report.stamps {
-        let row = FieldSourceStamp {
-            land: stamp.land.clone(),
-            year: stamp.year,
-            fetched: stamp.fetched,
-        };
-        // One row per state; a second import of the same state replaces it.
-        line.source
-            .field_sources
-            .retain(|existing| existing.land != row.land);
-        line.source.field_sources.push(row);
-    }
-    line.source
-        .field_sources
-        .sort_by(|a, b| a.land.cmp(&b.land));
-}
-
-/// One imported parcel as a line entry.
-fn to_source(field: &FieldFeature) -> FieldSource {
-    FieldSource {
-        polygon: field
-            .to_degrees()
-            .into_iter()
-            .map(|(lat, lon)| FieldPoint { lat, lon })
-            .collect(),
-        crop: field.crop.id().to_string(),
-        code: field.code_raw.clone(),
-        label: field.code_text.clone(),
-        level: match field.level {
-            fields::Level::Declared => "declared",
-            fields::Level::Group => "group",
-            fields::Level::Drawn => "drawn",
-        }
-        .to_string(),
-        direction_deg: field.direction.to_degrees(),
-        // `OSM` where there is no state: a module abroad still has to say
-        // where its fields came from.
-        source: fields::cache::origin_code(field.land).to_string(),
-        year: field.year,
-        seed: field.seed(),
-        tags: Vec::new(),
-    }
+    line.source.apply_field_import(report, replace);
 }
 
 /// The import dialog. Its own system, like [`crate::new_module`] — `ui::draw`
@@ -1188,6 +1144,7 @@ pub fn draw_outlines(
 mod tests {
     use super::*;
     use content::route::{EnvelopePoint, LineSource};
+    use fields::FieldFeature;
 
     fn field(lat: f64, lon: f64, size: f64, crop: &str, source: &str) -> FieldSource {
         FieldSource {

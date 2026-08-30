@@ -1,11 +1,15 @@
 //! Digital terrain models from the state survey offices (plan ch. 14/15).
 //!
-//! Supported are the two formats in which the federal states deliver their DGM1:
+//! Supported are the formats in which the federal states deliver their DGM1:
 //!
 //! * **XYZ**: one line per grid point, `easting northing height` in UTM
 //!   (EPSG:25832 or 25833).
 //! * **ESRI ASCII Grid** (`.asc`): header with `ncols`/`nrows`/`xllcorner`/`yllcorner`/
 //!   `cellsize`/`NODATA_value`, then the heights row by row from north to south.
+//! * **GeoTIFF** (`.tif`): single-band float raster with the `ModelPixelScale` and
+//!   `ModelTiepoint` tags for the extent. What NRW has been delivering since it retired
+//!   its XYZ service — a tile per square kilometre, named after its south-west corner
+//!   like every state's.
 //!
 //! A DGM1 tile sheet (1 km², 1 m grid) has one million points. Therefore:
 //! heights are stored **densely as `f32`** (4 MB per tile instead of ~48 MB as a hashmap),
@@ -39,6 +43,13 @@ pub enum DgmError {
     IrregularGrid,
     /// Header of an ASCII grid is incomplete.
     BadHeader,
+    /// A GeoTIFF carries no usable geo-reference (`ModelPixelScale`/
+    /// `ModelTiepoint` missing or malformed), so the grid has no place on
+    /// the earth.
+    NoGeoReference,
+    /// The file is well-formed but holds something that is not a height
+    /// grid (a sample format we do not read, non-square cells, …).
+    UnsupportedFormat,
     /// Tile would be absurdly large (protection against broken files).
     TooLarge,
 }
@@ -49,6 +60,10 @@ impl std::fmt::Display for DgmError {
             DgmError::Empty => write!(f, "DGM file contains no points"),
             DgmError::IrregularGrid => write!(f, "DGM points do not form a regular grid"),
             DgmError::BadHeader => write!(f, "ASCII grid header incomplete"),
+            DgmError::NoGeoReference => {
+                write!(f, "GeoTIFF without ModelPixelScale/ModelTiepoint")
+            }
+            DgmError::UnsupportedFormat => write!(f, "DGM file is not a height grid"),
             DgmError::TooLarge => write!(f, "grid implausibly large"),
         }
     }
@@ -182,6 +197,94 @@ impl HeightTile {
             zone,
             cell,
             origin: (xll, yll),
+            cols,
+            rows,
+            data,
+        })
+    }
+
+    /// Reads a GeoTIFF: a single-band float raster whose geo-reference comes
+    /// from the `ModelPixelScale` and `ModelTiepoint` tags. TIFF rows run
+    /// north to south, and the tiepoint names the top-left pixel's corner
+    /// (`RasterPixelIsArea`, as the states' deliveries are keyed) — so the
+    /// first sample sits half a cell inside the south-west corner the tie
+    /// plus the row count reach: NRW's 1000 × 1000 sheets at 1 m span the
+    /// square kilometre their file name names, samples at the half metres.
+    pub fn parse_tiff(bytes: &[u8], zone: u8) -> Result<Self, DgmError> {
+        // `Decoder::new` positions on the first image itself.
+        let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(bytes))
+            .map_err(|_| DgmError::UnsupportedFormat)?;
+        let (cols, rows) = decoder
+            .dimensions()
+            .map_err(|_| DgmError::UnsupportedFormat)?;
+        let (cols, rows) = (cols as usize, rows as usize);
+        if cols * rows > MAX_CELLS {
+            return Err(DgmError::TooLarge);
+        }
+
+        // Geo-reference: pixel size and the raster→model mapping of one point.
+        let scale = decoder
+            .get_tag_f64_vec(tiff::tags::Tag::ModelPixelScaleTag)
+            .ok()
+            .filter(|s| s.len() >= 2 && s[0] > 0.0)
+            .ok_or(DgmError::NoGeoReference)?;
+        let tie = decoder
+            .get_tag_f64_vec(tiff::tags::Tag::ModelTiepointTag)
+            .ok()
+            .filter(|t| t.len() >= 5)
+            .ok_or(DgmError::NoGeoReference)?;
+        // Cells have to be square — the states' deliveries are, and a dense
+        // grid has one spacing.
+        if (scale[0] - scale[1]).abs() > 1e-9 {
+            return Err(DgmError::UnsupportedFormat);
+        }
+        let origin = (
+            // Raster columns run west to east: the first sample is half a
+            // cell inside the tie's west edge.
+            tie[3] + (0.5 - tie[0]) * scale[0],
+            // Rows run north to south: the tie's north edge minus the whole
+            // raster, and half a cell up to the southernmost sample.
+            tie[4] - (rows as f64 - 0.5 - tie[1]) * scale[1],
+        );
+
+        // NODATA where the delivery says so (`GDAL_NODATA`, an ASCII value).
+        let nodata: Option<f64> = decoder
+            .find_tag(tiff::tags::Tag::GdalNodata)
+            .ok()
+            .flatten()
+            .and_then(|v| v.into_string().ok())
+            .and_then(|text| text.trim().trim_end_matches('\0').parse().ok());
+
+        let raw = decoder
+            .read_image()
+            .map_err(|_| DgmError::UnsupportedFormat)?;
+        let points: Vec<f64> = match raw {
+            tiff::decoder::DecodingResult::F32(v) => v.into_iter().map(|v| v as f64).collect(),
+            tiff::decoder::DecodingResult::F64(v) => v,
+            tiff::decoder::DecodingResult::U8(v) => v.into_iter().map(|v| v as f64).collect(),
+            tiff::decoder::DecodingResult::U16(v) => v.into_iter().map(|v| v as f64).collect(),
+            tiff::decoder::DecodingResult::U32(v) => v.into_iter().map(|v| v as f64).collect(),
+            tiff::decoder::DecodingResult::I8(v) => v.into_iter().map(|v| v as f64).collect(),
+            tiff::decoder::DecodingResult::I16(v) => v.into_iter().map(|v| v as f64).collect(),
+            tiff::decoder::DecodingResult::I32(v) => v.into_iter().map(|v| v as f64).collect(),
+            _ => return Err(DgmError::UnsupportedFormat),
+        };
+        if points.len() < cols * rows {
+            return Err(DgmError::Empty);
+        }
+
+        let mut data = vec![f32::NAN; cols * rows];
+        for (i, v) in points.iter().copied().enumerate() {
+            let (col, row) = (i % cols, i / cols);
+            // TIFF rows run north to south, our grid from south to north.
+            let target = rows - 1 - row;
+            let empty = v.is_nan() || nodata.is_some_and(|n| (v - n).abs() < 1e-6);
+            data[target * cols + col] = if empty { f32::NAN } else { v as f32 };
+        }
+        Ok(Self {
+            zone,
+            cell: scale[0],
+            origin,
             cols,
             rows,
             data,
@@ -395,7 +498,8 @@ impl TerrainSource {
         source
     }
 
-    /// Search a directory (recursively) for `*.xyz`, `*.asc` and `*.txt`.
+    /// Search a directory (recursively) for `*.xyz`, `*.asc`, `*.txt` and
+    /// `*.tif` (GeoTIFF).
     ///
     /// `zone` is the UTM zone of the data (32 for the west, 33 for the east of Germany)
     /// — it is part of the EPSG code of the delivery.
@@ -530,8 +634,15 @@ impl TerrainSource {
             }
         }
         let path = &self.tiles[index].path;
-        let text = std::fs::read_to_string(path).ok();
-        let tile = text.and_then(|t| HeightTile::parse(&t, self.zone).ok());
+        let tile = if is_tiff(path) {
+            std::fs::read(path)
+                .ok()
+                .and_then(|bytes| HeightTile::parse_tiff(&bytes, self.zone).ok())
+        } else {
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|t| HeightTile::parse(&t, self.zone).ok())
+        };
         let mut state = self.state();
         let Some(tile) = tile else {
             state.failed[index] = true;
@@ -583,11 +694,19 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase());
-        if matches!(ext.as_deref(), Some("xyz" | "asc" | "txt")) {
+        if matches!(ext.as_deref(), Some("xyz" | "asc" | "txt" | "tif" | "tiff")) {
             out.push(path);
         }
     }
     Ok(())
+}
+
+/// Whether the delivery at `path` is a GeoTIFF — read as bytes, not as text.
+fn is_tiff(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("tif") || e.eq_ignore_ascii_case("tiff"))
+        .unwrap_or(false)
 }
 
 /// Determine the sheet boundary of a tile — first from the file name, otherwise from the
@@ -600,7 +719,14 @@ fn tile_bounds(path: &Path) -> Option<(f64, f64, f64, f64)> {
     if let Some(b) = bounds_from_name(path) {
         return Some(b);
     }
-    // ASCII grid: the header is in the first lines.
+    // ASCII grid: the header is in the first lines. GeoTIFF: read the whole
+    // file — only reached when the name carries no corner, which a state's
+    // delivery never does.
+    if is_tiff(path) {
+        let bytes = std::fs::read(path).ok()?;
+        let tile = HeightTile::parse_tiff(&bytes, 32).ok()?;
+        return Some(tile.bounds());
+    }
     let text = std::fs::read_to_string(path).ok()?;
     let tile = HeightTile::parse(&text, 32).ok()?;
     Some(tile.bounds())
@@ -782,5 +908,171 @@ mod tests {
             HeightTile::parse_asc("ncols 3\n", 32).unwrap_err(),
             DgmError::BadHeader
         );
+    }
+
+    /// Writes a minimal single-band GeoTIFF — little-endian, uncompressed,
+    /// float32, geo-referenced by `ModelPixelScale` and a `ModelTiepoint` on
+    /// the top-left pixel's corner, exactly how NRW's DGM1 delivery is built.
+    /// `size` is `(width, height)`, `geo` the `(cell, tie_x, tie_y)` triple —
+    /// `None` builds the file without the geo tags. `heights` are whole
+    /// rows, north to south.
+    fn geotiff(
+        size: (usize, usize),
+        geo: Option<(f64, f64, f64)>,
+        heights: &[f32],
+        nodata: Option<&str>,
+    ) -> Vec<u8> {
+        let (width, height) = size;
+        let (cell, tie_x, tie_y) = geo.unwrap_or((0.0, 0.0, 0.0));
+        let mut pixels = Vec::with_capacity(heights.len() * 4);
+        for v in heights {
+            pixels.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut scale = Vec::with_capacity(24);
+        for v in [cell, cell, 0.0] {
+            scale.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut tie = Vec::with_capacity(48);
+        for v in [0.0, 0.0, 0.0, tie_x, tie_y, 0.0] {
+            tie.extend_from_slice(&v.to_le_bytes());
+        }
+        let text: Vec<u8> = nodata
+            .map(|n| n.bytes().chain(std::iter::once(0)).collect())
+            .unwrap_or_default();
+
+        let external: [&[u8]; 4] = [&pixels, &scale, &tie, &text];
+        // (tag, type, count, inline value) — external payloads get their
+        // offset filled in below, in `external` order.
+        let mut entries: Vec<Entry> = vec![
+            (256, 3, 1, short(width as u32), None),       // ImageWidth
+            (257, 3, 1, short(height as u32), None),      // ImageLength
+            (258, 3, 1, short(32), None),                 // BitsPerSample: f32
+            (259, 3, 1, short(1), None),                  // Compression: none
+            (262, 3, 1, short(1), None),                  // Photometric: BlackIsZero
+            (273, 4, 1, long(0), Some(0)),                // StripOffsets
+            (277, 3, 1, short(1), None),                  // SamplesPerPixel
+            (279, 4, 1, long(pixels.len() as u32), None), // StripByteCounts
+            (339, 3, 1, short(3), None),                  // SampleFormat: float
+        ];
+        if geo.is_some() {
+            entries.push((33550, 12, 3, long(0), Some(1))); // ModelPixelScale
+            entries.push((33922, 12, 6, long(0), Some(2))); // ModelTiepoint
+        }
+        if nodata.is_some() {
+            entries.push((42113, 2, text.len() as u32, long(0), Some(3))); // GDAL_NODATA
+        }
+
+        let ifd_size = 2 + entries.len() * 12 + 4;
+        let mut blob_off = 8 + ifd_size;
+        let mut offsets = [0usize; 4];
+        for (i, payload) in external.iter().enumerate() {
+            offsets[i] = blob_off;
+            blob_off += payload.len().next_multiple_of(2);
+        }
+        for entry in &mut entries {
+            if let Some(i) = entry.4 {
+                entry.3 = long(offsets[i] as u32);
+            }
+        }
+
+        let mut out = Vec::with_capacity(blob_off);
+        out.extend_from_slice(b"II\x2a\x00");
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for (tag, ty, count, value, _) in &entries {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&ty.to_le_bytes());
+            out.extend_from_slice(&count.to_le_bytes());
+            out.extend_from_slice(value);
+        }
+        out.extend_from_slice(&0u32.to_le_bytes());
+        for payload in external {
+            out.extend_from_slice(payload);
+            let pad = payload.len().next_multiple_of(2) - payload.len();
+            out.resize(out.len() + pad, 0);
+        }
+        out
+    }
+
+    /// One IFD entry: tag, type, count, inline value, external payload index.
+    type Entry = (u16, u16, u32, [u8; 4], Option<usize>);
+
+    fn short(v: u32) -> [u8; 4] {
+        let mut b = [0u8; 4];
+        b[..2].copy_from_slice(&(v as u16).to_le_bytes());
+        b
+    }
+
+    fn long(v: u32) -> [u8; 4] {
+        v.to_le_bytes()
+    }
+
+    /// A GeoTIFF tile reads like an XYZ or ASCII one: extent from the geo
+    /// tags, rows from north to south, NODATA empty.
+    #[test]
+    fn geotiff_is_read() {
+        // 2×2 grid at 1 m whose tiepoint puts the raster's top-left corner on
+        // (438000, 5715000) — a mini NRW sheet: samples at the half metres,
+        // heights rising towards the east, the south-east point NODATA.
+        let bytes = geotiff(
+            (2, 2),
+            Some((1.0, 438_000.0, 5_715_000.0)),
+            &[12.0, 13.0, 10.0, -9999.0],
+            Some("-9999"),
+        );
+        let tile = HeightTile::parse_tiff(&bytes, 32).unwrap();
+        assert_eq!((tile.cols, tile.rows), (2, 2));
+        assert_eq!(tile.cell, 1.0);
+        assert_eq!(tile.origin, (438_000.5, 5_714_998.5));
+        assert_eq!(
+            tile.bounds(),
+            (438_000.5, 5_714_998.5, 438_001.5, 5_714_999.5)
+        );
+        // The southern row sits at the bottom of the file, not the top.
+        assert_eq!(tile.height_at_utm(438_000.5, 5_714_998.5), Some(10.0));
+        assert_eq!(tile.height_at_utm(438_001.5, 5_714_999.5), Some(13.0));
+        // NODATA is empty, and sampling falls back to the neighbour.
+        assert_eq!(tile.len(), 3);
+        let south_east = tile.height_at_utm(438_001.5, 5_714_998.5).unwrap();
+        assert!(south_east.is_finite(), "{south_east}");
+    }
+
+    /// Without the geo tags the grid has no place on the earth — the import
+    /// refuses it rather than shipping ground of unknown position.
+    #[test]
+    fn geotiff_without_a_geo_reference_is_rejected() {
+        let bytes = geotiff((2, 2), None, &[1.0, 2.0, 3.0, 4.0], None);
+        assert_eq!(
+            HeightTile::parse_tiff(&bytes, 32).unwrap_err(),
+            DgmError::NoGeoReference
+        );
+    }
+
+    /// A directory with a named `.tif` sheet works like one with `.xyz` —
+    /// the name decides the extent, the content decides the heights.
+    #[test]
+    fn source_from_a_geotiff_directory() {
+        let dir = std::env::temp_dir().join("trainsim-dgm-tif");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dgm1_32_438_5715_1_nw.tif");
+        std::fs::write(
+            &path,
+            geotiff(
+                (2, 2),
+                // The tie sits on the sheet's north-west corner, as NRW's
+                // delivery has it: sheet 5715 spans up to 5716000.
+                Some((1.0, 438_000.0, 5_716_000.0)),
+                &[12.0, 13.0, 10.0, 11.0],
+                Some("-9999"),
+            ),
+        )
+        .unwrap();
+        let source = TerrainSource::from_dir(&dir, 32).unwrap();
+        assert_eq!(source.tile_count(), 1);
+        assert_eq!(source.height_at_utm(438_000.5, 5_715_998.5), Some(10.0));
+        assert_eq!(source.height_at_utm(438_001.5, 5_715_999.5), Some(13.0));
+        // Inside the named kilometre, outside the 2×2 pixels of the fixture.
+        assert_eq!(source.height_at_utm(438_900.0, 5_715_500.0), None);
+        std::fs::remove_file(&path).ok();
     }
 }

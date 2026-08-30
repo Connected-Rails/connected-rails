@@ -1785,7 +1785,9 @@ The import runs on a thread of its own: a bar, the state being asked, and a Stop
 means it. It ends in a **summary** — so many fields, so many hectares, this many of each
 crop, these warnings — and nothing is written until **Add to the module** is pressed.
 That is one undo step, so Ctrl+Z takes a whole import back out. A module import replaces
-what an earlier import put there and leaves hand-drawn fields alone.
+what an earlier import put there and leaves hand-drawn fields alone. Headless, the same
+import is `cargo run -p content --bin import-module -- --line <file.ron>` — the dialog's
+defaults, the summary on stderr, the module written back (see the Börde module below).
 
 The **field tool** (landscape category) draws one by hand: clicks set the corners, Enter
 or right-click closes it, and the crop comes from the tool options. That is the way to
@@ -1793,8 +1795,9 @@ fill a corner the register does not cover, and the only way in a fictional modul
 
 #### A line to look at it on
 
-`lines/boerde.ron` in the example mod is five kilometres across the Soester Börde with 135
-real parcels beside it, and `example:boerdefahrt` drives it:
+`lines/boerde.ron` in the example mod is five kilometres across the Soester Börde with 134
+real parcels beside it, its roads out of OpenStreetMap and the ground of the state's DGM1
+under it — `example:boerdefahrt` drives it:
 
 ```bash
 cargo run -p app -- --scenario example:boerdefahrt
@@ -1808,12 +1811,31 @@ maize is at full height and dark, and the beet is closed and darker still. Drive
 five kilometres in April and it is a different place: nothing about the appearance is
 stored, so the date decides all of it.
 
+It is also the module the three imports are demonstrated on, end to end and headless:
+
+```bash
+cargo run -p content --bin import-module -- \
+    --line mods/example/lines/boerde.ron \
+    --dgm cache/dgm/nrw --fetch-dgm nrw
+```
+
+That asks the register for the fields again, Overpass for the roads, downloads the DGM1
+sheets NRW publishes on its open data (GeoTIFF, one per square kilometre), cuts the
+corridor's terrain tiles into `heights/boerde/` and **fits the track to the ground** —
+start at 92.4 m NHN, down to 85 m in the dip at km 2, up to 103.5 m at the east end, the
+grades rounded to 0.1 ‰ on half-kilometre nodes over the land's trend. The route editor
+does the same three imports by dialog (File ▸ Import fields, File ▸ Import roads, the
+Height data (DGM) panel); the tool is the same code without the window, which is what
+makes the module reproducible.
+
 Two things it shows that are easy to get wrong when building your own. The **track has to
-sit at the height the ground is** (`height: 100.0` here, matching the terrain's fallback
-where a module ships no DGM) — put the rails eight metres below the plain and the line runs
-down a cutting for its whole length and you see banks instead of countryside. And the
-import's **clearance** decides how close the fields come: the 45 m default keeps them off
-the formation, 20 m brings them up to the lineside where they belong on a plain.
+sit at the height the ground is** — put the rails eight metres below the plain and the
+line runs down a cutting for its whole length and you see banks instead of countryside.
+Where the module ships no DGM the ground is the terrain's fallback height, and the track
+has to match *that*; where it ships one, as this one does since the DGM import, the fit
+above is what puts the rails on the land. And the import's **clearance** decides how
+close the fields come: 15 m keeps them off the formation, and on a plain brings them up
+to the lineside where they belong.
 
 #### What each state publishes
 
@@ -1941,7 +1963,9 @@ than as one striped one), and any `bridge=*` but `no` flags the way as flying. T
 dialog's two checkboxes opt the many-and-thin classes in:
 **field tracks** (`highway=track` — what an agricultural module is stitched with) and
 **access ways** (`service`, `living_street`, `pedestrian`). Nothing is written before
-the summary's Commit, and Commit is one undo step.
+the summary's Commit, and Commit is one undo step. `import-module --tracks --narrow`
+runs the same query and the same filters headless (without the flags it takes the
+dialog's defaults, and it replaces the road list — the module is being rebuilt).
 
 **The presets** are the German road system's widths, and the road tool stamps them:
 
@@ -1986,6 +2010,14 @@ Behind that path lies one **ESRI ASCII grid per terrain tile**
 (`<mod>/heights/<line>/x<kx>_y<ky>.asc`), cut out of the state survey office's delivery
 by the route editor. A federal state's DGM1 is hundreds of gigabytes; the corridor of a
 20 km module at 10 m spacing is a few megabytes.
+
+The delivery can be XYZ, ESRI ASCII Grid or **GeoTIFF** — what NRW has delivered since it
+retired its XYZ service: one single-band float tile per square kilometre, placed by the
+`ModelPixelScale`/`ModelTiepoint` tags, NODATA from `GDAL_NODATA`, named after its
+south-west corner like every state's sheets. NRW publishes every tile on its open data,
+so the headless `import-module` can fetch exactly the sheets a corridor needs
+(`--fetch-dgm nrw`, dl-de/by-2-0 — the module's header carries the source note) and cut
+them without the editor.
 
 In the editor's **Height data (DGM)** panel: choose the delivery directory, the UTM zone
 (32 west, 33 east of 12° E) and the grid spacing, then

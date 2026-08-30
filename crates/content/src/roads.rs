@@ -710,11 +710,7 @@ mod tests {
     #[test]
     fn a_road_lands_on_the_tiles_it_covers() {
         // 3 km across, so it spans several 512 m tiles.
-        let roads = Roads::from_parts(
-            &[source(440_000.0, 5_715_000.0, 3_000.0, 6.0)],
-            32,
-            512.0,
-        );
+        let roads = Roads::from_parts(&[source(440_000.0, 5_715_000.0, 3_000.0, 6.0)], 32, 512.0);
         assert_eq!(roads.len(), 1);
         assert!(roads.touches((859, 11162)), "{:?}", roads.by_tile.keys());
         assert!(!roads.touches((0, 0)));
@@ -813,12 +809,9 @@ mod tests {
         assert_eq!(here.len(), 1);
         assert_eq!(next.len(), 1);
         let v = |patch: &RoadPatch| {
-            patch
-                .uvs
-                .iter()
-                .fold((f32::MAX, f32::MIN), |(lo, hi), uv| {
-                    (lo.min(uv[1]), hi.max(uv[1]))
-                })
+            patch.uvs.iter().fold((f32::MAX, f32::MIN), |(lo, hi), uv| {
+                (lo.min(uv[1]), hi.max(uv[1]))
+            })
         };
         let (lo_here, hi_here) = v(&here[0]);
         let (lo_next, hi_next) = v(&next[0]);

@@ -9,7 +9,7 @@ pub mod dgm;
 pub mod fit;
 pub mod osm;
 
-pub use osm::{parse_forests, parse_markers, parse_water};
+pub use osm::{parse_forests, parse_markers, parse_roads, parse_water, roads_query};
 
 use crate::route::{EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource};
 use alignment::AlignmentOptions;

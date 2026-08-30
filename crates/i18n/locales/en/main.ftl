@@ -980,6 +980,17 @@ water-tags = Tags: { $tags }
 water-hint = Picked by clicking its surface — the water lies where the height data puts it; the shape is edited in the file or by importing anew
 water-hint-islands = Picked by clicking its surface, islands excluded — the water lies where the height data puts it; the shape is edited in the file or by importing anew ({ $islands } islands)
 action-import-markers = Import reference markers…
+action-import-roads = Import roads…
+road-import-title = Import roads from OpenStreetMap
+road-import-intro = Asks OpenStreetMap for every road the module envelope covers — motorway to field track — and turns the centre lines into carriageways. The class decides width, surface and markings; all of it stays editable afterwards.
+road-import-fetching = Fetching from OpenStreetMap
+road-import-parsing = Reading the answer
+road-import-found = { $roads } roads found
+road-import-tracks = Field tracks
+road-import-tracks-hint = Also import highway=track — the farm roads a agricultural module is stitched with
+road-import-narrow = Access ways
+road-import-narrow-hint = Also import service roads, living streets and pedestrian ways — the narrowest class
+status-roads-imported = { $count } roads imported — the carriageways are draped over the terrain where the height data puts them
 action-delete-layer = Delete layer
 status-markers-imported = { $count } reference markers in { $layers } layers — hide or delete them by layer
 status-marker-import-empty = { $file }: no taggable features for reference markers found

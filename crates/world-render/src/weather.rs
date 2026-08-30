@@ -156,14 +156,13 @@ fn dress(
     }
 }
 
-/// Writes the weather into every material that draws with it — but only when it
-/// has moved far enough to see, because touching an asset re-uploads it.
 fn update(
     sky: Res<Sky>,
     mut objects: ResMut<Assets<WeatherMaterial>>,
     mut terrain: ResMut<Assets<TerrainMaterial>>,
     mut fields: ResMut<Assets<crate::farmland::FieldMaterial>>,
     mut water: ResMut<Assets<crate::water::WaterMaterial>>,
+    mut roads: ResMut<Assets<crate::roads::RoadMaterial>>,
     mut last: Local<Option<WeatherParams>>,
 ) {
     let params = WeatherParams::of(&sky);
@@ -184,6 +183,10 @@ fn update(
     }
     // The water most of all: its waves are the wind, its rings are the rain.
     for (_, material) in water.iter_mut() {
+        material.extension.weather = params;
+    }
+    // The roads take it like the fields: wet asphalt polishes, snow covers.
+    for (_, material) in roads.iter_mut() {
         material.extension.weather = params;
     }
 }

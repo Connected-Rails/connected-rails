@@ -981,6 +981,17 @@ water-tags = Tags: { $tags }
 water-hint = Durch Klick auf die Oberfläche gewählt — das Wasser liegt, wo es die Höhendaten legen; die Form steht in der Datei oder kommt aus einem neuen Import
 water-hint-islands = Durch Klick auf die Oberfläche gewählt, Inseln ausgenommen — das Wasser liegt, wo es die Höhendaten legen; die Form steht in der Datei oder kommt aus einem neuen Import ({ $islands } Inseln)
 action-import-markers = Referenzmarker importieren…
+action-import-roads = Straßen importieren…
+road-import-title = Straßen aus OpenStreetMap importieren
+road-import-intro = Fragt OpenStreetMap nach allen Straßen, die das Modulumschreibungs-Polygon abdeckt — von der Autobahn bis zum Feldweg — und macht aus den Mittellinien Fahrbahnen. Die OSM-Klasse entscheidet über Breite, Belag und Markierung; alles bleibt danach editierbar.
+road-import-fetching = OpenStreetMap wird gefragt
+road-import-parsing = Die Antwort wird gelesen
+road-import-found = { $roads } Straßen gefunden
+road-import-tracks = Feldwege
+road-import-tracks-hint = Auch highway=track importieren — die Wirtschaftswege, mit denen ein Agrarmodul vernäht ist
+road-import-narrow = Anliegerwege
+road-import-narrow-hint = Auch Service Roads, Spielstraßen und Fußgängerstraßen importieren — die schmalste Klasse
+status-roads-imported = { $count } Straßen importiert — die Fahrbahnen liegen dort, wo das Höhendatenmodell sie hinsetzt
 action-delete-layer = Layer löschen
 status-markers-imported = { $count } Referenzmarker in { $layers } Layern — layerweise ausblendbar und löschbar
 status-marker-import-empty = { $file }: keine auswertbaren Objekte für Referenzmarker gefunden

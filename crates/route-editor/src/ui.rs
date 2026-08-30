@@ -100,6 +100,7 @@ mod section_tests {
             "interlock",
             "markers",
             "fields",
+            "roads",
             "heights",
             "module",
             "sky",
@@ -1101,6 +1102,7 @@ pub(crate) fn new_line(
         field_sources: vec![],
         markers: vec![],
         waters: vec![],
+        roads: vec![],
         terrain: vec![],
         heights: vec![],
         sections: vec![],
@@ -1184,6 +1186,10 @@ fn menu_bar(
                     if ui.button(t!("action-import-markers")).clicked() {
                         ui.close();
                         import_markers(state);
+                    }
+                    if ui.button(t!("action-import-roads")).clicked() {
+                        ui.close();
+                        request.import_roads = true;
                     }
                     ui.separator();
                     if ui.button(t!("action-load-imagery")).clicked() {
@@ -1484,7 +1490,7 @@ fn category_sections(category: &str) -> &'static [(&'static str, &'static str)] 
             ("interlock", "heading-interlock"),
             ("markers", "heading-markers"),
         ],
-        "tool-group-vegetation" => &[("fields", "heading-fields")],
+        "tool-group-vegetation" => &[("fields", "heading-fields"), ("roads", "heading-roads")],
         "tool-group-terrain" => &[("heights", "heading-heights")],
         "tool-group-module" => &[
             ("module", "heading-module"),
@@ -1794,6 +1800,10 @@ fn detail_panel(
                             ui.add_space(space::XS);
                             crate::fields::tool_rows(ui, state);
                         }
+                        if state.tool == Tool::PlaceRoad {
+                            ui.add_space(space::XS);
+                            crate::roads::tool_rows(ui, line, state);
+                        }
                         if state.tool == Tool::Brush {
                             ui.add_space(space::XS);
                             editor_ui::form_grid("brush").show(ui, |ui| {
@@ -1946,6 +1956,20 @@ fn detail_panel(
                                 field_import,
                                 sky.month,
                                 sky.day,
+                            );
+                        });
+                    }
+                    if shown("roads") {
+                        nav_section(ui, jump, &mut current, "roads", "heading-roads", |ui| {
+                            if ui.button(t!("action-import-roads")).clicked() {
+                                request.import_roads = true;
+                            }
+                            ui.label(
+                                egui::RichText::new(t!(
+                                    "road-count",
+                                    roads = line.source.roads.len()
+                                ))
+                                .color(colors::TEXT_SECONDARY),
                             );
                         });
                     }
@@ -2367,6 +2391,21 @@ fn selection_panel(
                     ui.add(egui::TextEdit::singleline(&mut water.name).desired_width(space::FIELD));
                 });
             });
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked()
+                    && let Some(p) = position
+                {
+                    focus.position = p;
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
+        }
+        Selection::Road(_) => {
+            let position = tools::selection_pos(line, state.selection, focus, marks);
+            crate::roads::selection_rows(ui, line, state);
             ui.add_space(space::XS);
             ui.horizontal(|ui| {
                 if ui.button(t!("action-center")).clicked()
@@ -4181,6 +4220,14 @@ fn issue_target(
             ),
             Selection::WalkArea(*area as usize),
         ),
+        RuleIssue::RoadTooShort { road } => (
+            line.source
+                .roads
+                .get(*road as usize)
+                .and_then(|road| road.points.first())
+                .map(|p| world_coords::geo::to_ecef_deg(p.lat, p.lon, crate::envelope::height(line, focus))),
+            Selection::Road(*road as usize),
+        ),
     }
 }
 
@@ -4230,6 +4277,7 @@ fn issue_text(issue: &RuleIssue) -> String {
         ),
         RuleIssue::FieldTooSmall { field } => t!("check-field-small", field = field),
         RuleIssue::FieldUnknownCrop { field } => t!("check-field-crop", field = field),
+        RuleIssue::RoadTooShort { road } => t!("check-road-short", road = road),
     }
 }
 

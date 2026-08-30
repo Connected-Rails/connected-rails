@@ -30,6 +30,7 @@ pub mod farmland;
 pub mod mist;
 pub mod people;
 pub mod precipitation;
+pub mod roads;
 pub mod scatter;
 pub mod sky;
 pub mod track;
@@ -51,6 +52,7 @@ pub use scatter::{
     cull_distant_woods, materialise_trees,
 };
 pub use track::{GAUGE, RailMaterial, spawn_track};
+pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use water::{WaterMaterial, WaterMaterials, WaterSurface, spawn_waters};
 
 /// Registers the splat shader and its material. Both programs add it after
@@ -65,6 +67,7 @@ impl Plugin for WorldRenderPlugin {
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<farmland::FieldMaterial>::default())
             .add_plugins(water::plugin)
+            .add_plugins(roads::plugin)
             .init_resource::<farmland::FieldMaterials>()
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()

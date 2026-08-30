@@ -98,6 +98,12 @@ pub enum Tool {
     /// fields; this is for the corner it did not cover, and for a fictional
     /// module where there is no register to ask.
     PlaceField,
+    /// Road: clicks set the vertices of a carriageway, Enter/right-click
+    /// finishes it; on a drawn road the walkway gestures reshape it (see
+    /// [`crate::roads`]). The OSM import (see [`crate::roads`]) is the usual
+    /// way to get the streets of a real place; this is for the track it did
+    /// not cover, and for a fictional module.
+    PlaceRoad,
 }
 
 /// What the Select tool holds.
@@ -125,6 +131,9 @@ pub enum Selection {
     Field(usize),
     /// A body of water — the whole polygon; picked by clicking its surface.
     Water(usize),
+    /// A road — the whole centre line; picked by clicking its carriageway or
+    /// its line on the map.
+    Road(usize),
 }
 
 /// The stroke the area brush is painting: one stretch of one track, growing under the
@@ -288,6 +297,7 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 6] = [
             (Tool::PlaceTree, "tool-tree", editor_ui::Icon::Tree),
             (Tool::PlaceForest, "tool-forest", editor_ui::Icon::Forest),
             (Tool::PlaceField, "tool-field", editor_ui::Icon::Field),
+            (Tool::PlaceRoad, "tool-road", editor_ui::Icon::Road),
             (Tool::Brush, "tool-brush", editor_ui::Icon::Brush),
         ],
     ),
@@ -591,6 +601,11 @@ pub struct EditorState {
     /// Crop the field tool gives the next field it closes; `None` = winter
     /// cereal, the commonest crop in the country.
     pub field_crop: Option<fields::CropClass>,
+    /// Road preset (`content::roads::PRESETS` id) the road tool gives the
+    /// next road it closes; `None` = the plain country road.
+    pub road_preset: Option<&'static str>,
+    /// Width of the next drawn road [m]; `None` = the preset's.
+    pub road_width: Option<f64>,
     /// Corner points of the forest polygon being drawn.
     pub forest_points: Vec<EcefPos>,
     /// Forest brush density [m² per tree]; `None` = 500.
@@ -774,7 +789,8 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         | Tool::EditEnvelope
         | Tool::PlaceWalkPath
         | Tool::PlaceWalkArea
-        | Tool::PlaceField => None,
+        | Tool::PlaceField
+        | Tool::PlaceRoad => None,
     }
 }
 
@@ -1663,6 +1679,16 @@ pub fn selection_pos(
                 crate::envelope::height(line, focus),
             ))
         }
+        // A road's own middle, likewise.
+        Selection::Road(i) => {
+            let road = line.source.roads.get(i)?;
+            let (lat, lon) = road.centre();
+            Some(geo::to_ecef_deg(
+                lat,
+                lon,
+                crate::envelope::height(line, focus),
+            ))
+        }
         Selection::None => None,
     }
 }
@@ -1964,6 +1990,13 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
         Selection::Water(i) => {
             if i < line.source.waters.len() {
                 line.source.waters.remove(i);
+            }
+        }
+        // A road like the water: picked whole, deleted whole, and the
+        // carriageways come with the rebuilt tiles.
+        Selection::Road(i) => {
+            if i < line.source.roads.len() {
+                line.source.roads.remove(i);
             }
         }
         Selection::None => {}
@@ -2921,13 +2954,13 @@ pub fn tool_input(
         if !state.forest_points.is_empty() {
             finish_forest(&mut line, &mut state, &mut overlay);
         } else if !state.walk_points.is_empty() {
-            // The field tool collects its corners in the same buffer the
-            // walkways do — the gesture is the same, only what is made of it
-            // at the end differs.
-            let status = if state.tool == Tool::PlaceField {
-                crate::fields::finish(&mut line, &mut state)
-            } else {
-                crate::walkways::finish(&mut line, &mut state)
+            // The field and road tools collect their points in the same
+            // buffer the walkways do — the gesture is the same, only what is
+            // made of it at the end differs.
+            let status = match state.tool {
+                Tool::PlaceField => crate::fields::finish(&mut line, &mut state),
+                Tool::PlaceRoad => crate::roads::finish(&mut line, &mut state),
+                _ => crate::walkways::finish(&mut line, &mut state),
             };
             if let Some(status) = status {
                 overlay.status = status;
@@ -3374,6 +3407,26 @@ pub fn tool_input(
                 && let Some(index) = crate::fields::pick(&line, p)
             {
                 state.selection = Selection::Field(index);
+                return;
+            }
+            let (lat, lon, _) = geo::from_ecef(p);
+            if !line
+                .source
+                .envelope_contains(lat.to_degrees(), lon.to_degrees())
+            {
+                overlay.status = t!("status-outside-envelope");
+                return;
+            }
+            state.walk_points.push(p);
+        }
+        Tool::PlaceRoad => {
+            // While a centre line is being drawn every click is its next
+            // point, whatever it lands on — a road has to be drawable across
+            // another one's neighbourhood.
+            if state.walk_points.is_empty()
+                && let Some(index) = crate::roads::pick(&line, p)
+            {
+                state.selection = Selection::Road(index);
                 return;
             }
             let (lat, lon, _) = geo::from_ecef(p);
@@ -4034,6 +4087,23 @@ pub fn draw_gizmos(
                 );
             }
         }
+        // The selected road's centre line, at the module's height — the
+        // carriageway on the ground is the import's or the tile's drawing.
+        Selection::Road(i) => {
+            let points = crate::roads::positions(&line, &focus, i);
+            if points.len() >= 2 {
+                gizmos.linestrip(
+                    points.iter().map(|p| {
+                        origin.0.to_render(*p)
+                            + origin
+                                .0
+                                .dir_to_render(EnuFrame::at(*p).up)
+                                * MARK_LIFT
+                    }),
+                    accent,
+                );
+            }
+        }
         Selection::None => {}
     }
 
@@ -4314,6 +4384,17 @@ pub fn draw_gizmos(
             origin.0.to_render(p) + up
         });
         gizmos.linestrip(points, Color::srgb(0.44, 0.68, 0.32));
+    }
+
+    // Roads: their centre lines, and the one being drawn by hand — the same
+    // gesture the walkways preview, in the roads' own grey.
+    crate::roads::draw_outlines(&mut gizmos, &line, &state, &focus, &origin.0);
+    if state.tool == Tool::PlaceRoad && !state.walk_points.is_empty() {
+        let points = state.walk_points.iter().copied().chain(cursor).map(|p| {
+            let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+            origin.0.to_render(p) + up
+        });
+        gizmos.linestrip(points, accent);
     }
 
     // Forest brush preview: the ring so far, the cursor as the next corner.

@@ -197,6 +197,33 @@ fn poll(dialog: &mut FieldImport) {
     }
 }
 
+/// The track, sampled as a polyline per edge, in degrees: what the corridors
+/// are built from, and what gets punched out of the fields.
+fn track_polylines(line: &Line) -> Vec<Vec<(f64, f64)>> {
+    line.net
+        .edges()
+        .iter()
+        .filter_map(|edge| {
+            let length = edge.length();
+            if length <= 0.0 {
+                return None;
+            }
+            // Every twenty metres: closer than that adds vertices the corridor
+            // quads do not need, further and a tight curve corners.
+            let steps = (length / 20.0).ceil().max(1.0) as usize;
+            Some(
+                (0..=steps)
+                    .map(|i| {
+                        let s = length * i as f64 / steps as f64;
+                        let (lat, lon, _) = geo::from_ecef(edge.eval(s).pos);
+                        (lat.to_degrees(), lon.to_degrees())
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
 /// The area an import covers, in degrees, with the track to punch out of it.
 fn area_of(line: &Line, state: &EditorState, scope: Scope) -> Option<Area> {
     let boundary: Vec<(f64, f64)> = match scope {
@@ -222,28 +249,26 @@ fn area_of(line: &Line, state: &EditorState, scope: Scope) -> Option<Area> {
     if boundary.len() < 3 {
         return None;
     }
-    // The track, sampled as a polyline per edge: what gets punched out of the
-    // fields, so no field lies on the formation the terrain pulls to rail
-    // height.
-    let mut track = Vec::new();
-    for edge in line.net.edges() {
-        let length = edge.length();
-        if length <= 0.0 {
-            continue;
-        }
-        // Every twenty metres: closer than that adds vertices the corridor
-        // quads do not need, further and a tight curve corners.
-        let steps = (length / 20.0).ceil().max(1.0) as usize;
-        let points: Vec<(f64, f64)> = (0..=steps)
-            .map(|i| {
-                let s = length * i as f64 / steps as f64;
-                let (lat, lon, _) = geo::from_ecef(edge.eval(s).pos);
-                (lat.to_degrees(), lon.to_degrees())
-            })
-            .collect();
-        track.push(points);
-    }
-    Some(Area { boundary, track })
+    Some(Area {
+        boundary,
+        track: track_polylines(line),
+    })
+}
+
+/// The track's corridor quads in the zone's metres: what no field may cover.
+fn track_corridors(line: &Line, zone: u8, clearance: f64) -> Vec<Vec<glam::DVec2>> {
+    track_polylines(line)
+        .iter()
+        .map(|poly| {
+            poly.iter()
+                .map(|(lat, lon)| {
+                    let (e, n) = geo::to_utm(lat.to_radians(), lon.to_radians(), zone);
+                    glam::DVec2::new(e, n)
+                })
+                .collect::<Vec<glam::DVec2>>()
+        })
+        .flat_map(|ring| fields::geometry::corridor(&ring, clearance))
+        .collect()
 }
 
 /// Writes an import into the line. One call, so it is one undo step.
@@ -964,8 +989,6 @@ pub fn finish(line: &mut Line, state: &mut EditorState) -> Option<String> {
             }
         })
         .collect();
-    // The working direction is the outline's own long axis, exactly as the
-    // import takes it — a hand-drawn field furrows the way it is shaped.
     let zone = state.terrain_options().zone;
     let ring: Vec<glam::DVec2> = polygon
         .iter()
@@ -974,37 +997,58 @@ pub fn finish(line: &mut Line, state: &mut EditorState) -> Option<String> {
             glam::DVec2::new(e, n)
         })
         .collect();
-    let direction_deg = fields::geometry::min_area_rect(&ring)
-        .map(|rect| rect.angle.to_degrees())
-        .unwrap_or(0.0);
-    // A seed from the outline, so two hand-drawn fields differ and the same
-    // one keeps its tint when the module is reopened.
-    let seed = fields::model::hash(
-        &ring
-            .iter()
-            .flat_map(|p| {
-                let mut bytes = ((p.x * 100.0).round() as i64).to_le_bytes().to_vec();
-                bytes.extend_from_slice(&((p.y * 100.0).round() as i64).to_le_bytes());
-                bytes
-            })
-            .collect::<Vec<u8>>(),
-    );
-    line.source.fields.push(FieldSource {
-        polygon,
-        crop: state
-            .field_crop
-            .unwrap_or(CropClass::WinterCereal)
-            .id()
-            .to_string(),
-        code: String::new(),
-        label: String::new(),
-        level: String::new(),
-        direction_deg,
-        source: String::new(),
-        year: None,
-        seed,
-        tags: Vec::new(),
-    });
+    // The track's clearance is punched out of a drawn field the same way the
+    // import punches it — a field the user draws across the line would sit on
+    // the formation, which the ground pulls up to rail height.
+    let corridors = track_corridors(line, zone, fields::import::TRACK_CLEARANCE);
+    let pieces = fields::import::punch(&ring, &corridors);
+    if pieces.is_empty() {
+        return Some(t!("status-field-on-track"));
+    }
+    for piece in pieces {
+        // The working direction is the outline's own long axis, exactly as the
+        // import takes it — a hand-drawn field furrows the way it is shaped.
+        let direction_deg = fields::geometry::min_area_rect(&piece)
+            .map(|rect| rect.angle.to_degrees())
+            .unwrap_or(0.0);
+        // A seed from the outline, so two hand-drawn fields differ and the same
+        // one keeps its tint when the module is reopened.
+        let seed = fields::model::hash(
+            &piece
+                .iter()
+                .flat_map(|p| {
+                    let mut bytes = ((p.x * 100.0).round() as i64).to_le_bytes().to_vec();
+                    bytes.extend_from_slice(&((p.y * 100.0).round() as i64).to_le_bytes());
+                    bytes
+                })
+                .collect::<Vec<u8>>(),
+        );
+        line.source.fields.push(FieldSource {
+            polygon: piece
+                .iter()
+                .map(|p| {
+                    let (lat, lon) = geo::from_utm(p.x, p.y, zone);
+                    FieldPoint {
+                        lat: lat.to_degrees(),
+                        lon: lon.to_degrees(),
+                    }
+                })
+                .collect(),
+            crop: state
+                .field_crop
+                .unwrap_or(CropClass::WinterCereal)
+                .id()
+                .to_string(),
+            code: String::new(),
+            label: String::new(),
+            level: String::new(),
+            direction_deg,
+            source: String::new(),
+            year: None,
+            seed,
+            tags: Vec::new(),
+        });
+    }
     state.selection = Selection::Field(line.source.fields.len() - 1);
     state.walk_vertex = None;
     None

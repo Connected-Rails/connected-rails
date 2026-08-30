@@ -436,8 +436,14 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   **The editor** has a threaded import with a progress bar, the state being asked, a Stop
   that means it, and a summary that has to be confirmed before anything is written — one
   undo step for a whole import. Scope is the module envelope or the selected field. A field
-  tool draws one by hand. **The renderer** cuts each field to the terrain tiles, drapes it on
-  the tile's own height grid, punches out the track's formation, and draws it with one
+  tool draws one by hand, and a drawn field is punched out of the track's clearance the same
+  way an imported one is. **The punch** takes the track's clearance corridor out of every
+  field so none lies on the formation the ground pulls up to rail height; where a corridor
+  quad never crosses the field's boundary — a siding ending inside a parcel — the quad is
+  stretched back the way the track came until its cut does cross, so the field is notched or
+  split instead of keeping a stripe of crop over the rails (`import::punch`). **The
+  renderer** cuts each field to the terrain tiles, drapes it on
+  the tile's own height grid, and draws it with one
   material per crop — furrows at the crop's own drill spacing, the sprayer's tramlines every
   24 m, both fading out as they fall below a pixel. **Driveable**: `lines/boerde.ron` and
   `example:boerdefahrt` are five kilometres across the Soester Börde with 135 real parcels

@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 # Same version bevy_ui already ships — one taffy in the tree, not two.
-taffy = "0.14"
+taffy = "0.10"
 # Lenient, fast, pure-Rust HTML parser; we build our own mutable DOM from it.
 tl = "0.7"
 # Pure-Rust ECMAScript engine for the gauge scripts — builds everywhere,

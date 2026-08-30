@@ -47,12 +47,12 @@ pub use people::{
     WalkwayHost, WalkwaysBound, bind_walkways, gait, move_strollers, person_bundle, play_gait,
     spawn_seated, spawn_strollers,
 };
+pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, Wood, WorldCatalog,
     cull_distant_woods, materialise_trees,
 };
 pub use track::{GAUGE, RailMaterial, spawn_track};
-pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use water::{WaterMaterial, WaterMaterials, WaterSurface, spawn_waters};
 
 /// Registers the splat shader and its material. Both programs add it after

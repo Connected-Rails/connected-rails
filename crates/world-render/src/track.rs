@@ -8,6 +8,13 @@
 //! ones: 1435 mm gauge measured 14 mm under the rail top, rails inclined
 //! 1:40 toward the gauge, sleepers on the DB standard spacing of 60 cm
 //! (1667 per km).
+//!
+//! The one detail the meshes cannot get from geometry is the shade on the
+//! inner side of the rail head: at the 5 cm scale of a head no shadow map
+//! resolves it, so `rail_head.wgsl` bakes it on — told which faces look
+//! across the gauge by the rails' lateral uv — and fades it out with camera
+//! distance, because past a few hundred metres the flat rust carries the
+//! look and the shadow is not worth its fragments.
 
 use bevy::asset::{Asset, RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::VisibilityRange;
@@ -39,7 +46,8 @@ pub(crate) fn plugin(app: &mut App) {
 /// need the rain look — the glaze is already the wet look.
 pub type RailMaterial = ExtendedMaterial<StandardMaterial, RailHead>;
 
-/// The extension proper — no bindings, the shader works off the world normal.
+/// The extension proper — no bindings of its own: the shader works off the
+/// world normal, the rails' lateral uv and the camera position.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
 pub struct RailHead {}
 
@@ -429,6 +437,10 @@ fn build_rails(e: &TrackEdge, frame: &EnuFrame, profile: RailProfile) -> Mesh {
                 let x = x + side * (y - GAUGE_MEASURE) * RAIL_CANT;
                 let pos = center + right * (side * axis + x) + up * (-y);
                 positions.push(to_render(pos));
+                // u is the signed lateral coordinate: the shader reads it to
+                // tell the faces looking across the gauge from the ones
+                // looking at the field (the baked inner-side shadow), v rides
+                // along the edge for anything that ever wants a texture.
                 uvs.push([(side * axis + x) as f32, (s * 2.5) as f32]);
             }
         }
@@ -795,6 +807,13 @@ mod tests {
         }
     }
 
+    fn uvs_of(mesh: &Mesh) -> Vec<[f32; 2]> {
+        match mesh.attribute(Mesh::ATTRIBUTE_UV_0) {
+            Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) => uvs.to_vec(),
+            _ => panic!("uvs"),
+        }
+    }
+
     /// The bed is a trapezoid on the RL 853 cross-section: 4.0 m over the
     /// sleeper underside (2.6 m sleeper + twice the 0.7 m shoulder), the
     /// whole build — rail, pad, sleeper, ballast — under the rail top, and
@@ -879,6 +898,59 @@ mod tests {
             normals.iter().any(|n| n[1] > 0.9),
             "no face of the rail points at the sky"
         );
+    }
+
+    /// The baked inner-side shadow in `rail_head.wgsl` picks its faces by the
+    /// lateral uv: every vertical face of the rails must sit strictly on one
+    /// side of the shader's split — gauge side below 0.746, field side above
+    /// 0.760 — or the shadow would smear across the head's flanks. The end
+    /// caps span the whole section and are exempt: the split is a statement
+    /// about the extruded skin only.
+    #[test]
+    fn vertical_rail_faces_split_at_the_gauge_uv() {
+        const GAUGE_SIDE_END: f32 = 0.746;
+        const FIELD_SIDE_START: f32 = 0.760;
+
+        let edge = straight_edge();
+        let frame = EnuFrame::at(edge.anchor);
+        for profile in [RailProfile::R49, RailProfile::R54, RailProfile::R60] {
+            let mesh = build_rails(&edge, &frame, profile);
+            let positions = positions_of(&mesh);
+            let uvs = uvs_of(&mesh);
+            let Some(bevy::mesh::Indices::U32(indices)) = mesh.indices() else {
+                panic!("indices");
+            };
+
+            let points = rail_section(profile).len();
+            let ring = points * 2;
+            let steps = ((edge.length() / SAMPLE).ceil() as usize).max(1);
+            let skin = &indices[..steps * ring * 6];
+
+            let (mut gauge_faces, mut field_faces) = (0u32, 0u32);
+            for quad in skin.chunks(6) {
+                let p = |i: u32| Vec3::from(positions[i as usize]);
+                let (a, b, c) = (p(quad[0]), p(quad[1]), p(quad[2]));
+                let normal = (b - a).cross(c - a).normalize_or_zero();
+                // Only the upright faces are the shadow's business — the
+                // running surface and the underside flares pick their look
+                // from the head blend.
+                if normal.y.abs() >= 0.5 {
+                    continue;
+                }
+                let lateral: Vec<f32> = quad.iter().map(|&i| uvs[i as usize][0].abs()).collect();
+                let min = lateral.iter().copied().fold(f32::MAX, f32::min);
+                let max = lateral.iter().copied().fold(f32::MIN, f32::max);
+                if max < GAUGE_SIDE_END {
+                    gauge_faces += 1;
+                } else if min > FIELD_SIDE_START {
+                    field_faces += 1;
+                } else {
+                    panic!("{profile:?}: vertical face straddles the split: {min}..{max}");
+                }
+            }
+            assert!(gauge_faces > 0, "{profile:?}: no gauge-side face");
+            assert!(field_faces > 0, "{profile:?}: no field-side face");
+        }
     }
 
     /// Sleepers go in at the type's spacing — 60 cm on the Regeloberbau —

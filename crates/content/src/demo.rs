@@ -4,7 +4,7 @@
 
 use crate::route::{
     DeviceSource, EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource, SectionSource,
-    SignalSource, TreeSource, YardSource,
+    SignalSource, TreeSource, WaterPoint, WaterSource, YardSource,
 };
 use sim_core::interlock::BlockMarkerPayload;
 use sim_core::interlock::{SignalKind, SignalSystem};
@@ -334,6 +334,52 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         trees: demo_trees(),
+        // A lake south of the first straight — the stand-in for the water
+        // import, so the demo shows a body of water without an extract. Its
+        // surface is laid over the terrain when the tiles are built, like the
+        // woods are filled into trees.
+        waters: vec![WaterSource {
+            name: "Mustersee".into(),
+            polygon: vec![
+                WaterPoint {
+                    lat: 51.9981,
+                    lon: 10.0040,
+                },
+                WaterPoint {
+                    lat: 51.9981,
+                    lon: 10.0100,
+                },
+                WaterPoint {
+                    lat: 51.9992,
+                    lon: 10.0102,
+                },
+                WaterPoint {
+                    lat: 51.9992,
+                    lon: 10.0038,
+                },
+            ],
+            // An island in the middle — the multipolygon import's work, so
+            // the demo shows a lake with an island in it.
+            holes: vec![vec![
+                WaterPoint {
+                    lat: 51.99850,
+                    lon: 10.0058,
+                },
+                WaterPoint {
+                    lat: 51.99848,
+                    lon: 10.0082,
+                },
+                WaterPoint {
+                    lat: 51.99880,
+                    lon: 10.0080,
+                },
+                WaterPoint {
+                    lat: 51.99882,
+                    lon: 10.0060,
+                },
+            ]],
+            tags: vec!["water".into()],
+        }],
         markers: vec![],
         terrain: vec![],
         heights: vec![],

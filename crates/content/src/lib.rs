@@ -12,6 +12,7 @@ pub mod route;
 pub mod scenarios;
 pub mod terrain;
 pub mod vehicles;
+pub mod water;
 
 pub use characters::{CharacterSpec, Gender, Role};
 pub use compose::Composition;
@@ -28,3 +29,4 @@ pub use terrain::{
     Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,
     TerrainTile, TileKey, Tree, Vegetation,
 };
+pub use water::{WaterPatch, Waters};

@@ -21,6 +21,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::world_serialization::WorldAsset;
 use content::LineSource;
+use content::TerrainOptions;
 use content::import::alignment::{CantRules, ramp_cant};
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
@@ -122,6 +123,8 @@ pub enum Selection {
     /// A field — the whole outline; the corner held, if any, is
     /// [`EditorState::walk_vertex`], which the fields share.
     Field(usize),
+    /// A body of water — the whole polygon; picked by clicking its surface.
+    Water(usize),
 }
 
 /// The stroke the area brush is painting: one stretch of one track, growing under the
@@ -1649,6 +1652,17 @@ pub fn selection_pos(
                 crate::envelope::height(line, focus),
             ))
         }
+        // A water body's middle, likewise — the gizmo-free selection's
+        // anchor, and what `F` frames.
+        Selection::Water(i) => {
+            let water = line.source.waters.get(i)?;
+            let (lat, lon) = water.centre();
+            Some(geo::to_ecef_deg(
+                lat,
+                lon,
+                crate::envelope::height(line, focus),
+            ))
+        }
         Selection::None => None,
     }
 }
@@ -1700,6 +1714,60 @@ fn nearest_edge(line: &Line, pick: &ScreenPick) -> Option<usize> {
         .filter(|(_, d)| *d <= PICK_PIXELS)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i)
+}
+
+/// The body of water the picked ground point falls into, if any — last in
+/// the pick order, so a click on open water selects the lake and a click
+/// beside it deselects as before. A point on an island misses, like it
+/// should; the bodies are tried from the last on, so a pond drawn over a
+/// lake is the one a click between them finds.
+fn pick_water(line: &Line, p: EcefPos) -> Option<Selection> {
+    let (lat, lon, _) = geo::from_ecef(p);
+    pick_water_at(line, lat.to_degrees(), lon.to_degrees())
+}
+
+/// [`pick_water`] in degrees — the pick itself, and what the tests ask.
+fn pick_water_at(line: &Line, lat: f64, lon: f64) -> Option<Selection> {
+    line.source
+        .waters
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, w)| w.contains(lat, lon))
+        .map(|(i, _)| Selection::Water(i))
+}
+
+/// The waterline of a body — outline and islands — as a gizmo strip on the
+/// ground. A corner off the loaded tiles keeps the module's fallback height
+/// for the frame or two until its tile has come, like every mark does.
+fn water_outline(
+    gizmos: &mut Gizmos,
+    origin: &RenderOrigin,
+    view: &crate::terrain::TerrainView,
+    options: &TerrainOptions,
+    water: &content::route::WaterSource,
+) {
+    let fallback = options.fallback_height + options.geoid_offset;
+    let on_ground = |lat: f64, lon: f64| -> EcefPos {
+        let (e, n) = geo::to_utm(lat.to_radians(), lon.to_radians(), options.zone);
+        let height = view.height_at(glam::DVec2::new(e, n)).unwrap_or(fallback);
+        geo::to_ecef_deg(lat, lon, height + MARK_LIFT as f64)
+    };
+    let mut strip = |ring: &[content::route::WaterPoint]| {
+        if ring.len() < 3 {
+            return;
+        }
+        let mut points: Vec<_> = ring.iter().map(|p| on_ground(p.lat, p.lon)).collect();
+        points.push(points[0]);
+        gizmos.linestrip(
+            points.iter().map(|p| origin.to_render(*p)),
+            Color::srgb(0.36, 0.61, 0.96),
+        );
+    };
+    strip(&water.polygon);
+    for hole in &water.holes {
+        strip(hole);
+    }
 }
 
 /// World position of a source node — where its first edge starts or ends.
@@ -1889,6 +1957,13 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
         Selection::Field(i) => {
             if i < line.source.fields.len() {
                 line.source.fields.remove(i);
+            }
+        }
+        // A water body neither — and the ground under it rebuilds through
+        // the change detector, which sees the polygon go.
+        Selection::Water(i) => {
+            if i < line.source.waters.len() {
+                line.source.waters.remove(i);
             }
         }
         Selection::None => {}
@@ -3456,18 +3531,28 @@ pub fn tool_input(
                         }
                         None => state.marked.push(mark),
                     },
-                    // Ctrl on empty ground grows the circle that adds.
-                    None if nearest.is_none() && nearest_edge(&line, pick).is_none() => {
+                    // Ctrl on empty ground grows the circle that adds — but
+                    // not over water, where a click has a meaning of its
+                    // own and the circle would start by surprise.
+                    None if nearest.is_none()
+                        && nearest_edge(&line, pick).is_none()
+                        && pick_water(&line, p).is_none() =>
+                    {
                         state.select_circle = Some(p);
                     }
                     None => {}
                 }
                 return;
             }
-            // Point candidates first, the track last.
+            // Point candidates first, the track last, the water under
+            // everything: a lake picked by clicking it, but never against
+            // the track that crosses it on an embankment.
             state.selection = match nearest {
                 Some((sel, _)) => sel,
-                None => nearest_edge(&line, pick).map_or(Selection::None, Selection::Edge),
+                None => nearest_edge(&line, pick)
+                    .map(Selection::Edge)
+                    .or_else(|| pick_water(&line, p))
+                    .unwrap_or(Selection::None),
             };
             // A walkway picked here is the whole way; no vertex is held.
             state.walk_vertex = None;
@@ -3936,6 +4021,19 @@ pub fn draw_gizmos(
         // `crate::fields::draw_outlines` below — every field, not only the
         // selected one.
         Selection::Field(_) => {}
+        // The selected body's waterline, islands included — what a click
+        // picked, on the ground the tiles put under it.
+        Selection::Water(i) => {
+            if let Some(water) = line.source.waters.get(i) {
+                water_outline(
+                    &mut gizmos,
+                    &origin.0,
+                    &ground.view,
+                    &state.terrain_options(),
+                    water,
+                );
+            }
+        }
         Selection::None => {}
     }
 
@@ -4740,6 +4838,59 @@ mod tests {
             branch.tangent.dot(cut.tangent) < -0.999,
             "the branch has to leave against the track"
         );
+    }
+
+    /// A click on open water picks the body, a click on its island misses,
+    /// and a click on dry land finds nothing — the last body in the file
+    /// wins where two lie on top of each other.
+    #[test]
+    fn a_click_picks_the_water_it_lands_on() {
+        let point = |lat: f64, lon: f64| content::route::WaterPoint { lat, lon };
+        let lake = content::route::WaterSource {
+            name: "See".into(),
+            polygon: vec![
+                point(52.000, 10.000),
+                point(52.000, 10.020),
+                point(52.020, 10.020),
+                point(52.020, 10.000),
+            ],
+            holes: vec![vec![
+                point(52.008, 10.008),
+                point(52.008, 10.012),
+                point(52.012, 10.012),
+                point(52.012, 10.008),
+            ]],
+            tags: vec!["water".into()],
+        };
+        let pond = content::route::WaterSource {
+            name: "Teich".into(),
+            polygon: vec![
+                point(52.004, 10.014),
+                point(52.004, 10.018),
+                point(52.008, 10.018),
+                point(52.008, 10.014),
+            ],
+            holes: Vec::new(),
+            tags: vec!["water".into()],
+        };
+        let mut source = straight_east(1000.0);
+        source.waters = vec![lake, pond];
+        let line = line_of(source);
+
+        // Open water of the lake, clear of pond and island.
+        assert!(matches!(
+            pick_water_at(&line, 52.018, 10.004),
+            Some(Selection::Water(0))
+        ));
+        // The island is the lake's hole: no water.
+        assert!(pick_water_at(&line, 52.010, 10.010).is_none());
+        // The pond lies over the lake's corner and wins the click.
+        assert!(matches!(
+            pick_water_at(&line, 52.006, 10.016),
+            Some(Selection::Water(1))
+        ));
+        // Dry land beside everything.
+        assert!(pick_water_at(&line, 52.030, 10.030).is_none());
     }
 
     fn line_of(source: content::LineSource) -> Line {

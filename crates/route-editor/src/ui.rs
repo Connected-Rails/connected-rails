@@ -537,6 +537,7 @@ fn file_dialog(state: &EditorState) -> rfd::FileDialog {
 pub enum FileAsk {
     Open,
     ImportForest,
+    ImportWater,
     ImportMarkers,
     Ghost,
     DgmFolder,
@@ -608,6 +609,7 @@ pub fn poll_file_dialog(
     match ask {
         FileAsk::Open => opened(path, &mut line, &mut history, &mut state, &mut overlay),
         FileAsk::ImportForest => forest_imported(path, &mut line, &mut state, &mut overlay),
+        FileAsk::ImportWater => water_imported(path, &mut line, &mut state, &mut overlay),
         FileAsk::ImportMarkers => markers_imported(path, &mut line, &mut state, &mut overlay),
         FileAsk::Ghost => ghost_loaded(path, &mut ghost, &state, &mut overlay),
         FileAsk::DgmFolder => state.dgm_source = Some(path.display().to_string()),
@@ -967,6 +969,54 @@ fn import_heights(line: &mut Line, state: &mut EditorState, overlay: &mut Overla
     overlay.status = t!("status-heights-imported", tiles = written, empty = empty);
 }
 
+/// File ▸ Import water: reads an Overpass JSON extract and takes its water
+/// bodies — `natural=water`, `waterway=riverbank`/`dock`, `landuse=
+/// reservoir`/`basin` — into the line as [`content::route::WaterSource`]s.
+/// Each is an ordinary entry, and each is where OSM put it: the surface is
+/// laid over the terrain when the tiles are built, at the height the
+/// elevation data gives the shoreline. A lake crossing the module boundary
+/// is kept whole — the neighbour imports the same polygon and shapes only
+/// what its own corridor covers.
+fn import_water(state: &mut EditorState) {
+    let filter = t!("filter-overpass-json");
+    ask_for_file(state, FileAsk::ImportWater, move |dialog| {
+        dialog.add_filter(filter, &["json"]).pick_file()
+    });
+}
+
+/// The Overpass extract the user picked, turned into water bodies.
+fn water_imported(path: PathBuf, line: &mut Line, state: &mut EditorState, overlay: &mut Overlay) {
+    let parsed = std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|text| content::import::parse_water(&text).map_err(|e| e.to_string()));
+    match parsed {
+        Ok(waters) if waters.is_empty() => {
+            overlay.status = t!("status-water-import-empty", file = path.display());
+        }
+        Ok(waters) => {
+            let count = waters.len();
+            let named = waters.iter().filter(|w| !w.name.is_empty()).count();
+            line.source.waters.extend(waters);
+            // The change detector marks the ground under the new polygons;
+            // the surfaces come with the tiles.
+            overlay.status = if named == count {
+                t!("status-water-imported", count = count)
+            } else {
+                t!(
+                    "status-water-imported-unnamed",
+                    count = count,
+                    named = named
+                )
+            };
+        }
+        Err(e) => report_failure(
+            state,
+            overlay,
+            t!("status-error", file = path.display(), error = e),
+        ),
+    }
+}
+
 /// File ▸ Import reference markers: reads an Overpass JSON extract and turns
 /// the tags it knows into markers, each in the layer of its tag — level
 /// crossings, platforms, kilometre marks. They are drawing aids, not
@@ -1050,6 +1100,7 @@ pub(crate) fn new_line(
         fields: vec![],
         field_sources: vec![],
         markers: vec![],
+        waters: vec![],
         terrain: vec![],
         heights: vec![],
         sections: vec![],
@@ -1125,6 +1176,10 @@ fn menu_bar(
                     if ui.button(t!("action-import-forest")).clicked() {
                         ui.close();
                         import_forest(state);
+                    }
+                    if ui.button(t!("action-import-water")).clicked() {
+                        ui.close();
+                        import_water(state);
                     }
                     if ui.button(t!("action-import-markers")).clicked() {
                         ui.close();
@@ -2282,6 +2337,47 @@ fn selection_panel(
         Selection::Field(_) => {
             let zone = state.terrain_options().zone;
             crate::fields::selection_rows(ui, line, state, zone, date.0, date.1);
+        }
+        Selection::Water(i) => {
+            let Some(water) = line.source.waters.get(i) else {
+                return;
+            };
+            let position = tools::selection_pos(line, state.selection, focus, marks);
+            ui.label(if water.name.is_empty() {
+                t!("sel-water-summary", index = i)
+            } else {
+                t!("sel-water-named", index = i, name = water.name)
+            });
+            let zone = state.terrain_options().zone;
+            ui.small(t!("water-area", area = format!("{:.0}", water.area(zone))));
+            if !water.tags.is_empty() {
+                ui.small(t!("water-tags", tags = water.tags.join(", ")));
+            }
+            ui.small(if water.holes.is_empty() {
+                t!("water-hint")
+            } else {
+                t!("water-hint-islands", islands = water.holes.len())
+            });
+            let water = &mut line.source.waters[i];
+            editor_ui::form_grid("sel-water").show(ui, |ui| {
+                // The name is what the file and the panel go by; the shape
+                // itself is the import's business, and a corner is edited
+                // in the file or by importing anew.
+                row(ui, "water-name", |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut water.name).desired_width(space::FIELD));
+                });
+            });
+            ui.add_space(space::XS);
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked()
+                    && let Some(p) = position
+                {
+                    focus.position = p;
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    tools::delete_selection(line, state);
+                }
+            });
         }
         Selection::Edge(i) => {
             let Some(edge) = line.source.edges.get(i) else {

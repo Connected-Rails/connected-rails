@@ -797,6 +797,37 @@ fn diff(
                 }
             }
         }
+        // A water body is cut into the tiles it covers, like a field — and
+        // its surface rides on the raw elevation data, so a change reaches
+        // the ground under it and no further.
+        if last.waters != now.waters {
+            const MANY: usize = 32;
+            let touched: Vec<&content::route::WaterSource> =
+                changed(&last.waters, &now.waters).take(MANY + 1).collect();
+            if touched.len() > MANY {
+                change = TerrainChange::all();
+            } else {
+                for water in touched {
+                    let corners: Vec<glam::DVec2> = water
+                        .polygon
+                        .iter()
+                        .chain(water.holes.iter().flatten())
+                        .map(|p| utm(p.lat, p.lon))
+                        .collect();
+                    let Some(lo) = corners.iter().copied().reduce(glam::DVec2::min) else {
+                        continue;
+                    };
+                    let hi = corners
+                        .iter()
+                        .copied()
+                        .reduce(glam::DVec2::max)
+                        .unwrap_or(lo);
+                    change
+                        .ground
+                        .add_disc((lo + hi) / 2.0, (hi - lo).length() / 2.0 + 1.0);
+                }
+            }
+        }
     }
     if !matches!(change.ground, Region::None) && !matches!(change.ground, Region::All) {
         // Ground that moves takes what stands on it along — the rebuilt tile

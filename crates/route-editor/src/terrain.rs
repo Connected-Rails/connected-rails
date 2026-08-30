@@ -231,6 +231,9 @@ pub struct TerrainView {
     /// Which height sources it was built from (`(path, zone)`) — a changed
     /// reference reloads them, an edit does not.
     sources: Vec<(String, u8)>,
+    /// The fingerprint of the water list the builder's levels were sampled
+    /// from — a changed list resamples them, an edit does not.
+    waters_fingerprint: Option<(u64, usize, usize)>,
     options: TerrainOptions,
     loaded: HashMap<TileKey, LoadedTile>,
     /// Tiles being built, with the generation they were requested for.
@@ -261,6 +264,7 @@ impl TerrainView {
             catalog_names: (Vec::new(), Vec::new()),
             builder: None,
             sources: Vec::new(),
+            waters_fingerprint: None,
             options: TerrainOptions::default(),
             loaded: HashMap::new(),
             pending: HashMap::new(),
@@ -350,6 +354,12 @@ pub fn update(
         ResMut<Assets<world_render::FieldMaterial>>,
         Res<world_render::sky::Sky>,
     ),
+    // The water of a tile: one material shared by every surface of the line
+    // (see `world_render::water`).
+    (mut water_materials, mut water_assets): (
+        ResMut<world_render::WaterMaterials>,
+        ResMut<Assets<world_render::WaterMaterial>>,
+    ),
 ) {
     // Taken only when there is something to take: a write through `ResMut`
     // marks the line changed, and the marks and the title watch for that.
@@ -415,7 +425,6 @@ pub fn update(
             view.version += 1;
         }
     }
-
     // Trees and objects placed anew on tiles whose ground stands.
     let builder = view.builder.clone().expect("refreshed above");
     let rescatter: Vec<TileKey> = view
@@ -520,6 +529,15 @@ pub fn update(
             entity,
             &tile.fields,
         );
+        // The water hangs under the tile with it.
+        world_render::spawn_waters(
+            &mut commands,
+            &mut meshes,
+            &mut water_materials,
+            &mut water_assets,
+            entity,
+            &tile.waters,
+        );
         // The mesh is on its way to the GPU; what stays is the height grid.
         tile.positions = Vec::new();
         tile.indices = Vec::new();
@@ -527,6 +545,7 @@ pub fn update(
         tile.trees = Vec::new();
         tile.objects = Vec::new();
         tile.fields = Vec::new();
+        tile.waters = Vec::new();
         let replaced = view.loaded.insert(
             k,
             LoadedTile {
@@ -752,13 +771,27 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
     let edits = TerrainEdits::from_line(&line.source, options.zone);
     let farmland =
         content::farmland::Fields::from_line(&line.source, options.zone, options.tile_size);
+    // The waters of the line, indexed for the tile builds. Their shoreline
+    // levels are sampled against the elevation data when the builder takes
+    // them in — a pass over a few thousand points, cheap but not free, so it
+    // only runs when the water list has actually changed.
+    let waters = content::water::Waters::from_line(&line.source, options.zone, options.tile_size);
+    let waters_fingerprint = waters.fingerprint();
 
     if let Some(builder) = &view.builder
         && view.sources == wanted
         && view.options == options
     {
+        // The same water list as last generation: keep the levels already
+        // sampled, the polygons have not moved.
+        let waters = if view.waters_fingerprint == Some(waters_fingerprint) {
+            builder.waters().clone()
+        } else {
+            waters
+        };
+        view.waters_fingerprint = Some(waters_fingerprint);
         view.builder = Some(Arc::new(
-            builder.with_line(&line.net, vegetation, scenery, farmland, edits),
+            builder.with_line(&line.net, vegetation, scenery, farmland, waters, edits),
         ));
         return;
     }
@@ -784,11 +817,13 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
     view.has_heights = sources.iter().any(|s| s.tile_count() > 0);
     view.sources = wanted;
     view.options = options;
+    view.waters_fingerprint = Some(waters_fingerprint);
     view.builder = Some(Arc::new(
         TerrainBuilder::new(&line.net, sources, options)
             .with_vegetation(vegetation)
             .with_scenery(scenery)
             .with_fields(farmland)
+            .with_waters(waters)
             .with_edits(edits),
     ));
     view.stale.all(view.generation);

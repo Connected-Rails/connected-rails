@@ -560,9 +560,10 @@ const ROAD_CLASSES: &[(&str, &str)] = &[
 /// class decides the preset — width, surface and markings, all editable —
 /// and where the mapper said more, it wins: `surface=*` over the preset's
 /// surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the
-/// centre line out. A carriageway of a divided road (`oneway=yes`) carries
-/// no centre line, which is what makes an Autobahn read as two carriageways
-/// rather than one striped one.
+/// centre line out, and `bridge=*` flags the way as flying (see
+/// [`crate::route::RoadSource::bridge`]). A carriageway of a divided road
+/// (`oneway=yes`) carries no centre line, which is what makes an Autobahn
+/// read as two carriageways rather than one striped one.
 // ponytail: the OSM `width` tag is often absent and occasionally nonsense
 // (a lane count, a feet figure). What is parsed here is the plain metres
 // number; everything else falls back to the class preset, which is a
@@ -613,6 +614,11 @@ pub fn parse_roads(json: &str) -> Result<Vec<RoadSource>, OsmError> {
         } else {
             CenterLine::None
         };
+        // A bridge flies: over the hollow the way spans — a valley, a river,
+        // a cutting — the carriageway holds the straight line between its own
+        // ends instead of following the ground. Any `bridge=*` but `no`
+        // counts; a viaduct is a bridge like any other.
+        let bridge = e.tags.get("bridge").is_some_and(|v| v != "no");
         roads.push(RoadSource {
             name: name_of(&e.tags),
             points,
@@ -620,6 +626,7 @@ pub fn parse_roads(json: &str) -> Result<Vec<RoadSource>, OsmError> {
             surface,
             center_line,
             edge_lines: preset.edge_lines,
+            bridge,
             tags: vec![format!("highway-{}", e.tags["highway"])],
         });
     }
@@ -1125,9 +1132,9 @@ mod tests {
             {"type": "way", "id": 10, "nodes": [1, 2],
              "tags": {"highway": "primary", "name": "Bördestraße", "surface": "asphalt"}},
             {"type": "way", "id": 11, "nodes": [2, 3],
-             "tags": {"highway": "motorway", "oneway": "yes", "lanes": "3"}},
+             "tags": {"highway": "motorway", "oneway": "yes", "lanes": "3", "bridge": "viaduct"}},
             {"type": "way", "id": 12, "nodes": [3, 4],
-             "tags": {"highway": "track", "surface": "concrete:plates", "width": "3"}},
+             "tags": {"highway": "track", "surface": "concrete:plates", "width": "3", "bridge": "no"}},
             {"type": "way", "id": 13, "nodes": [1, 4],
              "tags": {"highway": "footway"}},
             {"type": "way", "id": 14, "nodes": [1, 4],
@@ -1143,18 +1150,28 @@ mod tests {
         assert_eq!(primary.surface, RoadSurface::Asphalt);
         assert_eq!(primary.center_line, CenterLine::Dashed);
         assert!((primary.width - 7.5).abs() < 1e-9, "the preset's width");
+        assert!(!primary.bridge, "no bridge tag, no bridge");
 
         let motorway = &roads[1];
         // One-way: one carriageway, three lanes of 3.5 m, no centre line.
         assert_eq!(motorway.center_line, CenterLine::None);
         assert!((motorway.width - 10.5).abs() < 1e-9, "{}", motorway.width);
+        // The viaduct flies.
+        assert!(motorway.bridge, "bridge=viaduct");
 
         let track = &roads[2];
         assert_eq!(track.surface, RoadSurface::Concrete, "the plates");
         assert!((track.width - 3.0).abs() < 1e-9, "the mapper's width");
+        assert!(!track.bridge, "bridge=no is no bridge");
 
         let residential = &roads[3];
-        assert!((residential.width - 7.0).abs() < 1e-9, "{}", residential.width);
+        assert!(
+            (residential.width - 7.0).abs() < 1e-9,
+            "{}",
+            residential.width
+        );
+        // A residential street is innerorts: the shorter RMS dash.
+        assert_eq!(residential.center_line, CenterLine::DashedUrban);
 
         assert_eq!(parse_roads(r#"{"elements": []}"#), Ok(vec![]));
     }

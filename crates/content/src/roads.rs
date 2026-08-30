@@ -15,6 +15,12 @@
 //! markings (which of them to draw) and the half-width travel in the vertex
 //! colours, the along-road metre in the UVs.
 //!
+//! A road flagged as a bridge (`bridge=*`) flies: where the ground dips
+//! below the straight line between the way's own ends, the carriageway holds
+//! that line — the deck — instead of following the hollow, and its ends are
+//! measured on the shaped ground, so the deck meets the drape at the
+//! abutments and both tiles at a seam cut the same chord.
+//!
 //! Nothing here knows what asphalt looks like; the renderer's shader makes
 //! the markings out of the vertex colours and the wear out of the weather.
 //! So a module carries no road bitmaps, and two clients of a multiplayer run
@@ -107,7 +113,7 @@ pub const PRESETS: &[RoadPreset] = &[
         id: "residential",
         width: 5.5,
         surface: RoadSurface::Asphalt,
-        center_line: CenterLine::Dashed,
+        center_line: CenterLine::DashedUrban,
         edge_lines: true,
     },
     RoadPreset {
@@ -161,6 +167,7 @@ pub fn preset_source(preset: &RoadPreset) -> RoadSource {
         surface: preset.surface,
         center_line: preset.center_line,
         edge_lines: preset.edge_lines,
+        bridge: false,
         tags: Vec::new(),
     }
 }
@@ -181,7 +188,7 @@ struct Road {
     /// markings are measured against.
     centre: Vec<DVec2>,
     /// Arc length at each centre point [m], from the road's own start — the
-    /// dash phase runs in it, so the markings line up across the tiles.
+    /// dash phase runs in it, and the bridge chord is measured on it.
     s: Vec<f64>,
     /// The carriageway as a closed ring: the centre line buffered by its own
     /// half-width, square caps at the ends.
@@ -189,6 +196,10 @@ struct Road {
     surface: RoadSurface,
     center_line: CenterLine,
     edge_lines: bool,
+    /// Whether the way flies (`bridge=*`): where the ground dips below the
+    /// line between the way's own ends, the carriageway holds that line —
+    /// the deck of a bridge — instead of following the hollow.
+    bridge: bool,
     /// Half the carriageway width [m], as the file said it — clamped only
     /// where a bad file would make the buffer explode.
     half: f64,
@@ -271,6 +282,7 @@ impl Roads {
                 surface: source.surface,
                 center_line: source.center_line,
                 edge_lines: source.edge_lines,
+                bridge: source.bridge,
                 half,
                 lift: (index % 16) as f64 * 0.0015,
                 index: index as u32,
@@ -309,9 +321,10 @@ pub struct RoadPatch {
     /// crosses, and the texture repeats without a seam between the tiles.
     pub uvs: Vec<[f32; 2]>,
     /// Per-vertex data: `r` the centre line ([`crate::route::CenterLine`] as
-    /// a number), `g` whether the edge lines run, `b` the half-width [m] —
-    /// the three things the shader needs to draw the markings of the road
-    /// this vertex belongs to.
+    /// a number — 1 dashed außerorts, 2 dashed innerorts, 3 solid), `g`
+    /// whether the edge lines run, `b` the half-width [m] — the three things
+    /// the shader needs to draw the markings of the road this vertex belongs
+    /// to.
     pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     /// The roads that went into this patch, in line order — what a click on
@@ -326,6 +339,12 @@ impl RoadPatch {
 }
 
 /// The carriageways of one tile, one patch per surface found on it.
+///
+/// `ground` is the *shaped* ground height at any UTM point — DGM, brush
+/// edits and the track's cutting/embankment blend, the same function that
+/// sampled the tile's own grid. A bridge measures the ends of its chord on
+/// it; both tiles at a seam evaluate the same ends, so both cut the same
+/// chord and the decks meet without a step.
 pub(crate) fn patches(
     k: TileKey,
     grid: &HeightGrid,
@@ -333,6 +352,7 @@ pub(crate) fn patches(
     zone: u8,
     tile_size: f64,
     roads: &Roads,
+    ground: &mut dyn FnMut(DVec2) -> f64,
 ) -> Vec<RoadPatch> {
     let Some(indices) = roads.by_tile.get(&k) else {
         return Vec::new();
@@ -363,7 +383,7 @@ pub(crate) fn patches(
             if !patch.sources.contains(&road.index) {
                 patch.sources.push(road.index);
             }
-            add_piece(patch, &piece, road, grid, frame, zone);
+            add_piece(patch, &piece, road, grid, frame, zone, ground);
         }
     }
 
@@ -376,8 +396,9 @@ pub(crate) fn patches(
     out
 }
 
-/// Triangulates one piece of a road, drapes it on the tile's own height grid,
-/// and writes the marking data and the texture coordinates the shader needs.
+/// Triangulates one piece of a road, lays it on the tile's own height grid —
+/// or, where the road flies, on its bridge chord — and writes the marking
+/// data and the texture coordinates the shader needs.
 fn add_piece(
     patch: &mut RoadPatch,
     ring: &[DVec2],
@@ -385,6 +406,7 @@ fn add_piece(
     grid: &HeightGrid<'_>,
     frame: &EnuFrame,
     zone: u8,
+    ground: &mut dyn FnMut(DVec2) -> f64,
 ) {
     let mut points = ring.to_vec();
     let mut tris = fields::geometry::triangulate(&points);
@@ -402,34 +424,94 @@ fn add_piece(
         patch.sources.push(road.index);
     }
 
+    // The ends of a bridge's chord, deck height included: the shaped ground
+    // under the way's own first and last point. A bridge way spans abutment
+    // to abutment, so its ends *are* the abutments, and the deck meets the
+    // draped road there.
+    let ends = if road.bridge {
+        Some(buttress_heights(road, ground))
+    } else {
+        None
+    };
+
     let centre_kind = road.center_line as usize as f32;
     let edge = road.edge_lines as u32 as f32;
     for p in &points {
-        let height = grid.at(*p) + LIFT + road.lift;
+        let height = deck_height(road, *p, grid, ends);
         let (lat, lon) = geo::from_utm(p.x, p.y, zone);
         let world = geo::to_ecef(lat, lon, height);
         patch.positions.push(to_render(frame.to_local(world)));
-        patch.normals.push(normal_at(*p, grid));
+        patch.normals.push(if road.bridge {
+            deck_normal(*p, road, grid, ends)
+        } else {
+            normal_at(*p, grid)
+        });
         // Where the vertex stands on the road: the metre along it (the dash
         // phase) and across it (0 at one kerb, 1 at the other). Measured
         // against the resampled centre line, so both tiles at a seam read the
         // same numbers.
         let (lateral, along) = road.frame(*p);
-        patch
-            .uvs
-            .push([((0.5 + lateral / road.half).clamp(0.0, 1.0)) as f32, along as f32]);
-        patch.colors.push([
-            centre_kind,
-            edge,
-            road.half as f32,
-            1.0,
+        patch.uvs.push([
+            ((0.5 + lateral / road.half).clamp(0.0, 1.0)) as f32,
+            along as f32,
         ]);
+        patch
+            .colors
+            .push([centre_kind, edge, road.half as f32, 1.0]);
     }
     for [a, b, c] in tris {
         patch
             .indices
             .extend_from_slice(&[base + a, base + b, base + c]);
     }
+}
+
+/// The height a road vertex is laid at: the drape on the tile's grid — or,
+/// where the ground dips below the straight line between the way's own ends,
+/// that chord: the deck of a bridge. The drape still wins wherever the
+/// ground is above it, so the deck runs exactly as far as the hollow does.
+fn deck_height(road: &Road, p: DVec2, grid: &HeightGrid<'_>, ends: Option<(f64, f64)>) -> f64 {
+    let drape = grid.at(p) + LIFT + road.lift;
+    let Some((h0, h1)) = ends else {
+        return drape;
+    };
+    let (_, along) = road.frame(p);
+    let t = (along / road.length()).clamp(0.0, 1.0);
+    drape.max(h0 + (h1 - h0) * t)
+}
+
+/// The shaped ground under a way's own first and last point, deck height
+/// included — the abutments the bridge chord is stretched between.
+fn buttress_heights(road: &Road, ground: &mut dyn FnMut(DVec2) -> f64) -> (f64, f64) {
+    let first = road.centre.first().copied().unwrap_or_default();
+    let last = road.centre.last().copied().unwrap_or_default();
+    (
+        ground(first) + LIFT + road.lift,
+        ground(last) + LIFT + road.lift,
+    )
+}
+
+impl Road {
+    /// Length of the resampled centre line [m].
+    fn length(&self) -> f64 {
+        self.s.last().copied().unwrap_or(0.0)
+    }
+}
+
+/// The deck's own normal, by finite differences of the height the vertex is
+/// laid at — drape and chord both — so a bridge is shaded like the span it
+/// is and not like the valley it crosses. The same finite difference
+/// [`normal_at`] takes on the ground.
+fn deck_normal(p: DVec2, road: &Road, grid: &HeightGrid<'_>, ends: Option<(f64, f64)>) -> [f32; 3] {
+    const D: f64 = 1.0;
+    let dx = deck_height(road, p + DVec2::new(D, 0.0), grid, ends)
+        - deck_height(road, p - DVec2::new(D, 0.0), grid, ends);
+    let dy = deck_height(road, p + DVec2::new(0.0, D), grid, ends)
+        - deck_height(road, p - DVec2::new(0.0, D), grid, ends);
+    // Render axes: +x east, +y up, +z south — so north is −z.
+    let n = Vec3::new(-(dx / (2.0 * D)) as f32, 1.0, (dy / (2.0 * D)) as f32).normalize_or_zero();
+    let n = if n == Vec3::ZERO { Vec3::Y } else { n };
+    [n.x, n.y, n.z]
 }
 
 /// Resamples a polyline so the in-betweens follow the road's own step — the
@@ -604,6 +686,7 @@ mod tests {
             surface: RoadSurface::Asphalt,
             center_line: CenterLine::Dashed,
             edge_lines: true,
+            bridge: false,
             tags: Vec::new(),
         }
     }
@@ -620,7 +703,8 @@ mod tests {
         let (clat, clon) = geo::from_utm(centre.x, centre.y, 32);
         let frame = EnuFrame::at(geo::to_ecef(clat, clon, 0.0));
         let roads = Roads::from_parts(sources, 32, tile_size);
-        patches(tile, &grid, &frame, 32, tile_size, &roads)
+        let mut ground = |_: DVec2| 100.0;
+        patches(tile, &grid, &frame, 32, tile_size, &roads, &mut ground)
     }
 
     #[test]
@@ -721,6 +805,7 @@ mod tests {
             surface: RoadSurface::Asphalt,
             center_line: CenterLine::Dashed,
             edge_lines: true,
+            bridge: false,
             tags: Vec::new(),
         };
         let here = patches_of(std::slice::from_ref(&road), tile);
@@ -749,6 +834,86 @@ mod tests {
             assert_eq!(patch.colors[0][1], 1.0, "edge lines");
             assert!((patch.colors[0][2] - 3.0).abs() < 0.01, "the half-width");
         }
+    }
+
+    #[test]
+    fn the_urban_dash_rides_in_the_mesh() {
+        // The residential preset is an innerorts street: the shorter RMS
+        // dash, travelling in the mesh as r = 2 so the shader paints the
+        // 3-and-6 rather than the 6-and-12 of the country roads.
+        assert_eq!(
+            preset("residential").map(|p| p.center_line),
+            Some(CenterLine::DashedUrban)
+        );
+        let tile = (859, 11162);
+        let min = DVec2::new(tile.0 as f64 * 512.0, tile.1 as f64 * 512.0);
+        let mut road = source(min.x + 100.0, min.y + 250.0, 200.0, 6.0);
+        road.center_line = CenterLine::DashedUrban;
+        let patches = patches_of(std::slice::from_ref(&road), tile);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].colors[0][0], 2.0, "the urban dash");
+    }
+
+    #[test]
+    fn a_bridge_spans_the_hollow() {
+        let tile = (859, 11162);
+        let min = DVec2::new(tile.0 as f64 * 512.0, tile.1 as f64 * 512.0);
+        // A tile whose ground dips to 85 m in a band through the middle; the
+        // shaped ground the abutments are measured on stays at 100 m.
+        let step = 8.0;
+        let n = 64;
+        let mut heights = vec![100.0f32; (n + 1) * (n + 1)];
+        for iy in 0..=n {
+            for ix in 0..=n {
+                let north = min.y + iy as f64 * step;
+                if (min.y + 200.0..min.y + 312.0).contains(&north) {
+                    heights[iy * (n + 1) + ix] = 85.0;
+                }
+            }
+        }
+        let grid = HeightGrid::new(min, &heights, step, n);
+        let centre = min + DVec2::splat(256.0);
+        let (clat, clon) = geo::from_utm(centre.x, centre.y, 32);
+        let frame = EnuFrame::at(geo::to_ecef(clat, clon, 0.0));
+        let mut ground = |_: DVec2| 100.0;
+
+        // A north-south road through the dip, 400 m long: as a bridge it
+        // holds the line between its own ends; on the ground it follows the
+        // hollow down.
+        let mut flying = source(min.x + 100.0, min.y + 56.0, 6.0, 6.0);
+        flying.points = vec![
+            point(min.x + 100.0, min.y + 56.0),
+            point(min.x + 100.0, min.y + 456.0),
+        ];
+        flying.bridge = true;
+        let roads = Roads::from_parts(&[flying], 32, 512.0);
+        let bridge = patches(tile, &grid, &frame, 32, 512.0, &roads, &mut ground);
+        assert_eq!(bridge.len(), 1);
+        // The deck never dips: every vertex sits at the chord, the drape's
+        // 100 m plus the lifts, also — especially — in the band of the hollow.
+        for v in &bridge[0].positions {
+            assert!(v[1] > 99.5, "deck dips: {}", v[1]);
+        }
+        // The deck of the hollow is shaded as the span it is: normals up.
+        for n in &bridge[0].normals {
+            assert!(n[1] > 0.99, "deck normal off: {n:?}");
+        }
+
+        // The same road without the bridge flag follows the hollow down.
+        let mut grounded = source(min.x + 300.0, min.y + 56.0, 6.0, 6.0);
+        grounded.points = vec![
+            point(min.x + 300.0, min.y + 56.0),
+            point(min.x + 300.0, min.y + 456.0),
+        ];
+        let roads = Roads::from_parts(&[grounded], 32, 512.0);
+        let drape = patches(tile, &grid, &frame, 32, 512.0, &roads, &mut ground);
+        assert_eq!(drape.len(), 1);
+        let lowest = drape[0]
+            .positions
+            .iter()
+            .map(|v| v[1])
+            .fold(f32::MAX, f32::min);
+        assert!(lowest < 86.5, "no hollow followed: {lowest}");
     }
 
     #[test]

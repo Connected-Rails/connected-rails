@@ -302,7 +302,9 @@ impl WaterSource {
 /// carriageways and the farm roads' slabs. The markings are not part of it:
 /// they travel on their own (see [`CenterLine`]), so every combination of
 /// surface and markings is one road, not four kinds of road.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub enum RoadSurface {
     /// `surface=asphalt`, the default — the commonest German carriageway.
     #[default]
@@ -333,15 +335,20 @@ impl RoadSurface {
 /// What runs along the middle of a road. A centre line exists only on a
 /// two-way road wide enough to stripe — a motorway carriageway carries none
 /// (it is one direction; the next carriageway is its neighbour's business),
-/// and a field track is nobody's to overtake on. The dashes are the German
-/// 6 m stroke with a 12 m gap.
+/// and a field track is nobody's to overtake on. The dashes follow the RMS:
+/// the 6 m stroke with a 12 m gap outside built-up areas, the 3 m stroke
+/// with a 6 m gap inside them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum CenterLine {
     /// Nothing — one-way roads, field tracks, the narrowest streets.
     #[default]
     None,
-    /// Gestrichelte Mittellinie — overtaking allowed, the usual case.
+    /// Gestrichelte Mittellinie, außerorts — overtaking allowed, the usual
+    /// case on country roads: 6 m stroke, 12 m gap.
     Dashed,
+    /// Gestrichelte Mittellinie, innerorts — the shorter stroke the RMS
+    /// paints on town streets: 3 m stroke, 6 m gap.
+    DashedUrban,
     /// Durchgezogene Mittellinie — the Überholverbot line.
     Solid,
 }
@@ -352,6 +359,7 @@ impl CenterLine {
         match self {
             CenterLine::None => "none",
             CenterLine::Dashed => "dashed",
+            CenterLine::DashedUrban => "dashed-urban",
             CenterLine::Solid => "solid",
         }
     }
@@ -360,6 +368,7 @@ impl CenterLine {
     pub fn from_id(id: &str) -> Self {
         match id {
             "dashed" => CenterLine::Dashed,
+            "dashed-urban" => CenterLine::DashedUrban,
             "solid" => CenterLine::Solid,
             _ => CenterLine::None,
         }
@@ -407,6 +416,12 @@ pub struct RoadSource {
     /// Whether the solid white edge lines (Seitenlinien) run along the kerbs.
     #[serde(default = "default_edge_lines")]
     pub edge_lines: bool,
+    /// Whether the way flies (`bridge=*` in OSM). Where the ground dips
+    /// below the line between the way's own ends — a valley, a river, a
+    /// cutting — the carriageway holds that line instead of following the
+    /// hollow (see [`crate::roads`]).
+    #[serde(default)]
+    pub bridge: bool,
     /// Free-form tags, lower-case kebab like everywhere else. The OSM import
     /// records the `highway=*` class it matched, so a hand-edited file can
     /// still tell a motorway from a field track.

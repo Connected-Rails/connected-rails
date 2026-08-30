@@ -36,9 +36,18 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   profile over `s`, so one edge changes its type section by section, with the reserved
   name `"default"` returning to the built-in type. The mod runtime resolves the names
   after compile (like signal types) and merges `max_speed` into the one speed profile AI,
-  LZB, HUD and scoring already read; the app skins the ballast bed per section (texture
-  via `mods://`, else the type color) and feeds `roughness` into the sound table as the
-  `Roughness` quantity.
+  LZB, HUD and scoring already read; the app **builds the track the type describes**
+  (`world_render::track`): the ballast bed as the RL 853 trapezoid (4.0 m over the
+  sleeper underside, sides 1:1), skinned per section (texture via `mods://` — the
+  example mod ships CC0 photographs of ballast and sleepers, ambientCG and Poly
+  Haven, tiled through a repeat sampler set on the image once it has arrived — else
+  the type color), the sleepers as real prisms — concrete B 70/B 90 taper, timber 26 × 16 —
+  at the type's spacing, merged into chunk meshes culled at 400 m, and the two rails
+  extruded from the real rolled section of the type's profile (49E1, 54E3, 60E1 at
+  1435 mm gauge, 1:40 inclined), so what the editor and the run show are the DB
+  superstructure forms: B 90 and B 70 on the main lines, wooden sleepers on the jointed
+  branch lines, Feste Fahrbahn where the type says slab. Feeds `roughness` into the sound
+  table as the `Roughness` quantity.
   **Track objects** (`objects/*.ron` in a mod): a 3D object plus the pose its author
   defined relative to the track — lateral offset, rotation about up, height. A line
   places instances at `(edge, s)`; each placement stores concrete values stamped from
@@ -610,8 +619,9 @@ As of 2026-08-28 · `cargo test --workspace`: **805 tests green** · clippy and 
   true footprint — warm raising, cold lowering, grey levelling.
   **The editor shows the world it builds** (`terrain.rs`, `signals.rs`): `T`
   switches the map for the run's own picture — the same `TerrainBuilder`, mesh,
-  splat material and ground textures, the **track as ballast bed and rails**
-  skinned per track type, the line's **trees and scenery objects** as the mods'
+  splat material and ground textures, the **track as ballast bed, sleepers
+  and rails on their real sections** skinned per track type, the line's
+  **trees and scenery objects** as the mods'
   glTF at the placement's own pose (placeholder trees for unnamed ones, objects
   that ask for it on the terrain surface), and the **signal assemblies** on
   their mount points. The shared `world-render` crate is that code, used by
@@ -1365,9 +1375,11 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   handles, because the arc-to-point refit would flatten the clothoids. Re-fitting
   transitions around a moved point belongs to an alignment-aware pass (ch. 15 already
   has the reconstruction).
-- **The track ribbon is not streamed** — one mesh per edge at startup. A whole 100 km line
-  costs a few hundred thousand vertices there; only when the ballast bed gets sleepers and
-  a texture does the same tile logic have to be applied to it.
+- **The track ribbon is not streamed** — the meshes are built per edge at startup. The
+  bed is a real trapezoid now and the sleepers are chunk meshes with a 400 m cull band,
+  but a 100 km line still builds everything at startup (a few hundred thousand vertices of
+  rails and bed alone); the terrain's tile streaming has to reach it before 100 km lines
+  with hundreds of thousands of sleepers stay cheap.
 - **Ground textures are generated noise**, not photographs — the same policy as the
   sound sources (content, not code). Authored textures go into a mod once terrain
   texturing becomes moddable content.

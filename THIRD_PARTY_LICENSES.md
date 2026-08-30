@@ -195,6 +195,29 @@ resell this data directly, even in converted form". Character files that
 `LICENSE` explicitly lets mods sell would put a converted copy of the data in
 exactly that position, so the doubt was left out of the repository.
 
+## Track textures in `mods/example/assets/track/`
+
+The example mod's track textures — the photographed Schotter the ballast bed
+is skinned with, the worn gravel of the jointed branch lines, the weathered
+concrete of the sleepers and slab track, and the creosoted planks the wooden
+sleepers show — are surface scans by two libraries that publish everything
+under the **Creative Commons CC0 1.0 Universal** licence
+(<https://creativecommons.org/publicdomain/zero/1.0/>), so they may be
+copied, modified and redistributed with the repository without attribution.
+CC0 needs none, but the sources are recorded here:
+
+- `mods/example/assets/track/ballast.jpg` and `ballast_nor.jpg` —
+  [Gravel043](https://ambientcg.com/a/Gravel043) from
+  [ambientCG](https://ambientcg.com) (photogrammetry, CC0 1.0).
+- `ballast-worn.jpg` — [Gravel024](https://ambientcg.com/a/Gravel024)
+  (ambientCG, CC0).
+- `sleeper-concrete.jpg` / `sleeper-concrete_nor.jpg` —
+  [concrete_floor_worn_001](https://polyhaven.com/a/concrete_floor_worn_001)
+  (Poly Haven, CC0).
+- `sleeper-wood.jpg` / `sleeper-wood_nor.jpg` —
+  [dark_wooden_planks](https://polyhaven.com/a/dark_wooden_planks)
+  (Poly Haven, CC0).
+
 ## Sounds in `mods/example/assets/sounds/`
 
 Everything the example BR 101's sound table plays that is not a `synth:`

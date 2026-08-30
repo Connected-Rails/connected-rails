@@ -477,7 +477,9 @@ the project); re-run the script after editing it. The sounds the example vehicle
 sound table plays are the exception: recordings in `assets/sounds/` — CC0 cab clicks, and
 driving noise of the real loco cut out of CC BY trainspotting videos and CC0 recordings —
 credited in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and rebuilt from their
-sources by `tools/sounds/br101_sounds.py`.
+sources by `tools/sounds/br101_sounds.py`. The track textures in
+`example/assets/track/` are CC0 as well — a photographed Schotter, weathered concrete
+and creosoted planks, credited in the same file.
 
 ```ron
 model: Some((
@@ -1255,18 +1257,48 @@ magnets.
 A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
 built like, not where it runs:
 
+### Track types
+
+A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
+built like, not where it runs:
+
 ```ron
 (
-    name: "Hauptbahn",
-    texture: Some("example/assets/ballast.png"),  // ballast texture, tiled along the track
+    name: "Hauptbahn (B90)",
+    texture: Some("example/assets/track/ballast.jpg"),  // ballast texture, tiled along the track
+    normal_map: Some("example/assets/track/ballast_nor.jpg"),  // ballast normal map, same tiling
     color: (0.32, 0.30, 0.28),   // untextured fallback; the route editor tints sections its own way
     roughness: 1.0,              // scales the rolling noise; jointed track > 1, slab track < 1
     reverb: 0.0,                 // how much the surroundings ring: 0 = open line, 1 = tunnel
     max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
     lzb: false,                  // true: a line conductor belongs on this track (rule check)
+    // The physical build, in real dimensions. Defaults are the DB Regeloberbau
+    // (60E1 rail on concrete at 60 cm, 30 cm ballast).
+    oberbau: (
+        rail: R60,               // R49 = 49E1/S 49, R54 = 54E3/S 54, R60 = 60E1/UIC 60
+        sleeper: Concrete,       // Concrete | Wood | Slab (Feste Fahrbahn, no ballast)
+        sleeper_length: 2.6,     // across the track [m]; DB standard 2.6 m
+        sleeper_width: 0.32,     // along the track [m] (B 90: 0.32, wood: 0.26)
+        sleeper_height: 0.21,    // [m] (B 70/B 90: 0.21, wood: 0.16)
+        sleeper_spacing: 0.60,   // between sleeper centres [m]; 0.60 = 1667 per km
+        ballast_overhang: 0.70,  // shoulder beyond the sleeper end [m] each side
+        ballast_depth: 0.30,     // ballast under the sleeper [m]
+        sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
+        sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+    ),
     tags: ["main-line", "welded"],  // optional, for the content drawer's filter (see Tags)
 )
 ```
+
+The renderer builds what the `oberbau` says: the two rails are extruded from the real
+rolled section (49E1/S 49, 54E3/S 54, 60E1/UIC 60 — 1435 mm gauge measured 14 mm under the
+rail top, 1:40 inclined toward the gauge), the sleepers stand at the type's spacing and
+shape, and the ballast bed follows the RL 853 cross-section — top width sleeper + twice the
+shoulder, sides falling 1:1. A sleeper texture repeats 2.6 m along the sleeper, so a wood
+plank set reads one plank per sleeper; with `sleeper: "slab"` the bed becomes a concrete
+slab (Feste Fahrbahn) and the sleeper fields mean slab width and thickness instead. The
+detailed sleepers are drawn only up to 400 m — beyond, the bed's texture carries the look.
+A type that names no textures is skinned in its `color`; textures tile every 4 m.
 
 A line assigns types per edge as steps over the arc length, so one edge changes its
 superstructure section by section; the reserved name `"default"` returns to the built-in
@@ -1358,7 +1390,7 @@ run-time cost and no new concept downstream.
 | `speed` | permitted speed [km/h] |
 | `cant` | cant [mm] |
 | `grade` | longitudinal gradient [‰] |
-| `track_type` | superstructure — model, texture, roughness, reverb, speed limit, LZB flag |
+| `track_type` | superstructure — rail section, sleepers, ballast, texture, roughness, reverb, speed limit, LZB flag |
 | `electrification` | what hangs over it (see Electrification), or `"none"` |
 
 In the route editor the areas are **painted**: pick **Mark area**, press on a track and
@@ -1860,7 +1892,7 @@ the selection panel re-dials radius and amount, Delete removes a stroke.
 
 **`T` shows the world itself** (View ▸ Show terrain): the editor draws with the same code
 the run does — the DGM, the strokes, the cutting/embankment at the track, the ground
-textures, the ballast bed and rails of every track type, the line's **trees and scenery
+textures, the ballast bed, sleepers and rails of every track type, the line's **trees and scenery
 objects**, and the **signal assemblies** on their mount points. A wood, a lineside hut or
 a signal mast is judged where it is set instead of only in the run. Terrain and aerial
 imagery lie in the same place, so only one of them is drawn at a time; a module that

@@ -1,0 +1,27 @@
+// The Regeloberbau as the DB laid it into the 2010s: UIC 60 rails on B 70
+// sleepers at 60 cm (W14K-60-B70-1667), good for 230 km/h. A B 70 sleeper is
+// 2.6 m long, up to 30 × 21 cm in section and weighs around 300 kg — the
+// type DB built most of its main lines from before the B 90 took over.
+(
+    name: "Hauptbahn (B70)",
+    texture: Some("example/assets/track/ballast.jpg"),
+    normal_map: Some("example/assets/track/ballast_nor.jpg"),
+    color: (0.33, 0.31, 0.29),
+    roughness: 1.0,
+    reverb: 0.0,
+    max_speed: 200.0,
+    lzb: false,
+    oberbau: (
+        rail: R60,
+        sleeper: Concrete,
+        sleeper_length: 2.6,
+        sleeper_width: 0.30,
+        sleeper_height: 0.21,
+        sleeper_spacing: 0.60,
+        ballast_overhang: 0.70,
+        ballast_depth: 0.30,
+        sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
+        sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+    ),
+    tags: ["main-line", "welded", "b70"],
+)

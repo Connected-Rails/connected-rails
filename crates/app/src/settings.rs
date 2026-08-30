@@ -9,19 +9,26 @@
 //!
 //! **Every setting applies the moment it is dialled.** Language, volume, HUD and look
 //! sensitivity are read where they are used; window mode and vertical sync go onto the
-//! window; view distance, shadows, bloom, anti-aliasing and the shadow and mist quality
-//! reach into a running scene through `apply_scene`; the texture quality generates the
-//! ground textures again into the handles the terrain already holds. A setting that needs
-//! a restart is an excuse, and it would go stale the moment there is a pause menu.
+//! window; view distance, shadows, bloom, anti-aliasing, upscaling and the shadow and
+//! mist quality reach into a running scene through `apply_scene`; the texture quality
+//! generates the ground textures again into the handles the terrain already holds. A
+//! setting that needs a restart is an excuse, and it would go stale the moment there is
+//! a pause menu.
 
 use std::sync::OnceLock;
 
+#[cfg(feature = "dlss")]
+use bevy::anti_alias::dlss::{
+    Dlss, DlssPerfQualityMode, DlssProjectId, DlssSuperResolutionSupported,
+};
 use bevy::anti_alias::fxaa::{Fxaa, Sensitivity};
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
-use bevy::ecs::system::EntityCommands;
+use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
+use bevy::ecs::system::{EntityCommands, SystemParam};
 use bevy::light::DirectionalLightShadowMap;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::camera::{MipBias, TemporalJitter};
 use bevy::render::view::Msaa;
 use bevy::settings::{
     ReflectSettingsGroup, SaveSettings, SaveSettingsSync, SettingsGroup, SettingsPlugin,
@@ -89,6 +96,14 @@ pub struct Graphics {
     /// threshold for FXAA. One knob for all three, because the question the player
     /// is answering is the same one.
     pub aa_quality: Quality,
+    /// Temporal upscaling of the cab camera: the world is drawn below the screen's
+    /// resolution and reconstructed from that — the biggest lever there is on weak
+    /// hardware. Off draws one-to-one. An upscaler brings its own edge smoothing,
+    /// so it switches MSAA off while it is on.
+    pub upscaling: Upscaling,
+    /// The fraction of the picture that is actually drawn while upscaling is on:
+    /// Low the least, High the most.
+    pub upscaling_quality: Quality,
 }
 
 impl Default for Graphics {
@@ -109,6 +124,10 @@ impl Default for Graphics {
             // page had the row comes up looking the way it did.
             anti_aliasing: AntiAliasing::Msaa,
             aa_quality: Quality::Medium,
+            // Upscaling is a taste and a trade — softer edges for speed — so it starts
+            // off, with the picture exactly as it was drawn.
+            upscaling: Upscaling::Off,
+            upscaling_quality: Quality::Medium,
         }
     }
 }
@@ -164,6 +183,78 @@ impl AntiAliasing {
             _ => quality.key(),
         }
     }
+}
+
+/// How the picture is reconstructed above the resolution it was drawn at. Both
+/// techniques are temporal: they accumulate a history, read the depth and
+/// motion-vector prepasses, and smooth the edges themselves while they are at it —
+/// which is why an upscaler on the camera switches MSAA off.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Default, PartialEq)]
+pub enum Upscaling {
+    #[default]
+    Off,
+    /// AMD FidelityFX Super Resolution 3 — runs wherever the simulator renders.
+    Fsr,
+    /// NVIDIA Deep Learning Super Sampling — an RTX card on Vulkan, and a simulator
+    /// built with the `dlss` cargo feature, which is why the settings page offers
+    /// this step only when [`UpscalingSupport`] says it can be honoured.
+    Dlss,
+}
+
+impl Upscaling {
+    /// The steps the settings page cycles through: only what this machine can
+    /// actually run.
+    pub fn options(support: UpscalingSupport) -> &'static [Upscaling] {
+        match (support.fsr, support.dlss) {
+            (true, true) => &[Upscaling::Off, Upscaling::Fsr, Upscaling::Dlss],
+            (true, false) => &[Upscaling::Off, Upscaling::Fsr],
+            (false, true) => &[Upscaling::Off, Upscaling::Dlss],
+            (false, false) => &[Upscaling::Off],
+        }
+    }
+
+    /// One step through the offered options, wrapping. A stored value from another
+    /// machine — or from a build with the `dlss` feature — starts again from the
+    /// first option, so the row never sits on a choice it cannot honour.
+    pub fn cycle_in(self, options: &[Upscaling], dir: i32) -> Self {
+        cycle(options, self, dir)
+    }
+
+    /// What this step is called on the settings page.
+    pub fn key(self) -> &'static str {
+        match self {
+            Upscaling::Off => "set-upscaling-off",
+            Upscaling::Fsr => "set-upscaling-fsr",
+            Upscaling::Dlss => "set-upscaling-dlss",
+        }
+    }
+}
+
+/// Which upscaling techniques this machine can run — decided once the renderer is
+/// up (`fsr::FsrSupported` appears, and DLSS's resource only when the driver says
+/// yes) and kept current by a watcher system. The menu cycles only through what is
+/// here, and `apply_upscaling` renders anything else as off.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UpscalingSupport {
+    pub fsr: bool,
+    pub dlss: bool,
+}
+
+/// The graphics settings and what the machine can run of them, as one parameter.
+/// `setup` sits at Bevy's limit of sixteen system parameters, so the support
+/// resource rides in with the settings rather than as a parameter of its own.
+#[derive(SystemParam)]
+pub struct GraphicsRead<'w> {
+    pub graphics: Res<'w, Graphics>,
+    pub upscaling: Res<'w, UpscalingSupport>,
+}
+
+/// The same pair for the menu, which writes the settings back.
+#[derive(SystemParam)]
+pub struct GraphicsWrite<'w> {
+    pub graphics: ResMut<'w, Graphics>,
+    pub upscaling: Res<'w, UpscalingSupport>,
 }
 
 /// Three steps of "how hard does this work", shared by everything on the page that has
@@ -297,8 +388,10 @@ fn cycle<T: Copy + PartialEq>(order: &[T], value: T, dir: i32) -> T {
 pub fn apply_anti_aliasing(camera: &mut EntityCommands, graphics: &Graphics) {
     // MSAA is a required component of every camera, so it is set rather than added:
     // the other two techniques want it off, or they smooth an already smoothed edge.
-    camera.insert(match graphics.anti_aliasing {
-        AntiAliasing::Msaa => graphics.aa_quality.msaa(),
+    // An upscaler goes further — its temporal reconstruction *is* the edge smoothing,
+    // and its compute write wants the single-sample target.
+    camera.insert(match (graphics.anti_aliasing, graphics.upscaling) {
+        (AntiAliasing::Msaa, Upscaling::Off) => graphics.aa_quality.msaa(),
         _ => Msaa::Off,
     });
     match graphics.anti_aliasing {
@@ -318,6 +411,54 @@ pub fn apply_anti_aliasing(camera: &mut EntityCommands, graphics: &Graphics) {
             camera.remove::<Fxaa>().remove::<Smaa>();
         }
     }
+}
+
+/// Puts the chosen upscaling on the cab camera — `apply_anti_aliasing`'s sibling,
+/// called from the same two places (`setup` and `apply_scene`). A technique the
+/// machine cannot run renders as off; the prepasses that exist only to feed the
+/// upscalers come off with them.
+pub fn apply_upscaling(
+    camera: &mut EntityCommands,
+    graphics: &Graphics,
+    support: UpscalingSupport,
+) {
+    #[cfg(feature = "dlss")]
+    let dlss_wanted = graphics.upscaling == Upscaling::Dlss && support.dlss;
+    #[cfg(not(feature = "dlss"))]
+    let dlss_wanted = false;
+    let fsr_wanted = graphics.upscaling == Upscaling::Fsr && support.fsr;
+
+    if fsr_wanted {
+        #[cfg(feature = "dlss")]
+        camera.remove::<Dlss>();
+        camera.insert(crate::fsr::Fsr {
+            quality: graphics.upscaling_quality,
+        });
+    } else if dlss_wanted {
+        camera.remove::<crate::fsr::Fsr>();
+        #[cfg(feature = "dlss")]
+        insert_dlss(camera, graphics.upscaling_quality);
+    } else {
+        camera.remove::<crate::fsr::Fsr>();
+        #[cfg(feature = "dlss")]
+        camera.remove::<Dlss>();
+        camera.remove::<(DepthPrepass, MotionVectorPrepass, TemporalJitter, MipBias)>();
+    }
+}
+
+/// The DLSS component for a quality step. NVIDIA's own preset names — Performance,
+/// Balanced, Quality — are the same question the page's Low … High answers.
+#[cfg(feature = "dlss")]
+fn insert_dlss(camera: &mut EntityCommands, quality: Quality) {
+    camera.insert(Dlss {
+        perf_quality_mode: match quality {
+            Quality::Low => DlssPerfQualityMode::Performance,
+            Quality::Medium => DlssPerfQualityMode::Balanced,
+            Quality::High => DlssPerfQualityMode::Quality,
+        },
+        reset: false,
+        ..default()
+    });
 }
 
 /// The mixer. One knob for now — the sim has a single output bus.
@@ -408,6 +549,43 @@ impl Default for Gameplay {
     }
 }
 
+/// Decides whether this machine may touch NVIDIA's NGX at all, and puts down the
+/// DLSS project id when it may. Returns the decision for `main`, which leaves
+/// `DefaultPlugins`' own `DlssInitPlugin` out when the answer is no.
+///
+/// The gate is the GPU vendor, and it has to exist: the NGX SDK does not fail on
+/// a card that is not NVIDIA's — it segfaults, at `DlssSdk::new`, long before any
+/// setting could be read (`DlssPlugin::finish`). Without the init plugin no NGX
+/// callback reaches the instance, the supported-resource never appears, the menu
+/// does not offer the step, and an upscaling setting of `Dlss` renders as off.
+///
+/// `main` calls this right ahead of `DefaultPlugins`; without the `dlss` feature
+/// there is nothing to prepare and the answer is always no.
+pub fn pre_render_plugins(app: &mut App) -> bool {
+    #[cfg(feature = "dlss")]
+    {
+        let nvidia = bevy::tasks::block_on(
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle())
+                .enumerate_adapters(wgpu::Backends::VULKAN),
+        )
+        .iter()
+        .any(|adapter| adapter.get_info().vendor == 0x10de);
+        if nvidia {
+            // Names the app to NVIDIA's SDK; fixed, because the id is meant to be
+            // the same for every install of the simulator.
+            app.insert_resource(DlssProjectId(uuid::uuid!(
+                "d60684ef-0a93-415a-8712-33a305462cd3"
+            )));
+        }
+        nvidia
+    }
+    #[cfg(not(feature = "dlss"))]
+    {
+        let _ = app;
+        false
+    }
+}
+
 /// Loads the settings and keeps window, mixer, language and the file in step.
 ///
 /// Add this **before** `DefaultPlugins`: loading happens while the plugin is built,
@@ -426,8 +604,10 @@ pub fn plugin(app: &mut App) {
         .register_type::<Gameplay>()
         .register_type::<HudMode>()
         .register_type::<AntiAliasing>()
+        .register_type::<Upscaling>()
         .register_type::<Quality>()
         .register_type::<WindowStyle>()
+        .init_resource::<UpscalingSupport>()
         .add_plugins(SettingsPlugin::new(APP_ID));
     // `TRAINSIM_LANG` stays the outermost override: a scripted or CI run sets it and
     // must not be steered by whatever the user last picked in the menu. Without it the
@@ -439,11 +619,18 @@ pub fn plugin(app: &mut App) {
         Update,
         (
             apply_window.run_if(resource_changed::<Graphics>),
-            apply_scene.run_if(resource_changed::<Graphics>),
+            // The support resource arrives a frame after the renderer is up; a change
+            // to it re-applies the scene, so an upscaler the machine can run reaches
+            // the camera without the setting being touched again.
+            apply_scene
+                .run_if(resource_changed::<Graphics>.or_else(resource_changed::<UpscalingSupport>)),
             // Regenerating three textures is not something to do on a frame that only
             // moved a slider, so this one waits for its own setting.
             apply_ground_textures.run_if(texture_quality_changed),
             apply_audio.run_if(resource_changed::<Audio>),
+            watch_upscaling_support,
+            #[cfg(feature = "dlss")]
+            watch_dlss_support,
             save_changed.run_if(
                 resource_changed::<Graphics>
                     .or_else(resource_changed::<Audio>)
@@ -460,6 +647,30 @@ fn texture_quality_changed(graphics: Res<Graphics>, mut last: Local<Option<Quali
     let changed = *last != Some(graphics.texture_quality) && last.is_some();
     *last = Some(graphics.texture_quality);
     changed
+}
+
+/// Keeps the FSR half of [`UpscalingSupport`] honest: `fsr::FsrSupported` appears once
+/// the renderer has built the upscaler's pipelines.
+fn watch_upscaling_support(
+    mut support: ResMut<UpscalingSupport>,
+    fsr: Option<Res<crate::fsr::FsrSupported>>,
+) {
+    if support.fsr != fsr.is_some() {
+        support.fsr = fsr.is_some();
+    }
+}
+
+/// Keeps the DLSS half of [`UpscalingSupport`] honest: the resource exists only when
+/// the simulator was built with the `dlss` feature *and* the driver on this machine
+/// supports it.
+#[cfg(feature = "dlss")]
+fn watch_dlss_support(
+    mut support: ResMut<UpscalingSupport>,
+    dlss: Option<Res<DlssSuperResolutionSupported>>,
+) {
+    if support.dlss != dlss.is_some() {
+        support.dlss = dlss.is_some();
+    }
 }
 
 /// The language the operating system asks for, frozen at startup.
@@ -546,14 +757,16 @@ fn apply_window(graphics: Res<Graphics>, mut window: Query<&mut Window, With<Pri
     }
 }
 
-/// View distance, bloom and anti-aliasing into a scene that is already running. Every parameter is
+/// View distance, upscaling, bloom and anti-aliasing into a scene that is already running. Every parameter is
 /// optional because none of it exists while the menu is up — the world is built on
 /// leaving it.
 ///
 /// Shadows need nothing here: `update_daylight` re-reads the setting every frame anyway,
 /// because it also has to switch them off at night and under an overcast sky.
+#[allow(clippy::too_many_arguments)]
 fn apply_scene(
     graphics: Res<Graphics>,
+    support: Res<UpscalingSupport>,
     mut commands: Commands,
     view: Option<ResMut<ViewDistance>>,
     streamer: Option<ResMut<TerrainStreamer>>,
@@ -594,6 +807,9 @@ fn apply_scene(
             }
             _ => {}
         }
+        // Upscaling first: the anti-aliasing that follows reads it, because a
+        // temporal upscaler on the camera wants MSAA off.
+        apply_upscaling(&mut commands.entity(camera), &graphics, *support);
         apply_anti_aliasing(&mut commands.entity(camera), &graphics);
     }
 }
@@ -682,6 +898,7 @@ mod tests {
     fn the_view_distance_reaches_a_running_scene() {
         let mut app = App::new();
         app.insert_resource(Graphics::default())
+            .insert_resource(UpscalingSupport::default())
             .insert_resource(ViewDistance(0.0))
             .add_systems(Update, apply_scene.run_if(resource_changed::<Graphics>));
         app.update();
@@ -694,6 +911,52 @@ mod tests {
         app.world_mut().resource_mut::<Graphics>().view_distance = 9_000.0;
         app.update();
         assert_eq!(app.world().resource::<ViewDistance>().0, 9_000.0);
+    }
+
+    /// Upscaling starts off, and the row only ever cycles through what the machine
+    /// can honour — a stored `Dlss` from a `dlss` build lands back inside the list
+    /// on the first press, and a one-option list stays where it is.
+    #[test]
+    fn upscaling_cycles_through_the_offered_options_only() {
+        let graphics = Graphics::default();
+        assert_eq!(graphics.upscaling, Upscaling::Off);
+        assert_eq!(graphics.upscaling_quality, Quality::Medium);
+
+        let both = [Upscaling::Off, Upscaling::Fsr, Upscaling::Dlss];
+        assert_eq!(Upscaling::Off.cycle_in(&both, 1), Upscaling::Fsr);
+        assert_eq!(Upscaling::Fsr.cycle_in(&both, 1), Upscaling::Dlss);
+        assert_eq!(Upscaling::Dlss.cycle_in(&both, -1), Upscaling::Fsr);
+        assert_eq!(Upscaling::Fsr.cycle_in(&both, -1), Upscaling::Off);
+
+        // A value the list does not carry is read as sitting on the first, so the
+        // first press lands inside the list either way.
+        let without_dlss = [Upscaling::Off, Upscaling::Fsr];
+        assert_eq!(Upscaling::Dlss.cycle_in(&without_dlss, 1), Upscaling::Fsr);
+        assert_eq!(Upscaling::Dlss.cycle_in(&without_dlss, -1), Upscaling::Fsr);
+
+        let only_off = [Upscaling::Off];
+        assert_eq!(Upscaling::Off.cycle_in(&only_off, 1), Upscaling::Off);
+        assert_eq!(Upscaling::Off.cycle_in(&only_off, -1), Upscaling::Off);
+
+        // The option list itself follows what the machine can run.
+        assert_eq!(
+            Upscaling::options(UpscalingSupport::default()),
+            &[Upscaling::Off]
+        );
+        assert_eq!(
+            Upscaling::options(UpscalingSupport {
+                fsr: true,
+                dlss: false
+            }),
+            &[Upscaling::Off, Upscaling::Fsr]
+        );
+        assert_eq!(
+            Upscaling::options(UpscalingSupport {
+                fsr: true,
+                dlss: true
+            }),
+            &[Upscaling::Off, Upscaling::Fsr, Upscaling::Dlss]
+        );
     }
 
     /// The frame cap keeps its rhythm while it is met and starts afresh when it is

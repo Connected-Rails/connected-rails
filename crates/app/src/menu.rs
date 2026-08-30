@@ -314,6 +314,8 @@ enum Setting {
     MistQuality,
     AntiAliasing,
     AaQuality,
+    Upscaling,
+    UpscalingQuality,
     Window,
     VSync,
     MaxFps,
@@ -458,6 +460,8 @@ const SETTINGS: [(&str, &[Setting]); 4] = [
             Setting::MistQuality,
             Setting::AntiAliasing,
             Setting::AaQuality,
+            Setting::Upscaling,
+            Setting::UpscalingQuality,
             Setting::Window,
             Setting::VSync,
             Setting::MaxFps,
@@ -484,6 +488,8 @@ impl Setting {
             Setting::MistQuality => "set-mist-quality",
             Setting::AntiAliasing => "set-aa",
             Setting::AaQuality => "set-aa-quality",
+            Setting::Upscaling => "set-upscaling",
+            Setting::UpscalingQuality => "set-upscaling-quality",
             Setting::Window => "set-window",
             Setting::MaxFps => "set-max-fps",
             Setting::VSync => "set-vsync",
@@ -512,6 +518,8 @@ impl Setting {
             Setting::VSync => Control::Toggle(graphics.vsync),
             Setting::AntiAliasing
             | Setting::AaQuality
+            | Setting::Upscaling
+            | Setting::UpscalingQuality
             | Setting::ShadowQuality
             | Setting::MistQuality
             | Setting::TextureQuality
@@ -547,6 +555,14 @@ impl Setting {
             // MSAA counts its samples, off has nothing to be dialled at all, and the
             // other two are simply Low … High (`AntiAliasing::level_key`).
             Setting::AaQuality => t!(graphics.anti_aliasing.level_key(graphics.aa_quality)),
+            Setting::Upscaling => t!(graphics.upscaling.key()),
+            // As with the quality under the anti-aliasing: a dash where the thing it
+            // belongs to is off, because a step that changes nothing should not read
+            // like one that does.
+            Setting::UpscalingQuality => t!(dimmed(
+                graphics.upscaling != settings::Upscaling::Off,
+                graphics.upscaling_quality
+            )),
             Setting::ShadowQuality => t!(dimmed(graphics.shadows, graphics.shadow_quality)),
             Setting::MistQuality => t!(dimmed(graphics.mist, graphics.mist_quality)),
             Setting::TextureQuality => t!(graphics.texture_quality.key()),
@@ -659,6 +675,7 @@ fn change(
     graphics: &mut Graphics,
     audio: &mut Audio,
     gameplay: &mut Gameplay,
+    support: &settings::UpscalingSupport,
 ) {
     use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
     match setting {
@@ -671,6 +688,15 @@ fn change(
         Setting::Mist => graphics.mist = !graphics.mist,
         Setting::AntiAliasing => graphics.anti_aliasing = graphics.anti_aliasing.cycle(dir),
         Setting::AaQuality => graphics.aa_quality = graphics.aa_quality.cycle(dir),
+        // The upscaling row only walks through what this machine can run.
+        Setting::Upscaling => {
+            graphics.upscaling = graphics
+                .upscaling
+                .cycle_in(settings::Upscaling::options(*support), dir);
+        }
+        Setting::UpscalingQuality => {
+            graphics.upscaling_quality = graphics.upscaling_quality.cycle(dir);
+        }
         Setting::ShadowQuality => graphics.shadow_quality = graphics.shadow_quality.cycle(dir),
         Setting::MistQuality => graphics.mist_quality = graphics.mist_quality.cycle(dir),
         Setting::TextureQuality => graphics.texture_quality = graphics.texture_quality.cycle(dir),
@@ -1115,7 +1141,7 @@ pub fn menu(
     mut selection: ResMut<Selection>,
     mut manager: ResMut<ModManager>,
     mut mods: ResMut<Mods>,
-    mut graphics: ResMut<Graphics>,
+    mut settings: settings::GraphicsWrite,
     mut audio: ResMut<Audio>,
     mut gameplay: ResMut<Gameplay>,
     mut rebind: Rebind,
@@ -1149,7 +1175,7 @@ pub fn menu(
             overlay,
             &mods.0,
             &selection,
-            &graphics,
+            &settings.graphics,
             &audio,
             &gameplay,
             &rebind.binds,
@@ -1201,7 +1227,14 @@ pub fn menu(
                         go(&mut menu, Page::Controls);
                     }
                 } else {
-                    change(setting, dir, &mut graphics, &mut audio, &mut gameplay);
+                    change(
+                        setting,
+                        dir,
+                        &mut settings.graphics,
+                        &mut audio,
+                        &mut gameplay,
+                        &settings.upscaling,
+                    );
                 }
             }
         } else if menu.page == Page::Run && selection.service.is_none() {
@@ -1318,7 +1351,7 @@ pub fn menu(
         overlay,
         &mods.0,
         &selection,
-        &graphics,
+        &settings.graphics,
         &audio,
         &gameplay,
         &rebind.binds,
@@ -2985,6 +3018,7 @@ mod tests {
             .init_resource::<Graphics>()
             .init_resource::<Audio>()
             .init_resource::<Gameplay>()
+            .init_resource::<settings::UpscalingSupport>()
             .init_resource::<Binds>()
             .init_resource::<Bindings>()
             .init_resource::<Fonts>()
@@ -3327,6 +3361,7 @@ mod tests {
             .init_resource::<Graphics>()
             .init_resource::<Audio>()
             .init_resource::<Gameplay>()
+            .init_resource::<settings::UpscalingSupport>()
             .init_resource::<Binds>()
             .init_resource::<Bindings>()
             .init_resource::<Fonts>()
@@ -3554,11 +3589,19 @@ mod tests {
     #[test]
     fn every_setting_stays_inside_its_range() {
         let (mut graphics, mut audio, mut gameplay) = default();
+        let support = settings::UpscalingSupport::default();
         for (_, group) in SETTINGS {
             for setting in group {
                 for dir in [-1, 1] {
                     for _ in 0..40 {
-                        change(*setting, dir, &mut graphics, &mut audio, &mut gameplay);
+                        change(
+                            *setting,
+                            dir,
+                            &mut graphics,
+                            &mut audio,
+                            &mut gameplay,
+                            &support,
+                        );
                     }
                 }
             }

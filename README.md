@@ -152,6 +152,8 @@ built world down with it, so the next one starts from an empty world.
 | | `texture_quality` | Size and filtering of the generated ground textures: `Low` 128², `Medium` 256², `High` 512². |
 | | `anti_aliasing` | How the edges are smoothed: `Off`, `Fxaa`, `Smaa` or `Msaa`. |
 | | `aa_quality` | How hard that works: `Low`, `Medium` or `High` — 2×/4×/8× for MSAA, the preset for the other two. |
+| | `upscaling` | Temporal upscaling of the picture: `Off`, `Fsr` (any GPU) or `Dlss` (an NVIDIA RTX card on Vulkan — offered only where it can run, and only in a simulator built with the `dlss` cargo feature, which the released Windows and Linux builds are). The page offers a technique only where it can run. An upscaler smooths the edges itself, so it takes MSAA off the camera while it is on. |
+| | `upscaling_quality` | How much of the picture is really drawn: `Low` half the edge in each axis, `Medium` 59 %, `High` two thirds. |
 | | `window` | `Windowed`, `Borderless` over the whole monitor, or exclusive `Fullscreen`. |
 | | `vsync` | Caps the frame rate at the monitor's. |
 | | `max_fps` | Frames a second the simulator holds itself to, 30 … 240; the top step (250) is no cap at all. |

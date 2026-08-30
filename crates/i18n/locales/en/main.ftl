@@ -965,6 +965,18 @@ action-import-forest = Import forest…
 filter-overpass-json = Overpass extract (JSON)
 status-forest-imported = { $count } trees baked from { $areas } forest areas — each one stays individually editable
 status-forest-import-empty = { $file }: no landuse=forest or natural=wood ways found
+action-import-water = Import water…
+status-water-imported = { $count } water bodies imported — the surfaces are laid over the terrain where the height data puts them
+status-water-imported-unnamed = { $count } water bodies imported ({ $named } of them named) — the surfaces are laid over the terrain where the height data puts them
+status-water-import-empty = { $file }: no natural=water, waterway=riverbank or landuse=reservoir ways found
+sel-water-summary = Water { $index }
+sel-water-named = { $name } — water { $index }
+water-name = Name
+water-name-hint = What the body is called in the file and this panel; the OSM import fills it from the map
+water-area = Area: { $area } m²
+water-tags = Tags: { $tags }
+water-hint = Picked by clicking its surface — the water lies where the height data puts it; the shape is edited in the file or by importing anew
+water-hint-islands = Picked by clicking its surface, islands excluded — the water lies where the height data puts it; the shape is edited in the file or by importing anew ({ $islands } islands)
 action-import-markers = Import reference markers…
 action-delete-layer = Delete layer
 status-markers-imported = { $count } reference markers in { $layers } layers — hide or delete them by layer

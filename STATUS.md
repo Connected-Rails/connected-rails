@@ -1581,11 +1581,24 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
    - **Point features onto `TreeSource`** (object at lat/lon with yaw and scale — the
      primitive exists, only the name says "tree"): single trees, power towers, wind turbines,
      towers and steeples, lamps. Cheapest layer, no format change.
+   - **Water is in place** — "File ▸ Import water…" reads `natural=water`,
+     `waterway=riverbank`/`dock` and `landuse=reservoir`/`basin` polygons into
+     `WaterSource`s (`content::water`), multipolygon relations included: outer
+     members chain into rings (a braided river becomes one body per braid), inner
+     members become islands the surface goes around. The surfaces are cut to the
+     terrain tiles and laid over the raw elevation data at the level the shoreline
+     samples give, so a lake settles flat and a river follows its fall, and an
+     embankment across a valley holds the water back like a dam. The shader
+     (`world_render::water`) makes the waves out of the wind and the rain, the
+     depth-coloured body out of the shoreline level minus the bed, and the
+     reflection out of the sky the atmosphere already computes. Clicking a surface
+     in the editor selects its body — waterline outlined, name editable, centre and
+     delete in the panel; the shape itself is the file's or a fresh import's.
+     Not yet: a hand-editable water level, and vertex handles like the fields have.
    - **Areas and bands onto a fourth splat channel** — `terrain::splat_weights` already
-     carries `[grass, rock, gravel, 1.0]`, the fourth component is free. Water
-     (`natural=water`, `waterway=riverbank`), roads (`highway=*` buffered by their width),
-     farmland and meadow paint into it instead of becoming meshes: one texture in the
-     extension shader, no water renderer, no road ribbon.
+     carries `[grass, rock, gravel, 1.0]`, the fourth component is free. Roads
+     (`highway=*` buffered by their width), farmland and meadow paint into it instead of
+     becoming meshes: one texture in the extension shader, no road ribbon.
    - **Buildings** (`building=*`, `building:levels`): footprint extruded into a block model —
      the one layer that genuinely needs new geometry, and the biggest visual gain.
    - **Reference markers are in place** (see the editor above) — level crossings, platforms,

@@ -34,6 +34,7 @@ pub mod people;
 pub mod precipitation;
 pub mod scatter;
 pub mod sky;
+pub mod water;
 pub mod weather;
 pub mod windscreen;
 
@@ -50,6 +51,7 @@ pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, WorldCatalog,
     materialise_trees,
 };
+pub use water::{WaterMaterial, WaterMaterials, WaterSurface, spawn_waters};
 
 /// Registers the splat shader and its material. Both programs add it after
 /// `DefaultPlugins` — the embedded registry only exists once the asset plugin
@@ -62,6 +64,7 @@ impl Plugin for WorldRenderPlugin {
         embedded_asset!(app, "fields.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<farmland::FieldMaterial>::default())
+            .add_plugins(water::plugin)
             .init_resource::<farmland::FieldMaterials>()
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()

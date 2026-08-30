@@ -966,6 +966,18 @@ action-import-forest = Wald importieren…
 filter-overpass-json = Overpass-Auszug (JSON)
 status-forest-imported = { $count } Bäume aus { $areas } Waldflächen gesetzt — jeder bleibt einzeln editierbar
 status-forest-import-empty = { $file }: keine Wege mit landuse=forest oder natural=wood gefunden
+action-import-water = Wasser importieren…
+status-water-imported = { $count } Wasserflächen importiert — die Oberflächen legen sich dorthin, wo sie die Höhendaten legen
+status-water-imported-unnamed = { $count } Wasserflächen importiert ({ $named } davon benannt) — die Oberflächen legen sich dorthin, wo sie die Höhendaten legen
+status-water-import-empty = { $file }: keine Wege mit natural=water, waterway=riverbank oder landuse=reservoir gefunden
+sel-water-summary = Wasserfläche { $index }
+sel-water-named = { $name } — Wasserfläche { $index }
+water-name = Name
+water-name-hint = Wie die Fläche in der Datei und diesem Panel heißt; der OSM-Import übernimmt es aus der Karte
+water-area = Fläche: { $area } m²
+water-tags = Tags: { $tags }
+water-hint = Durch Klick auf die Oberfläche gewählt — das Wasser liegt, wo es die Höhendaten legen; die Form steht in der Datei oder kommt aus einem neuen Import
+water-hint-islands = Durch Klick auf die Oberfläche gewählt, Inseln ausgenommen — das Wasser liegt, wo es die Höhendaten legen; die Form steht in der Datei oder kommt aus einem neuen Import ({ $islands } Inseln)
 action-import-markers = Referenzmarker importieren…
 action-delete-layer = Layer löschen
 status-markers-imported = { $count } Referenzmarker in { $layers } Layern — layerweise ausblendbar und löschbar

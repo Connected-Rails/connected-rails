@@ -125,13 +125,15 @@ fn handles(
             ))
         }
         // An edge is dragged by its support points, which it already has; a
-        // walkway is reshaped vertex by vertex with its own tool.
+        // walkway is reshaped vertex by vertex with its own tool; a water
+        // body has no handles — it is picked whole, and reshaped in the file.
         Selection::Edge(_)
         | Selection::TrackArea(_)
         | Selection::EnvelopePoint(_)
         | Selection::WalkPath(_)
         | Selection::WalkArea(_)
         | Selection::Field(_)
+        | Selection::Water(_)
         | Selection::None => None,
     }
 }
@@ -339,6 +341,7 @@ fn apply(line: &mut Line, selection: Selection, axis: Axis, dir: DVec3, delta: f
         | Selection::WalkPath(_)
         | Selection::WalkArea(_)
         | Selection::Field(_)
+        | Selection::Water(_)
         | Selection::None => {}
     }
 }

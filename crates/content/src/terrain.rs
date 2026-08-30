@@ -157,6 +157,10 @@ pub struct TerrainTile {
     /// [`crate::farmland`]) — draped on this tile's own ground, so it follows
     /// every hollow the terrain has.
     pub fields: Vec<crate::farmland::FieldPatch>,
+    /// The water on this tile (see [`crate::water`]) — the surfaces of the
+    /// lakes and rivers whose waterline reaches it, standing at the height
+    /// the elevation data gives them.
+    pub waters: Vec<crate::water::WaterPatch>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
@@ -818,6 +822,7 @@ pub struct TerrainBuilder {
     scenery: Scenery,
     crowd: Crowd,
     fields: crate::farmland::Fields,
+    waters: crate::water::Waters,
     edits: TerrainEdits,
 }
 
@@ -831,6 +836,7 @@ impl TerrainBuilder {
             scenery: Scenery::default(),
             crowd: Crowd::default(),
             fields: crate::farmland::Fields::default(),
+            waters: crate::water::Waters::default(),
             edits: TerrainEdits::default(),
         }
     }
@@ -858,10 +864,26 @@ impl TerrainBuilder {
         self
     }
 
-    /// Terrain brush strokes of the line — tiles built afterwards are shaped
-    /// by them.
+    /// The farmland of the line — tiles built afterwards carry it, draped on
+    /// their ground.
     pub fn with_fields(mut self, fields: crate::farmland::Fields) -> Self {
         self.fields = fields;
+        self
+    }
+
+    /// The bodies of water of the line — tiles built afterwards carry their
+    /// surfaces. The shoreline levels are sampled here, once, against this
+    /// builder's elevation data; an already prepared set is left alone, so
+    /// the caller can hand the same waters from one builder generation to
+    /// the next.
+    pub fn with_waters(mut self, mut waters: crate::water::Waters) -> Self {
+        waters.prepare(
+            &self.sources,
+            self.options.zone,
+            self.options.geoid_offset,
+            self.options.fallback_height,
+        );
+        self.waters = waters;
         self
     }
 
@@ -883,6 +905,7 @@ impl TerrainBuilder {
         vegetation: Vegetation,
         scenery: Scenery,
         fields: crate::farmland::Fields,
+        waters: crate::water::Waters,
         edits: TerrainEdits,
     ) -> Self {
         Self {
@@ -893,10 +916,19 @@ impl TerrainBuilder {
             scenery: Scenery::default(),
             crowd: Crowd::default(),
             fields,
+            waters: crate::water::Waters::default(),
             edits,
         }
         .with_vegetation(vegetation)
         .with_scenery(scenery)
+        .with_waters(waters)
+    }
+
+    /// The waters the line carries, with their sampled shoreline levels —
+    /// what the editor hands from one builder generation to the next when
+    /// the water list has not changed.
+    pub fn waters(&self) -> &crate::water::Waters {
+        &self.waters
     }
 
     /// The 3D object names of the vegetation ([`Tree::object`] indexes them).
@@ -948,6 +980,7 @@ impl TerrainBuilder {
             &self.scenery,
             &self.crowd,
             &self.fields,
+            &self.waters,
             &self.edits,
             stats,
         )
@@ -994,14 +1027,14 @@ impl TerrainBuilder {
 /// the sheet the last point fell on answers the next one nearly always — the
 /// sampler keeps it per source and goes back through the source's lock only
 /// when a point leaves it.
-struct Sampler<'a> {
+pub(crate) struct Sampler<'a> {
     sources: Vec<&'a TerrainSource>,
     hot: Vec<Option<Arc<HeightTile>>>,
     grid_zone: u8,
 }
 
 impl<'a> Sampler<'a> {
-    fn new(sources: impl IntoIterator<Item = &'a TerrainSource>, grid_zone: u8) -> Self {
+    pub(crate) fn new(sources: impl IntoIterator<Item = &'a TerrainSource>, grid_zone: u8) -> Self {
         let sources: Vec<&TerrainSource> = sources.into_iter().collect();
         Self {
             hot: vec![None; sources.len()],
@@ -1014,7 +1047,7 @@ impl<'a> Sampler<'a> {
     /// source in the grid zone is asked in UTM directly; one in another zone
     /// through the geodetic detour (`lat`/`lon` are the same point, already
     /// converted).
-    fn height(&mut self, p: DVec2, lat: f64, lon: f64) -> Option<f64> {
+    pub(crate) fn height(&mut self, p: DVec2, lat: f64, lon: f64) -> Option<f64> {
         for (i, source) in self.sources.iter().enumerate() {
             let (e, n) = if source.zone == self.grid_zone {
                 (p.x, p.y)
@@ -1069,6 +1102,7 @@ fn build_key(
     scenery: &Scenery,
     crowd: &Crowd,
     farmland: &crate::farmland::Fields,
+    waters: &crate::water::Waters,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -1081,8 +1115,8 @@ fn build_key(
     // Only the strokes that reach this tile — the rest never see a grid point.
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
-        k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, farmland, &edits,
-        stats,
+        k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, farmland, waters,
+        &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -1121,6 +1155,7 @@ pub fn build(
             &Scenery::default(),
             &Crowd::default(),
             &crate::farmland::Fields::default(),
+            &crate::water::Waters::default(),
             &TerrainEdits::default(),
             &mut stats,
         ) {
@@ -1207,6 +1242,7 @@ fn build_tile(
     scenery: &Scenery,
     crowd: &Crowd,
     farmland: &crate::farmland::Fields,
+    waters: &crate::water::Waters,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
@@ -1269,6 +1305,14 @@ fn build_tile(
     // stand on — so a field follows every hollow the ground has.
     let fields =
         crate::farmland::patches(k, &grid, &frame, options.zone, options.tile_size, farmland);
+    // The water of the tile, cut to it and laid at the height the elevation
+    // data gives it — against the raw DGM, not the shaped grid, so an
+    // embankment across a valley holds the water back like a dam.
+    let waters = if waters.is_empty() || !waters.touches(k) {
+        Vec::new()
+    } else {
+        crate::water::patches(k, sampler, &frame, options, options.tile_size, waters)
+    };
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
@@ -1301,6 +1345,7 @@ fn build_tile(
         people,
         walkways,
         fields,
+        waters,
         step,
         lod,
         radius,
@@ -1760,6 +1805,7 @@ mod tests {
             Vegetation::default(),
             Scenery::default(),
             crate::farmland::Fields::default(),
+            crate::water::Waters::default(),
             TerrainEdits::from_parts(
                 &[TerrainEditSource {
                     lat: hill_lat,

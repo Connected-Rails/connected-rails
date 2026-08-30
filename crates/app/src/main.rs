@@ -783,6 +783,14 @@ fn setup(
         terrain_options.tile_size,
     );
     info!("fields: {} on the line", farmland.len());
+    // The line's waters, their surfaces laid over the terrain at build time
+    // (see `content::water`).
+    let waters = content::water::Waters::from_line(
+        &line_source,
+        terrain_options.zone,
+        terrain_options.tile_size,
+    );
+    info!("water: {} on the line", waters.len());
     // Trees, scenery objects and people come with the tiles: each stands on
     // the ground of the tile it lands on, and streams in and out with it.
     let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
@@ -794,6 +802,7 @@ fn setup(
         ))
         .with_crowd(crowd)
         .with_fields(farmland)
+        .with_waters(waters)
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(

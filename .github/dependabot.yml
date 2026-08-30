@@ -14,6 +14,15 @@ updates:
       # tree makes Vec3 and Quat two unrelated types and nothing that touches a
       # Transform compiles. Bump it by hand together with bevy.
       - dependency-name: glam
+      # bevy_egui 0.42 needs egui 0.36, but egui-phosphor (the icon font in
+      # editor-ui) has no release for egui 0.36 yet. The bump leaves two epaint
+      # versions in the tree and `FontData` becomes two unrelated types.
+      # Bump it by hand together with egui-phosphor.
+      - dependency-name: bevy_egui
+      # taffy has to stay on the version bevy_ui ships; html-display pins the
+      # same one so there is one layout engine in the tree. Bump it by hand
+      # together with bevy.
+      - dependency-name: taffy
 
   - package-ecosystem: github-actions
     directory: /

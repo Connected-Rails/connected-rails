@@ -1,0 +1,389 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "tools/trees/build_trees.mjs (Connected Rails, geometry by ez-tree)",
+  "copyright": "Connected Rails contributors, EUPL-1.2. Generated with ez-tree (MIT, Daniel Greenheck)."
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "name": "weissdorn_b",
+   "nodes": [
+    0,
+    1,
+    2,
+    3
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "crown_LOD0",
+   "mesh": 0
+  },
+  {
+   "name": "crown_LOD1",
+   "mesh": 1
+  },
+  {
+   "name": "crown_LOD2",
+   "mesh": 2
+  },
+  {
+   "name": "crown_LOD3",
+   "mesh": 3
+  }
+ ],
+ "meshes": [
+  {
+   "name": "crown_LOD0",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "crown_LOD1",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 4,
+      "NORMAL": 5,
+      "TEXCOORD_0": 6
+     },
+     "indices": 7,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "crown_LOD2",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 8,
+      "NORMAL": 9,
+      "TEXCOORD_0": 10
+     },
+     "indices": 11,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "crown_LOD3",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 12,
+      "NORMAL": 13,
+      "TEXCOORD_0": 14
+     },
+     "indices": 15,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "weissdorn_autumn",
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "baseColorFactor": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "metallicFactor": 0,
+    "roughnessFactor": 0.9
+   },
+   "alphaMode": "MASK",
+   "alphaCutoff": 0.5,
+   "doubleSided": true
+  }
+ ],
+ "textures": [
+  {
+   "source": 0,
+   "sampler": 0
+  }
+ ],
+ "images": [
+  {
+   "uri": "weissdorn_autumn.png"
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9729,
+   "minFilter": 9987,
+   "wrapS": 33071,
+   "wrapT": 33071
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 2718,
+   "type": "VEC3",
+   "min": [
+    -2.179453946215191,
+    -0.9056430927379493,
+    -3.1989995730302643
+   ],
+   "max": [
+    3.9216266073665045,
+    5,
+    2.9994671748968416
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 2718,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 2718,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5123,
+   "count": 6312,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 4,
+   "componentType": 5126,
+   "count": 985,
+   "type": "VEC3",
+   "min": [
+    -2.1509370747596273,
+    -0.843350997916503,
+    -3.3961622486985843
+   ],
+   "max": [
+    4.116970653533028,
+    5.227794335658876,
+    3.174725321957826
+   ]
+  },
+  {
+   "bufferView": 5,
+   "componentType": 5126,
+   "count": 985,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 6,
+   "componentType": 5126,
+   "count": 985,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 7,
+   "componentType": 5123,
+   "count": 2376,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 8,
+   "componentType": 5126,
+   "count": 424,
+   "type": "VEC3",
+   "min": [
+    -2.2176359599461217,
+    -0.9233304227253617,
+    -3.5144598540995764
+   ],
+   "max": [
+    4.234177081232941,
+    5.364470937054201,
+    3.279880210194417
+   ]
+  },
+  {
+   "bufferView": 9,
+   "componentType": 5126,
+   "count": 424,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 10,
+   "componentType": 5126,
+   "count": 424,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 11,
+   "componentType": 5123,
+   "count": 738,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 12,
+   "componentType": 5126,
+   "count": 8,
+   "type": "VEC3",
+   "min": [
+    -3.9216266073665045,
+    -0.9056430927379493,
+    -3.9216266073665045
+   ],
+   "max": [
+    3.9216266073665045,
+    5,
+    3.9216266073665045
+   ]
+  },
+  {
+   "bufferView": 13,
+   "componentType": 5126,
+   "count": 8,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 14,
+   "componentType": 5126,
+   "count": 8,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 15,
+   "componentType": 5123,
+   "count": 12,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 32616,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 32616,
+   "byteLength": 32616,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 65232,
+   "byteLength": 21744,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 86976,
+   "byteLength": 12624,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 99600,
+   "byteLength": 11820,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 111420,
+   "byteLength": 11820,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 123240,
+   "byteLength": 7880,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 131120,
+   "byteLength": 4752,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 135872,
+   "byteLength": 5088,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 140960,
+   "byteLength": 5088,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 146048,
+   "byteLength": 3392,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 149440,
+   "byteLength": 1476,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 150916,
+   "byteLength": 96,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 151012,
+   "byteLength": 96,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 151108,
+   "byteLength": 64,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 151172,
+   "byteLength": 24,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "uri": "weissdorn_b.bin",
+   "byteLength": 151196
+  }
+ ]
+}

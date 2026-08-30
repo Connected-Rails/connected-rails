@@ -20,7 +20,9 @@
 //! gaits, and the one a person walks with is picked for its pace and its
 //! variant ([`gait`]) — a stroll is not a sped-down hurry.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+#[cfg(test)]
+use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,9 +32,7 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::asset::LoadState;
 use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{Gltf, GltfAssetLabel, GltfExtras};
-use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
-use bevy::render::render_resource::{TextureDimension, TextureFormat};
 use bevy::world_serialization::WorldAsset;
 use content::CharacterSpec;
 use content::people::{
@@ -42,7 +42,7 @@ use content::people::{
 use sim_core::train::{SeatSpec, lod_level};
 
 use crate::scatter::SceneryIndex;
-use crate::{asset_path, with_mipmaps};
+use crate::{TextureMips, asset_path};
 
 /// Past this distance nobody on a platform is drawn [m] — at half a kilometre
 /// a person is a pixel, and a station of sixty is sixty skinned draws for it.
@@ -56,17 +56,10 @@ pub const PASSENGER_CULL: f32 = 300.0;
 /// second, `_LOD2` (1 600) up to the third, `_LOD3` (500) on to the cull
 /// distance. A character with fewer levels runs its last one to the end.
 pub const PERSON_LOD_BANDS: [f32; 3] = [30.0, 80.0, 200.0];
-/// Anisotropic samples on a character's atlases. The atlases are looked at
-/// obliquely (a coat seen from the platform, a face seen from the side), and 4
-/// is where the cost stops paying for itself on a texture this size.
-const TEXTURE_ANISOTROPY: u16 = 4;
 /// A looping clip runs between 1 − this and 1 + this of its own speed, picked
 /// by the person's phase, so a crowd that shares one clip does not breathe in
 /// step.
 const IDLE_SPEED_SPREAD: f32 = 0.1;
-/// Frames a texture is waited for before it is given up on — a scene whose
-/// atlas never arrives is a broken file, not a slow disk.
-const TEXTURE_PATIENCE: u32 = 600;
 /// Share of the seats a train has that are taken.
 pub const SEAT_TAKEN_SHARE: f32 = 0.65;
 
@@ -788,37 +781,6 @@ impl CharacterGraphs {
     }
 }
 
-/// Which of the characters' atlases have their mip chain, and which are
-/// still waited for.
-#[derive(Resource, Default)]
-pub struct PeopleTextures {
-    done: HashSet<AssetId<Image>>,
-    pending: Vec<PendingTexture>,
-}
-
-struct PendingTexture {
-    image: Handle<Image>,
-    /// The material that samples it, touched once the chain is built so its
-    /// bind group is made anew with the new texture.
-    material: Handle<StandardMaterial>,
-    frames: u32,
-}
-
-impl PeopleTextures {
-    fn enqueue(&mut self, image: &Handle<Image>, material: &Handle<StandardMaterial>) {
-        if self.done.contains(&image.id())
-            || self.pending.iter().any(|p| p.image.id() == image.id())
-        {
-            return;
-        }
-        self.pending.push(PendingTexture {
-            image: image.clone(),
-            material: material.clone(),
-            frames: 0,
-        });
-    }
-}
-
 /// Finishes every person whose scene hierarchy has appeared: LOD bands on the
 /// meshes, the animation graph on the player and the pose's clip started, and
 /// the atlases queued for their mip chain.
@@ -834,10 +796,9 @@ pub fn dress_people(
     assets: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
     clips: Res<Assets<AnimationClip>>,
-    materials: Res<Assets<StandardMaterial>>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     mut cache: ResMut<CharacterGraphs>,
-    mut textures: ResMut<PeopleTextures>,
+    mut textures: ResMut<TextureMips>,
 ) {
     for (root, person, scene) in &fresh {
         // The scene spawns some frames after the entity; until then there is
@@ -928,12 +889,7 @@ pub fn dress_people(
         );
 
         for material in &worn {
-            let Some(material_asset) = materials.get(material) else {
-                continue;
-            };
-            for image in textures_of(material_asset) {
-                textures.enqueue(image, material);
-            }
+            textures.enqueue(material);
         }
         commands.entity(root).insert(Dressed { player });
     }
@@ -960,97 +916,6 @@ fn lod_band(rank: usize, count: usize, cull: f32) -> (f32, f32) {
 /// crowd does not move in step.
 fn clip_speed(phase: f32) -> f32 {
     1.0 + IDLE_SPEED_SPREAD * (2.0 * phase.clamp(0.0, 1.0) - 1.0)
-}
-
-/// Every texture a material samples.
-fn textures_of(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Image>> {
-    [
-        &material.base_color_texture,
-        &material.emissive_texture,
-        &material.metallic_roughness_texture,
-        &material.normal_map_texture,
-        &material.occlusion_texture,
-    ]
-    .into_iter()
-    .flatten()
-}
-
-/// Builds the mip chain of every character atlas that has arrived. The
-/// pipeline writes plain PNG and JPEG, which the loader takes as one level; a
-/// person twenty metres away then samples a 2048² atlas at one texel per
-/// pixel and shimmers with every step. Cheap when nothing is waiting.
-pub fn mip_people_textures(
-    mut textures: ResMut<PeopleTextures>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    if textures.pending.is_empty() {
-        return;
-    }
-    let pending = std::mem::take(&mut textures.pending);
-    for mut entry in pending {
-        let Some(mut image) = images.get_mut(&entry.image) else {
-            entry.frames += 1;
-            if entry.frames < TEXTURE_PATIENCE {
-                textures.pending.push(entry);
-            } else {
-                debug!("person texture {:?} never arrived", entry.image.path());
-            }
-            continue;
-        };
-        if build_mip_chain(&mut image) {
-            // The material's bind group holds the old texture view; a touch
-            // has it prepared anew with the one that carries the chain.
-            materials.get_mut(&entry.material);
-        }
-        textures.done.insert(entry.image.id());
-    }
-}
-
-/// Appends the mip chain to a plain RGBA8 image and sets a sampler that uses
-/// it. `false` where the image is not one to touch: compressed, layered, or
-/// already carrying a chain.
-fn build_mip_chain(image: &mut Image) -> bool {
-    let descriptor = &image.texture_descriptor;
-    let plain = descriptor.mip_level_count <= 1
-        && descriptor.dimension == TextureDimension::D2
-        && descriptor.size.depth_or_array_layers == 1
-        && matches!(
-            descriptor.format,
-            TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm
-        );
-    if !plain {
-        return false;
-    }
-    let (width, height) = (descriptor.size.width, descriptor.size.height);
-    let Some(data) = image.data.take() else {
-        return false;
-    };
-    if data.len() != (width * height * 4) as usize {
-        image.data = Some(data);
-        return false;
-    }
-    let (data, levels) = with_mipmaps(data, width, height);
-    image.data = Some(data);
-    image.texture_descriptor.mip_level_count = levels;
-    if let Some(view) = image.texture_view_descriptor.as_mut() {
-        view.mip_level_count = None;
-    }
-    // The glTF's own wrap modes are kept; the filtering is what changes.
-    let (address_u, address_v) = match &image.sampler {
-        ImageSampler::Descriptor(sampler) => (sampler.address_mode_u, sampler.address_mode_v),
-        _ => (ImageAddressMode::Repeat, ImageAddressMode::Repeat),
-    };
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: address_u,
-        address_mode_v: address_v,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: TEXTURE_ANISOTROPY,
-        ..default()
-    });
-    true
 }
 
 /// SplitMix64 of three indices — the one hash every seat decision comes out
@@ -1231,49 +1096,6 @@ mod tests {
         assert_eq!(family("walk_0"), None);
         assert_eq!(family("walk_fast"), None);
         assert_eq!(family("wave"), None);
-    }
-
-    /// A plain image gets its chain and a mipmapped sampler; one that has a
-    /// chain, or is not RGBA8, is left alone.
-    #[test]
-    fn a_mip_chain_is_built_once_for_rgba8() {
-        use bevy::asset::RenderAssetUsages;
-        use bevy::render::render_resource::Extent3d;
-        let mut image = Image::new(
-            Extent3d {
-                width: 4,
-                height: 2,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            vec![200; 4 * 2 * 4],
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        );
-        assert!(build_mip_chain(&mut image));
-        assert_eq!(image.texture_descriptor.mip_level_count, 3);
-        assert_eq!(image.data.as_ref().map(Vec::len), Some((8 + 2 + 1) * 4));
-        match &image.sampler {
-            ImageSampler::Descriptor(sampler) => {
-                assert_eq!(sampler.anisotropy_clamp, TEXTURE_ANISOTROPY);
-                assert_eq!(sampler.mipmap_filter, ImageFilterMode::Linear);
-            }
-            other => panic!("{other:?}"),
-        }
-        assert!(!build_mip_chain(&mut image), "not twice");
-        let mut float = Image::new(
-            Extent3d {
-                width: 2,
-                height: 2,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            vec![0; 2 * 2 * 8],
-            TextureFormat::Rgba16Float,
-            RenderAssetUsages::default(),
-        );
-        assert!(!build_mip_chain(&mut float));
-        assert_eq!(float.texture_descriptor.mip_level_count, 1);
     }
 
     /// Standing below a fifth of the walk or without a walk clip; the cycle at

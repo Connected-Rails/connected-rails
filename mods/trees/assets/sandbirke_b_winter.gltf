@@ -1,0 +1,389 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "tools/trees/build_trees.mjs (Connected Rails, geometry by ez-tree)",
+  "copyright": "Connected Rails contributors, EUPL-1.2. Generated with ez-tree (MIT, Daniel Greenheck)."
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "name": "sandbirke_b",
+   "nodes": [
+    0,
+    1,
+    2,
+    3
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "crown_LOD0",
+   "mesh": 0
+  },
+  {
+   "name": "crown_LOD1",
+   "mesh": 1
+  },
+  {
+   "name": "crown_LOD2",
+   "mesh": 2
+  },
+  {
+   "name": "crown_LOD3",
+   "mesh": 3
+  }
+ ],
+ "meshes": [
+  {
+   "name": "crown_LOD0",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1,
+      "TEXCOORD_0": 2
+     },
+     "indices": 3,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "crown_LOD1",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 4,
+      "NORMAL": 5,
+      "TEXCOORD_0": 6
+     },
+     "indices": 7,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "crown_LOD2",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 8,
+      "NORMAL": 9,
+      "TEXCOORD_0": 10
+     },
+     "indices": 11,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "name": "crown_LOD3",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 12,
+      "NORMAL": 13,
+      "TEXCOORD_0": 14
+     },
+     "indices": 15,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "sandbirke_winter",
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "baseColorFactor": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "metallicFactor": 0,
+    "roughnessFactor": 0.9
+   },
+   "alphaMode": "MASK",
+   "alphaCutoff": 0.5,
+   "doubleSided": true
+  }
+ ],
+ "textures": [
+  {
+   "source": 0,
+   "sampler": 0
+  }
+ ],
+ "images": [
+  {
+   "uri": "sandbirke_winter.png"
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9729,
+   "minFilter": 9987,
+   "wrapS": 33071,
+   "wrapT": 33071
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 3756,
+   "type": "VEC3",
+   "min": [
+    -2.467708345949189,
+    0,
+    -6.475908137967231
+   ],
+   "max": [
+    3.610761743166466,
+    16.804921611037877,
+    0.5769695994846116
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 3756,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 3756,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5123,
+   "count": 13098,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 4,
+   "componentType": 5126,
+   "count": 538,
+   "type": "VEC3",
+   "min": [
+    -2.1570144518394243,
+    0,
+    -6.101338849078582
+   ],
+   "max": [
+    3.0902698480397097,
+    16.302818723825872,
+    0.5628423296098088
+   ]
+  },
+  {
+   "bufferView": 5,
+   "componentType": 5126,
+   "count": 538,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 6,
+   "componentType": 5126,
+   "count": 538,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 7,
+   "componentType": 5123,
+   "count": 1782,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 8,
+   "componentType": 5126,
+   "count": 64,
+   "type": "VEC3",
+   "min": [
+    -0.9618114163080222,
+    0,
+    -5.048203588476735
+   ],
+   "max": [
+    1.6802849258809587,
+    16.107501723322546,
+    0.5125202839323554
+   ]
+  },
+  {
+   "bufferView": 9,
+   "componentType": 5126,
+   "count": 64,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 10,
+   "componentType": 5126,
+   "count": 64,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 11,
+   "componentType": 5123,
+   "count": 162,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 12,
+   "componentType": 5126,
+   "count": 8,
+   "type": "VEC3",
+   "min": [
+    -6.475908137967231,
+    0,
+    -6.475908137967231
+   ],
+   "max": [
+    6.475908137967231,
+    16.804921611037877,
+    6.475908137967231
+   ]
+  },
+  {
+   "bufferView": 13,
+   "componentType": 5126,
+   "count": 8,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 14,
+   "componentType": 5126,
+   "count": 8,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 15,
+   "componentType": 5123,
+   "count": 12,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 45072,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 45072,
+   "byteLength": 45072,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 90144,
+   "byteLength": 30048,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 120192,
+   "byteLength": 26196,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 146388,
+   "byteLength": 6456,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 152844,
+   "byteLength": 6456,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 159300,
+   "byteLength": 4304,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 163604,
+   "byteLength": 3564,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 167168,
+   "byteLength": 768,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 167936,
+   "byteLength": 768,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 168704,
+   "byteLength": 512,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 169216,
+   "byteLength": 324,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 169540,
+   "byteLength": 96,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 169636,
+   "byteLength": 96,
+   "target": 34962,
+   "byteStride": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 169732,
+   "byteLength": 64,
+   "target": 34962,
+   "byteStride": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 169796,
+   "byteLength": 24,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "uri": "sandbirke_b_winter.bin",
+   "byteLength": 169820
+  }
+ ]
+}

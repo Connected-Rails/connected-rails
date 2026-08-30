@@ -3725,6 +3725,7 @@ mod tests {
                 height: 0.0,
                 autumn_model: None,
                 winter_model: None,
+                lod_distances: Vec::new(),
                 tags: Vec::new(),
             },
         );

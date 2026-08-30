@@ -1,11 +1,28 @@
-// Older jointed superstructure: audibly rougher, same 120 km/h the example
-// line runs anyway — the type change is heard, not braked for.
+// Jointed track the old way: S 54 rails on creosoted wooden sleepers at
+// 60 cm, laid with lasched joints — the rolling noise roughens at every
+// joint (roughness 1.4), the sleepers sit lower than a concrete one (16 cm
+// against 21 cm) and the ballast bed is worn browner. This is what a
+// Nebenbahn or a sidings complex looks like before it is renewed.
 (
     name: "Altbau (verlascht)",
+    texture: Some("example/assets/track/ballast-worn.jpg"),
     color: (0.38, 0.33, 0.26),
     roughness: 1.4,
+    reverb: 0.0,
     max_speed: 120.0,
     lzb: false,
+    oberbau: (
+        rail: R54,
+        sleeper: Wood,
+        sleeper_length: 2.6,
+        sleeper_width: 0.26,
+        sleeper_height: 0.16,
+        sleeper_spacing: 0.60,
+        ballast_overhang: 0.70,
+        ballast_depth: 0.30,
+        sleeper_texture: Some("example/assets/track/sleeper-wood.jpg"),
+        sleeper_normal_map: Some("example/assets/track/sleeper-wood_nor.jpg"),
+    ),
     // Tags: free, lower case — the route editor's content drawer filters on them.
-    tags: ["branch-line", "jointed"],
+    tags: ["branch-line", "jointed", "wood"],
 )

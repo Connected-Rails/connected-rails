@@ -35,6 +35,18 @@ pub struct TrackObject {
     pub autumn_model: Option<String>,
     #[serde(default)]
     pub winter_model: Option<String>,
+    /// How far each level of detail of the model reaches \[m\], finest first —
+    /// `crown_LOD0` up to the first entry, `crown_LOD1` up to the second, and
+    /// the last entry is where the object stops being drawn at all.
+    ///
+    /// Empty means the renderer's own bands, which is what a mast or a hut
+    /// wants. Vegetation names its own, because the distance at which a level
+    /// stops paying for itself is a matter of how big the plant is: a two metre
+    /// blackthorn is a smudge where a forty metre fir is still a tree, and a
+    /// wood of blackthorn drawn to two kilometres is tens of thousands of draw
+    /// calls for nothing.
+    #[serde(default)]
+    pub lod_distances: Vec<f32>,
     /// Free-form tags the mod author gives the entry, for finding it again in
     /// a catalogue of thousands: `["mast", "catenary", "epoch-4"]`. Lower-case
     /// kebab by convention — the editors normalise what is typed, and the
@@ -68,15 +80,18 @@ mod tests {
             height: 0.0,
             autumn_model: None,
             winter_model: Some("example/assets/mast_winter.gltf".into()),
+            lod_distances: vec![80.0, 260.0, 800.0, 2_500.0],
             tags: vec!["mast".into(), "epoch-4".into()],
         };
         assert_eq!(TrackObject::from_ron(&full.to_ron()).unwrap(), full);
 
-        // A minimal file needs only name and model; seasonal variants are optional.
+        // A minimal file needs only name and model; seasonal variants and the
+        // level bands are optional.
         let minimal =
             TrackObject::from_ron("(name:\"Baum\",model:\"x/assets/tree.gltf\")").unwrap();
         assert_eq!(minimal.lateral_offset, 0.0);
         assert_eq!(minimal.yaw_deg, 0.0);
         assert_eq!(minimal.winter_model, None);
+        assert!(minimal.lod_distances.is_empty());
     }
 }

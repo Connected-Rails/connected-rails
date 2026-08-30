@@ -477,7 +477,9 @@ the project); re-run the script after editing it. The sounds the example vehicle
 sound table plays are the exception: recordings in `assets/sounds/` — CC0 cab clicks, and
 driving noise of the real loco cut out of CC BY trainspotting videos and CC0 recordings —
 credited in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and rebuilt from their
-sources by `tools/sounds/br101_sounds.py`.
+sources by `tools/sounds/br101_sounds.py`. The track textures in
+`example/assets/track/` are CC0 as well — a photographed Schotter, weathered concrete
+and creosoted planks, credited in the same file.
 
 ```ron
 model: Some((
@@ -1255,18 +1257,48 @@ magnets.
 A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
 built like, not where it runs:
 
+### Track types
+
+A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
+built like, not where it runs:
+
 ```ron
 (
-    name: "Hauptbahn",
-    texture: Some("example/assets/ballast.png"),  // ballast texture, tiled along the track
+    name: "Hauptbahn (B90)",
+    texture: Some("example/assets/track/ballast.jpg"),  // ballast texture, tiled along the track
+    normal_map: Some("example/assets/track/ballast_nor.jpg"),  // ballast normal map, same tiling
     color: (0.32, 0.30, 0.28),   // untextured fallback; the route editor tints sections its own way
     roughness: 1.0,              // scales the rolling noise; jointed track > 1, slab track < 1
     reverb: 0.0,                 // how much the surroundings ring: 0 = open line, 1 = tunnel
     max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
     lzb: false,                  // true: a line conductor belongs on this track (rule check)
+    // The physical build, in real dimensions. Defaults are the DB Regeloberbau
+    // (60E1 rail on concrete at 60 cm, 30 cm ballast).
+    oberbau: (
+        rail: R60,               // R49 = 49E1/S 49, R54 = 54E3/S 54, R60 = 60E1/UIC 60
+        sleeper: Concrete,       // Concrete | Wood | Slab (Feste Fahrbahn, no ballast)
+        sleeper_length: 2.6,     // across the track [m]; DB standard 2.6 m
+        sleeper_width: 0.32,     // along the track [m] (B 90: 0.32, wood: 0.26)
+        sleeper_height: 0.21,    // [m] (B 70/B 90: 0.21, wood: 0.16)
+        sleeper_spacing: 0.60,   // between sleeper centres [m]; 0.60 = 1667 per km
+        ballast_overhang: 0.70,  // shoulder beyond the sleeper end [m] each side
+        ballast_depth: 0.30,     // ballast under the sleeper [m]
+        sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
+        sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+    ),
     tags: ["main-line", "welded"],  // optional, for the content drawer's filter (see Tags)
 )
 ```
+
+The renderer builds what the `oberbau` says: the two rails are extruded from the real
+rolled section (49E1/S 49, 54E3/S 54, 60E1/UIC 60 — 1435 mm gauge measured 14 mm under the
+rail top, 1:40 inclined toward the gauge), the sleepers stand at the type's spacing and
+shape, and the ballast bed follows the RL 853 cross-section — top width sleeper + twice the
+shoulder, sides falling 1:1. A sleeper texture repeats 2.6 m along the sleeper, so a wood
+plank set reads one plank per sleeper; with `sleeper: "slab"` the bed becomes a concrete
+slab (Feste Fahrbahn) and the sleeper fields mean slab width and thickness instead. The
+detailed sleepers are drawn only up to 400 m — beyond, the bed's texture carries the look.
+A type that names no textures is skinned in its `color`; textures tile every 4 m.
 
 A line assigns types per edge as steps over the arc length, so one edge changes its
 superstructure section by section; the reserved name `"default"` returns to the built-in
@@ -1358,7 +1390,7 @@ run-time cost and no new concept downstream.
 | `speed` | permitted speed [km/h] |
 | `cant` | cant [mm] |
 | `grade` | longitudinal gradient [‰] |
-| `track_type` | superstructure — model, texture, roughness, reverb, speed limit, LZB flag |
+| `track_type` | superstructure — rail section, sleepers, ballast, texture, roughness, reverb, speed limit, LZB flag |
 | `electrification` | what hangs over it (see Electrification), or `"none"` |
 
 In the route editor the areas are **painted**: pick **Mark area**, press on a track and
@@ -1459,12 +1491,36 @@ way: an object is placed by the terrain tile it stands on, so it streams in and 
 that tile and its feet meet the ground the tile actually has.
 
 **Levels of detail** work as for vehicles and signals: nodes named `<name>_LOD0`,
-`_LOD1`, … are shown by camera distance (the bands are 200, 700 and 1 500 m; the last
-level a model ships runs to the cull distance — 2.5 km for trees, 3 km for objects).
-A model without the suffix is one level, drawn up to that distance. This matters most
-for trees: every tree of a wood is drawn as an **instance** of its model's mesh parts —
-not as its own scene — so a thousand firs sharing one glTF are a handful of draw calls,
-and a low-poly `_LOD1` is what keeps a whole hillside cheap.
+`_LOD1`, … are shown by camera distance. A model without the suffix is one level, drawn
+up to the cull distance. This matters most for trees: every tree of a wood is drawn as an
+**instance** of its model's mesh parts — not as its own scene — so a thousand firs
+sharing one glTF are a handful of draw calls, and a coarse `_LOD2` is what keeps a whole
+hillside cheap. Keep a level to **one material** where you can: the renderer spawns one
+entity per mesh part per level, so bark and leaves in one atlas is half the entities and
+half the draw calls of two separate materials.
+
+The bands are 80, 260 and 800 m, and an object is culled at 2.5 km (3 km for scenery
+objects). An object may name **its own**, which is what vegetation does:
+
+```ron
+// Visible in full to 20 m, then coarser twice, gone at 700 m.
+lod_distances: [20, 60, 120, 700],
+```
+
+The list is finest first and its **last entry is the cull distance**. A model with fewer
+levels than the list has entries runs its last level on to the cull distance. Scale them
+to how big the plant is: a level pays for its triangles only while the plant covers
+enough pixels, so a forty metre fir hands over at a hundred metres and is drawn to two and
+a half kilometres, while a two metre blackthorn hands over at twenty and is gone at seven
+hundred — and a hedge of blackthorn drawn to two kilometres is tens of thousands of draw
+calls for nothing.
+
+A **crossed-quad impostor as the coarsest level wants a late hand-over**, not an early
+one. Two quads at a right angle are the least that works — a single fixed billboard
+vanishes the moment the camera looks along it — and the pair has a seam: whichever blade
+is edge-on is drawn as a narrow strip through the other. Hand over where the plant is a
+few dozen pixels tall and the strip is under a pixel; hand over early and the tree looks
+sliced. `mods/trees` uses about eighteen times the plant's height.
 
 **Lit windows at night.** A node whose name ends in **`_NIGHT`** is shown after dusk and
 hidden by day — lit windows in a house, a glowing sign, the light pool under a platform
@@ -1601,9 +1657,41 @@ height always from the terrain):
 ```ron
 trees: [
     // Empty object = the app's built-in placeholder tree.
-    (object: "example:fichte", lat: 52.0006, lon: 10.004, yaw_deg: 0.0, scale: 1.3),
+    (object: "trees:fichte_b", lat: 52.0006, lon: 10.004, yaw_deg: 0.0, scale: 1.3),
 ],
 ```
+
+The **`trees` mod** ships the vegetation of Central Europe: twenty-eight species — spruce,
+pine, silver fir, larch, Douglas fir, juniper; beech, oak, hornbeam, birch, alder, two
+maples, ash, lime, aspen, Lombardy poplar, two willows, elm, horse chestnut, rowan, wild
+cherry, black locust; hazel, hawthorn, elder, blackthorn — each in three individually
+shaped variants (`_a`, `_b`, `_c`), four levels of detail, and summer, autumn and winter
+models. It is generated, not modelled: `tools/trees/species.json` describes the species,
+`tools/trees/build_trees.mjs` grows them with
+[ez-tree](https://github.com/dgreenheck/ez-tree), and the leaves on their cards are
+photographed leaves out of the CC0 libraries of [ambientCG](https://ambientcg.com) and
+[Poly Haven](https://polyhaven.com), cut out and arranged by the pipeline. See
+`tools/trees/README.md` to add one.
+
+#### Stands
+
+A wood is rarely one species. Any tree object may carry **`stand-…` tags** saying which
+kinds of wood it grows in:
+
+```ron
+tags: ["laubbaum", "stand-laubwald", "stand-mischwald", "stand-allee"],
+```
+
+The route editor collects every `stand-…` tag the installed mods carry and offers them
+above the single species in the tree and forest tools. Picking one has the forest brush
+draw from all the species tagged with it, so a painted wood comes out mixed and no two
+trees in it are the same shape. There is no stand file and no registry — a mod that adds
+a species to an existing wood needs nothing but the tag the others already have, and one
+that invents `stand-obstgarten` gets a new entry in the list for free.
+
+The stands the `trees` mod brings: `mischwald`, `laubwald`, `nadelwald`, `bergwald`,
+`auwald`, `bach`, `heide`, `pionier`, `bahndamm`, `boeschung`, `hecke`, `feld`, `allee`,
+`park`, `stadt`.
 
 There is no separate forest construct: a wood is many tree entries. That is deliberate —
 whether a tree was hand-set, painted or imported, it is the same kind of row, so any tree
@@ -1860,7 +1948,7 @@ the selection panel re-dials radius and amount, Delete removes a stroke.
 
 **`T` shows the world itself** (View ▸ Show terrain): the editor draws with the same code
 the run does — the DGM, the strokes, the cutting/embankment at the track, the ground
-textures, the ballast bed and rails of every track type, the line's **trees and scenery
+textures, the ballast bed, sleepers and rails of every track type, the line's **trees and scenery
 objects**, and the **signal assemblies** on their mount points. A wood, a lineside hut or
 a signal mast is judged where it is set instead of only in the run. Terrain and aerial
 imagery lie in the same place, so only one of them is drawn at a time; a module that

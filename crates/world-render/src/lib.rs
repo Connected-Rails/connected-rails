@@ -12,7 +12,6 @@ use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::gltf::GltfAssetLabel;
-use bevy::image::ImageLoaderSettings;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{ConeAnchor, CylinderAnchor, MeshBuilder};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
@@ -21,10 +20,9 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
 use content::{PersonInstance, SceneryInstance, TerrainTile, Tree};
-use glam::DVec3;
 use sim_core::interlock::{Aspect, DistantAspect, MainAspect, SignalKind, SignalModel};
 use sim_core::train::lod_level;
-use track_model::{Facing, TrackEdge, TrackNetwork, TrackObject};
+use track_model::{Facing, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 pub mod clouds;
@@ -34,6 +32,7 @@ pub mod people;
 pub mod precipitation;
 pub mod scatter;
 pub mod sky;
+pub mod track;
 pub mod water;
 pub mod weather;
 pub mod windscreen;
@@ -48,9 +47,10 @@ pub use people::{
     spawn_seated, spawn_strollers,
 };
 pub use scatter::{
-    OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, WorldCatalog,
-    materialise_trees,
+    OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, Wood, WorldCatalog,
+    cull_distant_woods, materialise_trees,
 };
+pub use track::{GAUGE, RailMaterial, spawn_track};
 pub use water::{WaterMaterial, WaterMaterials, WaterSurface, spawn_waters};
 
 /// Registers the splat shader and its material. Both programs add it after
@@ -69,7 +69,7 @@ impl Plugin for WorldRenderPlugin {
             .init_resource::<Daylight>()
             .init_resource::<TreeModels>()
             .init_resource::<people::CharacterGraphs>()
-            .init_resource::<people::PeopleTextures>()
+            .init_resource::<TextureMips>()
             .init_resource::<people::PeopleClock>()
             .add_plugins((
                 sky::plugin,
@@ -78,21 +78,20 @@ impl Plugin for WorldRenderPlugin {
                 precipitation::plugin,
                 weather::plugin,
                 windscreen::plugin,
+                track::plugin,
             ))
             .add_systems(
                 Update,
                 (
                     switch_night_nodes,
                     materialise_trees,
+                    scatter::cull_distant_woods,
                     farmland::follow_date,
                     // A walker dressed this frame gets its gait the same frame.
-                    (
-                        people::dress_people,
-                        people::move_strollers,
-                        people::mip_people_textures,
-                    )
-                        .chain(),
+                    (people::dress_people, people::move_strollers, mip_textures).chain(),
                     people::bind_walkways,
+                    // The track's tiling textures get their sampler once loaded.
+                    track::apply_tiling,
                 ),
             );
     }
@@ -553,10 +552,11 @@ pub fn respawn_scatter(
     people: &[PersonInstance],
     catalog: &WorldCatalog,
 ) {
-    let Ok(mut entity) = commands.get_entity(tile) else {
+    if commands.get_entity(tile).is_err() {
         return;
-    };
-    entity.remove::<PendingTrees>();
+    }
+    // The wood carries the pending state and is one of the `Scattered` children,
+    // so despawning them takes it with them.
     for child in old {
         commands.entity(child).try_despawn();
     }
@@ -564,214 +564,6 @@ pub fn respawn_scatter(
         return;
     };
     scatter::spawn_scatter(&mut entity, trees, objects, people, &[], catalog);
-}
-
-/// Track gauge [m].
-const GAUGE: f64 = 1.435;
-/// Half width of the ballast bed [m].
-const BALLAST_HALF: f64 = 2.6;
-/// Sample spacing along the edge [m].
-const SAMPLE: f64 = 4.0;
-
-/// Builds meshes for all edges of the network and spawns them. Where the edge
-/// carries a formation, the ballast bed takes its material from the edge's
-/// track type — color, and the type's texture where one is named (`mods://…`,
-/// tiled along the track); the type sections of one edge become separate
-/// meshes at the type boundaries. Without a formation — track on the builder's
-/// own constructions — only the rails stand; the bed is theirs to model.
-pub fn spawn_track(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    assets: &AssetServer,
-    net: &TrackNetwork,
-    origin: &RenderOrigin,
-) {
-    let ballast_materials: Vec<Handle<StandardMaterial>> = net
-        .types()
-        .iter()
-        .map(|ty| {
-            let texture = ty.texture.as_ref().map(|file| {
-                assets
-                    .load_builder()
-                    .with_settings(|settings: &mut ImageLoaderSettings| {
-                        // The ballast tiles along the track — clamped edges
-                        // would smear the last texel over kilometres.
-                        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                            address_mode_u: ImageAddressMode::Repeat,
-                            address_mode_v: ImageAddressMode::Repeat,
-                            ..default()
-                        });
-                    })
-                    .load(asset_path(file))
-            });
-            materials.add(StandardMaterial {
-                base_color: Color::srgb(ty.color.0, ty.color.1, ty.color.2),
-                base_color_texture: texture,
-                perceptual_roughness: 1.0,
-                ..default()
-            })
-        })
-        .collect();
-    let rail_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.45, 0.45, 0.48),
-        metallic: 0.8,
-        perceptual_roughness: 0.35,
-        ..default()
-    });
-
-    for edge in net.edges() {
-        let anchor = edge.anchor;
-        let frame = EnuFrame::at(anchor);
-        let (translation, rotation) = origin.frame_transform(&frame);
-
-        let mut parts: Vec<(Mesh, Handle<StandardMaterial>)> = if edge.formation {
-            edge.track_type_runs()
-                .into_iter()
-                .map(|(s0, s1, index)| {
-                    let material = ballast_materials
-                        .get(index as usize)
-                        .unwrap_or(&ballast_materials[0]);
-                    (build_ballast(edge, &frame, s0, s1), material.clone())
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        parts.push((build_rails(edge, &frame), rail_material.clone()));
-        for (mesh, material) in parts {
-            commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(material),
-                Transform::from_translation(translation).with_rotation(rotation),
-                WorldAnchored::in_frame(frame),
-            ));
-        }
-    }
-}
-
-/// Cross section of the track at `s`: centre, right and up in `frame`.
-fn cross_section(e: &TrackEdge, frame: &EnuFrame, s: f64) -> (DVec3, DVec3, DVec3) {
-    let pose = e.eval(s);
-    let center = frame.to_local(pose.pos);
-    let tangent = frame.dir_to_local(pose.tangent);
-    let up = frame.dir_to_local(pose.up);
-    let right = tangent.cross(up).normalize();
-    (center, right, up)
-}
-
-/// Ballast bed of the edge between `s0` and `s1`, 30 cm below the rail head.
-fn build_ballast(e: &TrackEdge, frame: &EnuFrame, s0: f64, s1: f64) -> Mesh {
-    let steps = (((s1 - s0) / SAMPLE).ceil() as usize).max(1);
-    let mut ballast = RibbonBuilder {
-        // The texture continues across a type boundary instead of restarting.
-        uv_row_offset: (s0 / SAMPLE) as f32,
-        ..default()
-    };
-    for i in 0..=steps {
-        let s = s0 + (s1 - s0) * i as f64 / steps as f64;
-        let (center, right, up) = cross_section(e, frame, s);
-        let bed = center - up * 0.3;
-        ballast.push_pair(bed - right * BALLAST_HALF, bed + right * BALLAST_HALF);
-    }
-    ballast.build()
-}
-
-/// Two rails as narrow ribbons over the whole edge.
-fn build_rails(e: &TrackEdge, frame: &EnuFrame) -> Mesh {
-    let steps = ((e.length() / SAMPLE).ceil() as usize).max(1);
-    let mut rails = RibbonBuilder::default();
-    for i in 0..=steps {
-        let s = e.length() * i as f64 / steps as f64;
-        let (center, right, _) = cross_section(e, frame, s);
-        let half = GAUGE / 2.0;
-        rails.push_quad(
-            center - right * (half + 0.04),
-            center - right * (half - 0.04),
-            center + right * (half - 0.04),
-            center + right * (half + 0.04),
-        );
-    }
-    rails.build_pairs()
-}
-
-/// Collects a ribbon from point pairs and builds a triangle mesh from it.
-#[derive(Default)]
-struct RibbonBuilder {
-    positions: Vec<[f32; 3]>,
-    /// Points per cross section (2 for one ribbon, 4 for two rails).
-    stride: usize,
-    /// Added to the UV row index — a mesh that starts mid-edge keeps the
-    /// texture phase of the whole edge.
-    uv_row_offset: f32,
-}
-
-impl RibbonBuilder {
-    fn push_pair(&mut self, left: DVec3, right: DVec3) {
-        self.stride = 2;
-        self.positions.push(to_render(left));
-        self.positions.push(to_render(right));
-    }
-
-    fn push_quad(&mut self, a: DVec3, b: DVec3, c: DVec3, d: DVec3) {
-        self.stride = 4;
-        for p in [a, b, c, d] {
-            self.positions.push(to_render(p));
-        }
-    }
-
-    fn build(self) -> Mesh {
-        self.build_with(&[(0, 1)])
-    }
-
-    /// Two separate ribbons (left and right rail).
-    fn build_pairs(self) -> Mesh {
-        self.build_with(&[(0, 1), (2, 3)])
-    }
-
-    fn build_with(self, bands: &[(usize, usize)]) -> Mesh {
-        let stride = self.stride.max(1);
-        let rows = self.positions.len() / stride;
-        let mut indices = Vec::new();
-        for row in 0..rows.saturating_sub(1) {
-            for (l, r) in bands.iter().copied() {
-                let a = (row * stride + l) as u32;
-                let b = (row * stride + r) as u32;
-                let c = ((row + 1) * stride + l) as u32;
-                let d = ((row + 1) * stride + r) as u32;
-                // Left, right, then along the track: that order faces upwards,
-                // which is where the normals point and where the camera is
-                // (pinned by a test) — the other way round the ribbon is a
-                // backface and the ballast is not drawn at all.
-                indices.extend_from_slice(&[a, b, c, b, d, c]);
-            }
-        }
-        let normals = vec![[0.0f32, 1.0, 0.0]; self.positions.len()];
-        let uvs: Vec<[f32; 2]> = (0..self.positions.len())
-            .map(|i| {
-                [
-                    (i % stride) as f32,
-                    ((i / stride) as f32 + self.uv_row_offset) * 0.5,
-                ]
-            })
-            .collect();
-
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
-        );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_indices(Indices::U32(indices));
-        mesh.compute_normals();
-        mesh
-    }
-}
-
-/// ENU (x = east, y = north, z = up) → render axes (x = east, y = up, z = −north).
-fn to_render(p: DVec3) -> [f32; 3] {
-    [p.x as f32, p.z as f32, -p.y as f32]
 }
 
 /// 3D models of the line's signals, resolved at setup — index = signal index.
@@ -1223,7 +1015,7 @@ fn ground_texture(
             data.push(255);
         }
     }
-    let (data, mip_level_count) = with_mipmaps(data, size, size);
+    let (data, mip_level_count) = with_mipmaps(data, size, size, None);
 
     // `Image::new` checks the data length against mip level 0 — build uninit
     // and attach the full mip chain by hand.
@@ -1286,6 +1078,219 @@ fn hash01(x: u64, y: u64, seed: u64) -> f32 {
     ((z >> 40) as f32) / (1u64 << 24) as f32
 }
 
+/// Anisotropic samples on a generated atlas. They are looked at obliquely — a
+/// coat seen from the platform, a trunk seen from a passing cab — and 4 is
+/// where the cost stops paying for itself at these texture sizes.
+const TEXTURE_ANISOTROPY: u16 = 4;
+/// Frames a texture is waited for before it is given up on — an asset whose
+/// atlas never arrives is a broken file, not a slow disk.
+const TEXTURE_PATIENCE: u32 = 600;
+
+/// The generated atlases waiting for their mip chain, and the ones that have
+/// it. The characters and the trees share it: both are built by a script that
+/// writes plain PNG, which the loader takes as a single level, and both are
+/// looked at from far enough away that one texel per pixel is a shimmer with
+/// every step.
+///
+/// A material is queued, not an image: the trees' materials are labelled
+/// sub-assets of a glTF and are not there the frame the model is read, so the
+/// queue waits for the material first and for its textures second.
+#[derive(Resource, Default)]
+pub struct TextureMips {
+    done: std::collections::HashSet<AssetId<Image>>,
+    materials: Vec<PendingMaterial>,
+    pending: Vec<PendingTexture>,
+}
+
+struct PendingMaterial {
+    material: Handle<StandardMaterial>,
+    /// Foliage: switch it from a hard mask to alpha-to-coverage once it is
+    /// there. A leaf's edge is then anti-aliased against the sky instead of
+    /// stepping from texel to texel, which is what a canopy is mostly made of.
+    cutout: bool,
+    frames: u32,
+}
+
+struct PendingTexture {
+    image: Handle<Image>,
+    /// The material that samples it, touched once the chain is built so its
+    /// bind group is made anew with the new texture.
+    material: Handle<StandardMaterial>,
+    /// The alpha cutoff of a masked material — the mip chain needs it to keep
+    /// the cut-out's coverage (see [`with_mipmaps`]).
+    cutoff: Option<f32>,
+    frames: u32,
+}
+
+impl TextureMips {
+    /// Queues every texture of a material, once the material itself is there.
+    pub fn enqueue(&mut self, material: &Handle<StandardMaterial>) {
+        self.queue(material, false);
+    }
+
+    /// The same for a cut-out material — foliage, hair, a chain-link fence.
+    /// Its mip chain keeps the coverage of its alpha, and its edges are
+    /// resolved by the sample mask rather than by a hard test.
+    pub fn enqueue_cutout(&mut self, material: &Handle<StandardMaterial>) {
+        self.queue(material, true);
+    }
+
+    fn queue(&mut self, material: &Handle<StandardMaterial>, cutout: bool) {
+        if self
+            .materials
+            .iter()
+            .any(|p| p.material.id() == material.id())
+        {
+            return;
+        }
+        self.materials.push(PendingMaterial {
+            material: material.clone(),
+            cutout,
+            frames: 0,
+        });
+    }
+
+    fn enqueue_image(
+        &mut self,
+        image: &Handle<Image>,
+        material: &Handle<StandardMaterial>,
+        cutoff: Option<f32>,
+    ) {
+        if self.done.contains(&image.id())
+            || self.pending.iter().any(|p| p.image.id() == image.id())
+        {
+            return;
+        }
+        self.pending.push(PendingTexture {
+            image: image.clone(),
+            material: material.clone(),
+            cutoff,
+            frames: 0,
+        });
+    }
+}
+
+/// Builds the mip chain of every queued atlas that has arrived. Cheap when
+/// nothing is waiting, which is every frame but the ones after a tile or a
+/// platform brought a model nobody had loaded yet.
+pub fn mip_textures(
+    mut textures: ResMut<TextureMips>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if !textures.materials.is_empty() {
+        for mut entry in std::mem::take(&mut textures.materials) {
+            match materials.get(&entry.material) {
+                Some(material) => {
+                    let cutoff = match material.alpha_mode {
+                        AlphaMode::Mask(cutoff) => Some(cutoff),
+                        // Alpha-to-coverage uses the same 0.5 the mask does.
+                        AlphaMode::AlphaToCoverage => Some(0.5),
+                        _ => None,
+                    };
+                    let queued: Vec<Handle<Image>> = textures_of(material).cloned().collect();
+                    for image in &queued {
+                        textures.enqueue_image(image, &entry.material, cutoff);
+                    }
+                    if entry.cutout
+                        && matches!(material.alpha_mode, AlphaMode::Mask(_))
+                        && let Some(mut material) = materials.get_mut(&entry.material)
+                    {
+                        material.alpha_mode = AlphaMode::AlphaToCoverage;
+                    }
+                }
+                None => {
+                    entry.frames += 1;
+                    if entry.frames < TEXTURE_PATIENCE {
+                        textures.materials.push(entry);
+                    } else {
+                        debug!("material {:?} never arrived", entry.material.path());
+                    }
+                }
+            }
+        }
+    }
+    if textures.pending.is_empty() {
+        return;
+    }
+    for mut entry in std::mem::take(&mut textures.pending) {
+        let Some(mut image) = images.get_mut(&entry.image) else {
+            entry.frames += 1;
+            if entry.frames < TEXTURE_PATIENCE {
+                textures.pending.push(entry);
+            } else {
+                debug!("texture {:?} never arrived", entry.image.path());
+            }
+            continue;
+        };
+        if build_mip_chain(&mut image, entry.cutoff) {
+            // The material's bind group holds the old texture view; a touch
+            // has it prepared anew with the one that carries the chain.
+            materials.get_mut(&entry.material);
+        }
+        textures.done.insert(entry.image.id());
+    }
+}
+
+/// Appends the mip chain to a plain RGBA8 image and sets a sampler that uses
+/// it. `false` where the image is not one to touch: compressed, layered, or
+/// already carrying a chain.
+fn build_mip_chain(image: &mut Image, cutout: Option<f32>) -> bool {
+    let descriptor = &image.texture_descriptor;
+    let plain = descriptor.mip_level_count <= 1
+        && descriptor.dimension == TextureDimension::D2
+        && descriptor.size.depth_or_array_layers == 1
+        && matches!(
+            descriptor.format,
+            TextureFormat::Rgba8UnormSrgb | TextureFormat::Rgba8Unorm
+        );
+    if !plain {
+        return false;
+    }
+    let (width, height) = (descriptor.size.width, descriptor.size.height);
+    let Some(data) = image.data.take() else {
+        return false;
+    };
+    if data.len() != (width * height * 4) as usize {
+        image.data = Some(data);
+        return false;
+    }
+    let (data, levels) = with_mipmaps(data, width, height, cutout);
+    image.data = Some(data);
+    image.texture_descriptor.mip_level_count = levels;
+    if let Some(view) = image.texture_view_descriptor.as_mut() {
+        view.mip_level_count = None;
+    }
+    // The glTF's own wrap modes are kept; the filtering is what changes.
+    let (address_u, address_v) = match &image.sampler {
+        ImageSampler::Descriptor(sampler) => (sampler.address_mode_u, sampler.address_mode_v),
+        _ => (ImageAddressMode::Repeat, ImageAddressMode::Repeat),
+    };
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: address_u,
+        address_mode_v: address_v,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: TEXTURE_ANISOTROPY,
+        ..default()
+    });
+    true
+}
+
+/// Every texture a material samples.
+fn textures_of(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Image>> {
+    [
+        &material.base_color_texture,
+        &material.emissive_texture,
+        &material.metallic_roughness_texture,
+        &material.normal_map_texture,
+        &material.occlusion_texture,
+    ]
+    .into_iter()
+    .flatten()
+}
+
 /// Appends a box-filtered mip chain to a plain RGBA8 image of `width` ×
 /// `height` texels — generated images have no loader to build one, the
 /// characters' atlases ship without one, and without it a texture shimmers at
@@ -1293,10 +1298,31 @@ fn hash01(x: u64, y: u64, seed: u64) -> f32 {
 /// first stays there, as the GPU expects); an odd side folds its last texel
 /// in twice rather than dropping it. Returns the data with the chain appended
 /// and the level count.
-pub(crate) fn with_mipmaps(mut data: Vec<u8>, width: u32, height: u32) -> (Vec<u8>, u32) {
+///
+/// `cutout` is the alpha cutoff of a masked material, and it changes the alpha
+/// channel: **averaging alpha destroys a cut-out.** A leaf card is mostly
+/// transparent, so every halving pulls its average alpha down, and by the
+/// fourth or fifth level almost no texel still reaches the cutoff — the canopy
+/// of a wood thins out and finally evaporates with distance while the opaque
+/// trunks stay, which is what a forest at half a kilometre looked like before
+/// this. Each level's alpha is therefore rescaled so that the share of texels
+/// passing the cutoff stays what it was at full size (Castaño's method: bisect
+/// a factor until the coverage matches). Pass `None` for an opaque image.
+pub(crate) fn with_mipmaps(
+    mut data: Vec<u8>,
+    width: u32,
+    height: u32,
+    cutout: Option<f32>,
+) -> (Vec<u8>, u32) {
+    let target = cutout.map(|cutoff| (coverage(&data, cutoff, 1.0), cutoff));
     let mut levels = 1;
     let (mut prev_w, mut prev_h) = (width.max(1) as usize, height.max(1) as usize);
-    let mut prev_start = 0usize;
+    // Every level is filtered from the level above it **as the filter made it**,
+    // not as the rescale left it. Filtering the boosted alpha and boosting the
+    // result again compounds: five levels of a fifth more each turn every texel
+    // opaque, and the tree's billboard stops being a tree and becomes the
+    // rectangle it is drawn on.
+    let mut previous = data[..prev_w * prev_h * 4].to_vec();
     while prev_w > 1 || prev_h > 1 {
         let (next_w, next_h) = ((prev_w / 2).max(1), (prev_h / 2).max(1));
         let mut level = Vec::with_capacity(next_w * next_h * 4);
@@ -1305,15 +1331,16 @@ pub(crate) fn with_mipmaps(mut data: Vec<u8>, width: u32, height: u32) -> (Vec<u
             for x in 0..next_w {
                 let (x0, x1) = ((2 * x).min(prev_w - 1), (2 * x + 1).min(prev_w - 1));
                 for c in 0..4 {
-                    let at = |px: usize, py: usize| {
-                        u32::from(data[prev_start + (py * prev_w + px) * 4 + c])
-                    };
+                    let at = |px: usize, py: usize| u32::from(previous[(py * prev_w + px) * 4 + c]);
                     let sum = at(x0, y0) + at(x1, y0) + at(x0, y1) + at(x1, y1);
                     level.push((sum / 4) as u8);
                 }
             }
         }
-        prev_start = data.len();
+        previous = level.clone();
+        if let Some((target, cutoff)) = target {
+            rescale_alpha(&mut level, cutoff, target);
+        }
         (prev_w, prev_h) = (next_w, next_h);
         data.extend_from_slice(&level);
         levels += 1;
@@ -1321,10 +1348,215 @@ pub(crate) fn with_mipmaps(mut data: Vec<u8>, width: u32, height: u32) -> (Vec<u
     (data, levels)
 }
 
+/// The share of texels that still pass the cutoff once their alpha has been
+/// scaled — measured on the rounded byte the level will actually hold, not on
+/// the exact product, because a factor that does not move the byte moves
+/// nothing.
+fn coverage(level: &[u8], cutoff: f32, scale: f32) -> f32 {
+    if level.is_empty() {
+        return 0.0;
+    }
+    let limit = (cutoff * 255.0).round();
+    let (texels, _) = level.as_chunks::<4>();
+    let passing = texels
+        .iter()
+        .filter(|texel| (f32::from(texel[3]) * scale).min(255.0).round() >= limit)
+        .count();
+    passing as f32 / texels.len().max(1) as f32
+}
+
+/// Scales a level's alpha so its coverage at `cutoff` comes back to `target`.
+///
+/// Coverage rises monotonically with the factor, so a bisection finds the
+/// smallest one that reaches the target — but only after checking whether the
+/// level drifted at all. A cut-out whose alpha is flatly 0 or 255 keeps its
+/// coverage under *any* factor, and a bisection over a constant would run off
+/// to whichever end it started from and wipe the image out.
+///
+/// A level that has blurred into one flat alpha cannot have a coverage between
+/// nothing and everything, and the bisection then lands on everything. The
+/// result is checked against simply leaving the level alone, and the nearer of
+/// the two wins — a canopy turned into a solid rectangle is further from the
+/// truth than one left thin.
+fn rescale_alpha(level: &mut [u8], cutoff: f32, target: f32) {
+    /// Coverage this close to the target counts as unchanged.
+    const TOLERANCE: f32 = 0.02;
+    /// Alpha is only ever brightened this far. One halving costs a cut-out
+    /// perhaps a fifth of its coverage, so anything past a factor of three is a
+    /// level that cannot hold the coverage at all — and forcing it there turns
+    /// the sheet opaque.
+    const MAX_SCALE: f32 = 3.0;
+
+    if target <= 0.0 || level.is_empty() {
+        return;
+    }
+    let have = coverage(level, cutoff, 1.0);
+    if (have - target).abs() <= TOLERANCE {
+        return;
+    }
+    let (mut lo, mut hi) = if have < target {
+        (1.0, MAX_SCALE)
+    } else {
+        (0.0, 1.0)
+    };
+    // Where even the largest factor does not reach the target there is nothing
+    // to bisect for: take it and leave the level as sparse as it turned out.
+    if coverage(level, cutoff, hi) >= target {
+        for _ in 0..14 {
+            let mid = 0.5 * (lo + hi);
+            if coverage(level, cutoff, mid) < target {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+    }
+    // Only if it actually helps. A level that has blurred into one flat alpha —
+    // the last few of a chain, where a texel covers a whole leaf — cannot hold a
+    // coverage between nothing and everything, and the bisection then lands on
+    // everything. Turning a canopy into a solid rectangle is further from the
+    // truth than leaving it thin, so that scale is thrown away.
+    let scale = hi;
+    if (coverage(level, cutoff, scale) - target).abs() > (have - target).abs() {
+        return;
+    }
+    for texel in level.as_chunks_mut::<4>().0 {
+        texel[3] = (f32::from(texel[3]) * scale).min(255.0).round() as u8;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sim_core::interlock::SignalPart;
+
+    /// A plain image gets its chain and a mipmapped sampler; one that has a
+    /// chain, or is not RGBA8, is left alone.
+    #[test]
+    fn a_mip_chain_is_built_once_for_rgba8() {
+        use bevy::asset::RenderAssetUsages;
+        use bevy::render::render_resource::Extent3d;
+        let mut image = Image::new(
+            Extent3d {
+                width: 4,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            vec![200; 4 * 2 * 4],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        );
+        assert!(build_mip_chain(&mut image, None));
+        assert_eq!(image.texture_descriptor.mip_level_count, 3);
+        assert_eq!(image.data.as_ref().map(Vec::len), Some((8 + 2 + 1) * 4));
+        match &image.sampler {
+            ImageSampler::Descriptor(sampler) => {
+                assert_eq!(sampler.anisotropy_clamp, TEXTURE_ANISOTROPY);
+                assert_eq!(sampler.mipmap_filter, ImageFilterMode::Linear);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!build_mip_chain(&mut image, None), "not twice");
+        let mut float = Image::new(
+            Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            vec![0; 2 * 2 * 8],
+            TextureFormat::Rgba16Float,
+            RenderAssetUsages::default(),
+        );
+        assert!(!build_mip_chain(&mut float, None));
+        assert_eq!(float.texture_descriptor.mip_level_count, 1);
+    }
+
+    /// A cut-out keeps its coverage down the chain — a canopy of scattered
+    /// leaves, which is what a foliage card is. Box-filtering alpha alone pulls
+    /// the average under the cutoff level by level, and the wood then thins out
+    /// with distance until only the opaque trunks are left. Rescaling holds the
+    /// share of covered texels where it started.
+    ///
+    /// It must not run the other way either: a chain that boosts alpha it has
+    /// already boosted turns opaque within a few levels, and the tree's
+    /// billboard stops being a tree and becomes the rectangle it is drawn on.
+    #[test]
+    fn a_cut_out_keeps_its_coverage_down_the_chain() {
+        const SIZE: usize = 128;
+        let mut data = vec![0u8; SIZE * SIZE * 4];
+        // Leaf-sized blobs on a lattice, jittered — about half the sheet.
+        for row in 0..8 {
+            for column in 0..8 {
+                let cx = column as f32 * 16.0 + 8.0 + ((row * 5) % 7) as f32 - 3.0;
+                let cy = row as f32 * 16.0 + 8.0 + ((column * 3) % 5) as f32 - 2.0;
+                for y in 0..SIZE {
+                    for x in 0..SIZE {
+                        let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+                        if d > 6.0 {
+                            continue;
+                        }
+                        let i = (y * SIZE + x) * 4;
+                        data[i] = 80;
+                        data[i + 1] = 160;
+                        data[i + 2] = 60;
+                        // A soft edge, as a photographed leaf has.
+                        data[i + 3] = (255.0 * (1.0 - (d / 6.0).powi(3))).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+        }
+        let start = coverage(&data[..SIZE * SIZE * 4], 0.5, 1.0);
+        assert!(
+            (0.15..0.6).contains(&start),
+            "the fixture covers a canopy's worth of the sheet ({start})"
+        );
+
+        let plain = with_mipmaps(data.clone(), SIZE as u32, SIZE as u32, None);
+        let kept = with_mipmaps(data, SIZE as u32, SIZE as u32, Some(0.5));
+        assert_eq!(plain.1, kept.1, "the same number of levels either way");
+
+        let mut offset = SIZE * SIZE * 4;
+        let mut side = SIZE / 2;
+        let mut checked = 0;
+        let mut thinned = false;
+        while side >= 8 {
+            let len = side * side * 4;
+            let share = |image: &Vec<u8>| coverage(&image[offset..offset + len], 0.5, 1.0);
+            let (before, after) = (share(&plain.0), share(&kept.0));
+            thinned |= before < start * 0.8;
+            assert!(
+                after >= before,
+                "level {side}: {after} is no worse than {before}"
+            );
+            // Nearer the original coverage than the plain chain, and never
+            // filled up past it — a level that turns solid is a billboard that
+            // reads as the rectangle it is drawn on.
+            assert!(
+                (after - start).abs() <= (before - start).abs(),
+                "level {side}: {after} is nearer {start} than {before}"
+            );
+            assert!(
+                after <= start + 0.12,
+                "level {side} did not fill up ({after})"
+            );
+            offset += len;
+            side /= 2;
+            checked += 1;
+        }
+        assert!(checked >= 3, "several levels were compared");
+        assert!(
+            thinned,
+            "the plain chain does thin out — otherwise this proves nothing"
+        );
+
+        // An image whose coverage the filter did not touch is left alone;
+        // rescaling a constant would run the factor off to one end.
+        let opaque = vec![255u8; 16 * 16 * 4];
+        let (chain, _) = with_mipmaps(opaque, 16, 16, Some(0.5));
+        assert!(chain.iter().all(|&v| v == 255), "nothing was scaled");
+    }
 
     /// A 4 × 2 image halves to 2 × 1 and then 1 × 1 — three levels, the short
     /// side held at one; the chain is the box average of the level before.
@@ -1334,7 +1566,7 @@ mod tests {
         for v in [0u8, 40, 80, 120, 160, 200, 240, 255] {
             data.extend_from_slice(&[v, v, v, 255]);
         }
-        let (chain, levels) = with_mipmaps(data, 4, 2);
+        let (chain, levels) = with_mipmaps(data, 4, 2, None);
         assert_eq!(levels, 3);
         assert_eq!(chain.len(), (8 + 2 + 1) * 4);
         // Level 1, texel 0: the average of texels (0,0), (1,0), (0,1), (1,1).
@@ -1342,41 +1574,10 @@ mod tests {
         assert_eq!(chain[8 * 4], 100);
         assert_eq!(chain[8 * 4 + 3], 255);
         // A square image keeps the old count: 256 → 9 levels.
-        let (_, levels) = with_mipmaps(vec![0; 256 * 256 * 4], 256, 256);
+        let (_, levels) = with_mipmaps(vec![0; 256 * 256 * 4], 256, 256, None);
         assert_eq!(levels, 9);
         // A single texel is its own chain.
-        assert_eq!(with_mipmaps(vec![1, 2, 3, 4], 1, 1).1, 1);
-    }
-
-    /// The ballast bed is seen from above — from the cab as much as from the
-    /// editor's map. A ribbon wound the other way round is a backface and the
-    /// track is simply not there.
-    #[test]
-    fn the_track_ribbon_faces_upwards() {
-        let mut ribbon = RibbonBuilder::default();
-        for i in 0..3 {
-            let along = DVec3::new(i as f64 * 4.0, 0.0, 0.0);
-            // left of travel = north, right = south (ENU: x east, y north).
-            ribbon.push_pair(
-                along + DVec3::new(0.0, 2.6, 0.0),
-                along - DVec3::new(0.0, 2.6, 0.0),
-            );
-        }
-        let mesh = ribbon.build();
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
-            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            panic!("positions");
-        };
-        let Some(bevy::mesh::Indices::U32(indices)) = mesh.indices() else {
-            panic!("indices");
-        };
-        for triangle in indices.chunks(3) {
-            let p = |i: u32| Vec3::from(positions[i as usize]);
-            let (a, b, c) = (p(triangle[0]), p(triangle[1]), p(triangle[2]));
-            let normal = (b - a).cross(c - a);
-            assert!(normal.y > 0.0, "triangle faces down: {normal:?}");
-        }
+        assert_eq!(with_mipmaps(vec![1, 2, 3, 4], 1, 1, None).1, 1);
     }
 
     /// The season is what the date makes of the ground and the leaves —
@@ -1496,6 +1697,7 @@ mod tests {
             height: 0.0,
             autumn_model: None,
             winter_model: None,
+            lod_distances: Vec::new(),
             tags: Vec::new(),
         }
     }

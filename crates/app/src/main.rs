@@ -438,14 +438,35 @@ fn main() {
 
 /// Exits the app after the given number of frames — with `--screenshot` the window is
 /// captured beforehand.
+///
+/// The last frame's diagnostics go into the log on the way out. A `--frames`
+/// run is how the rendering is measured (the forest test of
+/// `tools/trees/bench_forest.mjs` is one), and reading them off a screenshot of
+/// the F6 overlay is neither scriptable nor precise.
 fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
+    diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
+    terrain: Res<TerrainInfo>,
     mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     *count += 1;
+    if *count == limit.0 {
+        let perf = hud::Perf::read(&diagnostics);
+        info!(
+            "after {} frames: {:.0} fps, {:.1} ms, {} entities; \
+             terrain {} tiles, {} triangles, {:.1} MB",
+            limit.0,
+            perf.fps,
+            perf.frame_ms,
+            perf.entities,
+            terrain.0.tiles,
+            terrain.0.triangles,
+            terrain.0.memory() as f64 / (1024.0 * 1024.0),
+        );
+    }
     let Some(shot) = shot else {
         if *count >= limit.0 {
             exit.write(AppExit::Success);
@@ -595,7 +616,7 @@ fn log_mods(mods: Res<Mods>) {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    world_materials: render::WorldMaterials,
     mut images: ResMut<Assets<Image>>,
     mut terrain_materials: ResMut<Assets<render::TerrainMaterial>>,
     mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
@@ -610,6 +631,12 @@ fn setup(
     binds: Res<bindings::Binds>,
     fonts: Res<theme::Fonts>,
 ) {
+    // Back to the names the body has always used.
+    let render::WorldMaterials {
+        standard: mut materials,
+        rail: mut rail_materials,
+    } = world_materials;
+
     // `--hud full|reduced|off` puts the display in one of its three steps for a
     // screenshot, which cannot press a key. It goes into a resource of its own rather than
     // into the setting: the settings file is written on exit whether anything changed or
@@ -809,6 +836,7 @@ fn setup(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut rail_materials,
         &assets,
         &sim.net,
         &origin,

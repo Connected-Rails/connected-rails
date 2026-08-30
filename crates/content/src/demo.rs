@@ -19,26 +19,87 @@ pub const START: GeoPoint = GeoPoint {
     height: 100.0,
 };
 
-/// Vegetation of the example line: two hand-set trees plus two woods, baked
-/// into single trees exactly as the editor's forest brush does it.
+/// A stand of the `trees` mod: the species a wood of this kind is mixed from,
+/// named as often as they are meant to occur. [`crate::terrain::fill_polygon`]
+/// draws one entry per tree, so a species listed twice is twice as likely, and
+/// the three individuals each species ships (`_a`, `_b`, `_c`) keep a stand of
+/// one species from being a stand of one shape.
+///
+/// The same mixtures the route editor offers under the `stand-*` tags of the
+/// mod — this is the demo line naming them by hand, not a second catalogue.
+fn stand(members: &[&str]) -> Vec<String> {
+    let mut objects = Vec::with_capacity(members.len() * 3);
+    for member in members {
+        for variant in ['a', 'b', 'c'] {
+            objects.push(format!("trees:{member}_{variant}"));
+        }
+    }
+    objects
+}
+
+/// Vegetation of the example line: a mixed wood on the northern slope, a
+/// spruce stand to the south, scrub along the line, and two solitary trees near
+/// the start. All of it baked into single trees exactly as the editor's forest
+/// brush does it, so streaming, instancing and per-tree editing stay exercised
+/// — and all of it out of the `trees` mod, which is where the levels of detail
+/// and the seasonal models come from. Without that mod installed every one of
+/// them falls back to the renderer's placeholder, which is the point of the
+/// fallback.
 fn demo_trees() -> Vec<TreeSource> {
     let mut trees = vec![
+        // A solitary oak beside the line, and a birch across from it.
         TreeSource {
-            object: String::new(),
+            object: "trees:stieleiche_c".into(),
             lat: 52.0006,
             lon: 10.004,
             yaw_deg: 0.0,
-            scale: 1.3,
+            scale: 1.15,
         },
         TreeSource {
-            object: String::new(),
+            object: "trees:sandbirke_b".into(),
             lat: 51.9994,
             lon: 10.007,
             yaw_deg: 120.0,
             scale: 1.0,
         },
     ];
-    for (polygon, area, seed) in [
+    let mixed = stand(&[
+        "rotbuche",
+        "rotbuche",
+        "stieleiche",
+        "hainbuche",
+        "bergahorn",
+        "winterlinde",
+        "sandbirke",
+        "vogelkirsche",
+        "fichte",
+        "laerche",
+        "hasel",
+        "eberesche",
+    ]);
+    let conifer = stand(&[
+        "fichte",
+        "fichte",
+        "fichte",
+        "kiefer",
+        "kiefer",
+        "weisstanne",
+        "douglasie",
+        "laerche",
+        "sandbirke",
+    ]);
+    // What grows on a railway embankment: pioneers and thorn scrub.
+    let scrub = stand(&[
+        "robinie",
+        "salweide",
+        "holunder",
+        "schlehe",
+        "weissdorn",
+        "eberesche",
+        "sandbirke",
+        "zitterpappel",
+    ]);
+    for (polygon, objects, area, seed) in [
         (
             vec![
                 (52.001, 10.005),
@@ -46,7 +107,8 @@ fn demo_trees() -> Vec<TreeSource> {
                 (52.005, 10.028),
                 (52.004, 10.006),
             ],
-            400.0,
+            &mixed,
+            220.0,
             1,
         ),
         (
@@ -56,14 +118,39 @@ fn demo_trees() -> Vec<TreeSource> {
                 (51.998, 10.022),
                 (51.994, 10.020),
             ],
-            700.0,
+            &conifer,
+            160.0,
             2,
+        ),
+        // Two bands along the first straight, clear of the embankment the
+        // terrain pulls up to rail height (`TREE_TRACK_CLEARANCE`).
+        (
+            vec![
+                (52.00060, 10.0020),
+                (52.00060, 10.0380),
+                (52.00090, 10.0380),
+                (52.00090, 10.0020),
+            ],
+            &scrub,
+            90.0,
+            3,
+        ),
+        (
+            vec![
+                (51.99910, 10.0040),
+                (51.99910, 10.0360),
+                (51.99940, 10.0360),
+                (51.99940, 10.0040),
+            ],
+            &scrub,
+            90.0,
+            4,
         ),
     ] {
         // The polygons keep off the track on their own — no clearance filter.
         trees.extend(crate::terrain::fill_polygon(
             &polygon,
-            &[],
+            objects,
             area,
             seed,
             32,
@@ -246,10 +333,6 @@ pub fn musterbahn() -> LineSource {
                 length: 300.0,
             },
         ],
-        // Placeholder vegetation (no mod objects named): two woods baked the
-        // same way the editor's forest brush bakes them, plus two single trees
-        // near the start — the demo shows trees, and streaming/instancing and
-        // per-tree editing stay exercised.
         trees: demo_trees(),
         // A lake south of the first straight — the stand-in for the water
         // import, so the demo shows a body of water without an extract. Its

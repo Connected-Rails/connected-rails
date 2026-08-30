@@ -45,15 +45,15 @@ use bevy::gltf::{Gltf, GltfMesh};
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use fields::CropClass;
 use fields::phenology::{self, Stage};
 use fields::stats::vary;
-use fields::CropClass;
 
 use crate::{
-    farmland::{linear, FieldSurface},
+    Season, TextureMips,
+    farmland::{FieldSurface, linear},
     sky::Sky,
     weather::{WeatherExt, WeatherMaterial},
-    Season, TextureMips,
 };
 
 /// Where two crossed cards hand over to one [m]. A metre of crop at ninety
@@ -470,7 +470,10 @@ fn grow(
         .try_attribute(Mesh::ATTRIBUTE_POSITION)
         .ok()?
         .as_float3()?;
-    let normals = mesh.try_attribute(Mesh::ATTRIBUTE_NORMAL).ok()?.as_float3()?;
+    let normals = mesh
+        .try_attribute(Mesh::ATTRIBUTE_NORMAL)
+        .ok()?
+        .as_float3()?;
     let colors = match mesh.try_attribute(Mesh::ATTRIBUTE_COLOR).ok()? {
         VertexAttributeValues::Float32x4(colors) => colors,
         _ => return None,
@@ -511,13 +514,14 @@ fn grow(
     // cost allows.
     let hero_share = match model {
         Some(model) => {
-            let by_count = (MAX_HEROES.min(MIN_HEROES.max(
-                HERO_TRIANGLE_BUDGET / model.tris().max(1),
-            )) as f64)
-                .max(1.0);
+            let by_count =
+                (MAX_HEROES.min(MIN_HEROES.max(HERO_TRIANGLE_BUDGET / model.tris().max(1))) as f64)
+                    .max(1.0);
             let (_, wanted) = model_of(crop)?;
             let cards = area * density as f64;
-            ((wanted as f64 / density as f64).min(by_count / cards).min(1.0)) as f32
+            ((wanted as f64 / density as f64)
+                .min(by_count / cards)
+                .min(1.0)) as f32
         }
         None => 0.0,
     };
@@ -526,11 +530,7 @@ fn grow(
     let mut cards: Vec<Card> = Vec::with_capacity(MAX_CARDS);
     let mut week_sum = 0.0f64;
     for (i, tri) in tris.iter().enumerate() {
-        let (ia, ib, ic) = (
-            tri[0] as usize,
-            tri[1] as usize,
-            tri[2] as usize,
-        );
+        let (ia, ib, ic) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
         let (a, b, c) = (
             Vec3::from(positions[ia]),
             Vec3::from(positions[ib]),
@@ -583,13 +583,17 @@ fn grow(
             }
             cards.push(Card {
                 pos,
-                up: if up.length_squared() > 0.5 { up } else { Vec3::Y },
+                up: if up.length_squared() > 0.5 {
+                    up
+                } else {
+                    Vec3::Y
+                },
                 yaw: (vary(i as u64 * 3 + k * 13, 0x91A7 + 7) as f32 - 0.5) * 1.1,
                 width: card_width(crop) * (0.75 + 0.5 * vary(i as u64 + k, 0x91A7 + 6) as f32),
                 height: (growth.height
                     * (0.7 + 0.5 * vary(i as u64 + k * 11, 0x91A7 + 9) as f32)
                     * scale)
-                .max(0.03),
+                    .max(0.03),
                 lean: (vary(i as u64 + k * 7, 0x91A7 + 10) as f32 - 0.5) * 0.35,
                 tint,
                 light: vary(i as u64 + k * 13, 0x91A7 + 21) as f32,
@@ -657,8 +661,7 @@ impl PlantMaterials {
         self.day = Some(today);
         for (crop, handle) in &self.by_crop {
             if let Some(mut material) = assets.get_mut(handle) {
-                material.base.base_color =
-                    stand_colour(phenology::growth(*crop, month, day, 0));
+                material.base.base_color = stand_colour(phenology::growth(*crop, month, day, 0));
             }
         }
         true
@@ -754,7 +757,13 @@ pub fn update_field_plants(
     mut plants: ResMut<PlantMaterials>,
     mut models: ResMut<PlantModels>,
     sky: Res<Sky>,
-    mut fields: Query<(Entity, &FieldSurface, &Mesh3d, &GlobalTransform, &mut FieldPlants)>,
+    mut fields: Query<(
+        Entity,
+        &FieldSurface,
+        &Mesh3d,
+        &GlobalTransform,
+        &mut FieldPlants,
+    )>,
     cameras: Query<(&Camera, &GlobalTransform)>,
 ) {
     let Some((_, at)) = cameras.iter().find(|(camera, _)| camera.is_active) else {
@@ -798,7 +807,13 @@ pub fn update_field_plants(
 
         // Grown for the day already? The day's colour rode in with the
         // material; only stage, height, winter and a landed model rebuild.
-        let key = CropKey::of(surface.crop, sky.month, sky.day, state.week, model.is_some());
+        let key = CropKey::of(
+            surface.crop,
+            sky.month,
+            sky.day,
+            state.week,
+            model.is_some(),
+        );
         if state.grown == Some(key) || builds >= BUILD_BUDGET {
             continue;
         }
@@ -808,8 +823,13 @@ pub fn update_field_plants(
             continue;
         };
         state.grown = Some(key);
-        let Some(grown) = grow(surface_mesh, surface.crop, sky.month, sky.day, model.as_deref())
-        else {
+        let Some(grown) = grow(
+            surface_mesh,
+            surface.crop,
+            sky.month,
+            sky.day,
+            model.as_deref(),
+        ) else {
             continue;
         };
         state.week = grown.week;
@@ -837,7 +857,12 @@ pub fn update_field_plants(
                     (
                         at,
                         hero_mesh(part, &grown.cards, stand),
-                        models.dressed(&part.material, &standards, &mut materials, part.uvs.is_some()),
+                        models.dressed(
+                            &part.material,
+                            &standards,
+                            &mut materials,
+                            part.uvs.is_some(),
+                        ),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -850,31 +875,46 @@ pub fn update_field_plants(
                         continue;
                     };
                     let handle = meshes.add(hero_mesh.clone());
-                    spawned.push((parent.spawn((
-                        Mesh3d(handle.clone()),
+                    spawned.push((
+                        parent
+                            .spawn((
+                                Mesh3d(handle.clone()),
+                                MeshMaterial3d(material.clone()),
+                                Transform::IDENTITY,
+                                range(0.0, LOD0_END),
+                                NotShadowCaster,
+                            ))
+                            .id(),
+                        handle.id(),
+                    ));
+                }
+            }
+            let filler = meshes.add(card_mesh(&grown.cards, false));
+            spawned.push((
+                parent
+                    .spawn((
+                        Mesh3d(filler.clone()),
                         MeshMaterial3d(material.clone()),
                         Transform::IDENTITY,
                         range(0.0, LOD0_END),
                         NotShadowCaster,
-                    )).id(), handle.id()));
-                }
-            }
-            let filler = meshes.add(card_mesh(&grown.cards, false));
-            spawned.push((parent.spawn((
-                Mesh3d(filler.clone()),
-                MeshMaterial3d(material.clone()),
-                Transform::IDENTITY,
-                range(0.0, LOD0_END),
-                NotShadowCaster,
-            )).id(), filler.id()));
+                    ))
+                    .id(),
+                filler.id(),
+            ));
             let sparse = meshes.add(card_mesh(&grown.cards, true));
-            spawned.push((parent.spawn((
-                Mesh3d(sparse.clone()),
-                MeshMaterial3d(material),
-                Transform::IDENTITY,
-                range(LOD0_END, PLANT_CULL),
-                NotShadowCaster,
-            )).id(), sparse.id()));
+            spawned.push((
+                parent
+                    .spawn((
+                        Mesh3d(sparse.clone()),
+                        MeshMaterial3d(material),
+                        Transform::IDENTITY,
+                        range(LOD0_END, PLANT_CULL),
+                        NotShadowCaster,
+                    ))
+                    .id(),
+                sparse.id(),
+            ));
         });
         state.lods.extend(spawned);
     }
@@ -945,7 +985,10 @@ fn card_mesh(cards: &[Card], sparse: bool) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
@@ -1011,7 +1054,10 @@ fn hero_mesh(part: &PlantPart, cards: &[Card], stand: [f32; 3]) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
@@ -1079,11 +1125,13 @@ mod tests {
         mesh.indices().map(Indices::len).unwrap_or(0)
     }
 
-
     /// One square of ground, `size` metres on a side, as a patch's mesh —
     /// two triangles, flat, with the vertex colours a field piece carries.
     fn patch(size: f32) -> Mesh {
-        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
         mesh.insert_attribute(
             Mesh::ATTRIBUTE_POSITION,
             vec![
@@ -1133,10 +1181,23 @@ mod tests {
         // third of the cards, one quad of the cross each.
         let kept = grown.cards.iter().filter(|c| c.sparse).count();
         assert_eq!(index_count(&far) / 6, kept, "one quad per kept card");
-        assert_eq!(index_count(&near) / 12, grown.cards.len(), "two quads a card");
+        assert_eq!(
+            index_count(&near) / 12,
+            grown.cards.len(),
+            "two quads a card"
+        );
         // And the thinning is the draw's, not a hash quirk: about a third.
-        assert!(kept * 3 < grown.cards.len() * 2, "{kept} of {}", grown.cards.len());
-        assert!(kept * 3 > grown.cards.len(), "{} of {}", kept, grown.cards.len());
+        assert!(
+            kept * 3 < grown.cards.len() * 2,
+            "{kept} of {}",
+            grown.cards.len()
+        );
+        assert!(
+            kept * 3 > grown.cards.len(),
+            "{} of {}",
+            kept,
+            grown.cards.len()
+        );
     }
 
     #[test]
@@ -1207,11 +1268,24 @@ mod tests {
             _ => panic!("colours are float quads"),
         };
         assert!(colors[0][1] < 0.4 * 0.8 + 1e-6, "foot darker than head");
-        assert!((colors[1][1] - 0.4 * 1.05).abs() < 0.2, "head near the stand colour");
+        assert!(
+            (colors[1][1] - 0.4 * 1.05).abs() < 0.2,
+            "head near the stand colour"
+        );
         // Not a hero: nothing is baked.
-        let plain = Card { hero: false, ..card };
+        let plain = Card {
+            hero: false,
+            ..card
+        };
         let empty = hero_mesh(&model.parts[0], &[plain], [0.2, 0.4, 0.1]);
-        assert!(empty.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap().is_empty());
+        assert!(
+            empty
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

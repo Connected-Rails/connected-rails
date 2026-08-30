@@ -24,8 +24,8 @@ pub use people::{
     Crowd, PersonInstance, Pose, StrollAgent, StrollPose, Walkway, WalkwayKind, WalkwayNode,
     embedded_walkways, stroll_pose,
 };
-pub use route::{CompiledLine, FieldSource, LineSource, TreeSource};
 pub use roads::{RoadPatch, Roads};
+pub use route::{CompiledLine, FieldSource, LineSource, TreeSource};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{
     Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,

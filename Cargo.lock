@@ -3009,7 +3009,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sim-core",
+ "tiff",
  "track-model",
+ "ureq",
  "world-coords",
 ]
 

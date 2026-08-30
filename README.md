@@ -302,7 +302,8 @@ of tile sheets (subdirectories included):
 cargo run -p content --bin import-line -- line.json --dgm ./dgm1_niedersachsen --epsg 25832 --name "Musterbahn" --out line.ron
 ```
 
-Supported are XYZ (`x y z`, UTM) and ESRI ASCII Grid (`.asc`). Sheet boundaries are read from
+Supported are XYZ (`x y z`, UTM), ESRI ASCII Grid (`.asc`) and GeoTIFF (`.tif`, the
+single-band float tiles NRW delivers). Sheet boundaries are read from
 the file name (`dgm1_32_389_5711_1_ni.xyz`), so nothing is loaded at startup; each tile only
 enters memory once a query falls into it, and at most eight stay loaded at a time. This makes
 even a DGM1 of an entire federal state (several thousand tiles) usable.
@@ -537,8 +538,10 @@ landscape is right. Rhineland-Palatinate publishes nothing at all, and a module 
 no German register under it at all; both fall back to OpenStreetMap's `landuse=farmland`,
 which is thinner than a register and share-alike, and the import says so. See *Fields* in
 MODS.md for the crop groups, the licences and how to correct a mapping — and `cargo run -p app -- --scenario
-example:boerdefahrt` for five kilometres across the Soester Börde with 135 real parcels
-beside the track.
+example:boerdefahrt` for five kilometres across the Soester Börde with 134 real parcels
+beside the track, its roads out of OpenStreetMap and the state DGM1 under it. All three
+imports re-run headless in one command (`cargo run -p content --bin import-module -- …`),
+which is how the module is regenerated.
 
 The app shows the terrain automatically (flat without DGM):
 

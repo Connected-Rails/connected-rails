@@ -400,10 +400,13 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   displacement known from Zusi has no source here (pinned by a test at the 32/33
   boundary).
 - **Import (ch. 15):** Overpass JSON → way chain → alignment → `LineSource`. From OSM come
-  geometry, `maxspeed` and `name`; DGM tiles (XYZ or ESRI ASCII Grid) from a single file or
+  geometry, `maxspeed` and `name`; DGM tiles (XYZ, ESRI ASCII Grid or GeoTIFF — the single
+  band float tiles NRW delivers, geo-referenced by `ModelPixelScale`/`ModelTiepoint`, NODATA
+  from `GDAL_NODATA`) from a single file or
   an entire directory supply the gradient profile. Tiles are loaded lazily (sheet boundaries
   from the file name) and kept in an LRU, so even a federal state's DGM1 is usable.
-  CLI: `import-line`.
+  CLI: `import-line`, and `import-module` for re-fetching a whole module's fields, roads
+  and heights headless (2026-08-31, see below).
 - **Fields from the agricultural registers (field plan, complete):** the countryside beside
   the line is farmed, and a field is a crop rather than a green rectangle. A line stores the
   outline, the crop, the working direction and a seed (`route::FieldSource`); what a field
@@ -446,11 +449,27 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   the tile's own height grid, and draws it with one
   material per crop — furrows at the crop's own drill spacing, the sprayer's tramlines every
   24 m, both fading out as they fall below a pixel. **Driveable**: `lines/boerde.ron` and
-  `example:boerdefahrt` are five kilometres across the Soester Börde with 135 real parcels
+  `example:boerdefahrt` are five kilometres across the Soester Börde with 134 real parcels
   beside the track, which is what caught the one bug the editor could not — a module whose
-  rails sit below the terrain's fallback height runs down a cutting for its whole length,
+  rails sit below the terrain runs down a cutting for its whole length,
   and from a cab that is banks rather than countryside. Invisible from a top-down editor
-  view; obvious at two and a half metres.
+  view; obvious at two and a half metres. Since 2026-08-31 the module carries its own
+  ground (DGM1 cut into `heights/boerde/`, 141 tiles, 2.5 MB) and the track stands where
+  the ground is — 92.4 m NHN at the start, over the dip at km 2, up to 103.5 m at the east
+  end.
+- **The Börde module rebuilt from live data (2026-08-31, `content/src/bin/import-module.rs`):**
+  the module the imports are demonstrated on is now generated, not maintained by hand: one
+  command asks the NRW register for the fields again, Overpass for the roads, downloads the
+  54 DGM1 GeoTIFF sheets the corridor needs from NRW's open data, cuts the corridor's
+  terrain tiles at 10 m into `<mod>/heights/<line>/` and **fits the track to the ground** —
+  node heights are the DGM's trend over ±125 m (a 1 m DGM point is a field bank or a ditch,
+  and an alignment follows the land, not the hedge), grades rounded to 0.1 ‰ on
+  half-kilometre nodes, a `Continue` edge standing on the height the edge before it ends
+  at. The fit refuses when the delivery does not cover the whole track — a half-fitted
+  line is worse than an unfitted one. The shared parts moved into the library so editor
+  and tool cannot drift apart: `FieldSource::from_feature` and
+  `LineSource::apply_field_import` in `content::route` are what the editor's field-import
+  Commit runs.
 - **The standing crop (2026-08-30, `world_render::plants`):** the painted surface sells a
   field at any distance but one — close up a crop is not a colour on the ground but things
   standing on it, and a maize field in August really does stand two and a half metres above

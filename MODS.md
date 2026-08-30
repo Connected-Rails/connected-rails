@@ -1901,8 +1901,9 @@ roads: [
         points: [(lat: 51.598, lon: 8.160), (lat: 51.599, lon: 8.161)],
         width: 7.5,
         surface: Asphalt,          // or Concrete
-        center_line: Dashed,       // None, Dashed, Solid
+        center_line: Dashed,       // None, Dashed, DashedUrban, Solid
         edge_lines: true,
+        bridge: false,             // flies over a dip
         tags: ["highway-primary"],
     ),
 ],
@@ -1910,8 +1911,16 @@ roads: [
 
 The `points` are the **centre line** OSM maps a street with; the carriageway is the
 `width` either side of it, draped on the terrain when the tiles are built. `width`,
-`surface`, `center_line` and `edge_lines` carry defaults, so a hand-written entry can be
-as short as `points` alone.
+`surface`, `center_line`, `edge_lines` and `bridge` carry defaults, so a hand-written
+entry can be as short as `points` alone.
+
+A road with `bridge: true` **flies**: where the ground dips below the straight line
+between the way's own ends — a valley, a river, a cutting — the carriageway holds that
+line instead of following the hollow, and its ends are measured on the shaped ground
+(the elevation data as the tile grid samples it), so the deck meets the draped road at
+the abutments and both tiles at a seam cut the same chord. A bridge way in OSM spans
+abutment to abutment, which is exactly what this wants; a crossing where the elevation
+data is flat shows no dip and no bridge.
 
 **Import.** File ▸ Import roads asks Overpass for every `highway=*` way inside the
 module envelope — the same extract a hand-downloaded Overpass Turbo query returns, so a
@@ -1919,7 +1928,8 @@ file picked with the dialog works too. The OSM class decides what the road is ma
 and the mapper's own tags win where they say more: `surface=*` over the preset's
 surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the centre line out (a
 divided road is two one-way carriageways, and an Autobahn reads as two of these rather
-than as one striped one). The dialog's two checkboxes opt the many-and-thin classes in:
+than as one striped one), and any `bridge=*` but `no` flags the way as flying. The
+dialog's two checkboxes opt the many-and-thin classes in:
 **field tracks** (`highway=track` — what an agricultural module is stitched with) and
 **access ways** (`service`, `living_street`, `pedestrian`). Nothing is written before
 the summary's Commit, and Commit is one undo step.
@@ -1932,7 +1942,7 @@ the summary's Commit, and Commit is one undo step.
 | Bundes-/Landstraße außerorts | 7.5 m | dashed centre, edge lines |
 | Landstraße with overtaking ban | 7.0 m | solid centre, edge lines |
 | Kreisstraße | 6.5 m | dashed centre, edge lines |
-| Gemeindestraße | 5.5 m | dashed centre, edge lines |
+| Gemeindestraße | 5.5 m | dashed centre (innerorts), edge lines |
 | Anliegerstraße | 4.5 m | edge lines only |
 | Spielstraße | 3.0 m | none |
 | Wirtschaftsweg (asphalt) | 3.5 m | none |
@@ -1946,10 +1956,14 @@ panel edits width, surface and markings of the selected road afterwards.
 
 The look is **the program's, not the module's**: two surface scans (asphalt, concrete —
 ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`) and the markings drawn by the shader in
-real metres (12 cm strokes, edge lines 25 cm off the kerb, the centre dash running 6 m
-on and 12 m off). A module carries no road bitmaps, and two clients of a multiplayer run
-agree on what a road looks like without a byte crossing the network — roads are static
-module content, a pure function of the line file and the elevation data.
+real metres, per the RMS (Richtlinien für die Markierung von Straßen): 12 cm strokes,
+edge lines 25 cm off the kerb, the centre dash running 6 m on and 12 m off outside
+built-up areas and 3 m on and 6 m off inside them (`Dashed` vs `DashedUrban`). The
+surface texture tiles 4 m × 4 m on every carriageway, so the grain keeps its shape
+whatever the road's width. A module carries no road bitmaps, and two clients of a
+multiplayer run agree on what a road looks like without a byte crossing the network —
+roads are static module content, a pure function of the line file and the elevation
+data.
 
 ### Height data (DGM)
 

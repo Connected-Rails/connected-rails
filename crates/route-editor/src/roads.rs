@@ -373,7 +373,6 @@ fn finished(
     close
 }
 
-
 // ---------------------------------------------------------------------------
 // Drawing one by hand
 // ---------------------------------------------------------------------------
@@ -452,6 +451,8 @@ pub fn finish(line: &mut Line, state: &mut EditorState) -> Option<String> {
         surface: preset.surface,
         center_line: preset.center_line,
         edge_lines: preset.edge_lines,
+        // A hand-drawn road starts on the ground; the panel flags bridges.
+        bridge: false,
         tags: Vec::new(),
     });
     state.selection = Selection::Road(line.source.roads.len() - 1);
@@ -546,6 +547,9 @@ pub fn selection_rows(ui: &mut egui::Ui, line: &mut Line, state: &mut EditorStat
         crate::ui::row(ui, "road-edge-lines", |ui| {
             ui.checkbox(&mut road.edge_lines, "");
         });
+        crate::ui::row(ui, "road-bridge", |ui| {
+            ui.checkbox(&mut road.bridge, "");
+        });
     });
     if !road.tags.is_empty() {
         ui.small(
@@ -592,7 +596,12 @@ fn centre_combo(ui: &mut egui::Ui, id: &str, centre: &mut CenterLine) {
         .width(space::FIELD * 2.0)
         .selected_text(t!(&format!("road-center-{}", centre.id())))
         .show_ui(ui, |ui| {
-            for candidate in [CenterLine::None, CenterLine::Dashed, CenterLine::Solid] {
+            for candidate in [
+                CenterLine::None,
+                CenterLine::Dashed,
+                CenterLine::DashedUrban,
+                CenterLine::Solid,
+            ] {
                 if ui
                     .selectable_label(
                         *centre == candidate,
@@ -702,6 +711,7 @@ mod tests {
             surface: RoadSurface::Asphalt,
             center_line: CenterLine::Dashed,
             edge_lines: true,
+            bridge: false,
             tags: vec!["highway-primary".into()],
         }
     }
@@ -772,7 +782,11 @@ mod tests {
         let road = &line.source.roads[0];
         assert_eq!(road.width, 4.0, "the tool's width");
         assert_eq!(road.surface, RoadSurface::Asphalt, "the preset's surface");
-        assert_eq!(road.center_line, CenterLine::Dashed, "the preset's markings");
+        assert_eq!(
+            road.center_line,
+            CenterLine::DashedUrban,
+            "the preset's markings"
+        );
         assert_eq!(road.points.len(), 2);
     }
 

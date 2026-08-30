@@ -991,6 +991,12 @@ road-import-tracks-hint = Also import highway=track — the farm roads a agricul
 road-import-narrow = Access ways
 road-import-narrow-hint = Also import service roads, living streets and pedestrian ways — the narrowest class
 status-roads-imported = { $count } roads imported — the carriageways are draped over the terrain where the height data puts them
+road-center-none = None
+road-center-dashed = Dashed
+road-center-dashed-urban = Dashed (urban)
+road-center-solid = Solid
+road-bridge = Bridge
+road-bridge-hint = The way flies: over a valley, river or cutting the carriageway holds the straight line between its own ends instead of following the ground — the OSM import sets this from bridge=*
 action-delete-layer = Delete layer
 status-markers-imported = { $count } reference markers in { $layers } layers — hide or delete them by layer
 status-marker-import-empty = { $file }: no taggable features for reference markers found

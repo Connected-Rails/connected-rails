@@ -992,6 +992,12 @@ road-import-tracks-hint = Auch highway=track importieren — die Wirtschaftswege
 road-import-narrow = Anliegerwege
 road-import-narrow-hint = Auch Service Roads, Spielstraßen und Fußgängerstraßen importieren — die schmalste Klasse
 status-roads-imported = { $count } Straßen importiert — die Fahrbahnen liegen dort, wo das Höhendatenmodell sie hinsetzt
+road-center-none = Keine
+road-center-dashed = Gestrichelt
+road-center-dashed-urban = Gestrichelt (innerorts)
+road-center-solid = Durchgezogen
+road-bridge = Brücke
+road-bridge-hint = Das Bauwerk fliegt: über Tal, Fluss oder Einschnitt hält die Fahrbahn die gerade Linie zwischen ihren eigenen Enden, statt dem Boden zu folgen — der OSM-Import setzt das aus bridge=*
 action-delete-layer = Layer löschen
 status-markers-imported = { $count } Referenzmarker in { $layers } Layern — layerweise ausblendbar und löschbar
 status-marker-import-empty = { $file }: keine auswertbaren Objekte für Referenzmarker gefunden

@@ -1220,6 +1220,27 @@ fn blend_height(near: Option<(f64, f64)>, ground: f64, options: &TerrainOptions)
     }
 }
 
+/// The *shaped* ground at an arbitrary point: raw elevation plus geoid, the
+/// brush edits over it, and the cutting/embankment blend towards the track —
+/// exactly what the tile grid is sampled with (see [`build_tile`]), and what
+/// a bridge deck measures its abutments on.
+fn shaped_ground(
+    p: DVec2,
+    lat: f64,
+    lon: f64,
+    sampler: &mut Sampler<'_>,
+    edits: &TerrainEdits,
+    centerline: &Centerline,
+    options: &TerrainOptions,
+) -> f64 {
+    let ground = sampler
+        .height(p, lat, lon)
+        .map(|h| h + options.geoid_offset)
+        .unwrap_or(options.fallback_height + options.geoid_offset);
+    let ground = edits.apply(p, ground);
+    blend_height(centerline.nearest(p), ground, options)
+}
+
 /// The height grid of a tile: what the mesh, the trees and the objects all
 /// stand on. Row by row from the south, `(n + 1)²` values.
 pub(crate) struct HeightGrid<'a> {
@@ -1309,7 +1330,6 @@ fn build_tile(
             let height = blend_height(near, ground, options);
             heights.push(height);
             track_dist.push(near.map_or(f64::INFINITY, |(d, _)| d));
-
             let world = geo::to_ecef(lat, lon, height);
             positions.push(to_render(frame.to_local(world)));
         }
@@ -1340,11 +1360,27 @@ fn build_tile(
         crate::water::patches(k, sampler, &frame, options, options.tile_size, waters)
     };
     // The carriageways of the tile, cut to it and draped on the same grid
-    // the fields are — so a road follows every hollow the ground has.
+    // the fields are — so a road follows every hollow the ground has. A
+    // bridge flies over the hollow: its abutment heights are measured on the
+    // *shaped* ground — the same function that sampled the grid — so the
+    // deck meets the drape at its ends, and both tiles at a seam cut the
+    // same chord.
     let roads = if roads.is_empty() || !roads.touches(k) {
         Vec::new()
     } else {
-        crate::roads::patches(k, &grid, &frame, options.zone, options.tile_size, roads)
+        let mut ground = |p: DVec2| {
+            let (lat, lon) = geo::from_utm(p.x, p.y, options.zone);
+            shaped_ground(p, lat, lon, sampler, edits, centerline, options)
+        };
+        crate::roads::patches(
+            k,
+            &grid,
+            &frame,
+            options.zone,
+            options.tile_size,
+            roads,
+            &mut ground,
+        )
     };
 
     // Regular triangulation. The winding faces **up**: +x is east and +z is
@@ -1860,6 +1896,79 @@ mod tests {
         // pulled out from under.
         assert!((at(&builder, 200.0) - before).abs() < 1e-9);
         assert!(Arc::ptr_eq(&builder.sources[0], &edited.sources[0]));
+    }
+
+    /// A road flagged `bridge` spans the hollow a brush stroke makes; an
+    /// unflagged one follows it down. The full tile build — DGM, edits, grid
+    /// and the road patches on top — so the wiring in [`build_tile`] is the
+    /// thing under test.
+    #[test]
+    fn a_bridge_road_spans_the_hollow_the_ground_makes() {
+        let net = test_net();
+        // 500 m along the line, 60 m south of it: the hollow's centre.
+        let start = net.edges()[0].eval(0.0).pos;
+        let (lat, lon, _) = geo::from_ecef(start);
+        let (lat, lon) = (lat.to_degrees(), lon.to_degrees());
+        let dip_lat = lat - 60.0 / 111_320.0;
+        let dip_lon = lon + 500.0 / (111_320.0 * lat.to_radians().cos());
+
+        let road = |bridge: bool| crate::route::RoadSource {
+            name: String::new(),
+            points: vec![
+                crate::route::RoadPoint {
+                    lat: dip_lat,
+                    lon: dip_lon - 0.004,
+                },
+                crate::route::RoadPoint {
+                    lat: dip_lat,
+                    lon: dip_lon + 0.004,
+                },
+            ],
+            width: 6.0,
+            surface: crate::route::RoadSurface::Asphalt,
+            center_line: crate::route::CenterLine::None,
+            edge_lines: true,
+            bridge,
+            tags: Vec::new(),
+        };
+        let heights = |bridge: bool| {
+            let builder = TerrainBuilder::new(&net, vec![test_source()], options())
+                .with_edits(TerrainEdits::from_parts(
+                    &[TerrainEditSource {
+                        lat: dip_lat,
+                        lon: dip_lon,
+                        radius: 100.0,
+                        edit: TerrainEdit::Raise(-14.0),
+                    }],
+                    32,
+                ))
+                .with_roads(crate::roads::Roads::from_parts(&[road(bridge)], 32, 512.0));
+            let mut stats = TerrainStats::default();
+            let mut lo = f64::MAX;
+            let mut hi = f64::MIN;
+            for k in builder.corridor_keys() {
+                if let Some(tile) = builder.build_key(k, &mut stats) {
+                    for patch in &tile.roads {
+                        for v in &patch.positions {
+                            lo = lo.min(v[1] as f64);
+                            hi = hi.max(v[1] as f64);
+                        }
+                    }
+                }
+            }
+            (lo, hi)
+        };
+
+        // The deck never follows the hollow down: it stays at the chord
+        // between its own ends, on ground the hollow did not touch. The DGM
+        // under the road sits near 99 m (the test slope) + 46 geoid, the
+        // hollow cuts ~14 m of that.
+        let (lo, hi) = heights(true);
+        assert!(lo > 140.0, "deck dived to {lo:.1}");
+        assert!(hi - lo < 5.0, "deck not a chord: {lo:.1}..{hi:.1}");
+        // On the ground the carriageway follows the hollow down.
+        let (lo, _) = heights(false);
+        assert!(lo < 136.0, "hollow not followed: {lo:.1}");
     }
 
     /// An object that snaps to the terrain stands on the tile's ground, one

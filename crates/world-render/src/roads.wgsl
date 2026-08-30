@@ -11,18 +11,19 @@
 //      noise over it, the same trick the fields use.
 //   2. The markings. White paint where the vertex colours say the road
 //      carries them: the edge lines at a hand's width from the kerb, and the
-//      centre line — dashed in the 6 m stroke the German rulebook paints, or
-//      solid where overtaking is forbidden. The paint rides *on* the
-//      texture, so the road beneath shows its grain through it.
+//      centre line — dashed in the stroke the German rulebook paints (the
+//      6 m stroke outside towns, the 3 m one inside), or solid where
+//      overtaking is forbidden. The paint rides *on* the texture, so the
+//      road beneath shows its grain through it.
 //   3. The weather. Rain darkens and polishes the carriageway, a cloud's
 //      shadow lies on it, and a wet road mirrors the sky — the same
 //      `weather_pbr` every other ground reads, so a road never disagrees
 //      with the field it crosses.
 //
 // The marking data comes in through the vertex colour — r the centre line
-// (0 none, 1 dashed, 2 solid), g the edge lines, b the half-width in metres —
-// so one material draws every road there is, and the mesh alone says which
-// stripes to paint where.
+// (0 none, 1 dashed, 2 dashed innerorts, 3 solid), g the edge lines, b the
+// half-width in metres — so one material draws every road there is, and the
+// mesh alone says which stripes to paint where.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -48,12 +49,24 @@ fn noise(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
-// German road markings, in metres: the stroke is 12 cm wide, the edge lines
-// sit 25 cm from the kerb, the centre dashes run 6 m on and 12 m off.
+// German road markings per the RMS (Richtlinien für die Markierung von
+// Straßen), in metres: the stroke is the 12 cm Schmalstrich, the edge lines
+// sit 25 cm from the kerb. The centre dashes run 6 m on and 12 m off outside
+// built-up areas, and the innerorts streets get the 3-and-6 the rulebook
+// paints there — the ratio is 1:2 in both.
 const MARK_WIDTH: f32 = 0.12;
 const EDGE_OFFSET: f32 = 0.25;
 const DASH: f32 = 6.0;
 const GAP: f32 = 12.0;
+const DASH_URBAN: f32 = 3.0;
+const GAP_URBAN: f32 = 6.0;
+
+/// The dashed centre line's stroke and gap, in metres: the 6-and-12 outside
+/// towns, the 3-and-6 inside them. `urban` is the vertex colour's word for
+/// the innerorts line.
+fn dash_period(urban: bool) -> vec2<f32> {
+    return select(vec2(DASH, GAP), vec2(DASH_URBAN, GAP_URBAN), urban);
+}
 
 /// A white stripe `centre_m` from the near kerb, `fade` widening it as it
 /// approaches a pixel — the anti-aliasing the fields give their furrows.
@@ -68,15 +81,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     // Across (0 at one kerb, 1 at the other) and along (metres from the
     // road's own start). The markings are measured in real metres — the
-    // half-width rides in the vertex colour — and the texture tiles every
-    // 4 m of road, so the grain repeats without a seam.
+    // half-width rides in the vertex colour — and the texture tiles in real
+    // metres on both axes, 4 m to the repeat, so the grain keeps its shape
+    // whatever the carriageway's width: a 2 m path and a 15 m motorway
+    // carriageway read the same asphalt, only more of it.
     let half_w = in.color.b;
     let width = 2.0 * half_w;
     let across_m = in.uv.x * width;
     let along_m = in.uv.y;
-    let tile = along_m / 4.0;
-    var surface = textureSample(surface_texture, surface_sampler, vec2(in.uv.x * 4.0, tile)).rgb;
-    let bump = textureSample(surface_normal, surface_normal_sampler, vec2(in.uv.x * 4.0, tile)).xyz * 2.0 - 1.0;
+    let tex = vec2(across_m, along_m) / 4.0;
+    var surface = textureSample(surface_texture, surface_sampler, tex).rgb;
+    let bump = textureSample(surface_normal, surface_normal_sampler, tex).xyz * 2.0 - 1.0;
     surface = surface * (0.92 + 0.16 * (bump.x + bump.y));
 
     // How many metres of carriageway a pixel covers: below one mark-width it
@@ -89,13 +104,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         paint = max(paint, stripe(across_m, width - EDGE_OFFSET, fade));
     }
     if in.color.r > 0.5 {
-        // Dashed (r = 1) runs the 6-and-12; solid (r = 2) never lifts. Near
-        // the horizon a dash boundary can no longer be seen, so the stripe
-        // reads as continuous rather than as a picket fence.
-        let phase = fract(along_m / (DASH + GAP)) * (DASH + GAP);
-        let dash_fade = clamp(fwidth(along_m) * 2.0, 0.0, 1.0);
-        let on = select(1.0, step(phase, DASH + dash_fade * (DASH + GAP)), in.color.r < 1.5);
-        let length_fade = 1.0 - smoothstep(0.3, 0.9, fwidth(along_m));
+        // r = 1 the 6-and-12 outside towns, r = 2 the 3-and-6 inside them,
+        // r = 3 the solid line that never lifts. The stroke keeps its
+        // rulebook length — the anti-aliasing softens each dash end by about
+        // a *pixel*, never by a share of the pattern — and once the gap
+        // itself is sub-pixel the line reads as continuous rather than as a
+        // picket fence.
+        let urban = in.color.r > 1.5 && in.color.r < 2.5;
+        let marks = dash_period(urban);
+        let stroke = marks.x;
+        let cycle = marks.x + marks.y;
+        let phase = fract(along_m / cycle) * cycle;
+        let aa = max(fwidth(along_m), 1e-4);
+        let dash = smoothstep(-aa, aa, phase) * (1.0 - smoothstep(stroke - aa, stroke + aa, phase));
+        let merged = smoothstep(0.75, 1.5, aa / marks.y);
+        let on = max(dash, merged);
         paint = max(paint, stripe(across_m, half_w, fade) * on);
     }
     // Worn paint: greyer, and gone at the speckles the weather left.

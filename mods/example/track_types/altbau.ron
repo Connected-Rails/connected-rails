@@ -1,11 +1,16 @@
-// Jointed track the old way: S 54 rails on creosoted wooden sleepers at
-// 60 cm, laid with lasched joints — the rolling noise roughens at every
+// Jointed track the old way: 54E3 rails on creosoted wooden sleepers at
+// 60 cm, laid with fishplated joints — the rolling noise roughens at every
 // joint (roughness 1.4), the sleepers sit lower than a concrete one (16 cm
-// against 21 cm) and the ballast bed is worn browner. This is what a
-// Nebenbahn or a sidings complex looks like before it is renewed.
+// against 21,4) and are held by Oberbau K, the ribbed baseplate that carries
+// the 1:40 for them. The bed is fouled brown. This is what a Nebenbahn or a
+// sidings complex looks like before it is renewed.
 (
     name: "Altbau (verlascht)",
     texture: Some("example/assets/track/ballast-worn.jpg"),
+    normal_map: Some("example/assets/track/ballast-worn_nor.jpg"),
+    depth_map: Some("example/assets/track/ballast-worn_disp.jpg"),
+    occlusion_map: Some("example/assets/track/ballast-worn_ao.jpg"),
+    texture_scale: 2.0,
     color: (0.38, 0.33, 0.26),
     roughness: 1.4,
     reverb: 0.0,
@@ -18,10 +23,18 @@
         sleeper_width: 0.26,
         sleeper_height: 0.16,
         sleeper_spacing: 0.60,
-        ballast_overhang: 0.70,
+        // Oberbau K: the rail stands on a 16 mm ribbed plate, not on a pad.
+        rail_pad: 0.016,
+        fastening: Some(K),
+        ballast_overhang: 0.40,
         ballast_depth: 0.30,
+        ballast_slope: 1.5,
+        // A bed nobody has tamped in twenty years has sunk around its
+        // sleepers rather than being packed flush with them.
+        crib_drop: 0.055,
         sleeper_texture: Some("example/assets/track/sleeper-wood.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-wood_nor.jpg"),
+        sleeper_texture_scale: Some(2.6),
     ),
     // Tags: free, lower case — the route editor's content drawer filters on them.
     tags: ["branch-line", "jointed", "wood"],

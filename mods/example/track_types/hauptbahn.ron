@@ -5,7 +5,13 @@
 // `max_speed` caps the line's speed profile wherever the type is assigned,
 // `roughness` scales the rolling noise (1.0 = welded main-line rail),
 // `reverb` is how much the surroundings ring (0 = open line, 1 = tunnel),
-// `texture` / `normal_map` (mods://<mod>/assets/…) skin the ballast bed,
+// `texture` / `normal_map` / `depth_map` (mods://<mod>/assets/…) skin the
+// ballast bed — the height map is what gives the stones relief instead of a
+// flat photograph — and `texture_scale` says how many metres one repeat of
+// them covers. That last one matters more than it looks: DB Gleisschotter is
+// 31,5/63 mm, so the scan has to be laid down at the size it was taken at or
+// the bed reads as asphalt (too small) or as riprap (too large).
+//
 // `color` is the untextured fallback and the route editor's section tint,
 // `lzb: true` makes the editor's rule check demand a line conductor device.
 //
@@ -18,24 +24,37 @@
     name: "Hauptbahn (B90)",
     texture: Some("example/assets/track/ballast.jpg"),
     normal_map: Some("example/assets/track/ballast_nor.jpg"),
+    depth_map: Some("example/assets/track/ballast_disp.jpg"),
+    occlusion_map: Some("example/assets/track/ballast_ao.jpg"),
+    texture_scale: 2.2,
     color: (0.32, 0.30, 0.28),
     roughness: 1.0,
     reverb: 0.0,
     max_speed: 250.0,
     lzb: false,
-    // The current DB Regeloberbau: UIC 60 rails on B 90 sleepers at 60 cm,
-    // 30 cm of ballast — `W14K-60-B90-1667` in the DB's own notation.
+    // The current DB Regeloberbau: 60E1 rails on B 90 sleepers at 60 cm,
+    // 30 cm of ballast, fastening W 14 — `W14K-60-B90-1667` in the DB's own
+    // notation. The B 90 is the wider sleeper: 320 mm at the base against the
+    // B 70's 300, and correspondingly wider on top.
     oberbau: (
         rail: R60,
         sleeper: Concrete,
         sleeper_length: 2.6,
         sleeper_width: 0.32,
-        sleeper_height: 0.21,
+        sleeper_top_width: Some(0.24),
+        sleeper_height: 0.214,
+        sleeper_mid_height: Some(0.175),
         sleeper_spacing: 0.60,
-        ballast_overhang: 0.70,
+        rail_pad: 0.010,
+        fastening: Some(W14),
+        // 0.50 m of shoulder: the wider one, for line speeds over 160 km/h.
+        ballast_overhang: 0.50,
         ballast_depth: 0.30,
+        ballast_slope: 1.5,
+        crib_drop: 0.04,
         sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+        sleeper_texture_scale: Some(1.0),
     ),
     // Tags: free, lower case — the route editor's content drawer filters on them.
     tags: ["main-line", "welded", "b90"],

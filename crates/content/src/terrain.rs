@@ -77,17 +77,20 @@ pub struct TerrainOptions {
     /// Up to here the finest level applies [m].
     pub corridor: f64,
     /// Up to here the terrain follows the track exactly [m] — the half width
-    /// of the formation (Planum) of a single track: the ~2.6 m ballast body
-    /// plus shoulder. Edges without a formation
+    /// of the formation (Planum) of a single track: the 4.85 m ballast body
+    /// (2.6 m of sleeper, a 0.4 m shoulder each side and the 1:1.5 slopes)
+    /// plus the Randweg beside it. Edges without a formation
     /// ([`TrackEdge::formation`](track_model::TrackEdge::formation)) shape
     /// nothing here.
     pub flatten: f64,
     /// How far the ground beside the track lies **below** the top of rail [m].
-    /// The track is drawn as a ballast bed 30 cm under the rail head, and
-    /// terrain pulled to rail height would bury it — the formation is lower
-    /// than the rail, on the line as much as in the model. The remaining
-    /// centimetres keep the bed off the ground plane, which would otherwise
-    /// z-fight with it.
+    /// This is the Planum, and it is not a made-up clearance: the DB
+    /// Regeloberbau stacks 172 mm of rail, a 10 mm pad, a 214 mm sleeper and
+    /// 300 mm of ballast under it, so the formation lies **696 mm** under the
+    /// top of rail ([`track_model::REGEL_PLANUM`]). Ground pulled up any
+    /// higher than that buries the bed it is supposed to carry — and a bed
+    /// buried to its crest is exactly what makes a track read as a ladder
+    /// lying on a road.
     pub rail_offset: f64,
     /// Up to here rail and terrain height are blended [m] — the foot of the
     /// embankment or cutting. From the formation edge to here the ground runs
@@ -117,10 +120,10 @@ impl Default for TerrainOptions {
             radius: 1_200.0,
             base_step: 4.0,
             corridor: 96.0,
-            flatten: 4.0,
-            rail_offset: 0.4,
+            flatten: 3.0,
+            rail_offset: track_model::REGEL_PLANUM,
             blend: 12.0,
-            gravel: 7.0,
+            gravel: 5.5,
             skirt: 8.0,
             fallback_height: 100.0,
             centerline_step: 25.0,

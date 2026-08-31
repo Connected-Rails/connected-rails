@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::asset::{AssetPath, LoadState};
+use bevy::camera::RenderTarget;
 use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{Gltf, GltfAssetLabel, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
@@ -190,14 +191,17 @@ fn tile_reach(trees: &[Tree]) -> f32 {
 /// again when it is not. Cheap: one distance per tile against a few hundred
 /// thousand entities that would otherwise each be tested twice a frame.
 pub fn cull_distant_woods(
-    cameras: Query<(&Camera, &GlobalTransform)>,
+    // The camera that draws the world — see `draws_the_world`. Measuring a
+    // wood's distance to a cab display, a cloud panorama or one of the route
+    // editor's catalogue thumbnails culls by the wrong thing entirely.
+    cameras: Query<(&Camera, &RenderTarget, &GlobalTransform), With<Camera3d>>,
     mut woods: Query<(&GlobalTransform, &Wood, &mut Visibility)>,
     mut reported: Local<usize>,
 ) {
     let Some(eye) = cameras
         .iter()
-        .find(|(camera, _)| camera.is_active)
-        .map(|(_, at)| at.translation())
+        .find(|(camera, target, _)| crate::draws_the_world(camera, target))
+        .map(|(.., at)| at.translation())
     else {
         return;
     };

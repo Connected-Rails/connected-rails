@@ -332,13 +332,59 @@ pub enum Op {
 // polygon type with holes all the way through the mesh builder; a hole in a
 // German field block is rare enough to wait for that.
 pub fn clip(subject: &[DVec2], clip: &[DVec2], op: Op) -> Vec<Vec<DVec2>> {
+    let (rings, sure) = clip_once(subject, clip, op);
+    if sure {
+        return rings;
+    }
+    // The two touch without the pass finding a crossing, which is what
+    // happens when a corner sits exactly on the other's edge or two edges run
+    // along each other — and it is exactly what a cadastral register is full
+    // of, because neighbouring parcels are digitised from a shared boundary.
+    // Greiner-Hormann cannot tell that from one ring lying wholly inside the
+    // other, and answers the wrong one of the two.
+    //
+    // So nudge and go round again. A tenth of a millimetre is four orders
+    // under anything anybody can see and six over the last bit of an `f64` at
+    // these coordinates; what it buys is a proper crossing where there was a
+    // degenerate touch.
+    let (nudged, sure) = clip_once(&nudge(subject), clip, op);
+    if sure { nudged } else { rings }
+}
+
+/// Moves every vertex of a ring a tenth of a millimetre, deterministically.
+///
+/// Deterministic from the vertex itself, so one ring is always moved the same
+/// way — the same field cut in two neighbouring tiles is cut along the same
+/// line, and two clients of a multiplayer run agree. No trigonometry: the
+/// platform's `sin` is not promised to be the same bit on two machines.
+fn nudge(ring: &[DVec2]) -> Vec<DVec2> {
+    const OFF: f64 = 1e-4;
+    ring.iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ (p.x.to_bits() >> 13)
+                ^ (p.y.to_bits() >> 7).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+            let unit = |bits: u64| (bits & 0xFFFF) as f64 / 32_768.0 - 1.0;
+            *p + DVec2::new(unit(h), unit(h >> 16)) * OFF
+        })
+        .collect()
+}
+
+/// One pass of the clip, and whether its answer can be trusted.
+///
+/// Not trusted when the pass found no crossing at all *and* the subject's own
+/// corners disagree about which side of the clip they are on: they cannot
+/// disagree unless the rings cross, so a pass that found no crossing has
+/// missed one.
+fn clip_once(subject: &[DVec2], clip: &[DVec2], op: Op) -> (Vec<Vec<DVec2>>, bool) {
     let mut subject = dedupe(subject, 1e-6);
     let mut other = dedupe(clip, 1e-6);
     if subject.len() < 3 {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     if other.len() < 3 {
-        return vec![subject];
+        return (vec![subject], true);
     }
     to_ccw(&mut subject);
     to_ccw(&mut other);
@@ -351,10 +397,17 @@ pub fn clip(subject: &[DVec2], clip: &[DVec2], op: Op) -> Vec<Vec<DVec2>> {
     let mut s = Chain::new(&subject);
     let mut c = Chain::new(&other);
     if !intersect_chains(&mut s, &mut c) {
-        // No crossing: one is wholly inside the other, or they are disjoint.
-        let inside = contains(&other, subject[0]) == (op == Op::Intersect);
+        // No crossing: one is wholly inside the other, or they are disjoint —
+        // *if* that is really so. Corners on either side of the other ring say
+        // it is not, and then this answer is a guess.
+        let first = contains(&other, subject[0]);
+        let sure = subject.iter().all(|p| contains(&other, *p) == first) && {
+            let theirs = contains(&subject, other[0]);
+            other.iter().all(|p| contains(&subject, *p) == theirs)
+        };
+        let inside = first == (op == Op::Intersect);
         let subject_holds_clip = contains(&subject, other[0]);
-        return match (op, inside, subject_holds_clip) {
+        let rings = match (op, inside, subject_holds_clip) {
             (Op::Intersect, true, _) => vec![subject],
             (Op::Intersect, false, true) => vec![other],
             (Op::Intersect, false, false) => Vec::new(),
@@ -362,6 +415,7 @@ pub fn clip(subject: &[DVec2], clip: &[DVec2], op: Op) -> Vec<Vec<DVec2>> {
             (Op::Difference, true, _) => vec![subject],
             (Op::Difference, false, _) => Vec::new(),
         };
+        return (rings, sure);
     }
     mark_entries(&mut s, &other);
     mark_entries(&mut c, &subject);
@@ -374,7 +428,7 @@ pub fn clip(subject: &[DVec2], clip: &[DVec2], op: Op) -> Vec<Vec<DVec2>> {
             *entry = !*entry;
         }
     }
-    walk(&s, &c)
+    (walk(&s, &c), true)
 }
 
 /// A ring as a list of vertices with the intersections spliced in.

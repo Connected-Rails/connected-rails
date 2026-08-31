@@ -17,6 +17,7 @@ mod fields;
 mod gizmo;
 mod new_module;
 mod overlay;
+mod power;
 mod roads;
 mod settings;
 mod signals;
@@ -339,6 +340,8 @@ pub struct Request {
     pub import_fields: bool,
     /// Open the road import dialog (menu, see [`roads`]).
     pub import_roads: bool,
+    /// Open the overhead line import dialog (menu, see [`power`]).
+    pub import_power: bool,
     pub retry_failed: bool,
     pub load_config: bool,
     pub save_config: bool,
@@ -457,6 +460,7 @@ fn main() {
     .init_resource::<thumbnails::Thumbnails>()
     .init_resource::<new_module::NewModule>()
     .init_resource::<fields::FieldImport>()
+    .init_resource::<power::PowerImport>()
     .init_resource::<roads::RoadImport>()
     .init_resource::<terrain::Marks>()
     .init_resource::<tools::GhostPreview>()
@@ -470,7 +474,14 @@ fn main() {
     // top of the panels anyway.
     .add_systems(
         EguiPrimaryContextPass,
-        (ui::draw, new_module::draw, fields::draw, roads::draw).chain(),
+        (
+            ui::draw,
+            new_module::draw,
+            fields::draw,
+            roads::draw,
+            power::draw,
+        )
+            .chain(),
     )
     .add_systems(
         Update,

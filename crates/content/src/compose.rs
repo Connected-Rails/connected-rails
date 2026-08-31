@@ -380,6 +380,12 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
     // boundary is kept whole by each side — the terrain each module builds
     // covers only its own corridor.
     merged.waters.extend(module.waters.iter().cloned());
+    // Overhead lines are geo-positioned too, and a line running past two
+    // modules is imported whole by each of them — the masts outside a module's
+    // own corridor are simply never on a tile it builds.
+    merged
+        .power_lines
+        .extend(module.power_lines.iter().cloned());
     // Terrain strokes likewise; they keep their order, so a stroke of a later
     // module wins where two modules shape the same ground.
     merged.terrain.extend(module.terrain.iter().cloned());
@@ -654,6 +660,47 @@ mod tests {
         let compiled = merged.compile().expect("composed line compiles");
         assert_eq!(compiled.yards.len(), 2);
         assert_eq!(compiled.yards[1].at.edge, track_model::EdgeId(1));
+    }
+
+    /// The geo-positioned lists survive too. A composition that drops the
+    /// overhead lines shows nothing and says nothing — the module drives fine,
+    /// and the masts the import placed are simply gone.
+    #[test]
+    fn overhead_lines_survive_the_composition() {
+        use crate::route::{PowerArm, PowerLineSource, PowerPoint};
+
+        let (composition, mut lines) = two_modules();
+        for (name, line) in &mut lines {
+            line.power_lines.push(PowerLineSource {
+                name: format!("Leitung {name}"),
+                points: vec![
+                    PowerPoint {
+                        lat: 52.0,
+                        lon: 10.0,
+                        tension: true,
+                    },
+                    PowerPoint {
+                        lat: 52.0,
+                        lon: 10.004,
+                        tension: true,
+                    },
+                ],
+                object: "pylons:donaumast_380_trag".into(),
+                tension_object: "pylons:donaumast_380_abspann".into(),
+                height: 60.0,
+                root: 1.7,
+                arms: vec![PowerArm {
+                    at: 54.6,
+                    half_width: 7.0,
+                    conductors: 2,
+                }],
+                sag: 0.03,
+                tags: vec!["donaumast-380".into()],
+            });
+        }
+        let Composed { line: merged, .. } = composition.compose(&lines).expect("composes");
+        assert_eq!(merged.power_lines.len(), 2);
+        assert_eq!(crate::power::masts(&merged.power_lines).len(), 4);
     }
 
     #[test]

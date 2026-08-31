@@ -242,6 +242,58 @@
         (object: "trees:vogelkirsche_a", lat: 52.001958, lon: 10.011462, yaw_deg: 7.0, scale: 0.77),
         (object: "trees:sandbirke_c", lat: 52.002194, lon: 10.010896, yaw_deg: 186.1, scale: 0.98),
     ],
+    // Overhead lines: the masts stand on the terrain as instances and the
+    // conductors hang between them (see `content::power`, MODS.md). Both were
+    // written the way the OSM import writes them — the mast objects and the
+    // crossarms come from the atlas in `tools/pylons/pylons.json`.
+    power_lines: [
+        // The railway's own line: 110 kV at 16.7 Hz, four conductors on one
+        // crossarm, following the track a field's width to the north.
+        (
+            name: "Bahnstromleitung Musterstadt",
+            object: "pylons:bahnstrommast_110_trag",
+            tension_object: "pylons:bahnstrommast_110_abspann",
+            height: 27.5,
+            root: 0.90,
+            arms: [(at: 23.93, half_width: 4.50, conductors: 4)],
+            sag: 0.03,
+            tags: ["bahnstrommast-110"],
+            points: [
+                (lat: 52.004200, lon: 9.990000, tension: true),
+                (lat: 52.004200, lon: 9.994377),
+                (lat: 52.004200, lon: 9.998755),
+                (lat: 52.004200, lon: 10.003132),
+                (lat: 52.004200, lon: 10.007509),
+                (lat: 52.004200, lon: 10.011886),
+                (lat: 52.004200, lon: 10.016264),
+                (lat: 52.004200, lon: 10.020641),
+                (lat: 52.004200, lon: 10.025018),
+                (lat: 52.004200, lon: 10.029396),
+                (lat: 52.004200, lon: 10.033773),
+                (lat: 52.004200, lon: 10.038150, tension: true),
+            ],
+        ),
+        // And a 380 kV line of the public grid crossing the railway at a
+        // right angle, which is how a crossing is always built.
+        (
+            name: "Höchstspannungsleitung Nord-Süd",
+            object: "pylons:donaumast_380_trag",
+            tension_object: "pylons:donaumast_380_abspann",
+            height: 60.0,
+            root: 1.70,
+            arms: [(at: 54.60, half_width: 7.00, conductors: 2), (at: 46.20, half_width: 12.00, conductors: 4)],
+            sag: 0.03,
+            tags: ["donaumast-380"],
+            points: [
+                (lat: 51.994000, lon: 10.026000, tension: true),
+                (lat: 51.997617, lon: 10.026120),
+                (lat: 52.001235, lon: 10.026240),
+                (lat: 52.004852, lon: 10.026360),
+                (lat: 52.008470, lon: 10.026480),
+                (lat: 52.012087, lon: 10.026600, tension: true),
+            ],
+        ),
+    ],
     anchor: Some((lat: 52.000000, lon: 10.014600, height: 100.0)),
     // The module envelope: what this module covers. Terrain, trees and scenery stay
     // inside it, so the ground between two modules belongs to exactly one of them.

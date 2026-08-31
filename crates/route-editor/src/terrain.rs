@@ -330,6 +330,18 @@ impl TerrainView {
     }
 }
 
+/// The materials the surfaces on a tile are drawn with: the roads' one per
+/// surface kind, and the conductors' one for every wire on the line. Bundled
+/// because [`update`] is at Bevy's system-parameter limit and four `ResMut`s in
+/// a tuple is a type nobody wants to read.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct SurfaceMaterials<'w> {
+    road: ResMut<'w, world_render::RoadMaterials>,
+    road_assets: ResMut<'w, Assets<world_render::RoadMaterial>>,
+    conductor: ResMut<'w, world_render::ConductorMaterials>,
+    conductor_assets: ResMut<'w, Assets<world_render::ConductorMaterial>>,
+}
+
 /// Terrain of the edited module: takes edits over, streams tiles around the
 /// view point, and answers `T`.
 #[allow(clippy::too_many_arguments)]
@@ -360,12 +372,7 @@ pub fn update(
         ResMut<world_render::WaterMaterials>,
         ResMut<Assets<world_render::WaterMaterial>>,
     ),
-    // The roads of a tile: one material per surface kind (see
-    // `world_render::roads`).
-    (mut road_materials, mut road_assets): (
-        ResMut<world_render::RoadMaterials>,
-        ResMut<Assets<world_render::RoadMaterial>>,
-    ),
+    mut surfaces: SurfaceMaterials,
 ) {
     // Taken only when there is something to take: a write through `ResMut`
     // marks the line changed, and the marks and the title watch for that.
@@ -549,12 +556,21 @@ pub fn update(
             &mut commands,
             &mut meshes,
             &mut world_render::RoadDraw {
-                materials: &mut road_materials,
-                assets: &mut road_assets,
+                materials: &mut surfaces.road,
+                assets: &mut surfaces.road_assets,
                 server: &assets,
             },
             entity,
             &tile.roads,
+        );
+        // The conductors hang under the tile like everything else on it.
+        world_render::spawn_conductors(
+            &mut commands,
+            &mut meshes,
+            &mut surfaces.conductor_assets,
+            &mut surfaces.conductor,
+            entity,
+            &tile.conductors,
         );
         // The mesh is on its way to the GPU; what stays is the height grid.
         tile.positions = Vec::new();
@@ -791,6 +807,10 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
     let farmland =
         content::farmland::Fields::from_line(&line.source, options.zone, options.tile_size);
     let roads = content::roads::Roads::from_line(&line.source, options.zone, options.tile_size);
+    // The overhead lines. Their mast feet are fixed against the elevation data
+    // when the builder takes them in, like the waters' shorelines.
+    let power =
+        content::power::PowerLines::from_line(&line.source, options.zone, options.tile_size);
     // The waters of the line, indexed for the tile builds. Their shoreline
     // levels are sampled against the elevation data when the builder takes
     // them in — a pass over a few thousand points, cheap but not free, so it
@@ -811,7 +831,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
         };
         view.waters_fingerprint = Some(waters_fingerprint);
         view.builder = Some(Arc::new(builder.with_line(
-            &line.net, vegetation, scenery, farmland, waters, roads, edits,
+            &line.net, vegetation, scenery, farmland, waters, roads, power, edits,
         )));
         return;
     }
@@ -845,6 +865,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
             .with_fields(farmland)
             .with_waters(waters)
             .with_roads(roads)
+            .with_power_lines(power)
             .with_edits(edits),
     ));
     view.stale.all(view.generation);

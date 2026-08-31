@@ -167,6 +167,10 @@ pub struct TerrainTile {
     /// The roads on this tile (see [`crate::roads`]) — one surface per
     /// surface kind, draped on this tile's own ground like the fields.
     pub roads: Vec<crate::roads::RoadPatch>,
+    /// The overhead line conductors crossing this tile (see [`crate::power`]) —
+    /// the wires between the masts, hung as catenaries and cut to the tile. The
+    /// masts themselves are instances and travel in `trees`.
+    pub conductors: Vec<crate::power::ConductorPatch>,
     /// Grid spacing used [m].
     pub step: f64,
     /// LOD level (0 = finest).
@@ -437,8 +441,18 @@ pub struct Vegetation {
 }
 
 impl Vegetation {
+    /// The line's trees **and** the masts of its overhead lines.
+    ///
+    /// A mast is a geo-positioned instance of a mod object standing on the
+    /// terrain, which is what a tree is; the tile pipeline has exactly one of
+    /// those and there is no reason to build it a second time. So the masts
+    /// come in here, and everything downstream — bucketing, streaming,
+    /// instanced draws, levels of detail — treats a Donaumast as it treats a
+    /// spruce (see [`crate::power::masts`]).
     pub fn from_line(line: &LineSource, zone: u8) -> Self {
-        Self::from_parts(&line.trees, zone)
+        let mut sources = line.trees.clone();
+        sources.extend(crate::power::masts(&line.power_lines));
+        Self::from_parts(&sources, zone)
     }
 
     pub fn from_parts(trees: &[TreeSource], zone: u8) -> Self {
@@ -830,6 +844,7 @@ pub struct TerrainBuilder {
     fields: crate::farmland::Fields,
     waters: crate::water::Waters,
     roads: crate::roads::Roads,
+    power: crate::power::PowerLines,
     edits: TerrainEdits,
 }
 
@@ -845,6 +860,7 @@ impl TerrainBuilder {
             fields: crate::farmland::Fields::default(),
             waters: crate::water::Waters::default(),
             roads: crate::roads::Roads::default(),
+            power: crate::power::PowerLines::default(),
             edits: TerrainEdits::default(),
         }
     }
@@ -902,6 +918,22 @@ impl TerrainBuilder {
         self
     }
 
+    /// The overhead lines of the line — tiles built afterwards carry the
+    /// conductors crossing them. The mast feet are fixed here, once, against
+    /// this builder's elevation data: a span hangs between two masts that are
+    /// rarely on one tile, so a per-tile grid cannot answer where it starts.
+    /// An already prepared set is left alone, like the waters'.
+    pub fn with_power_lines(mut self, mut power: crate::power::PowerLines) -> Self {
+        power.prepare(
+            &self.sources,
+            self.options.zone,
+            self.options.geoid_offset,
+            self.options.fallback_height,
+        );
+        self.power = power;
+        self
+    }
+
     pub fn with_edits(mut self, edits: TerrainEdits) -> Self {
         self.edits = edits;
         self
@@ -923,6 +955,7 @@ impl TerrainBuilder {
         fields: crate::farmland::Fields,
         waters: crate::water::Waters,
         roads: crate::roads::Roads,
+        power: crate::power::PowerLines,
         edits: TerrainEdits,
     ) -> Self {
         Self {
@@ -935,12 +968,14 @@ impl TerrainBuilder {
             fields,
             waters: crate::water::Waters::default(),
             roads: crate::roads::Roads::default(),
+            power: crate::power::PowerLines::default(),
             edits,
         }
         .with_vegetation(vegetation)
         .with_scenery(scenery)
         .with_waters(waters)
         .with_roads(roads)
+        .with_power_lines(power)
     }
 
     /// The roads the line carries — what the editor hands from one builder
@@ -1026,6 +1061,7 @@ impl TerrainBuilder {
             &self.fields,
             &self.waters,
             &self.roads,
+            &self.power,
             &self.edits,
             stats,
         )
@@ -1149,6 +1185,7 @@ fn build_key(
     farmland: &crate::farmland::Fields,
     waters: &crate::water::Waters,
     roads: &crate::roads::Roads,
+    power: &crate::power::PowerLines,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> Option<TerrainTile> {
@@ -1162,7 +1199,7 @@ fn build_key(
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
         k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, farmland, waters,
-        roads, &edits, stats,
+        roads, power, &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -1203,6 +1240,7 @@ pub fn build(
             &crate::farmland::Fields::default(),
             &crate::water::Waters::default(),
             &crate::roads::Roads::default(),
+            &crate::power::PowerLines::default(),
             &TerrainEdits::default(),
             &mut stats,
         ) {
@@ -1351,6 +1389,7 @@ fn build_tile(
     farmland: &crate::farmland::Fields,
     waters: &crate::water::Waters,
     roads: &crate::roads::Roads,
+    power: &crate::power::PowerLines,
     edits: &TerrainEdits,
     stats: &mut TerrainStats,
 ) -> TerrainTile {
@@ -1444,6 +1483,14 @@ fn build_tile(
         )
     };
 
+    // The conductors crossing the tile: cut to it on the pieces' own middles,
+    // already hung between mast tops fixed once for the whole line.
+    let conductors = if power.is_empty() || !power.touches(k) {
+        Vec::new()
+    } else {
+        crate::power::patches(k, &frame, options.zone, power)
+    };
+
     // Regular triangulation. The winding faces **up**: +x is east and +z is
     // south in render axes, so a→b→c (east, then north) is the order whose
     // normal comes out of the ground — the other way round the whole surface
@@ -1477,6 +1524,7 @@ fn build_tile(
         fields,
         waters,
         roads,
+        conductors,
         step,
         lod,
         radius,
@@ -1955,6 +2003,7 @@ mod tests {
             crate::farmland::Fields::default(),
             crate::water::Waters::default(),
             crate::roads::Roads::default(),
+            crate::power::PowerLines::default(),
             TerrainEdits::from_parts(
                 &[TerrainEditSource {
                     lat: hill_lat,

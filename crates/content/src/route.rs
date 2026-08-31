@@ -411,6 +411,136 @@ pub struct RoadPoint {
     pub lon: f64,
 }
 
+/// One mast of an overhead line: where it stands, and whether it takes the pull
+/// of the conductors. Degrees like every other geo-positioned entry; the foot
+/// height comes from the terrain.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PowerPoint {
+    pub lat: f64,
+    pub lon: f64,
+    /// A tension mast (Abspannmast): the line's sections end here, so the
+    /// insulator strings lie along the conductors instead of hanging under
+    /// them. OSM marks these `power=tower` + `design=*` with a `location` the
+    /// import cannot read, so what sets it is the corner angle — a mast the
+    /// line turns hard at is an Abspannmast, and the ends of a way always are.
+    #[serde(default)]
+    pub tension: bool,
+}
+
+/// An overhead line: the masts OSM maps as a `power=line` way, and everything
+/// needed to stand them up and hang the conductors between them.
+///
+/// The line is stored the way a road is — the geometry the import got, plus the
+/// numbers that turn it into something to look at, all of them editable. It
+/// names its own mast objects rather than a type id, so a route that wants a
+/// Tonnenmast where the import chose a Donaumast changes one string and nothing
+/// else has to know about it; and `arms` carries where the conductors sit, so
+/// the wire can be strung without anything at run time knowing what a Donaumast
+/// is. That is the same trade [`RoadSource`] makes with its width.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PowerLineSource {
+    /// Name from OSM (`name=*`, else `ref=*`), shown in the editor; empty is
+    /// fine.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// The masts in order — two at least. A way OSM cut at the module boundary
+    /// stays whole, like a road's centre line.
+    pub points: Vec<PowerPoint>,
+    /// The suspension mast object (`"<mod>:<name>"`), e.g.
+    /// `"pylons:donaumast_380_trag"`; empty means no mast is drawn and the
+    /// conductors hang on nothing, which is what a hand-edited file gets for
+    /// asking.
+    #[serde(default)]
+    pub object: String,
+    /// The tension mast object; empty falls back to [`Self::object`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tension_object: String,
+    /// Mast height over ground [m] — what the objects were generated at, and
+    /// what [`PowerArm::at`] is measured against.
+    pub height: f64,
+    /// Half the mast body's width where the crossarms leave it [m] — the
+    /// innermost conductor cannot sit closer to the centre than this.
+    #[serde(default)]
+    pub root: f64,
+    /// Where the conductors sit, top crossarm first.
+    #[serde(default)]
+    pub arms: Vec<PowerArm>,
+    /// Conductor sag as a share of the span. About 0.03 on a transmission line
+    /// on a mild day; more in summer, less in frost.
+    #[serde(default = "default_sag")]
+    pub sag: f64,
+    /// Free-form tags, lower-case kebab like everywhere else. The OSM import
+    /// records the type it matched (`donaumast-380`) and the voltage.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_sag() -> f64 {
+    0.03
+}
+
+/// One crossarm of a line's masts: how high it is and where its conductors are.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PowerArm {
+    /// Height of the arm over the mast's foot [m].
+    pub at: f64,
+    /// Half the arm's width [m] — the outermost conductor sits here.
+    pub half_width: f64,
+    /// Conductors on this arm, both sides together.
+    pub conductors: u8,
+}
+
+impl PowerArm {
+    /// Where the conductors sit on this arm, as offsets from the mast's centre
+    /// across the line [m], outermost first and both sides.
+    ///
+    /// The same rule the model generator uses (`tools/pylons/lib/kit.mjs`,
+    /// `conductorPoints`): half the conductors each side, the outermost at the
+    /// tip and the rest evenly in towards the body — so the wire meets the
+    /// insulator string it is meant to hang on rather than the air beside it.
+    pub fn offsets(&self, root: f64) -> Vec<f64> {
+        let per_side = (self.conductors as f64 / 2.0).round().max(1.0);
+        let mut out = Vec::new();
+        for i in 0..per_side as usize {
+            let x = self.half_width * (per_side - i as f64) / per_side;
+            let x = x.max(root + 0.9);
+            if self.half_width <= 0.02 {
+                out.push(0.0);
+            } else {
+                out.push(-x);
+                out.push(x);
+            }
+        }
+        out
+    }
+}
+
+impl PowerLineSource {
+    /// Middle of the line [deg] — where the editor's list jumps to.
+    pub fn centre(&self) -> (f64, f64) {
+        if self.points.is_empty() {
+            return (0.0, 0.0);
+        }
+        let n = self.points.len() as f64;
+        (
+            self.points.iter().map(|p| p.lat).sum::<f64>() / n,
+            self.points.iter().map(|p| p.lon).sum::<f64>() / n,
+        )
+    }
+
+    /// Length of the line over the ground [m], measured in the UTM zone `zone`.
+    pub fn length(&self, zone: u8) -> f64 {
+        let utm = |p: &PowerPoint| {
+            let (e, n) = world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
+            glam::DVec2::new(e, n)
+        };
+        self.points
+            .windows(2)
+            .map(|w| (utm(&w[1]) - utm(&w[0])).length())
+            .sum()
+    }
+}
+
 /// A road: the centre line OSM maps a street with, and the width, surface and
 /// markings that turn it into a carriageway.
 ///
@@ -1114,6 +1244,11 @@ pub struct LineSource {
     /// the fields are.
     #[serde(default)]
     pub roads: Vec<RoadSource>,
+    /// Overhead lines (see [`PowerLineSource`]) — imported from OSM or drawn by
+    /// hand. Each one puts its masts on the ground as instances and strings the
+    /// conductors between them when the tiles are built (see [`crate::power`]).
+    #[serde(default)]
+    pub power_lines: Vec<PowerLineSource>,
     /// Terrain brush strokes on top of the elevation data (see
     /// [`TerrainEditSource`]).
     #[serde(default)]
@@ -1176,6 +1311,7 @@ impl Default for LineSource {
             markers: Vec::new(),
             waters: Vec::new(),
             roads: Vec::new(),
+            power_lines: Vec::new(),
             terrain: Vec::new(),
             heights: Vec::new(),
             sections: Vec::new(),
@@ -1478,6 +1614,13 @@ pub enum RuleIssue {
         fields: u32,
     },
 }
+
+// Roads and overhead lines are deliberately **not** counted here. Both are OSM
+// *ways*, and a way runs past a module rather than sitting inside it: the
+// import keeps it whole so the neighbour that imports the same way draws the
+// same line, and each module draws only what its own tiles cover. A 25 km
+// power line reaching a module for four of them is the normal case, not
+// something a builder has to move back in.
 
 /// Splits a segment chain at arc length `s`: the segment containing `s` is cut
 /// in two (curvature continues through the cut), whole segments stay whole.

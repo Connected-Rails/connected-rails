@@ -1103,6 +1103,7 @@ pub(crate) fn new_line(
         markers: vec![],
         waters: vec![],
         roads: vec![],
+        power_lines: vec![],
         terrain: vec![],
         heights: vec![],
         sections: vec![],
@@ -1190,6 +1191,10 @@ fn menu_bar(
                     if ui.button(t!("action-import-roads")).clicked() {
                         ui.close();
                         request.import_roads = true;
+                    }
+                    if ui.button(t!("action-import-power")).clicked() {
+                        ui.close();
+                        request.import_power = true;
                     }
                     ui.separator();
                     if ui.button(t!("action-load-imagery")).clicked() {

@@ -3635,9 +3635,9 @@ pub fn tool_input(
 /// How far above the ground a mark is drawn \[m\].
 ///
 /// Not a hair's breadth: the aerial photo is draped over the terrain with a
-/// lift of its own (`height_offset` in `imagery.ron`, four centimetres by
-/// default — above the terrain it textures, below the fields and what grows
-/// on them), and a mark at the same height disappears into the picture. Raise
+/// lift of its own (`height_offset` in `imagery.ron`, a quarter of a metre by
+/// default — above the terrain it textures and above the module's own ground
+/// sheets), and a mark at the same height disappears into the picture. Raise
 /// this if that is raised.
 pub(crate) const MARK_LIFT: f32 = 2.5;
 

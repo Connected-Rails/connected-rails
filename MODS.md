@@ -1759,12 +1759,13 @@ client works the picture out from the same three numbers.
 
 **The crop stands.** Beyond the painted surface, each field grows **plants** — real
 low-poly crop models (Quaternius, CC0 — see `THIRD_PARTY_LICENSES.md`) where the camera is
-close, painted cards under and between them, and none at all past about 400 m, where the
+close, cut-out cards under and between them, and none at all past about 220 m, where the
 paint carries the field alone. What a plant looks like follows the same crop, day and seed
-as the paint under it: bare ground grows nothing, a young stand is short and thin, stubble
-keeps the odd straw tuft, deep winter takes the crop away entirely. The plants belong to
-the program, not to a mod — the same rule as the ground textures — so a mod adds nothing
-and changes nothing here; a field's look follows from its data alone.
+as the paint under it: bare ground grows nothing, a young stand is short and thin, a cut
+field stands straw rather than half-height wheat, deep winter takes the crop away
+entirely. The plants belong to the program, not to a mod — the same rule as the ground
+textures — so a mod adds nothing and changes nothing here; a field's look follows from its
+data alone.
 
 #### Importing them
 

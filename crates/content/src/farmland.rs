@@ -36,14 +36,19 @@ use world_coords::{EnuFrame, geo};
 /// edge of a field does not stand proud of the grass beside it.
 pub const LIFT: f64 = 0.05;
 
-/// Target edge length of a field's mesh [m]. The terrain's own grid is four
-/// metres at its finest, so a field that follows it to eight is following the
-/// shape of the ground and not the shape of its own triangulation.
-const TARGET_EDGE: f64 = 8.0;
+/// Least a piece of a field may be and still be a field [m²].
+///
+/// Taking one parcel out of the one beside it leaves hairlines where the two
+/// share a boundary — they were digitised from either side and agree to a few
+/// centimetres, not exactly. Those slivers are numerical residue, not fields.
+const MIN_PIECE: f64 = 25.0;
 
-/// Most a single patch is subdivided. Four levels turn one triangle into 256,
-/// which is where a field the size of a tile lands at [`TARGET_EDGE`].
-const MAX_LEVELS: u32 = 4;
+/// How much two parcels have to share before one is taken out of the other
+/// [m²]. Adjacent parcels *touch*, which is not overlapping: of the 135
+/// fields on the example line, 49 pairs share a boundary and only 5 share any
+/// ground at all. Cutting on a touch would be work for nothing, and worse —
+/// the clip is least sure of itself where two rings run along each other.
+const MIN_SHARED: f64 = 1.0;
 
 /// The fields of a line, indexed by the terrain tiles they touch.
 #[derive(Debug, Clone, Default)]
@@ -51,6 +56,12 @@ pub struct Fields {
     /// Per tile, the fields whose bounding box reaches it.
     by_tile: HashMap<TileKey, Vec<usize>>,
     fields: Vec<Field>,
+    /// How many of the line's fields had ground taken off them because an
+    /// earlier one already had it, and how much [m²]. Register parcels
+    /// overlap more often than they should; a large number here means the
+    /// import is worth a look rather than the renderer.
+    overlaps: usize,
+    overlap_area: f64,
 }
 
 /// One field, ready to be cut up.
@@ -89,24 +100,107 @@ impl Fields {
             if ring.len() < 3 {
                 continue;
             }
-            let at = out.fields.len();
-            let (lo, hi) = fields::geometry::bounds(&ring);
-            let (kx0, ky0) = key(lo, tile_size);
-            let (kx1, ky1) = key(hi, tile_size);
-            for ky in ky0..=ky1 {
-                for kx in kx0..=kx1 {
-                    out.by_tile.entry((kx, ky)).or_default().push(at);
+            // Two parcels may not stand on the same ground. Where they do —
+            // and in a register they do, in slivers along boundaries that
+            // were digitised twice — the one that came first keeps it, and
+            // what is left of the later one is what gets drawn. Otherwise the
+            // two surfaces sit at the same height and flicker against each
+            // other, and the crop grows twice over the strip they share.
+            //
+            // Whoever came first: the order in the line file, so the answer
+            // is the same on every machine of a multiplayer run and does not
+            // move when a tile is streamed in again.
+            let mut pieces = vec![ring];
+            let mut taken = 0.0;
+            for rival in out.rivals(&pieces[0], tile_size) {
+                let other = out.fields[rival].ring.clone();
+                let mut left = Vec::new();
+                for piece in &pieces {
+                    let shared: f64 =
+                        fields::geometry::clip(piece, &other, fields::geometry::Op::Intersect)
+                            .iter()
+                            .map(|ring| fields::geometry::area(ring).abs())
+                            .sum();
+                    // Adjacent is not overlapping.
+                    if shared <= MIN_SHARED {
+                        left.push(piece.clone());
+                        continue;
+                    }
+                    taken += shared;
+                    left.extend(
+                        fields::geometry::clip(piece, &other, fields::geometry::Op::Difference)
+                            .into_iter()
+                            .filter(|ring| {
+                                ring.len() >= 3 && fields::geometry::area(ring).abs() > MIN_PIECE
+                            }),
+                    );
+                }
+                pieces = left;
+                if pieces.is_empty() {
+                    break;
                 }
             }
-            out.fields.push(Field {
-                ring,
-                crop,
-                direction: source.direction_deg.to_radians(),
-                seed: source.seed,
-                index: index as u32,
-            });
+            if taken > 0.0 {
+                out.overlaps += 1;
+                out.overlap_area += taken;
+            }
+            for piece in pieces {
+                let at = out.fields.len();
+                let (lo, hi) = fields::geometry::bounds(&piece);
+                let (kx0, ky0) = key(lo, tile_size);
+                let (kx1, ky1) = key(hi, tile_size);
+                for ky in ky0..=ky1 {
+                    for kx in kx0..=kx1 {
+                        out.by_tile.entry((kx, ky)).or_default().push(at);
+                    }
+                }
+                out.fields.push(Field {
+                    ring: piece,
+                    crop,
+                    direction: source.direction_deg.to_radians(),
+                    seed: source.seed,
+                    index: index as u32,
+                });
+            }
         }
         out
+    }
+
+    /// The fields already placed whose tiles a ring reaches — the only ones
+    /// it could be standing on. `by_tile` holds what has been placed so far,
+    /// so this is exactly "everything that came before, near here".
+    fn rivals(&self, ring: &[DVec2], tile_size: f64) -> Vec<usize> {
+        let (lo, hi) = fields::geometry::bounds(ring);
+        let (kx0, ky0) = key(lo, tile_size);
+        let (kx1, ky1) = key(hi, tile_size);
+        let mut out = Vec::new();
+        for ky in ky0..=ky1 {
+            for kx in kx0..=kx1 {
+                let Some(here) = self.by_tile.get(&(kx, ky)) else {
+                    continue;
+                };
+                for &at in here {
+                    // Boxes first: a tile holds fields that never come near
+                    // this one, and a clip is a great deal more work than
+                    // four comparisons.
+                    let (o_lo, o_hi) = fields::geometry::bounds(&self.fields[at].ring);
+                    if o_hi.x < lo.x || hi.x < o_lo.x || o_hi.y < lo.y || hi.y < o_lo.y {
+                        continue;
+                    }
+                    out.push(at);
+                }
+            }
+        }
+        // In order and once each: the tiles of a big field list it many times.
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// How many fields lost ground to one that came before them, and how much
+    /// [m²] — what the editor's checks report and the line's log counts.
+    pub fn overlaps(&self) -> (usize, f64) {
+        (self.overlaps, self.overlap_area)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -203,8 +297,8 @@ pub(crate) fn patches(
     out
 }
 
-/// Triangulates one piece of a field, refines it to [`TARGET_EDGE`] and drapes
-/// it on the tile's own height grid.
+/// Triangulates one piece of a field, cuts it on the tile's own height grid
+/// and drapes it there.
 fn add_piece(
     patch: &mut FieldPatch,
     ring: &[DVec2],
@@ -213,12 +307,14 @@ fn add_piece(
     frame: &EnuFrame,
     zone: u8,
 ) {
-    let mut points = ring.to_vec();
-    let mut tris = fields::geometry::triangulate(&points);
+    let points = ring.to_vec();
+    let tris = fields::geometry::triangulate(&points);
     if tris.is_empty() {
         return;
     }
-    refine(&mut points, &mut tris, levels(ring));
+    // Cut on the ground's own grid, so the surface follows the DGM instead of
+    // spanning it.
+    let (points, tris) = on_grid(&points, &tris, grid);
 
     // The rows run along the working direction, measured from the field's own
     // centre rather than the piece's — so the furrows of a field cut across
@@ -239,7 +335,10 @@ fn add_piece(
     let base = patch.positions.len() as u32;
 
     for p in &points {
-        let height = grid.at(*p) + LIFT;
+        // The mesh, not the bilinear surface: a field is drawn over the
+        // triangles the terrain draws, and between them the two disagree by
+        // the cell's twist — a decimetre of ground on a rolling field.
+        let height = grid.mesh_at(*p) + LIFT;
         let (lat, lon) = geo::from_utm(p.x, p.y, zone);
         let world = geo::to_ecef(lat, lon, height);
         patch.positions.push(to_render(frame.to_local(world)));
@@ -260,42 +359,172 @@ fn add_piece(
     }
 }
 
-/// How many times a piece is subdivided, from how big it is.
-fn levels(ring: &[DVec2]) -> u32 {
-    let (lo, hi) = fields::geometry::bounds(ring);
-    let size = (hi - lo).max_element();
-    let mut levels = 0;
-    let mut edge = size;
-    while edge > TARGET_EDGE && levels < MAX_LEVELS {
-        edge /= 2.0;
-        levels += 1;
+/// Cuts a field's triangles on the terrain's own height grid.
+///
+/// A field is a polygon and the ground is a grid, and a triangle that spans
+/// several grid cells is a flat plane where the ground is not: draped by its
+/// corners, it cuts through everything between them. What this did before was
+/// subdivide uniformly and give up after four levels — an imported field the
+/// size of a tile came out with **32 m triangles over a 4 m grid**, which is
+/// a field lying across the hills rather than on them.
+///
+/// Cutting it *on* the grid instead costs about two triangles a cell and puts
+/// every vertex on a grid line, where the drape is exact. Two neighbouring
+/// cells cut the same triangle edge at the same point, so nothing cracks and
+/// no corner is left hanging between them.
+///
+/// The cell is the terrain's own, and the fan starts at its **south-east**
+/// corner — which is the diagonal `build_tile` splits its cells on. A field
+/// cut that way does not merely come close to the ground: over every cell it
+/// covers whole it *is* the ground, triangle for triangle, and the five
+/// centimetres of [`LIFT`] are the same five centimetres everywhere.
+fn on_grid(points: &[DVec2], tris: &[[u32; 3]], grid: &HeightGrid) -> (Vec<DVec2>, Vec<[u32; 3]>) {
+    let cut = grid.step();
+    let origin = grid.min();
+    let cell_of = |p: DVec2| ((p - origin) / cut).floor();
+
+    let mut out_points: Vec<DVec2> = Vec::new();
+    let mut at: HashMap<(i64, i64), u32> = HashMap::new();
+    let mut out_tris: Vec<[u32; 3]> = Vec::new();
+    let (mut poly, mut half, mut scratch) = (Vec::new(), Vec::new(), Vec::new());
+
+    for &[a, b, c] in tris {
+        let tri = [points[a as usize], points[b as usize], points[c as usize]];
+        let lo = tri[0].min(tri[1]).min(tri[2]);
+        let hi = tri[0].max(tri[1]).max(tri[2]);
+        let (from, to) = (cell_of(lo), cell_of(hi));
+        for y in from.y as i64..=to.y as i64 {
+            for x in from.x as i64..=to.x as i64 {
+                let min = origin + DVec2::new(x as f64, y as f64) * cut;
+                clip_to_cell(tri, min, min + cut, &mut scratch, &mut poly);
+                if poly.len() < 3 {
+                    continue;
+                }
+                // `build_tile` splits every cell on its south-east to
+                // north-west diagonal, so the field is split there too. That
+                // is the step from *near* the ground to *on* it: each half
+                // lies inside one terrain triangle, so a plane through its
+                // corners is that triangle's own plane.
+                let diagonal = min.x + min.y + cut;
+                for lower in [true, false] {
+                    half.clear();
+                    half.extend_from_slice(&poly);
+                    clip_half(&mut scratch, &mut half, |p| {
+                        let side = diagonal - (p.x + p.y);
+                        if lower { side } else { -side }
+                    });
+                    if half.len() < 3 {
+                        continue;
+                    }
+                    // Vertices are shared by the millimetre, so the cuts of
+                    // two triangles that met along an edge still meet along
+                    // it.
+                    let mut intern = |p: DVec2| -> u32 {
+                        let key = ((p.x * 1e3).round() as i64, (p.y * 1e3).round() as i64);
+                        *at.entry(key).or_insert_with(|| {
+                            out_points.push(p);
+                            out_points.len() as u32 - 1
+                        })
+                    };
+                    let fan: Vec<u32> = half.iter().map(|p| intern(*p)).collect();
+                    for i in 1..fan.len() - 1 {
+                        // A sliver the weld collapsed draws nothing and costs
+                        // a vertex fetch.
+                        if fan[0] == fan[i] || fan[i] == fan[i + 1] || fan[0] == fan[i + 1] {
+                            continue;
+                        }
+                        out_tris.push([fan[0], fan[i], fan[i + 1]]);
+                    }
+                }
+            }
+        }
     }
-    levels
+    (out_points, out_tris)
 }
 
-/// Splits every triangle into four, `levels` times over. Uniform rather than
-/// by edge length: a mesh subdivided the same everywhere cannot crack, and a
-/// field is flat enough that the wasted vertices on its short axis are a few
-/// hundred bytes.
-fn refine(points: &mut Vec<DVec2>, tris: &mut Vec<[u32; 3]>, levels: u32) {
-    for _ in 0..levels {
-        let mut midpoints: HashMap<(u32, u32), u32> = HashMap::new();
-        let mut split = Vec::with_capacity(tris.len() * 4);
-        for &[a, b, c] in tris.iter() {
-            let mut mid = |i: u32, j: u32, points: &mut Vec<DVec2>| -> u32 {
-                let key = if i < j { (i, j) } else { (j, i) };
-                *midpoints.entry(key).or_insert_with(|| {
-                    let at = points.len() as u32;
-                    points.push((points[i as usize] + points[j as usize]) / 2.0);
-                    at
-                })
-            };
-            let ab = mid(a, b, points);
-            let bc = mid(b, c, points);
-            let ca = mid(c, a, points);
-            split.extend_from_slice(&[[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]);
+/// Clips a convex ring to the half-plane where `side` is not negative.
+///
+/// The cell's own four edges are done by [`clip_to_cell`], which can snap the
+/// crossing exactly onto the plane because it knows which coordinate it is.
+/// This one is for the cell's diagonal, which is internal to the cell — both
+/// halves take their crossing from the same ring, so they agree with each
+/// other and nothing outside the cell depends on it.
+fn clip_half(scratch: &mut Vec<DVec2>, out: &mut Vec<DVec2>, side: impl Fn(DVec2) -> f64) {
+    if out.len() < 3 {
+        out.clear();
+        return;
+    }
+    std::mem::swap(scratch, out);
+    out.clear();
+    for i in 0..scratch.len() {
+        let (a, b) = (scratch[i], scratch[(i + 1) % scratch.len()]);
+        let (sa, sb) = (side(a), side(b));
+        if sa >= 0.0 {
+            out.push(a);
         }
-        *tris = split;
+        if (sa >= 0.0) != (sb >= 0.0) {
+            out.push(a + (b - a) * (sa / (sa - sb)));
+        }
+    }
+    if out.len() < 3 {
+        out.clear();
+    }
+}
+
+/// A triangle clipped to an axis-aligned cell, as a convex ring.
+///
+/// Sutherland–Hodgman against the cell's four edges: a triangle and a
+/// rectangle are both convex, so what comes out is one ring of at most seven
+/// points, and the cells of the grid partition the triangle exactly.
+fn clip_to_cell(
+    tri: [DVec2; 3],
+    min: DVec2,
+    max: DVec2,
+    scratch: &mut Vec<DVec2>,
+    out: &mut Vec<DVec2>,
+) {
+    out.clear();
+    out.extend_from_slice(&tri);
+    for (axis, limit, above) in [
+        (0usize, min.x, true),
+        (0, max.x, false),
+        (1, min.y, true),
+        (1, max.y, false),
+    ] {
+        if out.len() < 3 {
+            out.clear();
+            return;
+        }
+        std::mem::swap(scratch, out);
+        out.clear();
+        let inside = |p: DVec2| {
+            if above {
+                p[axis] >= limit
+            } else {
+                p[axis] <= limit
+            }
+        };
+        for i in 0..scratch.len() {
+            let (a, b) = (scratch[i], scratch[(i + 1) % scratch.len()]);
+            let (ia, ib) = (inside(a), inside(b));
+            if ia {
+                out.push(a);
+            }
+            // The two ends straddle the edge, so the crossing is on it — and
+            // the denominator cannot vanish, because an edge parallel to the
+            // limit has both ends on the same side of it.
+            if ia != ib {
+                let mut crossing = a + (b - a) * ((limit - a[axis]) / (b[axis] - a[axis]));
+                // Snapped onto the plane rather than left a bit off it: the
+                // cell next door computes the same crossing from the other
+                // side, and the two have to be the same point exactly.
+                crossing[axis] = limit;
+                out.push(crossing);
+            }
+        }
+    }
+    if out.len() < 3 {
+        out.clear();
     }
 }
 
@@ -356,6 +585,26 @@ mod tests {
             year: None,
             seed: 42,
             tags: Vec::new(),
+        }
+    }
+
+    /// A field from an explicit ring, in metres east/north of a fixed point
+    /// on the test line — for the cases where the shape is the point.
+    fn source_ring(ring: &[(f64, f64)], crop: &str) -> FieldSource {
+        let (e0, n0) = (440_000.0, 5_715_000.0);
+        FieldSource {
+            polygon: ring
+                .iter()
+                .map(|(e, n)| {
+                    let (lat, lon) = geo::from_utm(e0 + e, n0 + n, 32);
+                    FieldPoint {
+                        lat: lat.to_degrees(),
+                        lon: lon.to_degrees(),
+                    }
+                })
+                .collect(),
+            crop: crop.into(),
+            ..source(0.0, 0.0, 1.0, crop)
         }
     }
 
@@ -520,31 +769,262 @@ mod tests {
     }
 
     #[test]
-    fn refinement_follows_the_ground() {
-        // A field 300 m across gets subdivided; a 5 m one does not.
-        let big = vec![
-            DVec2::ZERO,
-            DVec2::new(300.0, 0.0),
-            DVec2::new(300.0, 300.0),
+    fn a_field_is_cut_on_the_ground_s_own_grid() {
+        // Every triangle of a field has to lie inside one cell of the height
+        // grid it is draped on, or it spans ground it never sampled. The old
+        // uniform refinement gave up after four levels and left 32 m
+        // triangles on a 4 m grid; this is the property that says it cannot.
+        let heights = vec![0.0f32; 129 * 129];
+        let grid = HeightGrid::new(DVec2::ZERO, &heights, 4.0, 128);
+        let cut = grid.step();
+        let ring = vec![
+            DVec2::new(3.0, 5.0),
+            DVec2::new(311.0, 17.0),
+            DVec2::new(280.0, 297.0),
+            DVec2::new(41.0, 233.0),
         ];
-        let small = vec![DVec2::ZERO, DVec2::new(5.0, 0.0), DVec2::new(5.0, 5.0)];
-        assert!(levels(&big) > 0);
-        assert_eq!(levels(&small), 0);
-
-        let mut points = big.clone();
-        let mut tris = fields::geometry::triangulate(&points);
-        let before = tris.len();
-        refine(&mut points, &mut tris, 2);
-        assert_eq!(tris.len(), before * 16);
-        // Subdivision is conforming: no vertex is repeated, so no crack.
-        let mut sorted: Vec<(u64, u64)> = points
+        let tris = fields::geometry::triangulate(&ring);
+        let (points, cut_tris) = on_grid(&ring, &tris, &grid);
+        assert!(!cut_tris.is_empty());
+        for [a, b, c] in &cut_tris {
+            let t = [
+                points[*a as usize],
+                points[*b as usize],
+                points[*c as usize],
+            ];
+            let lo = t[0].min(t[1]).min(t[2]);
+            let hi = t[0].max(t[1]).max(t[2]);
+            // Inside one cell — the one its middle falls in.
+            let cell = (((t[0] + t[1] + t[2]) / 3.0) / cut).floor();
+            let (from, to) = (cell * cut, (cell + 1.0) * cut);
+            assert!(
+                lo.x >= from.x - 1e-9
+                    && lo.y >= from.y - 1e-9
+                    && hi.x <= to.x + 1e-9
+                    && hi.y <= to.y + 1e-9,
+                "{t:?} spans more than the {cut} m cell at {from:?}",
+            );
+        }
+        // And the cut keeps the field's area: nothing is dropped, nothing is
+        // covered twice.
+        let whole: f64 = tris
             .iter()
-            .map(|p| ((p.x * 1000.0) as u64, (p.y * 1000.0) as u64))
+            .map(|[a, b, c]| {
+                let (a, b, c) = (ring[*a as usize], ring[*b as usize], ring[*c as usize]);
+                (b - a).perp_dot(c - a).abs() / 2.0
+            })
+            .sum();
+        let pieces: f64 = cut_tris
+            .iter()
+            .map(|[a, b, c]| {
+                let (a, b, c) = (
+                    points[*a as usize],
+                    points[*b as usize],
+                    points[*c as usize],
+                );
+                (b - a).perp_dot(c - a).abs() / 2.0
+            })
+            .sum();
+        assert!((pieces - whole).abs() < whole * 1e-6, "{pieces} of {whole}");
+    }
+
+    /// A tile of ground with a hill on it, `step` metres to a grid point.
+    fn hilly(step: f64, n: usize, amplitude: f64, wavelength: f64) -> Vec<f32> {
+        (0..=n)
+            .flat_map(|y| {
+                (0..=n).map(move |x| {
+                    let (u, v) = (x as f64 * step, y as f64 * step);
+                    let t = std::f64::consts::TAU / wavelength;
+                    (amplitude * (u * t).sin() * (v * t).cos()) as f32
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn two_fields_never_stand_on_the_same_ground() {
+        // Two parcels overlapping by a strip — a register's own boundaries,
+        // digitised twice and disagreeing by a few metres. The later one
+        // gives the strip up, so no ground carries two surfaces at the same
+        // height and no crop grows twice over it.
+        let overlapping = [
+            source_ring(
+                &[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+                "maize",
+            ),
+            source_ring(
+                &[(80.0, 0.0), (200.0, 0.0), (200.0, 100.0), (80.0, 100.0)],
+                "winter-cereal",
+            ),
+        ];
+        let fields = Fields::from_parts(&overlapping, 32, 512.0);
+        let (count, taken) = fields.overlaps();
+        assert_eq!(count, 1, "one field gave ground up");
+        assert!((taken - 2_000.0).abs() < 50.0, "{taken} m² given up");
+        // The first keeps all of its ten thousand square metres; the second
+        // is down to the ten thousand it had to itself.
+        let total: f64 = fields
+            .fields
+            .iter()
+            .map(|f| fields::geometry::area(&f.ring).abs())
+            .sum();
+        assert!((total - 20_000.0).abs() < 100.0, "{total} m² of field");
+        // And no two of them share any ground at all.
+        for (i, a) in fields.fields.iter().enumerate() {
+            for b in &fields.fields[i + 1..] {
+                let shared: f64 =
+                    fields::geometry::clip(&a.ring, &b.ring, fields::geometry::Op::Intersect)
+                        .iter()
+                        .map(|r| fields::geometry::area(r).abs())
+                        .sum();
+                assert!(shared <= MIN_SHARED, "{shared} m² shared");
+            }
+        }
+    }
+
+    #[test]
+    fn parcels_that_only_touch_are_left_alone() {
+        // Neighbours sharing a boundary are not overlapping, and cutting one
+        // out of the other would be work for nothing — and a clip along two
+        // coincident edges is where a clipper is least sure of itself.
+        let touching = [
+            source_ring(
+                &[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+                "maize",
+            ),
+            source_ring(
+                &[(100.0, 0.0), (200.0, 0.0), (200.0, 100.0), (100.0, 100.0)],
+                "winter-cereal",
+            ),
+        ];
+        let fields = Fields::from_parts(&touching, 32, 512.0);
+        assert_eq!(
+            fields.overlaps().0,
+            0,
+            "a shared boundary is not an overlap"
+        );
+        assert_eq!(fields.len(), 2);
+        for f in &fields.fields {
+            assert!(
+                (fields::geometry::area(&f.ring).abs() - 10_000.0).abs() < 1.0,
+                "a field lost ground to its neighbour",
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_cut_in_two_stays_one_field() {
+        // Taking a strip out of the middle leaves two rings, and both are
+        // still the same parcel: the same crop, the same seed, the same index
+        // for the editor to select.
+        let split = [
+            source_ring(
+                &[(40.0, 0.0), (60.0, 0.0), (60.0, 100.0), (40.0, 100.0)],
+                "maize",
+            ),
+            source_ring(
+                &[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+                "winter-cereal",
+            ),
+        ];
+        let fields = Fields::from_parts(&split, 32, 512.0);
+        let pieces: Vec<&Field> = fields.fields.iter().filter(|f| f.index == 1).collect();
+        assert_eq!(pieces.len(), 2, "the strip cut it in two");
+        assert!(pieces.iter().all(|f| f.crop == CropClass::WinterCereal));
+        assert!(pieces.iter().all(|f| f.seed == pieces[0].seed));
+        let left: f64 = pieces
+            .iter()
+            .map(|f| fields::geometry::area(&f.ring).abs())
+            .sum();
+        assert!((left - 8_000.0).abs() < 100.0, "{left} m² left");
+    }
+
+    #[test]
+    fn a_field_lies_on_the_ground_and_not_across_it() {
+        // The property the whole cut exists for. A field draped by its
+        // corners is a plane where the ground is a shape: over a hill five
+        // metres high it hangs metres clear in the middle and digs in at the
+        // edges. Cut on the terrain's own cells *and* on the diagonal it
+        // splits them by, every triangle of the field lies inside one
+        // triangle of the ground — so it does not come close to it, it is it.
+        let step = 8.0;
+        let heights = hilly(step, 64, 5.0, 96.0);
+        let grid = HeightGrid::new(DVec2::ZERO, &heights, step, 64);
+        let ring = vec![
+            DVec2::new(20.0, 20.0),
+            DVec2::new(430.0, 30.0),
+            DVec2::new(420.0, 400.0),
+            DVec2::new(35.0, 380.0),
+        ];
+        let (points, tris) = on_grid(&ring, &fields::geometry::triangulate(&ring), &grid);
+
+        let mut worst: f64 = 0.0;
+        for [a, b, c] in &tris {
+            let (pa, pb, pc) = (
+                points[*a as usize],
+                points[*b as usize],
+                points[*c as usize],
+            );
+            let (ha, hb, hc) = (grid.mesh_at(pa), grid.mesh_at(pb), grid.mesh_at(pc));
+            // A handful of points inside the triangle, by barycentric weight.
+            for (u, v) in [(0.2, 0.2), (0.6, 0.2), (0.2, 0.6), (1.0 / 3.0, 1.0 / 3.0)] {
+                let w = 1.0 - u - v;
+                let p = pa * w + pb * u + pc * v;
+                worst = worst.max((ha * w + hb * u + hc * v - grid.mesh_at(p)).abs());
+            }
+        }
+        assert!(
+            worst < 1e-6,
+            "a field triangle stands {worst:.3} m off the ground it is drawn on",
+        );
+        // And the hill is really there, so the bound above means something:
+        // a mesh that spanned it would be metres out.
+        let relief = heights.iter().fold(0.0f32, |m, h| m.max(h.abs()));
+        assert!(relief > 4.0, "{relief}");
+    }
+
+    #[test]
+    fn the_cut_leaves_no_corner_hanging() {
+        // Two triangles that met along an edge have to still meet along it
+        // after the cut, or the field cracks open along the seam. They do
+        // because both cut that edge at the grid lines it crosses, and the
+        // vertices are shared by the millimetre.
+        let heights = vec![0.0f32; 65 * 65];
+        let grid = HeightGrid::new(DVec2::ZERO, &heights, 8.0, 64);
+        let ring = vec![
+            DVec2::new(1.0, 1.0),
+            DVec2::new(97.0, 3.0),
+            DVec2::new(95.0, 89.0),
+            DVec2::new(5.0, 91.0),
+        ];
+        let (points, tris) = on_grid(&ring, &fields::geometry::triangulate(&ring), &grid);
+        // Every edge is either on the outline or shared by exactly two
+        // triangles — a hanging corner shows up as an edge used once inside.
+        let mut edges: HashMap<(u32, u32), usize> = HashMap::new();
+        for [a, b, c] in &tris {
+            for (i, j) in [(*a, *b), (*b, *c), (*c, *a)] {
+                *edges
+                    .entry(if i < j { (i, j) } else { (j, i) })
+                    .or_default() += 1;
+            }
+        }
+        let outline: Vec<(u32, u32)> = edges
+            .iter()
+            .filter(|(_, n)| **n == 1)
+            .map(|(e, _)| *e)
             .collect();
-        sorted.sort_unstable();
-        let count = sorted.len();
-        sorted.dedup();
-        assert_eq!(sorted.len(), count, "a midpoint was made twice");
+        assert!(edges.values().all(|n| *n <= 2), "an edge used three times");
+        // The outline is a closed ring: every vertex on it is used twice.
+        let mut ends: HashMap<u32, usize> = HashMap::new();
+        for (a, b) in &outline {
+            *ends.entry(*a).or_default() += 1;
+            *ends.entry(*b).or_default() += 1;
+        }
+        assert!(
+            ends.values().all(|n| *n == 2),
+            "the boundary is not a closed ring — {} points",
+            points.len(),
+        );
     }
 
     #[test]

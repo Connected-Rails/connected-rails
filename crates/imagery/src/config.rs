@@ -231,12 +231,22 @@ pub struct ImageryConfig {
     /// Manual image offset against the map [m] (east/north) — aerial imagery is
     /// often off by metres relative to the track position.
     pub offset: (f64, f64),
-    /// Lift of the overlay above the terrain surface [m]. The drape grid is
-    /// coarser than the terrain mesh, so without a little air its secants cut
-    /// through the ridges in between — but the lift also decides what the
-    /// picture covers: the fields drape at a height of their own (a hand's
-    /// width above the ground), and the photo has to stay under what grows
-    /// there. A little air over the terrain, and under the crops.
+    /// Lift of the overlay above the terrain surface [m].
+    ///
+    /// The drape is its own grid, so it and the terrain mesh cross wherever
+    /// their interpolations disagree, and without air over the terrain the
+    /// picture is chopped up by the ridges in between. The route editor
+    /// samples the drape at the terrain's own finest spacing to keep that
+    /// disagreement small, so this only has to cover what is left of it —
+    /// and every centimetre of it is parallax on a picture people line up
+    /// against the track in half-metre steps.
+    ///
+    /// It is also what decides whether the photo lies over or under the
+    /// module's own ground sheets — fields at 5 cm, roads at 6, water at 12.
+    /// **Over**, deliberately: the aerial photo is the thing one traces
+    /// from, and the toolbar's own switch is how one looks at what has been
+    /// traced. Under them it is invisible on any module with farmland on it,
+    /// and the switch does nothing at all.
     pub height_offset: f64,
     pub cache: CacheConfig,
     pub request: RequestConfig,
@@ -253,7 +263,7 @@ impl Default for ImageryConfig {
             radius: 1_200.0,
             max_tiles: 1_024,
             offset: (0.0, 0.0),
-            height_offset: 0.04,
+            height_offset: 0.25,
             cache: CacheConfig::default(),
             request: RequestConfig::default(),
             providers: predefined_providers(),

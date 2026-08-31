@@ -17,10 +17,18 @@ use imagery::{DecodedTile, ImageryConfig, ImagerySource, TileId, tiles};
 use std::collections::HashMap;
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
-/// Grid spacing the imagery is draped at [m]. Fine enough to follow the
-/// embankment the terrain builder puts under the track, coarse enough that a
-/// tile stays a few hundred height lookups rather than a few thousand.
-const DRAPE_STEP: f64 = 8.0;
+/// Grid spacing the imagery is draped at [m].
+///
+/// **The terrain's own finest spacing** (`TerrainOptions::base_step`, 4 m
+/// inside the corridor). It has to be: the two are linear interpolations of
+/// the same height function, and a drape sampled coarser than the mesh cuts
+/// through every ridge the mesh has between its own vertices — worst of all
+/// at the crease where the formation blends into the ground, which is the
+/// one place an editor user is always looking. Twice as coarse is what the
+/// metre of air under [`ImageryConfig::height_offset`] used to be paying
+/// for, and a metre of air is a metre of parallax on a picture people
+/// calibrate against the track in half-metre steps.
+const DRAPE_STEP: f64 = 4.0;
 /// Height grids sampled at the same time. They share the workers with the
 /// terrain tiles, so asking for more only starves those.
 const MAX_DRAPING: usize = 8;
@@ -221,18 +229,25 @@ pub fn update(
 
 /// Ellipsoidal heights of a tile's drape grid, row by row from the north edge —
 /// the shape the terrain builder reports, lifted clear of it.
+///
+/// One batch, not a lookup a point: the sampler caches the height tile it
+/// last read from each source, and at [`DRAPE_STEP`] a drape tile is over a
+/// thousand points that all land in the same handful of tiles.
 fn height_grid(tile: TileId, segments: usize, lift: f64, builder: &TerrainBuilder) -> Vec<f64> {
     let (west, south, east, north) = tile.bounds();
     let n = segments.max(1);
-    let mut heights = Vec::with_capacity((n + 1) * (n + 1));
-    for row in 0..=n {
+    let points = (0..=n).flat_map(|row| {
         let lat = north + (south - north) * row as f64 / n as f64;
-        for col in 0..=n {
+        (0..=n).map(move |col| {
             let lon = west + (east - west) * col as f64 / n as f64;
-            heights.push(builder.surface_height(geo::to_ecef_deg(lat, lon, 0.0)) + lift);
-        }
-    }
-    heights
+            geo::to_ecef_deg(lat, lon, 0.0)
+        })
+    });
+    builder
+        .surface_heights(points)
+        .into_iter()
+        .map(|h| h + lift)
+        .collect()
 }
 
 /// Triangle indices of the drape grid, row-major from the north edge: two
@@ -257,13 +272,20 @@ fn grid_indices(n: usize) -> Vec<u32> {
 
 /// How many segments a tile is cut into per axis: about one vertex every
 /// [`DRAPE_STEP`] metres. Capped — a low zoom level makes a tile kilometres
-/// wide, and every vertex is a height lookup.
+/// wide, and every vertex is a height lookup. The cap is high enough that
+/// the working zoom levels reach the full spacing and only a deliberately
+/// coarse one, seen from far enough away that a metre of drape is a pixel,
+/// runs into it.
 fn drape_segments(tile: TileId) -> usize {
     let (west, _, east, _) = tile.bounds();
     let (lat, _) = tile.center();
     let width = (east - west) * 111_320.0 * lat.to_radians().cos().abs();
-    ((width / DRAPE_STEP).ceil() as usize).clamp(1, 32)
+    ((width / DRAPE_STEP).ceil() as usize).clamp(1, MAX_SEGMENTS)
 }
+
+/// Most segments a tile is cut into per axis — the ceiling on a drape tile's
+/// height lookups, `(n + 1)²` of them on a worker thread.
+const MAX_SEGMENTS: usize = 48;
 
 /// Re-align the tile quads after an origin rebase.
 pub fn resync<F: bevy::ecs::query::QueryFilter>(
@@ -356,6 +378,12 @@ fn spawn_tile(
         alpha_mode: AlphaMode::Blend,
         // Aerial imagery should look as delivered, not be lit.
         unlit: true,
+        // The drape and the terrain are two interpolations of one height
+        // function, so where they agree they agree to the last bit and the
+        // depth test decides by rounding. A nudge towards the camera settles
+        // that in the picture's favour — it cannot settle more than a tie,
+        // which is why the drape follows the mesh's own spacing above.
+        depth_bias: 4.0,
         ..default()
     });
 
@@ -395,6 +423,35 @@ mod tests {
             },
         );
         assert!(overlay.has(tile), "queued for its heights, not missing");
+    }
+
+    /// The drape may not be coarser than the mesh it lies on. A grid sampled
+    /// at twice the terrain's own spacing cuts through every ridge the mesh
+    /// has between its vertices, and the air it then needs over the terrain
+    /// is parallax on a picture people line up against the track.
+    #[test]
+    fn the_drape_follows_the_terrain_at_its_own_spacing() {
+        let terrain = content::terrain::TerrainOptions::default();
+        assert!(
+            DRAPE_STEP <= terrain.base_step,
+            "drape at {DRAPE_STEP} m over terrain at {} m",
+            terrain.base_step,
+        );
+        // And the zoom levels the default configuration actually asks for
+        // reach that spacing rather than running into the cap.
+        let config = ImageryConfig::default();
+        for lat in [47.5, 51.6, 55.0] {
+            let zoom = config.zoom_for(lat);
+            let tile = TileId::from_lat_lon(lat, 10.0, zoom);
+            let (west, _, east, _) = tile.bounds();
+            let (clat, _) = tile.center();
+            let width = (east - west) * 111_320.0 * clat.to_radians().cos().abs();
+            let step = width / drape_segments(tile) as f64;
+            assert!(
+                step <= terrain.base_step + 1e-6,
+                "zoom {zoom} at {lat}°: {step} m a segment",
+            );
+        }
     }
 
     /// One segment has to stay exactly the quad the map has always drawn, or

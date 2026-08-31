@@ -1291,6 +1291,86 @@ pub enum CompileError {
     ForwardReference(u32),
 }
 
+/// Which parcels stand on one another, and by how much.
+///
+/// Neighbouring parcels *touch* — that is what a boundary is, and it is not an
+/// overlap. Only shared **ground** counts, and only more than a square metre
+/// of it: a register's two sides of one boundary agree to a few centimetres,
+/// not exactly, and the slivers that leaves are digitisation and not a fault.
+///
+/// The renderer already refuses to draw the same ground twice
+/// (`content::farmland`), so this is a report and not a repair — but a parcel
+/// standing on its neighbour is a fault in the data, and the person who can
+/// fix it is looking at the editor.
+fn overlapping_fields(fields: &[FieldSource]) -> Vec<RuleIssue> {
+    use glam::DVec2;
+
+    /// Least shared ground that is worth a word [m²].
+    const MIN_SHARED: f64 = 1.0;
+
+    let Some(first) = fields.iter().find(|f| !f.polygon.is_empty()) else {
+        return Vec::new();
+    };
+    // One zone for the lot: a module is a few kilometres across, and what is
+    // wanted here is an area in metres, not a survey.
+    let zone = (((first.polygon[0].lon + 180.0) / 6.0).floor() as i32).clamp(0, 59) as u8 + 1;
+    let rings: Vec<Vec<DVec2>> = fields
+        .iter()
+        .map(|field| {
+            field
+                .polygon
+                .iter()
+                .map(|p| {
+                    let (e, n) =
+                        world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
+                    DVec2::new(e, n)
+                })
+                .collect()
+        })
+        .collect();
+    let boxes: Vec<(DVec2, DVec2)> = rings
+        .iter()
+        .map(|ring| {
+            if ring.len() < 3 {
+                (DVec2::ZERO, DVec2::ZERO)
+            } else {
+                fields::geometry::bounds(ring)
+            }
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    for i in 0..rings.len() {
+        if rings[i].len() < 3 {
+            continue;
+        }
+        for j in i + 1..rings.len() {
+            if rings[j].len() < 3 {
+                continue;
+            }
+            // Boxes first: a module has thousands of parcels and almost no
+            // pair of them comes anywhere near another.
+            let ((lo, hi), (o_lo, o_hi)) = (boxes[i], boxes[j]);
+            if o_hi.x < lo.x || hi.x < o_lo.x || o_hi.y < lo.y || hi.y < o_lo.y {
+                continue;
+            }
+            let shared: f64 =
+                fields::geometry::clip(&rings[i], &rings[j], fields::geometry::Op::Intersect)
+                    .iter()
+                    .map(|ring| fields::geometry::area(ring).abs())
+                    .sum();
+            if shared > MIN_SHARED {
+                out.push(RuleIssue::FieldsOverlap {
+                    field: i as u32,
+                    other: j as u32,
+                    area: shared.round() as u32,
+                });
+            }
+        }
+    }
+    out
+}
+
 /// A finding of [`LineSource::check`] — wiring that compiles but fails on the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleIssue {
@@ -1346,6 +1426,11 @@ pub enum RuleIssue {
     /// A field whose crop is not one the installed tables know. It is drawn as
     /// bare ground; the row says which id to correct.
     FieldUnknownCrop { field: u32 },
+    /// Two fields standing on the same ground. The renderer will not draw the
+    /// strip twice — the later parcel gives it up (`content::farmland`) — but
+    /// a register whose parcels overlap is a register worth looking at, so
+    /// the row says which two and how much [m²].
+    FieldsOverlap { field: u32, other: u32, area: u32 },
     /// A road with fewer than two points on its centre line — nothing to
     /// pave.
     RoadTooShort { road: u32 },
@@ -2509,6 +2594,7 @@ impl LineSource {
                 issues.push(RuleIssue::FieldUnknownCrop { field: i as u32 });
             }
         }
+        issues.extend(overlapping_fields(&self.fields));
 
         // Walkways: a path needs a start and an end, an area three corners. Nobody on
         // them is not an error — a way may be laid out before it is peopled.
@@ -3046,6 +3132,58 @@ impl LineSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two parcels standing on the same ground get a word from the rule
+    /// check; two that merely share a boundary do not, because that is what a
+    /// boundary is.
+    #[test]
+    fn the_rule_check_finds_fields_that_stand_on_each_other() {
+        // Roughly 70 m to a thousandth of a degree of latitude at 52° N, and
+        // about 110 m to a thousandth of longitude — big enough that a
+        // hundredth of that is well over the square metre the rule ignores.
+        let line = |second: &str| -> LineSource {
+            ron::from_str(&format!(
+                r#"(
+                name: "Acker",
+                nodes: [Buffer, Buffer],
+                edges: [],
+                fields: [
+                    (polygon: [(lat: 52.0, lon: 10.0), (lat: 52.0, lon: 10.001), (lat: 52.001, lon: 10.001), (lat: 52.001, lon: 10.0)], crop: "maize"),
+                    {second},
+                ],
+            )"#
+            ))
+            .unwrap()
+        };
+        let types = std::collections::BTreeMap::new();
+        let objects = std::collections::BTreeMap::new();
+
+        // Sharing the eastern boundary exactly: neighbours, not a fault.
+        let touching = line(
+            r#"(polygon: [(lat: 52.0, lon: 10.001), (lat: 52.0, lon: 10.002), (lat: 52.001, lon: 10.002), (lat: 52.001, lon: 10.001)], crop: "winter-cereal")"#,
+        );
+        let issues = touching.check(&types, &objects);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i, RuleIssue::FieldsOverlap { .. })),
+            "a shared boundary is not an overlap: {issues:?}",
+        );
+
+        // Reaching a fifth of the way in: a fault, and the row says how much.
+        let over = line(
+            r#"(polygon: [(lat: 52.0, lon: 10.0008), (lat: 52.0, lon: 10.002), (lat: 52.001, lon: 10.002), (lat: 52.001, lon: 10.0008)], crop: "winter-cereal")"#,
+        );
+        let issues = over.check(&types, &objects);
+        let found = issues.iter().find_map(|i| match i {
+            RuleIssue::FieldsOverlap { field, other, area } => Some((*field, *other, *area)),
+            _ => None,
+        });
+        let (field, other, area) = found.unwrap_or_else(|| panic!("{issues:?}"));
+        assert_eq!((field, other), (0, 1));
+        // A fifth of a 70 by 110 m parcel, give or take the projection.
+        assert!((1_000..2_500).contains(&area), "{area} m² shared");
+    }
 
     /// Walkways round-trip through RON with their defaults, and the rule check calls
     /// out a path without a second point and an area without a third corner.

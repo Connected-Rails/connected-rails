@@ -11,6 +11,7 @@
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
+use bevy::camera::RenderTarget;
 use bevy::gltf::GltfAssetLabel;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{ConeAnchor, CylinderAnchor, MeshBuilder};
@@ -42,13 +43,13 @@ pub mod windscreen;
 pub use farmland::{
     CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
 };
-pub use plants::{FieldPlants, PlantMaterials, update_field_plants};
 pub use people::{
     CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
     PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
     WalkwayHost, WalkwaysBound, bind_walkways, gait, move_strollers, person_bundle, play_gait,
     spawn_seated, spawn_strollers,
 };
+pub use plants::{FieldPlants, PlantMaterials, update_field_plants};
 pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, Wood, WorldCatalog,
@@ -1274,10 +1275,26 @@ pub fn mip_textures(
     }
 }
 
+/// Whether a camera is the one that draws the *world* into the window.
+///
+/// Not simply the first active camera: the simulator's cab displays and its
+/// cloud panorama are `Camera2d`s of their own, and the route editor's
+/// catalogue thumbnails are `Camera3d`s parked at the origin — all active,
+/// all drawing into an image of their own. Anything that measures a distance
+/// to one of those grows its geometry around the origin of the line instead
+/// of around the player, which is what the standing crop did for its first
+/// week and what wood culling would have done in the editor.
+///
+/// `Camera` requires `RenderTarget`, so a camera without one of its own is
+/// already the primary window's.
+pub fn draws_the_world(camera: &Camera, target: &RenderTarget) -> bool {
+    camera.is_active && matches!(target, RenderTarget::Window(_))
+}
+
 /// Appends the mip chain to a plain RGBA8 image and sets a sampler that uses
 /// it. `false` where the image is not one to touch: compressed, layered, or
 /// already carrying a chain.
-fn build_mip_chain(image: &mut Image, cutout: Option<f32>) -> bool {
+pub(crate) fn build_mip_chain(image: &mut Image, cutout: Option<f32>) -> bool {
     let descriptor = &image.texture_descriptor;
     let plain = descriptor.mip_level_count <= 1
         && descriptor.dimension == TextureDimension::D2

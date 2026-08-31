@@ -912,6 +912,12 @@ fn rebuild(
             return;
         }
     }
+    // A compiled line carries its track types by name only; resolving them
+    // against the installed mods is what gives the editor the same ballast,
+    // sleepers and rail section the simulator draws. Without this the editor
+    // shows every line on placeholder track.
+    line.net
+        .apply_track_types(|name| types.map.get(name).cloned());
     line.issues = line.source.check(&types.map, &objects.map);
     for entity in old.iter() {
         commands.entity(entity).despawn();

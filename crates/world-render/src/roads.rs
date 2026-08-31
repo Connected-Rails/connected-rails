@@ -93,7 +93,15 @@ impl RoadMaterials {
                     extension: RoadExt {
                         weather: weather::WeatherParams::default(),
                         texture: server.load(color),
-                        normal_map: server.load(normal),
+                        // A normal map is numbers, not colours: loaded as
+                        // sRGB, a flat texel comes out as a 40° tilt and the
+                        // whole carriageway is lit from the wrong direction.
+                        normal_map: server
+                            .load_builder()
+                            .with_settings(|settings: &mut bevy::image::ImageLoaderSettings| {
+                                settings.is_srgb = false;
+                            })
+                            .load(normal),
                     },
                 })
             })

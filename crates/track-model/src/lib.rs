@@ -6,6 +6,7 @@
 pub mod device;
 pub mod geometry;
 pub mod network;
+pub mod oberbau;
 pub mod position;
 pub mod power;
 pub mod profile;
@@ -18,8 +19,12 @@ pub use network::{
     Blocked, EdgeEnd, EdgeId, EdgeSide, NodeId, NodeKind, Switch, SwitchPosition, TrackEdge,
     TrackNetwork, TrackNode, TrackPose,
 };
+pub use oberbau::{
+    Fastening, GAUGE, GAUGE_MEASURE, Oberbau, RAIL_CANT, REGEL_PLANUM, RailPoint, RailProfile,
+    RailSection, SleeperKind,
+};
 pub use position::{AdvanceError, PassedDevice, TrackPosition};
 pub use power::{Electrification, PowerSystem, electrification_from_id, electrification_id};
 pub use profile::StepProfile;
 pub use track_object::TrackObject;
-pub use track_type::{Oberbau, RailProfile, SleeperKind, TrackType};
+pub use track_type::TrackType;

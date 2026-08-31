@@ -210,23 +210,27 @@ exactly that position, so the doubt was left out of the repository.
 
 ## Track textures in `mods/example/assets/track/`
 
-The example mod's track textures — the photographed Schotter the ballast bed
-is skinned with, the worn gravel of the jointed branch lines, the weathered
-concrete of the sleepers and slab track, and the creosoted planks the wooden
-sleepers show — are surface scans by two libraries that publish everything
-under the **Creative Commons CC0 1.0 Universal** licence
-(<https://creativecommons.org/publicdomain/zero/1.0/>), so they may be
-copied, modified and redistributed with the repository without attribution.
-CC0 needs none, but the sources are recorded here:
+The example mod's track textures — the crushed stone the ballast bed is skinned
+with, the fouled gravel of the jointed branch lines, the precast concrete of the
+sleepers and slab track, and the creosoted planks the wooden sleepers show — are
+surface scans by two libraries that publish everything under the **Creative
+Commons CC0 1.0 Universal** licence
+(<https://creativecommons.org/publicdomain/zero/1.0/>), so they may be copied,
+modified and redistributed with the repository without attribution. CC0 needs
+none, but the sources are recorded here. Each set ships as colour, normal
+(OpenGL convention), height and — for the two beds — ambient occlusion; the
+`_nor`, `_disp` and `_ao` maps are linear data and are loaded as such.
 
-- `mods/example/assets/track/ballast.jpg` and `ballast_nor.jpg` —
-  [Gravel043](https://ambientcg.com/a/Gravel043) from
-  [ambientCG](https://ambientcg.com) (photogrammetry, CC0 1.0).
-- `ballast-worn.jpg` — [Gravel024](https://ambientcg.com/a/Gravel024)
-  (ambientCG, CC0).
+- `ballast.jpg`, `ballast_nor.jpg`, `ballast_disp.jpg`, `ballast_ao.jpg` —
+  [Gravel024](https://ambientcg.com/a/Gravel024) from
+  [ambientCG](https://ambientcg.com) (photogrammetry, CC0 1.0). Dark angular
+  crushed stone, laid down at the 2.2 m the scan covers, which puts a stone at
+  the 31,5/63 mm of DB Gleisschotter.
+- `ballast-worn.jpg` and its three maps —
+  [Gravel033](https://ambientcg.com/a/Gravel033) (ambientCG, CC0), darkened and
+  warmed to the tone of a bed nobody has cleaned in twenty years.
 - `sleeper-concrete.jpg` / `sleeper-concrete_nor.jpg` —
-  [concrete_floor_worn_001](https://polyhaven.com/a/concrete_floor_worn_001)
-  (Poly Haven, CC0).
+  [Concrete030](https://ambientcg.com/a/Concrete030) (ambientCG, CC0).
 - `sleeper-wood.jpg` / `sleeper-wood_nor.jpg` —
   [dark_wooden_planks](https://polyhaven.com/a/dark_wooden_planks)
   (Poly Haven, CC0).

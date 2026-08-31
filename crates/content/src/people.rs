@@ -1653,7 +1653,11 @@ mod tests {
                 // tile is a 4 m grid, so the exact surface is only nearly it.
                 let ground = builder.surface_height(foot);
                 assert!((h - ground).abs() < 0.25, "{h:.2} on ground {ground:.2}");
-                assert!(h <= rail(s) + 0.01 && h >= rail(s) - 0.41, "{h:.2} vs rail");
+                let formation = rail(s) - options.rail_offset;
+                assert!(
+                    h <= rail(s) + 0.01 && h >= formation - 0.01,
+                    "{h:.2} is not between the formation {formation:.2} and the rail"
+                );
                 on_ground += 1;
             } else {
                 assert!((h - rail(s) - 0.76).abs() < 0.05, "{h:.2} on platform");

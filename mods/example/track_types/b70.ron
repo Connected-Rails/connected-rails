@@ -1,11 +1,15 @@
-// The Regeloberbau as the DB laid it into the 2010s: UIC 60 rails on B 70
+// The Regeloberbau as the DB laid it into the 2010s: 60E1 rails on B 70
 // sleepers at 60 cm (W14K-60-B70-1667), good for 230 km/h. A B 70 sleeper is
-// 2.6 m long, up to 30 × 21 cm in section and weighs around 300 kg — the
-// type DB built most of its main lines from before the B 90 took over.
+// 2.6 m long, 300 mm wide at the base and 220 on top, 214 mm deep under the
+// rail seat and 175 in the middle, and weighs around 300 kg — the type the DB
+// built most of its main lines from before the B 90 took over.
 (
     name: "Hauptbahn (B70)",
     texture: Some("example/assets/track/ballast.jpg"),
     normal_map: Some("example/assets/track/ballast_nor.jpg"),
+    depth_map: Some("example/assets/track/ballast_disp.jpg"),
+    occlusion_map: Some("example/assets/track/ballast_ao.jpg"),
+    texture_scale: 2.2,
     color: (0.33, 0.31, 0.29),
     roughness: 1.0,
     reverb: 0.0,
@@ -16,12 +20,19 @@
         sleeper: Concrete,
         sleeper_length: 2.6,
         sleeper_width: 0.30,
-        sleeper_height: 0.21,
+        sleeper_top_width: Some(0.22),
+        sleeper_height: 0.214,
+        sleeper_mid_height: Some(0.175),
         sleeper_spacing: 0.60,
-        ballast_overhang: 0.70,
+        rail_pad: 0.010,
+        fastening: Some(W14),
+        ballast_overhang: 0.40,
         ballast_depth: 0.30,
+        ballast_slope: 1.5,
+        crib_drop: 0.04,
         sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+        sleeper_texture_scale: Some(1.0),
     ),
     tags: ["main-line", "welded", "b70"],
 )

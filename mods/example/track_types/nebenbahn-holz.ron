@@ -1,10 +1,14 @@
-// The light end of the network: S 49 rails on wooden sleepers at 54 cm, the
-// Reichsbahn section (149 mm high, 125 mm foot) that is still standard on
-// lightly loaded branch lines and in sidings. Kiesbettung would be even
-// cheaper; this is laid on 30 cm of ballast all the same.
+// The light end of the network: 49E1 rails on wooden sleepers at 63 cm, the
+// Reichsbahn section (149 mm high, 125 mm foot) still standard on lightly
+// loaded branch lines and in sidings. The bed is thinner there than on a main
+// line — 20 cm under the sleeper instead of 30 — and the shoulder narrower.
 (
     name: "Nebenbahn (Holz)",
     texture: Some("example/assets/track/ballast-worn.jpg"),
+    normal_map: Some("example/assets/track/ballast-worn_nor.jpg"),
+    depth_map: Some("example/assets/track/ballast-worn_disp.jpg"),
+    occlusion_map: Some("example/assets/track/ballast-worn_ao.jpg"),
+    texture_scale: 2.0,
     color: (0.36, 0.32, 0.25),
     roughness: 1.4,
     reverb: 0.0,
@@ -16,11 +20,16 @@
         sleeper_length: 2.4,
         sleeper_width: 0.26,
         sleeper_height: 0.16,
-        sleeper_spacing: 0.54,
-        ballast_overhang: 0.70,
-        ballast_depth: 0.30,
+        sleeper_spacing: 0.63,
+        rail_pad: 0.016,
+        fastening: Some(K),
+        ballast_overhang: 0.35,
+        ballast_depth: 0.20,
+        ballast_slope: 1.5,
+        crib_drop: 0.05,
         sleeper_texture: Some("example/assets/track/sleeper-wood.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-wood_nor.jpg"),
+        sleeper_texture_scale: Some(2.4),
     ),
     tags: ["branch-line", "jointed", "wood", "narrow"],
 )

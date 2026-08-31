@@ -37,17 +37,44 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   name `"default"` returning to the built-in type. The mod runtime resolves the names
   after compile (like signal types) and merges `max_speed` into the one speed profile AI,
   LZB, HUD and scoring already read; the app **builds the track the type describes**
-  (`world_render::track`): the ballast bed as the RL 853 trapezoid (4.0 m over the
-  sleeper underside, sides 1:1), skinned per section (texture via `mods://` — the
-  example mod ships CC0 photographs of ballast and sleepers, ambientCG and Poly
-  Haven, tiled through a repeat sampler set on the image once it has arrived — else
-  the type color), the sleepers as real prisms — concrete B 70/B 90 taper, timber 26 × 16 —
-  at the type's spacing, merged into chunk meshes culled at 400 m, and the two rails
-  extruded from the real rolled section of the type's profile (49E1, 54E3, 60E1 at
-  1435 mm gauge, 1:40 inclined), so what the editor and the run show are the DB
-  superstructure forms: B 90 and B 70 on the main lines, wooden sleepers on the jointed
-  branch lines, Feste Fahrbahn where the type says slab. Feeds `roughness` into the sound
-  table as the `Roughness` quantity.
+  (`world_render::track`, rebuilt 2026-08-31 against the DB InfraGO dimensions and split
+  into `rail` / `sleeper` / `ballast` / `mesh`, with every measurement moved out of the
+  renderer into `track_model::oberbau`). SO — the top of rail — is the datum, and the
+  Regeloberbau stacks down from it: 172 mm of 60E1, a 10 mm pad, a 214 mm B 70, 300 mm of
+  ballast, Planum at 696 mm (which is now also the terrain's `rail_offset`; before, the
+  formation sat 40 cm down and buried the bed to its crest).
+  **Rails** are extruded from the rolled section of EN 13674 — the R 300 running surface
+  with its R 80 shoulders and R 13 gauge corners, the head side faces, the filleted web
+  and the flared foot — checked against the profile's own kilograms per metre, and
+  **rotated** 1:40 about the inner head face rather than sheared, so the crown leans in
+  and the gauge stays 1435 mm to the micrometre. They are chunked, sampled by curvature
+  (2 mm chord tolerance) and drop to a plain envelope past 320 m.
+  **Sleepers** are the beams they are — 214 mm at the rail seat against 175 in the middle,
+  300 mm at the base against 220 on top, chamfered along the top edges — each nudged a
+  centimetre out of true from a hash of its edge and index, so a row reads as laid track
+  and not as a comb; and they carry their **fastenings**, the pad, guide plates and
+  Spannklemme of W 14 or the ribbed baseplate of Oberbau K, culled at 160 m against the
+  sleepers' 400 m.
+  **The ballast bed** is the Regelquerschnitt of Ril 800.0130: the crest level with the
+  sleeper tops (`crib_drop` under them, so a sleeper sits *in* the bed), a 0.40 m shoulder
+  (0.50 above 160 km/h), 1:1.5 slopes to the Planum and a slow hashed wobble on the crest.
+  It is skinned per section from the type's colour, normal, **height and occlusion** maps
+  at the type's own `texture_scale` — parallax relief is what turns a photograph of stones
+  into stones — and the example mod ships CC0 scans (ambientCG, Poly Haven) laid down at
+  the size they were taken at. Normal, height and occlusion maps are loaded **linear**;
+  they were being gamma-decoded as colours, which tilted every texel's normal by 40° (the
+  same bug was in the roads).
+  `rail.wgsl` paints the steel from what the section knows about itself rather than from
+  the world normal: every contour point carries how far the wheels have polished it and
+  whether it is the head flank on the gauge side, in the mesh's second uv set. So the
+  running band is a 0.12-roughness mirror, the flanks and web rust unevenly along the
+  rail, and the shade a head casts on its own gauge face — which no shadow map resolves at
+  that scale — is baked on and faded out past a few hundred metres. What the editor and
+  the run show are the DB superstructure forms: B 90 and B 70 on the main lines, wooden
+  sleepers on Oberbau K on the jointed branch lines, Feste Fahrbahn where the type says
+  slab (with the fastenings bolted through the slab). The route editor **resolves its
+  track types** now — it drew every line on placeholder track before. Feeds `roughness`
+  into the sound table as the `Roughness` quantity.
   **Track objects** (`objects/*.ron` in a mod): a 3D object plus the pose its author
   defined relative to the track — lateral offset, rotation about up, height. A line
   places instances at `(edge, s)`; each placement stores concrete values stamped from
@@ -506,13 +533,16 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   the terrain it textures and below what grows there.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
-  at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
-  of rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
+  at the track — the ground there is the **formation**, `rail_offset` below the top of
+  rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
   level in the app, built while driving (see streaming above). The formation is sized like
-  the real thing (2026-08-29): a single track's Planum half-width of **4 m** (the ~2.6 m
-  ballast body plus shoulder), the embankment or cutting running from its edge to the
-  natural ground within **12 m** — roughly 1:2 at the heights a main line dam has — and the
-  gravel texture full on the formation, fading out by **7 m** so the slopes stay grass.
+  the real thing (2026-08-29, depth corrected 2026-08-31): `rail_offset` is the
+  Regeloberbau's own **696 mm** (`track_model::REGEL_PLANUM` — rail, pad, sleeper and
+  300 mm of ballast add up to it), where it used to be 40 cm and left the bed buried to
+  its crest; a single track's Planum half-width of **3 m** (the 4.85 m ballast body plus
+  the Randweg beside it), the embankment or cutting running from its edge to the natural
+  ground within **12 m** — roughly 1:2 at the heights a main line dam has — and the gravel
+  texture full on the formation, fading out by **5.5 m** so the slopes stay grass.
   The distance queries measure against the centreline **segments** rather than the 25 m
   samples, so the blend zone is where the line is, not where its samples happen to fall.
   **Edges without a formation** (`route::EdgeSource::formation`, default on): track the

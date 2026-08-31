@@ -1260,6 +1260,12 @@ impl<'a> HeightGrid<'a> {
         }
     }
 
+    /// The grid's own spacing [m] — what anything draped on it measures its
+    /// own fineness against.
+    pub(crate) fn step(&self) -> f64 {
+        self.step
+    }
+
     /// Height at the UTM point `p` (bilinear).
     pub(crate) fn at(&self, p: DVec2) -> f64 {
         let row = self.n + 1;

@@ -1945,6 +1945,44 @@ The `points` are the **centre line** OSM maps a street with; the carriageway is 
 `surface`, `center_line`, `edge_lines` and `bridge` carry defaults, so a hand-written
 entry can be as short as `points` alone.
 
+The carriageway is built as a **ribbon**: one quad per segment of the way, mitered where
+two segments meet, and cut into cells as fine as the elevation grid the tile is drawn
+from — so the road follows every fold of the ground under it, and a bend holds together
+instead of tearing where a single buffered outline would cross itself. A hairpin on very
+short segments narrows into its corner rather than folding over, and a way that closes on
+itself — a roundabout, a loop — runs through its own first point instead of showing a
+notch there.
+
+**Junctions** are worked out from the geometry, because OSM has no junction to import:
+two ways crossing, or one running out on another, is one. Where roads of comparable width
+meet, their carriageways are **merged into one surface** — the roads are cut back to its
+edge and the junction carries the ground between them itself, with its corners rounded the
+way a kerb is. That is what makes a junction one square of asphalt instead of two ribbons
+lying over one another, and it is what takes the seam out.
+
+The merge is careful about what it will attempt, and leaves anything else alone:
+
+- **Peers only.** A crossroads of two Landstraßen is merged. A field track running out on
+  a Bundesstraße is not — the B-road runs *through*, its Leitlinie with it, and merging
+  would take the through line out for the width of a track. Its mouth lies *on* the road
+  instead.
+- **Room only.** A junction never takes more than half the road between two nodes, and the
+  kerb radius gives way where two of them are close — which is what keeps a village
+  roundabout, whose mouths are a few metres apart, from being eaten by its own junctions.
+- **Never a bridge**, and never a shape the construction cannot vouch for.
+
+Where a junction is not merged, the markings still stop: both roads lose them over the
+mouth, and the surfaces are sorted onto layers a few millimetres apart so the one on top
+is on top everywhere instead of trading fragments along a torn edge. The edge lines break
+for anything that joins; the centre line only for a road at least as wide. Two ways that
+simply carry on from one another are **not** a junction at all — an extract splits a
+street at every change of tagging, and a street that lost its markings at each of them
+would be dashed rather than its centre line.
+
+A **roundabout** (`junction=roundabout`) is one carriageway like any other one-way road,
+so it carries no centre line. A module imported before this was so has the ring striped
+down the middle; re-import its roads, or set `center_line: None` on the ring by hand.
+
 A road with `bridge: true` **flies**: where the ground dips below the straight line
 between the way's own ends — a valley, a river, a cutting — the carriageway holds that
 line instead of following the hollow, and its ends are measured on the shaped ground
@@ -1957,9 +1995,10 @@ data is flat shows no dip and no bridge.
 module envelope — the same extract a hand-downloaded Overpass Turbo query returns, so a
 file picked with the dialog works too. The OSM class decides what the road is made of,
 and the mapper's own tags win where they say more: `surface=*` over the preset's
-surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the centre line out (a
-divided road is two one-way carriageways, and an Autobahn reads as two of these rather
-than as one striped one), and any `bridge=*` but `no` flags the way as flying. The
+surface, `width=*`/`lanes=*` over its width, `oneway=yes` and `junction=roundabout` take
+the centre line out (a divided road is two one-way carriageways, and an Autobahn reads as
+two of these rather than as one striped one), and any `bridge=*` but `no` flags the way as
+flying. The
 dialog's two checkboxes opt the many-and-thin classes in:
 **field tracks** (`highway=track` — what an agricultural module is stitched with) and
 **access ways** (`service`, `living_street`, `pedestrian`). Nothing is written before
@@ -1988,15 +2027,17 @@ and the width decide what it is made of, and a click on a drawn road takes it. T
 panel edits width, surface and markings of the selected road afterwards.
 
 The look is **the program's, not the module's**: two surface scans (asphalt, concrete —
-ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`) and the markings drawn by the shader in
-real metres, per the RMS (Richtlinien für die Markierung von Straßen): 12 cm strokes,
-edge lines 25 cm off the kerb, the centre dash running 6 m on and 12 m off outside
-built-up areas and 3 m on and 6 m off inside them (`Dashed` vs `DashedUrban`). The
-surface texture tiles 4 m × 4 m on every carriageway, so the grain keeps its shape
-whatever the road's width. A module carries no road bitmaps, and two clients of a
-multiplayer run agree on what a road looks like without a byte crossing the network —
-roads are static module content, a pure function of the line file and the elevation
-data.
+ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`), their normal maps for the grain, and the
+markings drawn by the shader in real metres, per the RMS (Richtlinien für die Markierung
+von Straßen): 12 cm strokes, edge lines 25 cm off the kerb, the centre dash running 6 m
+on and 12 m off outside built-up areas and 3 m on and 6 m off inside them (`Dashed` vs
+`DashedUrban`), and `Solid` a line that never lifts. The surface texture tiles 4 m × 4 m
+on every carriageway, so the grain keeps its shape whatever the road's width, and every
+marking is filtered over the pixel it falls in — a line that goes sub-pixel with distance
+fades out instead of breaking into sparks. A module carries no road bitmaps, and two
+clients of a multiplayer run agree on what a road looks like without a byte crossing the
+network — roads are static module content, a pure function of the line file and the
+elevation data.
 
 ### Height data (DGM)
 

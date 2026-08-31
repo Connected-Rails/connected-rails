@@ -11,6 +11,9 @@
 
 use crate::weather;
 use bevy::asset::embedded_asset;
+use bevy::image::{
+    ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
+};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
@@ -52,13 +55,88 @@ pub(crate) fn plugin(app: &mut App) {
     embedded_asset!(app, "roads/concrete.jpg");
     embedded_asset!(app, "roads/concrete_nor.jpg");
     app.add_plugins(MaterialPlugin::<RoadMaterial>::default())
-        .init_resource::<RoadMaterials>();
+        .init_resource::<RoadMaterials>()
+        .add_systems(Update, mip_surfaces);
+}
+
+/// The sampler a carriageway's texture wants. Two settings, both of them the
+/// difference between a road and a smear:
+///
+/// * **Repeat.** The shader samples in metres — a kilometre of road is 250
+///   repeats — and Bevy's default sampler clamps to the edge. A clamped road
+///   is one column of texels stretched from the horizon to the kerb.
+/// * **Mipmapped and anisotropic.** A road runs to the horizon, which is the
+///   one thing a texture without a mip chain cannot survive: it boils. JPEG
+///   brings no chain, so [`mip_surfaces`] builds one once the image is there
+///   and this sampler reads it.
+fn road_sampler(srgb: bool) -> impl Fn(&mut ImageLoaderSettings) + Send + Sync + 'static {
+    move |settings: &mut ImageLoaderSettings| {
+        // A normal map is a direction, not a colour: decoded as sRGB, its
+        // flat 128 would come out as a slope, and the whole road with it.
+        settings.is_srgb = srgb;
+        settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            address_mode_w: ImageAddressMode::Repeat,
+            mag_filter: ImageFilterMode::Linear,
+            min_filter: ImageFilterMode::Linear,
+            mipmap_filter: ImageFilterMode::Linear,
+            ..default()
+        });
+    }
+}
+
+/// Gives the surface textures their mip chain once they have arrived. The
+/// JPEG loader brings none, and the roads' textures are the program's own —
+/// they never pass the dressing the models' materials get
+/// ([`crate::mip_textures`]), which only walks a `StandardMaterial`.
+fn mip_surfaces(
+    mut roads: ResMut<RoadMaterials>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<RoadMaterial>>,
+    mut events: MessageReader<AssetEvent<Image>>,
+) {
+    if roads.pending.is_empty() {
+        events.clear();
+        return;
+    }
+    let arrived: Vec<AssetId<Image>> = events
+        .read()
+        .filter_map(|event| match event {
+            AssetEvent::LoadedWithDependencies { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    if arrived.is_empty() {
+        return;
+    }
+    let mut built = false;
+    roads.pending.retain(|handle| {
+        if !arrived.contains(&handle.id()) {
+            return true;
+        }
+        if let Some(mut image) = images.get_mut(handle) {
+            built |= crate::build_mip_chain(&mut image, None);
+        }
+        false
+    });
+    if built {
+        // The bind groups hold the texture views the chain replaced; a touch
+        // has them prepared anew.
+        let made: Vec<AssetId<RoadMaterial>> = materials.iter().map(|(id, _)| id).collect();
+        for id in made {
+            materials.get_mut(id);
+        }
+    }
 }
 
 /// The two road materials, made on first use and shared by every tile.
 #[derive(Resource, Default)]
 pub struct RoadMaterials {
     by_surface: std::collections::HashMap<content::route::RoadSurface, Handle<RoadMaterial>>,
+    /// Surface textures still waiting for their mip chain (see
+    /// [`mip_surfaces`]).
+    pending: Vec<Handle<Image>>,
 }
 
 impl RoadMaterials {
@@ -70,34 +148,44 @@ impl RoadMaterials {
         materials: &mut Assets<RoadMaterial>,
         server: &AssetServer,
     ) -> Handle<RoadMaterial> {
-        self.by_surface
-            .entry(surface)
-            .or_insert_with(|| {
-                let (color, normal) = match surface {
-                    content::route::RoadSurface::Asphalt => (
-                        "embedded://world_render/roads/asphalt.jpg",
-                        "embedded://world_render/roads/asphalt_nor.jpg",
-                    ),
-                    content::route::RoadSurface::Concrete => (
-                        "embedded://world_render/roads/concrete.jpg",
-                        "embedded://world_render/roads/concrete_nor.jpg",
-                    ),
-                };
-                materials.add(RoadMaterial {
-                    base: StandardMaterial {
-                        base_color: Color::WHITE,
-                        perceptual_roughness: 0.88,
-                        metallic: 0.0,
-                        ..default()
-                    },
-                    extension: RoadExt {
-                        weather: weather::WeatherParams::default(),
-                        texture: server.load(color),
-                        normal_map: server.load(normal),
-                    },
-                })
-            })
-            .clone()
+        if let Some(made) = self.by_surface.get(&surface) {
+            return made.clone();
+        }
+        let (color, normal) = match surface {
+            content::route::RoadSurface::Asphalt => (
+                "embedded://world_render/roads/asphalt.jpg",
+                "embedded://world_render/roads/asphalt_nor.jpg",
+            ),
+            content::route::RoadSurface::Concrete => (
+                "embedded://world_render/roads/concrete.jpg",
+                "embedded://world_render/roads/concrete_nor.jpg",
+            ),
+        };
+        let texture = server
+            .load_builder()
+            .with_settings(road_sampler(true))
+            .load(color);
+        let normal_map = server
+            .load_builder()
+            .with_settings(road_sampler(false))
+            .load(normal);
+        self.pending.push(texture.clone());
+        self.pending.push(normal_map.clone());
+        let made = materials.add(RoadMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 0.88,
+                metallic: 0.0,
+                ..default()
+            },
+            extension: RoadExt {
+                weather: weather::WeatherParams::default(),
+                texture,
+                normal_map,
+            },
+        });
+        self.by_surface.insert(surface, made.clone());
+        made
     }
 
     pub fn is_empty(&self) -> bool {
@@ -209,5 +297,27 @@ mod tests {
             panic!("colors");
         };
         assert!((colors[0][2] - 3.0).abs() < 1e-6, "the half-width");
+    }
+
+    /// The shader samples the surface in metres, so a kilometre of road is
+    /// hundreds of repeats: a texture that clamps to its edge instead of
+    /// repeating draws one column of texels the length of the carriageway.
+    /// And a normal map is a direction — read back through sRGB, its flat
+    /// 128 comes out as a slope and tilts the whole road.
+    #[test]
+    fn the_surface_repeats_and_the_normal_map_stays_linear() {
+        let mut settings = ImageLoaderSettings::default();
+        road_sampler(true)(&mut settings);
+        assert!(settings.is_srgb, "the colour is a colour");
+        let ImageSampler::Descriptor(sampler) = &settings.sampler else {
+            panic!("the road sets its own sampler");
+        };
+        assert_eq!(sampler.address_mode_u, ImageAddressMode::Repeat);
+        assert_eq!(sampler.address_mode_v, ImageAddressMode::Repeat);
+        assert_eq!(sampler.mipmap_filter, ImageFilterMode::Linear);
+
+        let mut settings = ImageLoaderSettings::default();
+        road_sampler(false)(&mut settings);
+        assert!(!settings.is_srgb, "the normal map is a direction");
     }
 }

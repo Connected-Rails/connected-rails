@@ -4096,10 +4096,7 @@ pub fn draw_gizmos(
                 gizmos.linestrip(
                     points.iter().map(|p| {
                         origin.0.to_render(*p)
-                            + origin
-                                .0
-                                .dir_to_render(EnuFrame::at(*p).up)
-                                * MARK_LIFT
+                            + origin.0.dir_to_render(EnuFrame::at(*p).up) * MARK_LIFT
                     }),
                     accent,
                 );

@@ -1284,9 +1284,10 @@ impl<'a> HeightGrid<'a> {
         self.min
     }
 
-    /// Spacing of the grid [m] — the tile's own level of detail. Anything
-    /// draped on this grid is only as true to the ground as its own mesh is
-    /// fine, so this is the number to cut it on.
+    /// The grid's own spacing [m] — the tile's own level of detail, and what
+    /// anything draped on it measures its own fineness against. A drape is
+    /// only as true to the ground as its mesh is fine, so this is the number
+    /// to cut it on.
     pub(crate) fn step(&self) -> f64 {
         self.step
     }

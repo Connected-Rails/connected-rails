@@ -169,6 +169,34 @@ pub struct FieldSource {
 }
 
 impl FieldSource {
+    /// One imported parcel as a line entry — what the field import writes,
+    /// from the editor's dialog as well as from `import-module`.
+    pub fn from_feature(field: &fields::FieldFeature) -> Self {
+        Self {
+            polygon: field
+                .to_degrees()
+                .into_iter()
+                .map(|(lat, lon)| FieldPoint { lat, lon })
+                .collect(),
+            crop: field.crop.id().to_string(),
+            code: field.code_raw.clone(),
+            label: field.code_text.clone(),
+            level: match field.level {
+                fields::Level::Declared => "declared",
+                fields::Level::Group => "group",
+                fields::Level::Drawn => "drawn",
+            }
+            .to_string(),
+            direction_deg: field.direction.to_degrees(),
+            // `OSM` where there is no state: a module abroad still has to say
+            // where its fields came from.
+            source: fields::cache::origin_code(field.land).to_string(),
+            year: field.year,
+            seed: field.seed(),
+            tags: Vec::new(),
+        }
+    }
+
     /// Middle of the outline [deg] — where the editor's list jumps to.
     pub fn centre(&self) -> (f64, f64) {
         if self.polygon.is_empty() {
@@ -1543,6 +1571,32 @@ impl LineSource {
 
     pub fn to_ron(&self) -> String {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serializable")
+    }
+
+    /// Writes a field import into the line — one call, so the editor makes it
+    /// one undo step. `replace_imported` (a whole-module import) removes what
+    /// an earlier import put here and leaves hand-drawn fields alone; without
+    /// it (one re-fetched parcel) the report's fields are simply added.
+    /// `field_sources` gets one row per state, replacing that state's earlier
+    /// row, so the module keeps saying which register it portrays.
+    pub fn apply_field_import(&mut self, report: &fields::ImportReport, replace_imported: bool) {
+        if replace_imported {
+            self.fields.retain(|f| f.source.is_empty());
+        }
+        self.fields
+            .extend(report.fields.iter().map(FieldSource::from_feature));
+        for stamp in &report.stamps {
+            let row = FieldSourceStamp {
+                land: stamp.land.clone(),
+                year: stamp.year,
+                fetched: stamp.fetched,
+            };
+            // One row per state; a second import of the same state replaces it.
+            self.field_sources
+                .retain(|existing| existing.land != row.land);
+            self.field_sources.push(row);
+        }
+        self.field_sources.sort_by(|a, b| a.land.cmp(&b.land));
     }
 
     /// Does this position lie inside the module's envelope?

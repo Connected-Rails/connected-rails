@@ -13,6 +13,11 @@ glam = { workspace = true }
 serde = { workspace = true }
 ron = { workspace = true }
 serde_json = "1"
+# GeoTIFF, the format NRW's DGM1 is delivered in (single-band float tiles).
+tiff = "0.11"
+# The import fetches its data itself: Overpass for the roads, a state's open
+# data for the DGM delivery (see `import-module`).
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 
 [dev-dependencies]
 glam = { workspace = true }

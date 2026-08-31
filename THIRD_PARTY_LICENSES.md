@@ -90,6 +90,19 @@ carries the obligation on. That is why it is the fallback and not the first
 choice, and why the import names it in the module's attribution and warns in
 its summary.
 
+## DGM1 of North Rhine-Westphalia (example module heights)
+
+The height grids the example module ships (`mods/example/heights/boerde/`) are cut
+from the **DGM1** of North Rhine-Westphalia, published by Geobasis NRW on its open
+data as one GeoTIFF tile per square kilometre. `import-module --fetch-dgm nrw`
+downloads exactly the sheets a module's corridor needs into a local cache; the
+cut-outs ship with the module, the delivery itself does not.
+
+The data is published under the *Datenlizenz Deutschland – Namensnennung – 2.0*.
+
+Attribution: *© Geobasis NRW, dl-de/by-2-0* — carried in the module's header comment,
+as the licence asks for a source note on derived works.
+
 ## Phosphor icons in the editor bars
 
 The sun on the status bar's day rail, the calendar leaf on its date button and

@@ -284,7 +284,10 @@ fn settings(ui: &mut egui::Ui, dialog: &mut RoadImport, line: &Line) -> bool {
                 .clone()
                 .on_disabled_hover_text(t!("field-import-no-envelope"));
         }
-        if start_button.clicked() && ready && let Some(bbox) = envelope_bbox(line) {
+        if start_button.clicked()
+            && ready
+            && let Some(bbox) = envelope_bbox(line)
+        {
             start(dialog, bbox);
         }
         if ui.button(t!("action-cancel")).clicked() {
@@ -335,7 +338,8 @@ fn finished(
                     let mut counts: std::collections::BTreeMap<&str, usize> =
                         std::collections::BTreeMap::new();
                     for road in roads {
-                        if let Some(class) = road.tags.first().and_then(|t| t.strip_prefix("highway-"))
+                        if let Some(class) =
+                            road.tags.first().and_then(|t| t.strip_prefix("highway-"))
                         {
                             *counts.entry(class).or_insert(0) += 1;
                         }
@@ -402,7 +406,8 @@ pub fn pick_at(line: &Line, lat: f64, lon: f64) -> Option<usize> {
             .points
             .iter()
             .map(|p| {
-                let (e, n) = world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
+                let (e, n) =
+                    world_coords::geo::to_utm(p.lat.to_radians(), p.lon.to_radians(), zone);
                 glam::DVec2::new(e, n)
             })
             .collect();
@@ -767,7 +772,9 @@ mod tests {
             road_width: Some(4.0),
             ..Default::default()
         };
-        state.walk_points.push(world_coords::geo::to_ecef_deg(52.0, 10.0, 0.0));
+        state
+            .walk_points
+            .push(world_coords::geo::to_ecef_deg(52.0, 10.0, 0.0));
         assert!(
             finish(&mut line, &mut state).is_some(),
             "one point is no road"
@@ -798,10 +805,28 @@ mod tests {
         assert!(allowed(&plain, "primary"));
         assert!(!allowed(&plain, "track"), "field tracks are opt-in");
         assert!(!allowed(&plain, "living_street"));
-        assert!(allowed(&RoadOptions { tracks: true, ..plain }, "track"));
-        assert!(allowed(&RoadOptions { tracks: true, ..plain }, "service"));
+        assert!(allowed(
+            &RoadOptions {
+                tracks: true,
+                ..plain
+            },
+            "track"
+        ));
+        assert!(allowed(
+            &RoadOptions {
+                tracks: true,
+                ..plain
+            },
+            "service"
+        ));
         assert!(
-            allowed(&RoadOptions { narrow: true, ..plain }, "living_street"),
+            allowed(
+                &RoadOptions {
+                    narrow: true,
+                    ..plain
+                },
+                "living_street"
+            ),
             "access ways are the narrow option's own"
         );
     }

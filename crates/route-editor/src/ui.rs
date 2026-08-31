@@ -4206,7 +4206,9 @@ fn issue_target(
             ),
             Selection::WalkPath(*path as usize),
         ),
-        RuleIssue::FieldTooSmall { field } | RuleIssue::FieldUnknownCrop { field } => (
+        RuleIssue::FieldTooSmall { field }
+        | RuleIssue::FieldUnknownCrop { field }
+        | RuleIssue::FieldsOverlap { field, .. } => (
             crate::fields::vertex_pos(line, focus, *field as usize, 0),
             Selection::Field(*field as usize),
         ),
@@ -4283,6 +4285,12 @@ fn issue_text(issue: &RuleIssue) -> String {
         ),
         RuleIssue::FieldTooSmall { field } => t!("check-field-small", field = field),
         RuleIssue::FieldUnknownCrop { field } => t!("check-field-crop", field = field),
+        RuleIssue::FieldsOverlap { field, other, area } => t!(
+            "check-fields-overlap",
+            field = field,
+            other = other,
+            area = area
+        ),
         RuleIssue::RoadTooShort { road } => t!("check-road-short", road = road),
     }
 }

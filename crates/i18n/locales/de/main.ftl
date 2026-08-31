@@ -2645,3 +2645,4 @@ status-field-points = Ein Feld braucht mindestens drei Ecken — die nächste an
 status-field-on-track = Das Feld liegt ganz innerhalb des Gleisabstands und wurde nicht angelegt
 check-field-small = Feld { $field } hat weniger als drei Ecken
 check-field-crop = Feld { $field } nennt eine Kultur, die keine Tabelle kennt — es wird als nackter Boden gezeichnet
+check-fields-overlap = Felder { $field } und { $other } stehen auf denselben { $area } m² Boden — das spätere gibt sie ab, aber ein Kataster mit überlappenden Parzellen ist einen Blick wert

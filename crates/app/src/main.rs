@@ -828,7 +828,17 @@ fn setup(
         terrain_options.zone,
         terrain_options.tile_size,
     );
-    info!("fields: {} on the line", farmland.len());
+    match farmland.overlaps() {
+        (0, _) => info!("fields: {} on the line", farmland.len()),
+        // Parcels that stand on each other are a fault in the register, not
+        // in the renderer: the later one gives the ground up so nothing is
+        // drawn twice, and the count says how much of that had to happen.
+        (n, area) => info!(
+            "fields: {} on the line ({n} overlapped one another, {:.2} ha given up)",
+            farmland.len(),
+            area / 10_000.0,
+        ),
+    }
     let waters = content::water::Waters::from_line(
         &line_source,
         terrain_options.zone,

@@ -422,8 +422,10 @@ purpose, including commercially, with no attribution required. The credit
 here is given because it is deserved.
 
 The files in the directory are **adaptations**: `tools/plants/normalise.mjs`
-bakes the node transforms in, puts the origin at the foot, scales every model
-to exactly one metre tall, re-indexes the vertices and writes one compact GLB
+bakes the node transforms in, splits a pack's scene into one variant per
+plant, stands each on its own foot, scales the set so the tallest is exactly
+one metre, cuts the leaf sheets out rather than blending them, drops the
+images no material samples, re-indexes the vertices and writes one compact GLB
 per crop (see `tools/plants/README.md` and the `fetch.mjs` that re-downloads
 the sources). At runtime the renderer scales each model by the phenology's
 stand height and repaints its untextured parts in the day's stand colour, so

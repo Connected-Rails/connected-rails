@@ -1277,7 +1277,7 @@ pub fn mip_textures(
 /// Appends the mip chain to a plain RGBA8 image and sets a sampler that uses
 /// it. `false` where the image is not one to touch: compressed, layered, or
 /// already carrying a chain.
-fn build_mip_chain(image: &mut Image, cutout: Option<f32>) -> bool {
+pub(crate) fn build_mip_chain(image: &mut Image, cutout: Option<f32>) -> bool {
     let descriptor = &image.texture_descriptor;
     let plain = descriptor.mip_level_count <= 1
         && descriptor.dimension == TextureDimension::D2

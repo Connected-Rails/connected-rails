@@ -26,6 +26,7 @@ use track_model::{Facing, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
 pub mod clouds;
+pub mod conductors;
 pub mod farmland;
 pub mod mist;
 pub mod people;
@@ -39,6 +40,7 @@ pub mod water;
 pub mod weather;
 pub mod windscreen;
 
+pub use conductors::{ConductorMark, ConductorMaterial, ConductorMaterials, spawn_conductors};
 pub use farmland::{
     CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
 };
@@ -81,6 +83,7 @@ impl Plugin for WorldRenderPlugin {
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .add_plugins(MaterialPlugin::<farmland::FieldMaterial>::default())
             .add_plugins(water::plugin)
+            .add_plugins(conductors::plugin)
             .add_plugins(roads::plugin)
             .init_resource::<farmland::FieldMaterials>()
             .init_resource::<plants::PlantMaterials>()

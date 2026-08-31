@@ -167,6 +167,12 @@ pub fn stream_terrain(
         ResMut<Assets<world_render::RoadMaterial>>,
         Res<AssetServer>,
     ),
+    // The overhead line conductors of a tile — one material for every wire on
+    // the line (see `world_render::conductors`).
+    (mut conductor_materials, mut conductor_assets): (
+        ResMut<world_render::ConductorMaterials>,
+        ResMut<Assets<world_render::ConductorMaterial>>,
+    ),
 ) {
     let options = streamer.options;
     // Every train counts, not just the player's — otherwise an AI train would drive
@@ -292,6 +298,15 @@ pub fn stream_terrain(
             },
             entity,
             &tile.roads,
+        );
+        // The conductors hang under the tile like everything else on it.
+        world_render::spawn_conductors(
+            &mut commands,
+            &mut meshes,
+            &mut conductor_assets,
+            &mut conductor_materials,
+            entity,
+            &tile.conductors,
         );
         streamer.missing += stats.missing;
         streamer.tile_loads = stats.tile_loads;

@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! import-module --line mods/example/lines/boerde.ron
-//!               [--no-fields] [--no-roads]
+//!               [--no-fields] [--no-roads] [--no-power]
 //!               [--tracks] [--narrow] [--refresh-fields]
 //!               [--dgm <dir>] [--fetch-dgm nrw] [--zone 32] [--cell 10]
 //!               [--no-fit-track] [--list-dgm-tiles]
@@ -25,7 +25,7 @@
 
 use content::TerrainBuilder;
 use content::import::dgm::{HeightTile, TerrainSource};
-use content::route::{EdgeStart, HeightSource, LineSource, RoadSource};
+use content::route::{EdgeStart, HeightSource, LineSource, PowerLineSource, RoadSource};
 use fields::{Area, Clip, CropTable, FieldCache, ImportOptions, ImportReport};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args.iter().any(|a| a == "--help") {
         eprintln!(
-            "Usage: import-module --line <file.ron> [--no-fields] [--no-roads]\n\
+            "Usage: import-module --line <file.ron> [--no-fields] [--no-roads] [--no-power]\n\
              \x20                     [--tracks] [--narrow] [--refresh-fields]\n\
              \x20                     [--dgm <dir>] [--fetch-dgm nrw] [--zone 32] [--cell 10]\n\
              \x20                     [--no-fit-track] [--list-dgm-tiles]"
@@ -63,6 +63,7 @@ fn main() -> ExitCode {
     };
     let do_fields = !set("--no-fields");
     let do_roads = !set("--no-roads");
+    let do_power = !set("--no-power");
     let tracks = set("--tracks");
     let narrow = set("--narrow");
     let refresh_fields = set("--refresh-fields");
@@ -135,6 +136,23 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("Error: the road import failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if do_power {
+        let Some(bbox) = envelope_bbox(&line) else {
+            eprintln!("Error: the line has no envelope to import inside");
+            return ExitCode::FAILURE;
+        };
+        match import_power(bbox) {
+            Ok(power) => {
+                print_power_report(&power, zone);
+                line.power_lines = power;
+            }
+            Err(e) => {
+                eprintln!("Error: the overhead line import failed: {e}");
                 return ExitCode::FAILURE;
             }
         }
@@ -327,6 +345,37 @@ fn allowed(tracks: bool, narrow: bool, class: &str) -> bool {
         "living_street" | "pedestrian" => narrow,
         "service" => tracks || narrow,
         _ => true,
+    }
+}
+
+/// The overhead lines of the envelope's box, fetched the way the roads are.
+fn import_power(bbox: (f64, f64, f64, f64)) -> Result<Vec<PowerLineSource>, String> {
+    let query = content::import::power_query(bbox.0, bbox.1, bbox.2, bbox.3);
+    let config = fields::RequestConfig::default();
+    let json = fields::osm::fetch_raw(&query, &config).map_err(|e| e.to_string())?;
+    content::import::parse_power_lines(&json).map_err(|e| e.to_string())
+}
+
+/// Prints the overhead line import's summary — the mast types and how many of
+/// each stand on the module, which is what says whether the type choice came
+/// out right before anybody starts the editor.
+fn print_power_report(lines: &[PowerLineSource], zone: u8) {
+    let mut types: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for line in lines {
+        let id = line.tags.first().map(String::as_str).unwrap_or("other");
+        let entry = types.entry(id).or_default();
+        entry.0 += 1;
+        entry.1 += line.points.len();
+    }
+    let length: f64 = lines.iter().map(|l| l.length(zone)).sum();
+    let masts: usize = lines.iter().map(|l| l.points.len()).sum();
+    eprintln!(
+        "Overhead lines: {} line(s), {masts} mast(s), {:.1} km",
+        lines.len(),
+        length / 1000.0
+    );
+    for (id, (count, masts)) in &types {
+        eprintln!("    {id}: {count} line(s), {masts} mast(s)");
     }
 }
 

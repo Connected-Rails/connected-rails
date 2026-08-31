@@ -951,6 +951,192 @@ impl OsmRailway {
     }
 }
 
+/// The Overpass QL for the overhead lines of a box: the transmission and
+/// distribution lines, with their mast nodes — `(._;>;)` pulls the nodes in, and
+/// the nodes are where the mast picture is written (`design=*`).
+pub fn power_query(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> String {
+    // Overpass takes its box south, west, north, east.
+    let bbox = format!("{min_lat:.6},{min_lon:.6},{max_lat:.6},{max_lon:.6}");
+    format!(
+        "[out:json][timeout:120];\
+         way[\"power\"~\"^(line|minor_line)$\"]({bbox});\
+         (._;>;);out body;"
+    )
+}
+
+/// The overhead lines of an Overpass extract.
+///
+/// A `power=line` way is a chain of mast nodes, and what stands at those nodes
+/// is decided by three tags: `design=*` on the masts says what the mast picture
+/// is, `voltage=*` on the way says how big it is, and `frequency=16.7` says it
+/// is not a public grid line at all but the railway's own. Between them they
+/// pick one of [`crate::power::PRESETS`], and the preset stamps the mast
+/// objects, the crossarm heights and the conductor positions into the line —
+/// the same trade the road import makes with its width.
+///
+/// **Every node of the way becomes a mast.** OSM tags the towers themselves,
+/// but not always, and a bend in a power line without a mast at it is not a
+/// thing that exists. So the geometry decides: every vertex carries a mast, and
+/// a vertex the line turns more than fifteen degrees at — like both ends of the
+/// way — carries a tension mast.
+pub fn parse_power_lines(json: &str) -> Result<Vec<crate::route::PowerLineSource>, OsmError> {
+    let response: OverpassResponse =
+        serde_json::from_str(json).map_err(|e| OsmError::Json(e.to_string()))?;
+
+    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    let mut designs: HashMap<i64, String> = HashMap::new();
+    for e in &response.elements {
+        if let (Some(lat), Some(lon)) = (e.lat, e.lon) {
+            nodes.insert(e.id, (lat, lon));
+            if let Some(design) = e.tags.get("design") {
+                designs.insert(e.id, design.clone());
+            }
+        }
+    }
+
+    let mut lines = Vec::new();
+    for e in &response.elements {
+        if e.kind != "way" {
+            continue;
+        }
+        let Some(kind) = e.tags.get("power") else {
+            continue;
+        };
+        if kind != "line" && kind != "minor_line" {
+            continue;
+        }
+        let mut points: Vec<crate::route::PowerPoint> = e
+            .nodes
+            .iter()
+            .filter_map(|id| nodes.get(id))
+            .map(|&(lat, lon)| crate::route::PowerPoint {
+                lat,
+                lon,
+                tension: false,
+            })
+            .collect();
+        if points.len() < 2 {
+            continue;
+        }
+        mark_tension(&mut points);
+
+        // The mast picture the mapper wrote most often on this way's masts. A
+        // line is one design from end to end in practice; where the mappers
+        // disagree, the majority is the line.
+        let design = majority_design(&e.nodes, &designs);
+        let volts = voltage_kv(&e.tags);
+        let railway = e
+            .tags
+            .get("frequency")
+            .and_then(|f| f.parse::<f64>().ok())
+            .is_some_and(|f| (10.0..20.0).contains(&f));
+        let id = pick_type(design.as_deref(), volts, railway, kind == "minor_line");
+        let Some(preset) = crate::power::preset(id) else {
+            continue;
+        };
+
+        let mut tags = vec![id.to_string()];
+        if let Some(kv) = volts {
+            tags.push(format!("{kv}kv"));
+        }
+        if railway {
+            tags.push("bahnstrom".to_string());
+        }
+        lines.push(crate::power::source_from(
+            preset,
+            name_of(&e.tags),
+            points,
+            tags,
+        ));
+    }
+    Ok(lines)
+}
+
+/// Marks the masts that take the pull: both ends of the way, and every mast the
+/// line turns hard at.
+fn mark_tension(points: &mut [crate::route::PowerPoint]) {
+    let n = points.len();
+    let turns: Vec<bool> = (0..n)
+        .map(|i| {
+            if i == 0 || i + 1 == n {
+                return true;
+            }
+            let before = crate::power::bearing(&points[i - 1], &points[i]);
+            let after = crate::power::bearing(&points[i], &points[i + 1]);
+            crate::power::turns_hard(before, after)
+        })
+        .collect();
+    for (point, tension) in points.iter_mut().zip(turns) {
+        point.tension = tension;
+    }
+}
+
+/// The `design=*` most of a way's masts carry.
+fn majority_design(way: &[i64], designs: &HashMap<i64, String>) -> Option<String> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for id in way {
+        if let Some(design) = designs.get(id) {
+            *counts.entry(design.as_str()).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by_key(|&(design, count)| (count, std::cmp::Reverse(design)))
+        .map(|(design, _)| design.to_string())
+}
+
+/// The line's voltage [kV]. `voltage=380000;110000` is a mast carrying both
+/// levels; the biggest one decides what the mast looks like.
+fn voltage_kv(tags: &HashMap<String, String>) -> Option<u32> {
+    tags.get("voltage")?
+        .split(';')
+        .filter_map(|v| v.trim().parse::<u32>().ok())
+        .max()
+        .map(|volts| volts / 1000)
+}
+
+/// Which atlas type a way lands on.
+///
+/// Design first, voltage second — a `design=donau` at 220 kV is a Donaumast
+/// built smaller, not a different shape. Where the mappers wrote no design at
+/// all, which is most of the German network, the voltage alone decides and the
+/// answer is a Donaumast: it is what the great majority of German lines
+/// actually stand on.
+fn pick_type(design: Option<&str>, volts: Option<u32>, railway: bool, minor: bool) -> &'static str {
+    if railway {
+        return match design {
+            Some("two-level") => "bahnstrommast-110-zweiebenen",
+            _ => "bahnstrommast-110",
+        };
+    }
+    if minor {
+        return match (design, volts) {
+            (_, Some(0)) => "holzmast-nsp",
+            (Some("triangle" | "asymmetric" | "armless_three-level"), _) => {
+                "betonmast-20kv-dreieck"
+            }
+            _ => "betonmast-20kv-einebene",
+        };
+    }
+    // 380, 220 or 110 — the three levels the German grid is built in.
+    let level = match volts {
+        Some(v) if v >= 300 => 380,
+        Some(v) if v >= 180 => 220,
+        _ => 110,
+    };
+    match (design, level) {
+        (Some("barrel"), _) => "tonnenmast-380",
+        (Some("three-level" | "four-level"), _) => "tannenbaummast-220",
+        (Some("portal" | "h-frame"), _) => "portalmast-380",
+        (Some("asymmetric" | "delta" | "y-frame"), _) => "kompaktmast-380",
+        (Some("one-level"), 380) => "einebenenmast-380",
+        (Some("one-level"), _) => "einebenenmast-110",
+        (_, 380) => "donaumast-380",
+        (_, 220) => "donaumast-220",
+        (_, _) => "donaumast-110",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,5 +1374,123 @@ mod tests {
         let roads = parse_roads(json).expect("parses");
         assert_eq!(roads.len(), 1);
         assert_eq!(roads[0].points.len(), 2);
+    }
+
+    /// A 380 kV way with `design=donau` on its masts becomes a line of
+    /// Donaumasten, with the objects and the crossarms of the atlas entry.
+    #[test]
+    fn a_donau_way_becomes_donaumasten() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0, "tags": {"power": "tower", "design": "donau"}},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.004, "tags": {"power": "tower", "design": "donau"}},
+            {"type": "node", "id": 3, "lat": 52.0, "lon": 10.008, "tags": {"power": "tower", "design": "donau"}},
+            {"type": "way", "id": 10, "nodes": [1, 2, 3],
+             "tags": {"power": "line", "voltage": "380000", "name": "Nord-Sued"}}
+        ]}"#;
+        let lines = parse_power_lines(json).expect("parses");
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        assert_eq!(line.name, "Nord-Sued");
+        assert_eq!(line.object, "pylons:donaumast_380_trag");
+        assert_eq!(line.points.len(), 3);
+        assert_eq!(line.arms.len(), 2, "the Donaumast's two crossarms");
+        assert!(line.tags.contains(&"donaumast-380".to_string()));
+        assert!(line.tags.contains(&"380kv".to_string()));
+        // The ends take the pull, the straight mast in between does not.
+        assert!(line.points[0].tension);
+        assert!(!line.points[1].tension);
+        assert!(line.points[2].tension);
+    }
+
+    /// A way at 16.7 Hz is the railway's own line, whatever its voltage says —
+    /// four conductors on one crossarm, not six on two.
+    #[test]
+    fn a_16_7_hz_line_is_a_bahnstrom_line() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.004},
+            {"type": "way", "id": 10, "nodes": [1, 2],
+             "tags": {"power": "line", "voltage": "110000", "frequency": "16.7"}}
+        ]}"#;
+        let lines = parse_power_lines(json).expect("parses");
+        assert_eq!(lines[0].object, "pylons:bahnstrommast_110_trag");
+        assert_eq!(lines[0].arms.len(), 1);
+        assert_eq!(lines[0].arms[0].conductors, 4);
+        assert!(lines[0].tags.contains(&"bahnstrom".to_string()));
+    }
+
+    /// `power=minor_line` is the medium-voltage grid: a concrete pole, and the
+    /// pole picture follows the design the mappers wrote.
+    #[test]
+    fn a_minor_line_is_a_concrete_pole_line() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0, "tags": {"power": "pole", "design": "triangle"}},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.001, "tags": {"power": "pole", "design": "triangle"}},
+            {"type": "way", "id": 10, "nodes": [1, 2], "tags": {"power": "minor_line"}}
+        ]}"#;
+        let lines = parse_power_lines(json).expect("parses");
+        assert_eq!(lines[0].object, "pylons:betonmast_20kv_dreieck_trag");
+        assert!(lines[0].height < 15.0, "a pole, not a tower");
+    }
+
+    /// No `design=*` anywhere, which is most of the German network: the voltage
+    /// alone decides, and the answer is the mast most German lines stand on.
+    #[test]
+    fn an_untagged_way_falls_back_on_the_voltage() {
+        let way = |voltage: &str| {
+            format!(
+                r#"{{"elements": [
+                {{"type": "node", "id": 1, "lat": 52.0, "lon": 10.0}},
+                {{"type": "node", "id": 2, "lat": 52.0, "lon": 10.004}},
+                {{"type": "way", "id": 10, "nodes": [1, 2],
+                  "tags": {{"power": "line", "voltage": "{voltage}"}}}}
+            ]}}"#
+            )
+        };
+        for (voltage, object) in [
+            ("380000", "pylons:donaumast_380_trag"),
+            ("220000", "pylons:donaumast_220_trag"),
+            ("110000", "pylons:donaumast_110_trag"),
+            // A mast carrying two levels is drawn as the bigger of them.
+            ("380000;110000", "pylons:donaumast_380_trag"),
+        ] {
+            let lines = parse_power_lines(&way(voltage)).expect("parses");
+            assert_eq!(lines[0].object, object, "at {voltage} V");
+        }
+    }
+
+    /// A hard corner needs a mast built to be pulled sideways; a degree or two
+    /// does not.
+    #[test]
+    fn the_line_turns_on_a_tension_mast() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.004},
+            {"type": "node", "id": 3, "lat": 52.004, "lon": 10.004},
+            {"type": "node", "id": 4, "lat": 52.008, "lon": 10.00405},
+            {"type": "way", "id": 10, "nodes": [1, 2, 3, 4],
+             "tags": {"power": "line", "voltage": "110000"}}
+        ]}"#;
+        let lines = parse_power_lines(json).expect("parses");
+        let points = &lines[0].points;
+        assert!(points[1].tension, "the right angle");
+        assert!(!points[2].tension, "a degree or two is not a corner");
+    }
+
+    /// Nothing power-related in the extract, and nothing comes back.
+    #[test]
+    fn an_extract_without_power_lines_yields_none() {
+        assert_eq!(parse_power_lines(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    /// The query asks for the two way classes the parser reads, and for their
+    /// nodes — the design tags are on the nodes, not on the way.
+    #[test]
+    fn the_power_query_asks_for_ways_and_their_nodes() {
+        let query = power_query(52.0, 10.0, 52.1, 10.1);
+        assert!(query.contains("power"));
+        assert!(query.contains("line|minor_line"));
+        assert!(query.contains("(._;>;)"), "the nodes come too");
+        assert!(query.contains("52.000000,10.000000,52.100000,10.100000"));
     }
 }

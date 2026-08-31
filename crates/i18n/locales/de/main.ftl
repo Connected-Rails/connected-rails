@@ -2645,3 +2645,31 @@ status-field-points = Ein Feld braucht mindestens drei Ecken — die nächste an
 status-field-on-track = Das Feld liegt ganz innerhalb des Gleisabstands und wurde nicht angelegt
 check-field-small = Feld { $field } hat weniger als drei Ecken
 check-field-crop = Feld { $field } nennt eine Kultur, die keine Tabelle kennt — es wird als nackter Boden gezeichnet
+
+# Freileitungen (Streckeneditor: Datei ▸ Freileitungen importieren…)
+action-import-power = Freileitungen importieren…
+power-import-title = Freileitungen aus OpenStreetMap importieren
+power-import-intro = Fragt OpenStreetMap nach allen Freileitungen, die das Modulumschreibungs-Polygon abdeckt — vom 380-kV-Netz bis zur Ortsleitung und der eigenen 110-kV-Bahnstromleitung — und stellt deren Masten aufs Gelände, mit den Seilen dazwischen. design=*, voltage=* und frequency=* entscheiden über den Masttyp; alles bleibt danach editierbar.
+power-import-fetching = OpenStreetMap wird gefragt
+power-import-parsing = Antwort wird gelesen
+power-import-found = { $lines } Leitungen gefunden, { $masts } Masten
+status-power-imported = { $count } Masten importiert — sie stehen dort, wo das Höhendatenmodell sie hinsetzt, mit den Seilen dazwischen
+pylon-other = Unbekannter Typ
+pylon-einebenenmast-380 = Einebenenmast (380 kV)
+pylon-donaumast-380 = Donaumast (380 kV)
+pylon-tonnenmast-380 = Tonnenmast (380 kV)
+pylon-donaumast-220 = Donaumast (220 kV)
+pylon-tannenbaummast-220 = Tannenbaummast (220 kV)
+pylon-donaumast-110 = Donaumast (110 kV)
+pylon-einebenenmast-110 = Einebenenmast (110 kV)
+pylon-kombimast-380-110 = Kombinationsmast (380/110 kV)
+pylon-portalmast-380 = Portalmast (380 kV)
+pylon-kompaktmast-380 = Kompaktmast (380 kV)
+pylon-bahnstrommast-110 = Bahnstrommast (110 kV)
+pylon-bahnstrommast-110-zweiebenen = Bahnstrommast, zweiebenig (110 kV)
+pylon-betonmast-20kv-einebene = Betonmast, Einebenenanordnung (20 kV)
+pylon-betonmast-20kv-dreieck = Betonmast, Dreiecksanordnung (20 kV)
+pylon-stahlgittermast-20kv = Stahlgittermast, Mittelspannung (20 kV)
+pylon-masttrafo-20kv = Masttransformatorstation (20/0.4 kV)
+pylon-holzmast-nsp = Niederspannungsmast, Holz (400 V)
+pylon-fernmeldemast-bahn = Streckenfernmeldemast

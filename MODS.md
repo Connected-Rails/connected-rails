@@ -1998,6 +1998,79 @@ multiplayer run agree on what a road looks like without a byte crossing the netw
 roads are static module content, a pure function of the line file and the elevation
 data.
 
+### Overhead lines
+
+The power lines crossing the country are `power_lines:` on the line, one entry per
+line — the masts in order, plus what stands at them:
+
+```ron
+power_lines: [
+    (
+        name: "Bahnstromleitung Musterstadt",
+        object: "pylons:bahnstrommast_110_trag",       // the suspension mast
+        tension_object: "pylons:bahnstrommast_110_abspann",  // the Abspannmast
+        height: 27.5,                                  // mast height over ground [m]
+        root: 0.90,                                    // half the body width at the arms
+        arms: [(at: 23.93, half_width: 4.50, conductors: 4)],  // top arm first
+        sag: 0.03,                                     // of the span
+        tags: ["bahnstrommast-110"],
+        points: [
+            (lat: 52.0042, lon: 9.9900, tension: true),
+            (lat: 52.0042, lon: 9.9944),
+            (lat: 52.0042, lon: 9.9988, tension: true),
+        ],
+    ),
+],
+```
+
+Two things come out of one entry, and they take different routes. **The masts** are
+geo-positioned instances of a mod object standing on the terrain — which is what a tree
+is, so they stream, batch and drop levels of detail exactly as a wood does; three
+hundred Donaumasten cost what three hundred spruces cost. **The conductors** are
+geometry, cut to the terrain tiles the way the roads are, hung as catenaries between the
+mast tops: about 3 % of the span in sag, so a 400 m span dips twelve metres. A conductor
+drawn as a straight line is the single most obvious way to make a power line look wrong.
+
+What the mesh carries is the wire's **centre line**, not a ribbon around it. A conductor
+is always thinner than a pixel at the distance a power line is seen at, and a
+sub-pixel line is not thin but *dotted* — so the shader spreads the centre line into a
+band facing the camera, never under a pixel and a half wide, and gives back exactly what
+the widening took as coverage. A distant line stays a continuous grey hairline that fades
+away rather than a crawling dashed net. Nothing about it is declared in the line file.
+
+A mast is turned so its crossarms stand **across** the line and it bisects the corner
+where the line bends. A point with `tension: true` takes the `tension_object` — the
+Abspannmast, whose insulator strings lie along the conductors instead of hanging under
+them. `arms` is what the wire is hung on: `at` is the crossarm's height over the mast's
+foot, `half_width` where its outermost conductor sits, and `conductors` how many it
+carries in total, half of them each side.
+
+**The masts come from `mods/pylons/`**, generated from the atlas in
+`tools/pylons/pylons.json` — eighteen German types from the 380 kV Donaumast down to
+the wooden low-voltage pole and the lineside telegraph pole, two role variants each,
+four levels of detail. `tools/pylons/README.md` documents the catalogue and the
+generator. They are ordinary track objects too, so the object tool places a single mast
+by hand wherever a line is not what is wanted.
+
+**Import.** File ▸ Import overhead lines asks Overpass for every `power=line` and
+`power=minor_line` way inside the module envelope. `design=*` on the mast nodes says
+what the mast picture is, `voltage=*` on the way how big it is, and `frequency=16.7`
+that it is the railway's own line rather than a public grid one; between them they pick
+one of the atlas's types, and the type stamps the objects, the crossarm heights and the
+conductor positions into the entry. Every vertex of the way carries a mast — OSM does
+not always tag them, and a bend without a mast is not a thing that exists — and a vertex
+the line turns more than fifteen degrees at, like both ends of the way, carries a tension
+mast. Nothing is written before the summary's Commit, and Commit is one undo step.
+`import-module` runs the same query headless; `--no-power` leaves it out.
+
+Everything the import guessed stays editable: the mast object is a string, so a route
+that wants a Tonnenmast where the import chose a Donaumast changes it there and nothing
+else has to know.
+
+Overhead lines are **scenery**. Nothing about them is simulated, nothing is replicated,
+and two clients of a multiplayer run build the same masts and the same wires out of the
+same line file without a byte crossing the network.
+
 ### Height data (DGM)
 
 A module can carry its own ground, so it runs without `--dgm` on the command line:

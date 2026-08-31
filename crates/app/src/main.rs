@@ -856,6 +856,11 @@ fn setup(
         .with_fields(farmland)
         .with_waters(waters)
         .with_roads(roads)
+        .with_power_lines(content::power::PowerLines::from_line(
+            &line_source,
+            terrain_options.zone,
+            terrain_options.tile_size,
+        ))
         .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
 
     render::spawn_track(

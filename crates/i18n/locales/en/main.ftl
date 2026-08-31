@@ -2642,3 +2642,31 @@ status-field-points = A field needs at least three corners — click the next on
 status-field-on-track = The field lies entirely within the track's clearance and was not created
 check-field-small = Field { $field } has fewer than three corners
 check-field-crop = Field { $field } names a crop no table knows — it is drawn as bare ground
+
+# Overhead lines (route editor: File ▸ Import overhead lines…)
+action-import-power = Import overhead lines…
+power-import-title = Import overhead lines from OpenStreetMap
+power-import-intro = Asks OpenStreetMap for every power line the module envelope covers — the 380 kV grid down to the village feeder, and the railway's own 110 kV line — and stands its masts on the terrain with the conductors hung between them. design=*, voltage=* and frequency=* decide which mast; all of it stays editable afterwards.
+power-import-fetching = Fetching from OpenStreetMap
+power-import-parsing = Reading the answer
+power-import-found = { $lines } lines found, { $masts } masts
+status-power-imported = { $count } masts imported — they stand where the height data puts them, with the conductors between them
+pylon-other = Unknown type
+pylon-einebenenmast-380 = Einebenenmast — Single-level tower, 380 kV
+pylon-donaumast-380 = Donaumast — Danube tower, 380 kV
+pylon-tonnenmast-380 = Tonnenmast — Barrel tower, 380 kV
+pylon-donaumast-220 = Donaumast — Danube tower, 220 kV
+pylon-tannenbaummast-220 = Tannenbaummast — Fir-tree tower, 220 kV
+pylon-donaumast-110 = Donaumast — Danube tower, 110 kV
+pylon-einebenenmast-110 = Einebenenmast — Single-level tower, 110 kV
+pylon-kombimast-380-110 = Kombinationsmast — Combined tower, 380/110 kV
+pylon-portalmast-380 = Portalmast — Portal tower, 380 kV
+pylon-kompaktmast-380 = Kompaktmast — Compact tower, 380 kV
+pylon-bahnstrommast-110 = Bahnstrommast — Railway power tower, 110 kV
+pylon-bahnstrommast-110-zweiebenen = Bahnstrommast, zweiebenig — Railway power tower, two levels, 110 kV
+pylon-betonmast-20kv-einebene = Betonmast, Einebenenanordnung — Concrete pole, single level, 20 kV
+pylon-betonmast-20kv-dreieck = Betonmast, Dreiecksanordnung — Concrete pole, triangle, 20 kV
+pylon-stahlgittermast-20kv = Stahlgittermast, Mittelspannung — Lattice pole, medium voltage, 20 kV
+pylon-masttrafo-20kv = Masttransformatorstation — Pole-mounted transformer, 20/0.4 kV
+pylon-holzmast-nsp = Niederspannungsmast, Holz — Low-voltage pole, wood, 400 V
+pylon-fernmeldemast-bahn = Streckenfernmeldemast — Lineside telegraph pole

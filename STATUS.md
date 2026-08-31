@@ -754,6 +754,120 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   and binds moving parts — either through name prefixes, through the Blender custom
   property `ts_function`, or by hand from the node list. The viewport shows one level at a
   time against a reference body of the length over buffers.
+- **Overhead lines (2026-08-31, `mods/pylons`, `tools/pylons/`, `content::power`):**
+  the power lines a German line runs past, generated the way the trees are.
+  `tools/pylons/pylons.json` is an **atlas of eighteen types** — the 380 kV
+  Donaumast, Einebenenmast and Tonnenmast; 220 kV Donau- and Tannenbaummast;
+  110 kV Donau- and Einebenenmast; the 380/110 kV combination mast, the portal
+  and the compact mast; the railway's own 110 kV/16.7 Hz Bahnstrommast in its
+  one- and two-crossarm forms; the medium-voltage concrete poles in single-level
+  and triangle arrangement, the medium-voltage lattice pole and the
+  Masttransformatorstation; the wooden low-voltage pole; and the lineside
+  telegraph pole that is not a power line at all but stands where one would.
+  Each carries its height band, crossarm widths, conductor counts, span, epochs,
+  the OSM `design=*` it is mapped with, and the parameters the generator needs.
+
+  `build_pylons.mjs` turns it into **33 variants** (a Tragmast and an Abspannmast
+  per type) at four levels of detail, out of five parametric builders in
+  `lib/kit.mjs`: a battered lattice body with X bracing, a crossarm as two
+  trusses joined across, an insulator string or pin, an earth peak, foundations.
+  A Donaumast and a Bahnstrommast differ in that file by nothing at all — they
+  differ in the catalogue by a crossarm. No textures (a base colour and a
+  metallic factor say what an 8K galvanising scan would at the distance a mast
+  is seen), no npm dependency, under a second for the whole run, and
+  `--preview` draws every type into a PNG with its own rasteriser, because an
+  outline is not something a triangle count tells you about. Levels run 3 400 /
+  1 500 / 300 / 190 triangles for a 380 kV Donaumast, handing over at 6, 18 and
+  45 times the mast's height — more generous than the trees', because a mast is
+  a skeleton and its members leave the picture long before its outline does.
+
+  *The materials are painted, not scanned.* A flat base colour with a metallic
+  and a roughness number is a correct PBR material and still reads as plastic,
+  because what makes galvanising look like galvanising is the **spangle** — zinc
+  crystals a few centimetres across, each at its own gloss — and that lives in
+  the roughness. So `lib/texture.mjs` paints a base colour, an ORM and a normal
+  map for the zinc, the spun concrete and the creosoted pine, all tiling once
+  per metre (the UVs are in metres, so the grain is the same size on a 36 cm leg
+  as on a 6 cm brace): nine PNGs of 256 px for the whole catalogue, under a
+  megabyte. **Weathered zinc is not a mirror** — what a mast wears is the chalky
+  zinc carbonate of its first years, which is a dielectric over the metal, so
+  the weathering field drives the metallic as well as the roughness; the first
+  cut had `metallic = 1` and a mast that reflected the sky and blew out white
+  against it. Per-vertex colours carry what the texture cannot: per-member shade
+  and the dirt that gathers towards the foot. A third material was added for the
+  concrete a lattice mast stands on — galvanised steel on the foundation stubs
+  is the sort of thing nobody notices until they walk up to one.
+
+  *Nothing is downloaded, and that is a finding rather than a preference:* there
+  is no correctly shaped German Donaumast, Tonnenmast or Bahnstrommast available
+  under a usable licence anywhere (Sketchfab through its API for every English
+  and German term, Poly Pizza, Poly Haven, BlendSwap, OpenGameArt, BlenderKit,
+  ambientCG, Quaternius). `tools/pylons/README.md` records the two near misses
+  and why both were rejected — a CC0-tagged family on an unclaimed migrated
+  account, and a "CC BY" tower whose own description says it was ported out of a
+  commercial game.
+
+  *The levels of detail come off the members, not off the mast.* Scaling the
+  bands by the mast's height — the obvious rule, and the first one tried — puts a
+  12 m concrete pole with a 9 cm crossarm and a 60 m Donaumast with a 16 cm brace
+  a factor of five apart, when they stop resolving at almost the same distance.
+  So `LOD0` runs until the thinnest member is under a pixel (278 m for a 380 kV
+  Donaumast, 156 m for a Bahnstrommast), `LOD1` until half the panels drawn a
+  fifth thicker have gone the same way, `LOD2` until the mast's **body** is under
+  two pixels wide and there is nothing inside the outline left to draw, and the
+  cull sits where the mast is ten pixels tall, capped at four kilometres.
+
+  A coarse level is also drawn **thicker** than the one it replaces, because
+  dropping half the bracing costs *ink*: a lattice at six hundred metres is a
+  grey haze made of sub-pixel bars, and halving them halves the grey — the mast
+  then visibly darkens as the train approaches. `--ink` supersamples each level
+  at its own hand-over distance and reports the coverage against the level
+  before it; every hand-over in the catalogue is inside ±20 %, most inside
+  ±10 %. It caught two things no triangle count would have: the medium-voltage
+  lattice pole losing **70 % of its ink** at `LOD3` because that level dropped
+  the fittings, which are a twentieth of a Donaumast and most of a 15 m mast;
+  and, the other way round, that **ink is necessary and not sufficient** — an
+  earlier `LOD2` dropped the bracing entirely and put the grey back in thick
+  legs, matched the numbers exactly, and drew a bare A-frame where a mast
+  belonged. `LOD2` keeps a quarter of the panels.
+
+  *In the world* a line is `power_lines:` on the line file (`PowerLineSource`):
+  the masts in order, the mast objects, the crossarm heights and the conductor
+  positions. **The masts** ride in with the vegetation — a mast is a
+  geo-positioned instance of a mod object standing on the terrain, which is what
+  a tree is, so streaming, batching and levels of detail cost nothing new.
+  **The conductors** are geometry cut to the terrain tiles like the roads,
+  hung as catenaries: 3 % of the span in sag, so a 400 m span dips twelve
+  metres, sampled every twenty metres. The mast tops are fixed once against the
+  elevation data, like the waters' shorelines — a span hangs between two masts
+  that are rarely on one tile.
+
+  *A conductor is the one thing in this world that is always too thin to draw.*
+  A 380 kV bundle is 40 cm across and a 110 kV single conductor 2 cm; at the
+  kilometre and more a power line is looked at that is a fraction of a pixel,
+  and a fraction of a pixel is not a thin line but a *dotted* one — some pixel
+  centres hit, others missed, and the pattern crawls as the camera moves. The
+  first cut drew a fixed 11 cm ribbon and looked exactly like that. So the mesh
+  now carries the wire's **centre line** and its true width, and
+  `world_render::conductors` — the first custom vertex shader in the
+  repository — spreads it into a band facing the camera, never under a pixel and
+  a half wide, then gives back exactly what the widening took as coverage: the
+  ink on the screen stays what the wire is worth, so a line at two kilometres is
+  a grey hairline that fades out rather than a black net. Facing the camera also
+  removes the edge-on case a crossed pair of quads existed for, so it is half the
+  triangles as well. Blended, no shadow, no prepass (the vertex stage moves the
+  vertices), and drawn to three kilometres.
+
+  *The import* (File ▸ Import overhead lines, `import-module`, `--no-power` to
+  skip) asks Overpass for `power=line` and `power=minor_line`. `design=*` on the
+  mast nodes, `voltage=*` on the way and `frequency=16.7` pick the type; every
+  vertex carries a mast (OSM does not always tag them, and a bend without a mast
+  does not exist), and a vertex the line turns more than fifteen degrees at — or
+  either end of the way — carries the Abspannmast. `content::power::PRESETS` is
+  a copy of the atlas and a test reads `pylons.json` to fail when the two drift,
+  because a crossarm changed on one side only puts the conductors beside the
+  insulator strings instead of on them.
+
 - **Trees of Central Europe (2026-08-29, `mods/trees`, `tools/trees/`):** the
   vegetation is generated, not modelled. `tools/trees/species.json` describes
   twenty-eight species — spruce, pine, silver fir, larch, Douglas fir, juniper;

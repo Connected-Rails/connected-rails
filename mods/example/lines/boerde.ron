@@ -10081,7 +10081,7 @@
             ],
             width: 6.5,
             surface: Asphalt,
-            center_line: Dashed,
+            center_line: None,
             edge_lines: true,
             bridge: false,
             tags: [
@@ -13635,7 +13635,7 @@
             ],
             width: 5.5,
             surface: Asphalt,
-            center_line: DashedUrban,
+            center_line: None,
             edge_lines: true,
             bridge: false,
             tags: [

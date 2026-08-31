@@ -688,8 +688,15 @@ fn lanes_width(tags: &HashMap<String, String>) -> Option<f64> {
 }
 /// Whether a road runs in both directions and is wide enough to stripe: a
 /// one-way way is one carriageway, and a farm track nobody stripes.
+///
+/// A **roundabout** counts as one-way whether or not the mapper wrote the
+/// tag, because `junction=roundabout` implies it — and a ring with a centre
+/// line down the middle of it is the one marking no German roundabout has.
 fn two_way(class: &str, tags: &HashMap<String, String>) -> bool {
     let one_way = tags.get("oneway").is_some_and(|v| v == "yes" || v == "-1")
+        || tags
+            .get("junction")
+            .is_some_and(|v| v == "roundabout" || v == "circular")
         || class.ends_with("_link")
         || tags.get("lanes").and_then(|v| v.parse::<u32>().ok()) == Some(1);
     let narrow = matches!(class, "service" | "living_street" | "pedestrian" | "track");
@@ -1308,6 +1315,30 @@ mod tests {
     /// A Bundesstraße, a one-way motorway carriageway and a farm track come
     /// out as three roads with their own widths, surfaces and markings; the
     /// footway is not a road at all.
+    /// A roundabout carries no centre line, whether or not the mapper wrote
+    /// `oneway`: `junction=roundabout` says it, and a ring striped down the
+    /// middle is the one marking no German roundabout has.
+    #[test]
+    fn a_roundabout_is_one_carriageway() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0000, "lon": 10.0000},
+            {"type": "node", "id": 2, "lat": 52.0002, "lon": 10.0002},
+            {"type": "node", "id": 3, "lat": 52.0000, "lon": 10.0004},
+            {"type": "way", "id": 20, "nodes": [1, 2, 3, 1],
+             "tags": {"highway": "tertiary", "junction": "roundabout"}},
+            {"type": "way", "id": 21, "nodes": [1, 3],
+             "tags": {"highway": "tertiary"}}
+        ]}"#;
+        let roads = parse_roads(json).expect("parses");
+        assert_eq!(roads.len(), 2);
+        assert_eq!(roads[0].center_line, CenterLine::None, "the ring");
+        assert_eq!(
+            roads[1].center_line,
+            CenterLine::Dashed,
+            "the road that leaves it"
+        );
+    }
+
     #[test]
     fn roads_come_out_of_overpass_json() {
         let json = r#"{"elements": [

@@ -2642,6 +2642,7 @@ status-field-points = A field needs at least three corners — click the next on
 status-field-on-track = The field lies entirely within the track's clearance and was not created
 check-field-small = Field { $field } has fewer than three corners
 check-field-crop = Field { $field } names a crop no table knows — it is drawn as bare ground
+check-fields-overlap = Fields { $field } and { $other } stand on the same { $area } m² of ground — the later one gives it up, but a register whose parcels overlap is worth a look
 
 # Overhead lines (route editor: File ▸ Import overhead lines…)
 action-import-power = Import overhead lines…

@@ -1,15 +1,18 @@
 // The same superstructure as `feste-fahrbahn`, but with walls around it:
 // `reverb` is how much the surroundings ring, 0 = open line, 1 = tunnel. The
-// simulator mixes a reverb under everything the player hears and follows
-// this value, so a line says where its tunnels are by assigning the type —
-// nobody has to trace geometry at run time. A station hall or a deep cutting
-// sits in between, around 0.3 … 0.6.
+// simulator mixes a reverb under everything the player hears and follows this
+// value, so a line says where its tunnels are by assigning the type — nobody
+// has to trace geometry at run time. A station hall or a deep cutting sits in
+// between, around 0.3 … 0.6.
 //
 // Tunnels of the DB network are laid on Feste Fahrbahn; the slab replaces
 // ballast and sleepers in the mesh, `sleeper_length` is the slab width and
 // `sleeper_height` its thickness.
 (
     name: "Tunnel",
+    texture: Some("example/assets/track/sleeper-concrete.jpg"),
+    normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+    texture_scale: 2.0,
     color: (0.45, 0.45, 0.44),
     roughness: 0.85,
     reverb: 1.0,
@@ -19,10 +22,13 @@
         rail: R60,
         sleeper: Slab,
         sleeper_length: 2.8,
-        sleeper_width: 0.30,
         sleeper_height: 0.30,
+        sleeper_spacing: 0.65,
+        rail_pad: 0.012,
+        fastening: Some(W14),
         sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+        sleeper_texture_scale: Some(2.0),
     ),
     // Tags: free, lower case — the route editor's content drawer filters on them.
     tags: ["tunnel", "slab"],

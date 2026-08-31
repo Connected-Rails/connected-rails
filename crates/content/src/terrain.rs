@@ -77,17 +77,20 @@ pub struct TerrainOptions {
     /// Up to here the finest level applies [m].
     pub corridor: f64,
     /// Up to here the terrain follows the track exactly [m] — the half width
-    /// of the formation (Planum) of a single track: the ~2.6 m ballast body
-    /// plus shoulder. Edges without a formation
+    /// of the formation (Planum) of a single track: the 4.85 m ballast body
+    /// (2.6 m of sleeper, a 0.4 m shoulder each side and the 1:1.5 slopes)
+    /// plus the Randweg beside it. Edges without a formation
     /// ([`TrackEdge::formation`](track_model::TrackEdge::formation)) shape
     /// nothing here.
     pub flatten: f64,
     /// How far the ground beside the track lies **below** the top of rail [m].
-    /// The track is drawn as a ballast bed 30 cm under the rail head, and
-    /// terrain pulled to rail height would bury it — the formation is lower
-    /// than the rail, on the line as much as in the model. The remaining
-    /// centimetres keep the bed off the ground plane, which would otherwise
-    /// z-fight with it.
+    /// This is the Planum, and it is not a made-up clearance: the DB
+    /// Regeloberbau stacks 172 mm of rail, a 10 mm pad, a 214 mm sleeper and
+    /// 300 mm of ballast under it, so the formation lies **696 mm** under the
+    /// top of rail ([`track_model::REGEL_PLANUM`]). Ground pulled up any
+    /// higher than that buries the bed it is supposed to carry — and a bed
+    /// buried to its crest is exactly what makes a track read as a ladder
+    /// lying on a road.
     pub rail_offset: f64,
     /// Up to here rail and terrain height are blended [m] — the foot of the
     /// embankment or cutting. From the formation edge to here the ground runs
@@ -117,10 +120,10 @@ impl Default for TerrainOptions {
             radius: 1_200.0,
             base_step: 4.0,
             corridor: 96.0,
-            flatten: 4.0,
-            rail_offset: 0.4,
+            flatten: 3.0,
+            rail_offset: track_model::REGEL_PLANUM,
             blend: 12.0,
-            gravel: 7.0,
+            gravel: 5.5,
             skirt: 8.0,
             fallback_height: 100.0,
             centerline_step: 25.0,
@@ -1013,10 +1016,29 @@ impl TerrainBuilder {
     /// towards the rail near the track, exactly as the tile meshes are built.
     /// For objects that snap to the terrain.
     pub fn surface_height(&self, pos: EcefPos) -> f64 {
+        let mut sampler = Sampler::new(self.sources.iter().map(Arc::as_ref), self.options.zone);
+        self.sampled_height(&mut sampler, pos)
+    }
+
+    /// The same for a whole grid of points at once.
+    ///
+    /// A `Sampler` keeps the last height tile it read from each source, and
+    /// that cache is most of what makes a lookup cheap — one per point throws
+    /// it away every time. Anything that samples a surface rather than a
+    /// point (the editor's imagery drape is a thousand points a tile) wants
+    /// this one.
+    pub fn surface_heights(&self, points: impl IntoIterator<Item = EcefPos>) -> Vec<f64> {
+        let mut sampler = Sampler::new(self.sources.iter().map(Arc::as_ref), self.options.zone);
+        points
+            .into_iter()
+            .map(|pos| self.sampled_height(&mut sampler, pos))
+            .collect()
+    }
+
+    fn sampled_height(&self, sampler: &mut Sampler, pos: EcefPos) -> f64 {
         let (lat, lon, _) = geo::from_ecef(pos);
         let (e, n) = geo::to_utm(lat, lon, self.options.zone);
         let p = DVec2::new(e, n);
-        let mut sampler = Sampler::new(self.sources.iter().map(Arc::as_ref), self.options.zone);
         let ground = sampler
             .height(p, lat, lon)
             .map(|h| h + self.options.geoid_offset)
@@ -1295,6 +1317,45 @@ impl<'a> HeightGrid<'a> {
             heights,
             step,
             n,
+        }
+    }
+
+    /// The grid's south-west corner, in grid-zone UTM.
+    pub(crate) fn min(&self) -> DVec2 {
+        self.min
+    }
+
+    /// The grid's own spacing [m] — the tile's own level of detail, and what
+    /// anything draped on it measures its own fineness against. A drape is
+    /// only as true to the ground as its mesh is fine, so this is the number
+    /// to cut it on.
+    pub(crate) fn step(&self) -> f64 {
+        self.step
+    }
+
+    /// Height at the UTM point `p` on the **mesh** — the triangles
+    /// [`build_tile`] actually draws, not the bilinear surface between them.
+    ///
+    /// The two are the same at a grid point and along a grid line, and differ
+    /// inside a cell by that cell's twist: bilinear at the middle is the mean
+    /// of four corners, the mesh is the mean of the two the diagonal joins.
+    /// A decimetre on rolling ground — which is a field floating over the
+    /// ground or sunk into it, so anything draped *on* the terrain wants this
+    /// one and anything wanting a slope (`normal_at`) wants the smooth one.
+    pub(crate) fn mesh_at(&self, p: DVec2) -> f64 {
+        let local = (p - self.min) / self.step;
+        let (ix, iy) = (local.x.floor(), local.y.floor());
+        let (fx, fy) = (local.x - ix, local.y - iy);
+        let corner = self.min + DVec2::new(ix, iy) * self.step;
+        let h = |dx: f64, dy: f64| self.at(corner + DVec2::new(dx, dy) * self.step);
+        // `build_tile` writes [a, b, c] and [b, d, c] per cell: the diagonal
+        // runs south-east to north-west, which is `fx + fy == 1`.
+        if fx + fy <= 1.0 {
+            let (sw, se, nw) = (h(0.0, 0.0), h(1.0, 0.0), h(0.0, 1.0));
+            sw + (se - sw) * fx + (nw - sw) * fy
+        } else {
+            let (ne, nw, se) = (h(1.0, 1.0), h(0.0, 1.0), h(1.0, 0.0));
+            ne + (nw - ne) * (1.0 - fx) + (se - ne) * (1.0 - fy)
         }
     }
 
@@ -1806,6 +1867,23 @@ mod tests {
         }
         assert!(checked_rail > 10, "too few points checked at the track");
         assert!(checked_far > 10, "too few points checked off the track");
+    }
+
+    #[test]
+    fn a_batch_of_heights_is_the_points_one_by_one() {
+        // The batch shares one sampler across the grid, and a sampler holds
+        // the height tile it last read. It has to be a saving and nothing
+        // else: the editor drapes its aerial photo on what this returns, and
+        // a drape that disagrees with the terrain by so much as a rounding
+        // cuts through it.
+        let net = test_net();
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options());
+        let points: Vec<EcefPos> = (0..12)
+            .map(|i| geo::to_ecef_deg(52.0 + i as f64 * 1e-4, 10.0 + i as f64 * 7e-5, 0.0))
+            .collect();
+        let batch = builder.surface_heights(points.iter().copied());
+        let one_by_one: Vec<f64> = points.iter().map(|p| builder.surface_height(*p)).collect();
+        assert_eq!(batch, one_by_one);
     }
 
     #[test]

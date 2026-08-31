@@ -1,14 +1,18 @@
 // Feste Fahrbahn (Rheda 2000, as on the Nürnberg–Ingolstadt and
-// Köln–Rhein/Main high-speed lines): UIC 60 rails fastened straight onto a
-// cast concrete slab — no ballast, no sleepers, the fastenings bolted
-// through the slab. Quieter to run on than ballast (roughness 0.9), and the
-// slab replaces bed and sleepers in the mesh.
+// Köln–Rhein/Main high-speed lines): 60E1 rails fastened straight onto a cast
+// concrete slab — no ballast, no sleepers, the fastenings bolted through the
+// slab. Quieter to run on than ballast (roughness 0.85), and the slab
+// replaces bed and sleepers in the mesh.
 //
-// Of the `oberbau` sleeper fields a slab uses: length = slab width across
-// the track (2.8 m, the Rheda trough), height = slab thickness (30 cm);
-// spacing and the ballast fields are unused.
+// Of the `oberbau` sleeper fields a slab uses: length = slab width across the
+// track (2.8 m, the Rheda trough), height = slab thickness (30 cm), spacing =
+// the spacing of the rail seats (65 cm on Rheda 2000). The ballast fields are
+// unused.
 (
     name: "Feste Fahrbahn (Rheda)",
+    texture: Some("example/assets/track/sleeper-concrete.jpg"),
+    normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+    texture_scale: 2.0,
     color: (0.52, 0.52, 0.50),
     roughness: 0.85,
     reverb: 0.0,
@@ -18,10 +22,13 @@
         rail: R60,
         sleeper: Slab,
         sleeper_length: 2.8,
-        sleeper_width: 0.30,
         sleeper_height: 0.30,
+        sleeper_spacing: 0.65,
+        rail_pad: 0.012,
+        fastening: Some(W14),
         sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+        sleeper_texture_scale: Some(2.0),
     ),
     tags: ["high-speed", "slab", "feste-fahrbahn"],
 )

@@ -1255,50 +1255,92 @@ magnets.
 ### Track types
 
 A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
-built like, not where it runs:
-
-### Track types
-
-A **track type** (`track_types/*.ron`) describes the superstructure — what the track is
-built like, not where it runs:
+built like, not where it runs. Every dimension in it is a real one; the renderer extrudes
+what it says and invents nothing:
 
 ```ron
 (
     name: "Hauptbahn (B90)",
-    texture: Some("example/assets/track/ballast.jpg"),  // ballast texture, tiled along the track
-    normal_map: Some("example/assets/track/ballast_nor.jpg"),  // ballast normal map, same tiling
+    texture: Some("example/assets/track/ballast.jpg"),        // ballast colour
+    normal_map: Some("example/assets/track/ballast_nor.jpg"), // ballast normals (authored linear)
+    depth_map: Some("example/assets/track/ballast_disp.jpg"), // height map -> parallax relief
+    occlusion_map: Some("example/assets/track/ballast_ao.jpg"),// ambient occlusion between the stones
+    texture_scale: 2.2,          // metres one repeat of those four covers, along and across
     color: (0.32, 0.30, 0.28),   // untextured fallback; the route editor tints sections its own way
     roughness: 1.0,              // scales the rolling noise; jointed track > 1, slab track < 1
     reverb: 0.0,                 // how much the surroundings ring: 0 = open line, 1 = tunnel
     max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
     lzb: false,                  // true: a line conductor belongs on this track (rule check)
     // The physical build, in real dimensions. Defaults are the DB Regeloberbau
-    // (60E1 rail on concrete at 60 cm, 30 cm ballast).
+    // (60E1 rail on B 70 at 60 cm, 30 cm ballast, fastening W 14).
     oberbau: (
         rail: R60,               // R49 = 49E1/S 49, R54 = 54E3/S 54, R60 = 60E1/UIC 60
         sleeper: Concrete,       // Concrete | Wood | Slab (Feste Fahrbahn, no ballast)
         sleeper_length: 2.6,     // across the track [m]; DB standard 2.6 m
-        sleeper_width: 0.32,     // along the track [m] (B 90: 0.32, wood: 0.26)
-        sleeper_height: 0.21,    // [m] (B 70/B 90: 0.21, wood: 0.16)
+        sleeper_width: 0.32,     // at the underside, along the track [m] (B 70: 0.30, wood: 0.26)
+        sleeper_top_width: Some(0.24),   // cast sleepers come out of the mould with draft
+        sleeper_height: 0.214,   // under the rail seat [m] (B 70/B 90: 0.214, wood: 0.16)
+        sleeper_mid_height: Some(0.175), // and shallower between the seats (B 70: 0.175)
         sleeper_spacing: 0.60,   // between sleeper centres [m]; 0.60 = 1667 per km
-        ballast_overhang: 0.70,  // shoulder beyond the sleeper end [m] each side
-        ballast_depth: 0.30,     // ballast under the sleeper [m]
+        rail_pad: 0.010,         // Zwischenlage under the rail foot [m]; Oberbau K plate: 0.016
+        fastening: Some(W14),    // W14 (concrete) | K (ribbed plate, timber) | None
+        ballast_overhang: 0.50,  // shoulder beyond the sleeper end [m]; Ril 800.0130: 0.40, 0.50 > 160 km/h
+        ballast_depth: 0.30,     // ballast under the sleeper [m]; 0.20 on a branch line
+        ballast_slope: 1.5,      // shoulder falls 1:1.5 — run per unit of fall
+        crib_drop: 0.04,         // how far under the sleeper top the crib ballast lies [m]
         sleeper_texture: Some("example/assets/track/sleeper-concrete.jpg"),
         sleeper_normal_map: Some("example/assets/track/sleeper-concrete_nor.jpg"),
+        sleeper_texture_scale: Some(1.0), // metres one repeat covers; timber wants the plank (2.6)
     ),
     tags: ["main-line", "welded"],  // optional, for the content drawer's filter (see Tags)
 )
 ```
 
-The renderer builds what the `oberbau` says: the two rails are extruded from the real
-rolled section (49E1/S 49, 54E3/S 54, 60E1/UIC 60 — 1435 mm gauge measured 14 mm under the
-rail top, 1:40 inclined toward the gauge), the sleepers stand at the type's spacing and
-shape, and the ballast bed follows the RL 853 cross-section — top width sleeper + twice the
-shoulder, sides falling 1:1. A sleeper texture repeats 2.6 m along the sleeper, so a wood
-plank set reads one plank per sleeper; with `sleeper: "slab"` the bed becomes a concrete
-slab (Feste Fahrbahn) and the sleeper fields mean slab width and thickness instead. The
-detailed sleepers are drawn only up to 400 m — beyond, the bed's texture carries the look.
-A type that names no textures is skinned in its `color`; textures tile every 4 m.
+Everything but `name` is optional; a type that says nothing about its build is laid like
+the Regeloberbau. `sleeper_top_width`, `sleeper_mid_height`, `fastening` and
+`sleeper_texture_scale` follow the sleeper kind when they are left out — cast concrete
+gets the draft, the shallower waist and W 14, timber gets a plain beam and Oberbau K.
+
+**The vertical datum is SO** (Schienenoberkante, the top of rail), and the build stacks
+down from it: 172 mm of 60E1, a 10 mm pad, a 214 mm sleeper, 300 mm of ballast — so the
+Planum lies 696 mm under the rail, which is where the terrain pulls the ground beside the
+track down to.
+
+The renderer builds what the `oberbau` says:
+
+* **the rails** from the rolled section (EN 13674): the R 300 running surface with its
+  R 80 shoulders and R 13 gauge corners, the head, web and foot with their fillets. The
+  section is checked against the profile's own kilograms per metre, so an envelope that
+  looks right but weighs wrong is a failing test. Both rails are **rotated** 1:40 about
+  the inner head face, not sheared — the running surface leans in with them, which is why
+  a rail head carries a moving line of sun instead of one flat white band. Curves are
+  sampled by their radius, and past 320 m a plain envelope takes over.
+* **the sleepers** as the beams they are — deeper under the rail seats than between them,
+  narrower on top than at the base, chamfered along the top edges — each nudged a
+  centimetre out of true, because track that is laid to the millimetre reads as a comb.
+* **the fastenings**: the pad, the guide plates and the Spannklemme of W 14, or the ribbed
+  baseplate and clamp plates of Oberbau K. Drawn to 160 m, the sleepers to 400 m.
+* **the ballast bed** on the DB Regelquerschnitt: the crest **level with the sleeper tops**
+  (`crib_drop` under them), out to `ballast_overhang` beyond the sleeper ends, then falling
+  `ballast_slope` (1:1.5) to the Planum. A bed whose surface lay at the sleeper *underside*
+  would leave the sleepers standing on a plate, which is what makes track look like a
+  ladder on a road.
+
+With `sleeper: Slab` the bed becomes a concrete slab (Feste Fahrbahn); `sleeper_length` is
+then the slab width and `sleeper_height` its thickness, the ballast fields are unused, and
+the fastenings are bolted straight through the slab at `sleeper_spacing`.
+
+**Get `texture_scale` right.** It is how many metres one repeat of the bed's four maps
+covers, and it is the difference between ballast and asphalt: DB Gleisschotter is
+31,5/63 mm, so a scan laid down twice too small reads as a paved surface and twice too
+large as riprap. Use the physical size the scan was taken at — most ambientCG gravel is
+1.5 to 2.2 m. The same goes for `sleeper_texture_scale`: the sleeper is mapped
+isotropically, `u` along its length and `v` around its section, so a timber plank set
+wants the whole sleeper (2.6 m) and a concrete scan wants its own metre.
+
+**Normal, height and occlusion maps are numbers, not colours** — author and export them
+linear; the loader is told so and does not gamma-decode them. A type that names no
+textures is skinned in its `color`.
 
 A line assigns types per edge as steps over the arc length, so one edge changes its
 superstructure section by section; the reserved name `"default"` returns to the built-in
@@ -1759,12 +1801,13 @@ client works the picture out from the same three numbers.
 
 **The crop stands.** Beyond the painted surface, each field grows **plants** — real
 low-poly crop models (Quaternius, CC0 — see `THIRD_PARTY_LICENSES.md`) where the camera is
-close, painted cards under and between them, and none at all past about 400 m, where the
+close, cut-out cards under and between them, and none at all past about 220 m, where the
 paint carries the field alone. What a plant looks like follows the same crop, day and seed
-as the paint under it: bare ground grows nothing, a young stand is short and thin, stubble
-keeps the odd straw tuft, deep winter takes the crop away entirely. The plants belong to
-the program, not to a mod — the same rule as the ground textures — so a mod adds nothing
-and changes nothing here; a field's look follows from its data alone.
+as the paint under it: bare ground grows nothing, a young stand is short and thin, a cut
+field stands straw rather than half-height wheat, deep winter takes the crop away
+entirely. The plants belong to the program, not to a mod — the same rule as the ground
+textures — so a mod adds nothing and changes nothing here; a field's look follows from its
+data alone.
 
 #### Importing them
 
@@ -1945,6 +1988,44 @@ The `points` are the **centre line** OSM maps a street with; the carriageway is 
 `surface`, `center_line`, `edge_lines` and `bridge` carry defaults, so a hand-written
 entry can be as short as `points` alone.
 
+The carriageway is built as a **ribbon**: one quad per segment of the way, mitered where
+two segments meet, and cut into cells as fine as the elevation grid the tile is drawn
+from — so the road follows every fold of the ground under it, and a bend holds together
+instead of tearing where a single buffered outline would cross itself. A hairpin on very
+short segments narrows into its corner rather than folding over, and a way that closes on
+itself — a roundabout, a loop — runs through its own first point instead of showing a
+notch there.
+
+**Junctions** are worked out from the geometry, because OSM has no junction to import:
+two ways crossing, or one running out on another, is one. Where roads of comparable width
+meet, their carriageways are **merged into one surface** — the roads are cut back to its
+edge and the junction carries the ground between them itself, with its corners rounded the
+way a kerb is. That is what makes a junction one square of asphalt instead of two ribbons
+lying over one another, and it is what takes the seam out.
+
+The merge is careful about what it will attempt, and leaves anything else alone:
+
+- **Peers only.** A crossroads of two Landstraßen is merged. A field track running out on
+  a Bundesstraße is not — the B-road runs *through*, its Leitlinie with it, and merging
+  would take the through line out for the width of a track. Its mouth lies *on* the road
+  instead.
+- **Room only.** A junction never takes more than half the road between two nodes, and the
+  kerb radius gives way where two of them are close — which is what keeps a village
+  roundabout, whose mouths are a few metres apart, from being eaten by its own junctions.
+- **Never a bridge**, and never a shape the construction cannot vouch for.
+
+Where a junction is not merged, the markings still stop: both roads lose them over the
+mouth, and the surfaces are sorted onto layers a few millimetres apart so the one on top
+is on top everywhere instead of trading fragments along a torn edge. The edge lines break
+for anything that joins; the centre line only for a road at least as wide. Two ways that
+simply carry on from one another are **not** a junction at all — an extract splits a
+street at every change of tagging, and a street that lost its markings at each of them
+would be dashed rather than its centre line.
+
+A **roundabout** (`junction=roundabout`) is one carriageway like any other one-way road,
+so it carries no centre line. A module imported before this was so has the ring striped
+down the middle; re-import its roads, or set `center_line: None` on the ring by hand.
+
 A road with `bridge: true` **flies**: where the ground dips below the straight line
 between the way's own ends — a valley, a river, a cutting — the carriageway holds that
 line instead of following the hollow, and its ends are measured on the shaped ground
@@ -1957,9 +2038,10 @@ data is flat shows no dip and no bridge.
 module envelope — the same extract a hand-downloaded Overpass Turbo query returns, so a
 file picked with the dialog works too. The OSM class decides what the road is made of,
 and the mapper's own tags win where they say more: `surface=*` over the preset's
-surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the centre line out (a
-divided road is two one-way carriageways, and an Autobahn reads as two of these rather
-than as one striped one), and any `bridge=*` but `no` flags the way as flying. The
+surface, `width=*`/`lanes=*` over its width, `oneway=yes` and `junction=roundabout` take
+the centre line out (a divided road is two one-way carriageways, and an Autobahn reads as
+two of these rather than as one striped one), and any `bridge=*` but `no` flags the way as
+flying. The
 dialog's two checkboxes opt the many-and-thin classes in:
 **field tracks** (`highway=track` — what an agricultural module is stitched with) and
 **access ways** (`service`, `living_street`, `pedestrian`). Nothing is written before
@@ -1988,15 +2070,17 @@ and the width decide what it is made of, and a click on a drawn road takes it. T
 panel edits width, surface and markings of the selected road afterwards.
 
 The look is **the program's, not the module's**: two surface scans (asphalt, concrete —
-ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`) and the markings drawn by the shader in
-real metres, per the RMS (Richtlinien für die Markierung von Straßen): 12 cm strokes,
-edge lines 25 cm off the kerb, the centre dash running 6 m on and 12 m off outside
-built-up areas and 3 m on and 6 m off inside them (`Dashed` vs `DashedUrban`). The
-surface texture tiles 4 m × 4 m on every carriageway, so the grain keeps its shape
-whatever the road's width. A module carries no road bitmaps, and two clients of a
-multiplayer run agree on what a road looks like without a byte crossing the network —
-roads are static module content, a pure function of the line file and the elevation
-data.
+ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`), their normal maps for the grain, and the
+markings drawn by the shader in real metres, per the RMS (Richtlinien für die Markierung
+von Straßen): 12 cm strokes, edge lines 25 cm off the kerb, the centre dash running 6 m
+on and 12 m off outside built-up areas and 3 m on and 6 m off inside them (`Dashed` vs
+`DashedUrban`), and `Solid` a line that never lifts. The surface texture tiles 4 m × 4 m
+on every carriageway, so the grain keeps its shape whatever the road's width, and every
+marking is filtered over the pixel it falls in — a line that goes sub-pixel with distance
+fades out instead of breaking into sparks. A module carries no road bitmaps, and two
+clients of a multiplayer run agree on what a road looks like without a byte crossing the
+network — roads are static module content, a pure function of the line file and the
+elevation data.
 
 ### Overhead lines
 

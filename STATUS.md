@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and fmt clean.
+As of 2026-08-31 · `cargo test --workspace`: **1059 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -37,17 +37,44 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   name `"default"` returning to the built-in type. The mod runtime resolves the names
   after compile (like signal types) and merges `max_speed` into the one speed profile AI,
   LZB, HUD and scoring already read; the app **builds the track the type describes**
-  (`world_render::track`): the ballast bed as the RL 853 trapezoid (4.0 m over the
-  sleeper underside, sides 1:1), skinned per section (texture via `mods://` — the
-  example mod ships CC0 photographs of ballast and sleepers, ambientCG and Poly
-  Haven, tiled through a repeat sampler set on the image once it has arrived — else
-  the type color), the sleepers as real prisms — concrete B 70/B 90 taper, timber 26 × 16 —
-  at the type's spacing, merged into chunk meshes culled at 400 m, and the two rails
-  extruded from the real rolled section of the type's profile (49E1, 54E3, 60E1 at
-  1435 mm gauge, 1:40 inclined), so what the editor and the run show are the DB
-  superstructure forms: B 90 and B 70 on the main lines, wooden sleepers on the jointed
-  branch lines, Feste Fahrbahn where the type says slab. Feeds `roughness` into the sound
-  table as the `Roughness` quantity.
+  (`world_render::track`, rebuilt 2026-08-31 against the DB InfraGO dimensions and split
+  into `rail` / `sleeper` / `ballast` / `mesh`, with every measurement moved out of the
+  renderer into `track_model::oberbau`). SO — the top of rail — is the datum, and the
+  Regeloberbau stacks down from it: 172 mm of 60E1, a 10 mm pad, a 214 mm B 70, 300 mm of
+  ballast, Planum at 696 mm (which is now also the terrain's `rail_offset`; before, the
+  formation sat 40 cm down and buried the bed to its crest).
+  **Rails** are extruded from the rolled section of EN 13674 — the R 300 running surface
+  with its R 80 shoulders and R 13 gauge corners, the head side faces, the filleted web
+  and the flared foot — checked against the profile's own kilograms per metre, and
+  **rotated** 1:40 about the inner head face rather than sheared, so the crown leans in
+  and the gauge stays 1435 mm to the micrometre. They are chunked, sampled by curvature
+  (2 mm chord tolerance) and drop to a plain envelope past 320 m.
+  **Sleepers** are the beams they are — 214 mm at the rail seat against 175 in the middle,
+  300 mm at the base against 220 on top, chamfered along the top edges — each nudged a
+  centimetre out of true from a hash of its edge and index, so a row reads as laid track
+  and not as a comb; and they carry their **fastenings**, the pad, guide plates and
+  Spannklemme of W 14 or the ribbed baseplate of Oberbau K, culled at 160 m against the
+  sleepers' 400 m.
+  **The ballast bed** is the Regelquerschnitt of Ril 800.0130: the crest level with the
+  sleeper tops (`crib_drop` under them, so a sleeper sits *in* the bed), a 0.40 m shoulder
+  (0.50 above 160 km/h), 1:1.5 slopes to the Planum and a slow hashed wobble on the crest.
+  It is skinned per section from the type's colour, normal, **height and occlusion** maps
+  at the type's own `texture_scale` — parallax relief is what turns a photograph of stones
+  into stones — and the example mod ships CC0 scans (ambientCG, Poly Haven) laid down at
+  the size they were taken at. Normal, height and occlusion maps are loaded **linear**;
+  they were being gamma-decoded as colours, which tilted every texel's normal by 40° (the
+  same bug was in the roads).
+  `rail.wgsl` paints the steel from what the section knows about itself rather than from
+  the world normal: every contour point carries how far the wheels have polished it and
+  whether it is the head flank on the gauge side, in the mesh's second uv set. So the
+  running band is a 0.12-roughness mirror, the flanks and web rust unevenly along the
+  rail, and the shade a head casts on its own gauge face — which no shadow map resolves at
+  that scale — is baked on and faded out past a few hundred metres. What the editor and
+  the run show are the DB superstructure forms: B 90 and B 70 on the main lines, wooden
+  sleepers on Oberbau K on the jointed branch lines, Feste Fahrbahn where the type says
+  slab (with the fastenings bolted through the slab). The route editor **resolves its
+  track types** now — it drew every line on placeholder track before. Feeds `roughness`
+  into the sound table as the `Roughness` quantity.
   **Track objects** (`objects/*.ron` in a mod): a 3D object plus the pose its author
   defined relative to the track — lateral offset, rotation about up, height. A line
   places instances at `(edge, s)`; each placement stores concrete values stamped from
@@ -470,49 +497,159 @@ As of 2026-08-29 · `cargo test --workspace`: **954 tests green** · clippy and 
   and tool cannot drift apart: `FieldSource::from_feature` and
   `LineSource::apply_field_import` in `content::route` are what the editor's field-import
   Commit runs.
-- **The standing crop (2026-08-30, `world_render::plants`):** the painted surface sells a
-  field at any distance but one — close up a crop is not a colour on the ground but things
-  standing on it, and a maize field in August really does stand two and a half metres above
-  the ballast. So each field patch grows **plants**: real low-poly crop models —
-  **Quaternius' Ultimate Crops pack, CC0** (fetched via Poly Pizza, normalised by
-  `tools/plants`, credited in `THIRD_PARTY_LICENSES.md`) — where the camera is close, painted
-  cards under and between them, and nothing where the paint alone carries the field. One
-  model per crop group (wheat for the cereals, corn for maize, flowers for the rape,
-  turnip for the beet, clover for potato and legume, lettuce for vegetables, grass for the
-  meadow, vines for the vineyard, a tree for the orchard); what a plant looks like is still
-  a function of the crop, the day and the field's seed — an untextured part is repainted in
-  the day's stand colour through its vertices, so the wheat model is blue-green in May and
-  gold in July, one model serving every stage from sprout to ripe. The
-  geometry is the field's own surface mesh: cards sample its triangles, so they are never
-  under the track, never off the field, and draped like the ground is, for free. Each
-  field's week of the crop year rides in the surface's vertex colour (`b`, new —
-  `phenology::offset_of` publishes the seed's shift), so one wheat field stands in stubble
-  while its neighbour is still gold and the cards know it without ever having seen a seed.
-  **The budget**: the models are capped at a few hundred per patch — a heavy model thins
-  itself out against a 120 000-triangle purse, the light ones against 400 plants — and the
-  painted cards under them at 3 000. Three levels: models and crossed cards to 90 m, every
-  third card as one quad out to 420 m, the paint alone beyond — and the meshes exist only
-  within 480 m of the camera, dropped again past 560 m, two patches rebuilt to a frame (the
-  dropped geometry goes with them; the mesh assets are freed once the despawn has landed).
-  A card is eight vertices with one horizontal normal per quad (the seam the trees taught),
-  double-sided, no shadow: the day's colour rides in one material per crop, dressed with
-  the weather like every other outdoor material, and only a stage or height step of a
-  quarter metre rebuilds geometry — budgeted at two patches a frame. Deep winter takes the
-  crop away entirely; stubble keeps a third of the tufts. All of it is a function of the
-  patch mesh and the scenario clock, so two clients of a multiplayer run grow the same
-  field without a byte crossing the network. The editor's aerial imagery was moved under
-  the crop with it: its plane sat a metre above the ground (`height_offset: 1.0`), which
-  covered every field surface and everything standing on it — it now sits 4 cm up, above
-  the terrain it textures and below what grows there.
+- **The standing crop (2026-08-30, reworked 2026-08-31, `world_render::plants`):** the
+  painted surface sells a field at any distance but one — close up a crop is not a colour
+  on the ground but things standing on it, and a maize field in August really does stand
+  two and a half metres above the ballast. So each field patch grows **plants**: real
+  low-poly crop models — **Quaternius' Ultimate Crops and Nature packs, CC0** (fetched via
+  Poly Pizza, normalised by `tools/plants`, credited in `THIRD_PARTY_LICENSES.md`) — where
+  the camera is close, and **cut-out cards** under and between them out to where the paint
+  carries the field alone. One model per crop group (wheat for the cereals, corn for maize,
+  flowers for the rape, turnip for the beet, clover for potato and legume, lettuce for
+  vegetables, grass for the meadow, vines for the vineyard, a tree for the orchard, and
+  **hay wherever the combine has already been**); a pack that ships several plants in one
+  scene keeps them as **variants**, so a field stands seven different flower clumps rather
+  than seven copies of one. What a plant looks like is a function of the crop, the day and
+  the field's seed — an untextured part is repainted in the day's stand colour through its
+  vertices, each material keeping its colour *relative to the model's own average* so a
+  corn cob stays yellower than its stalk while the plant as a whole goes from blue-green in
+  May to gold in July. A root crop is sunk, so a beet field is leaves and not turnips
+  standing on the soil. The geometry is the field's own surface mesh: cards sample its
+  triangles, so they are never under the track, never off the field, and draped like the
+  ground is, for free. Each field's week of the crop year rides in the surface's vertex
+  colour (`b` — `phenology::offset_of` publishes the seed's shift), so one wheat field
+  stands in stubble while its neighbour is still gold and the cards know it without ever
+  having seen a seed.
+  **The cell grid** is what makes it affordable. A patch is a whole 512 m tile of one crop,
+  and a stand at field density over that is a hundred thousand plants of which a camera on
+  the ground sees a few thousand. So the patch is cut into 32 m cells and a cell is grown
+  when the camera comes near it, three cells a frame, **nearest first over every patch on
+  the line** — the geometry follows the camera rather than the query order. A cell's models
+  are budgeted against a 40 000-triangle purse and its cards capped at 12 000; the dropped
+  geometry goes with the entities, and the mesh assets are freed once the despawn has
+  landed.
+  **Three levels, and each is the one before it thinned.** Every card carries a rank, and a
+  level keeps the cards below its own threshold and draws them that much wider — so no card
+  ever moves as a camera walks up to it, and the coarse levels cost a fraction. To 30 m the
+  crop stands at its own spacing with the real models among it; to 70 m under a quarter of
+  the cards at twice the width, still crossed, still with models; to 170 m a tenth of them
+  at four and a half times the width, one quad each. The product falls with range on
+  purpose: a card is a vertical sheet, so what it hides depends on how far *down* you are
+  looking at it, and closing the ground ten metres out takes several times the cards that
+  closing it a hundred out does.
+  **A card is a tuft at life size, not a rectangle.** It samples a cut-out sheet drawn at
+  startup — thin blades with the odd ear for the cereals and the grass, long arching leaves
+  for maize, rape and the vine, a few big ones fanning out low for a beet's rosette — on a
+  cell **taller than it is wide**, because a plant is. The first version drew a wheat card
+  95 cm across with a square picture on it, so every blade came out 16 to 39 mm where a
+  wheat leaf is 8 to 15, and a field read as pampas grass at any distance. The card is now
+  one *clump* — a third of a metre of drill, a maize plant's metre of leaf span, a beet's
+  rosette, an orchard tree's crown — and the sheet's blades land where a botanist would put
+  them; `plants.rs` tests them in millimetres against the plant. Density is picked against
+  that width rather than on its own, because what an eye sees looking through a stand is
+  the cards' width per square metre. One **upright** normal per quad, drawn from both sides
+  without `double_sided` so the far side keeps that normal instead of its negation: a purely
+  horizontal normal, which is what the quad's geometry says, takes almost no light from a
+  July sun overhead and turns a maize field black. Deep winter takes the crop away
+  entirely; stubble keeps a third of the tufts, and they are straw.
+  All of it is a function of the patch mesh and the scenario clock, so two clients of a
+  multiplayer run grow the same field without a byte crossing the network.
+  **What the rework fixed.** Everything was drawn about three times life size, because the
+  card was sized as a stretch of field and the picture on it as one plant. The stand was
+  thin with it, and thinnest where it shows: from a cab window you look *down* into the
+  crop, where a vertical card hides almost nothing. The thinning between levels was biased
+  too — `fields::stats::vary` hashes with FNV-1a, whose high bits carry over between
+  sequential seeds, so a level meant to keep 45 % of the stand kept 38; the module draws
+  through a splitmix64 finaliser of its own now. *(The same bias is under every other
+  `vary` in the project — trees, crop draws, sowing offsets. Harmless for a colour, worth
+  knowing about for anything that counts.)* And the first version grew its crop **around the
+  world origin**,
+  not around the player: it took the first active camera in the world, and a cab display
+  and the cloud panorama are `Camera2d`s of their own, parked there. `scatter`'s wood
+  culling read the same query and is fixed with it. The models arrived on their side and
+  five metres wide because `normalise.mjs` read glTF's rotation **quaternion** as three
+  Euler angles (and mixed the scale into the rotation matrix while it was there), and stood
+  a corner of their bounding box on the ground rather than their foot. The build budget was
+  spent in query order, so a field five hundred metres away filled in while the one under
+  the window stayed bare. And a hero card drew a painted card inside the model standing on
+  it.
+- **No two fields on one piece of ground (2026-08-31, `content::farmland`,
+  `fields::geometry`):** a cadastral register's parcels are meant to tile the land and do
+  not quite: neighbours are digitised from either side of a boundary and agree to a few
+  centimetres, and the slivers left over are parcels standing on each other. On the example
+  line **13 of 135 fields** overlap another, 0.07 ha in all. Two surfaces at the same 5 cm
+  lift flicker against each other, and the standing crop grows twice over the strip they
+  share. So when the line's fields are built, **whoever came first keeps the ground** — the
+  order in the file, so the answer is the same on every machine of a multiplayer run — and
+  what is left of the later parcel is what gets drawn. A field cut in two by the
+  subtraction stays one field: same crop, same seed, same index for the editor to select.
+  Slivers under 25 m² are dropped as the numerical residue they are, and parcels that merely
+  *touch* are left alone: of the 49 pairs on the example line whose outlines meet, only 5
+  share any ground at all.
+  **The clipper had to be fixed for it.** Greiner-Hormann discards a crossing that lands
+  exactly on a corner and cannot see two edges running along each other — and that is what
+  a shared boundary *is*. With no crossing found it falls back to asking whether one ring
+  lies inside the other, using a point that is sitting on the boundary, and answers the
+  wrong one: a parcel overlapping its neighbour by a fifth came back as *wholly inside* it.
+  `clip` now checks whether it can be sure — corners of the subject on both sides of the
+  clip mean the rings do cross, whatever the pass found — and if it cannot, goes round
+  again with the subject nudged a tenth of a millimetre, which is four orders under
+  anything anybody can see and six over the last bit of an `f64` at these coordinates. The
+  nudge is deterministic from the vertices themselves and uses no trigonometry, because
+  `sin` is not promised to be the same bit on two machines. Everything that already worked
+  is untouched, bit for bit — the second pass only runs where the first one admits it was
+  guessing. *(This was a live fault in the track punch too: a field corner exactly on the
+  clearance corridor would have come back unpunched, with crop over the rails.)*
+  The editor says which parcels overlap and by how much (`RuleIssue::FieldsOverlap`), so
+  the register can be corrected rather than only papered over, and the line's log counts
+  them.
+- **Fields on the DGM (2026-08-31, `content::farmland`):** a field arrives from the register
+  as a polygon and the ground is a grid, so a field triangle that spans several grid cells
+  is a flat plane where the ground is a shape — draped by its corners it hangs clear of
+  every rise and digs into every hollow between them. What the mesh builder did was
+  subdivide **uniformly** and give up after four levels, which for an imported field the
+  size of a tile left **32 m triangles over a 4 m grid**. Now each piece is **cut on the
+  terrain's own cells**, and on the south-east/north-west diagonal `build_tile` splits them
+  by, so every field triangle lies inside one *terrain* triangle. And its corners take
+  their height from `HeightGrid::mesh_at` — the triangles the terrain actually draws —
+  rather than from the bilinear surface between them, which inside a cell differs by that
+  cell's twist: a decimetre of ground on rolling farmland, and the reason the first attempt
+  still stood 19 cm off. A field no longer comes close to the ground; over every cell it
+  covers it *is* the ground, and the 5 cm of `LIFT` is the same 5 cm everywhere. Tested on
+  a synthetic five-metre hill: the mesh agrees with the terrain to a micrometre where it
+  used to be 29 cm out. Cost: 450 000 field triangles on the Börde against 405 000 before —
+  the cut is finer near the track, where the terrain is, and coarser away from it, where
+  the terrain is. *(`roads`, `people` and the tree and object placement still take their
+  height from the bilinear `at`; same decimetre, same one-line fix, not audited here.)*
+- **The aerial imagery drape (2026-08-31, `route_editor::overlay`):** the editor's photo is
+  a grid draped on the height the terrain builder reports, and it was sampled at 8 m where
+  the terrain mesh itself runs at 4 m inside the corridor. Twice as coarse cuts through
+  every ridge the mesh has between its own vertices — worst at the crease where the
+  formation blends into the ground, which is the one place an editor user is always looking
+  — and the metre of air that used to hide that (`height_offset: 1.0`) is a metre of
+  parallax on a picture people line up against the track in half-metre steps. The drape now
+  follows the terrain's own finest spacing, sampled in one batch per tile (`TerrainBuilder::
+  surface_heights`, one sampler for the grid instead of one per point, which is where the
+  height-tile cache lives), and the lift is down to **25 cm** with a small depth bias to
+  settle what is left. *The crop had nothing to do with it:* the overlay is route-editor
+  only, and the simulator never drapes a photo — so `height_offset: 0.04`, set so the
+  picture would stay under the standing crop, only put it under the **field surfaces**
+  (5 cm), the roads (6 cm) and the water (12 cm). On a module with farmland the photo was
+  invisible and the toolbar's own imagery switch did nothing at all. It lies over them
+  again, deliberately: the photo is what one traces *from*, and the switch is how one looks
+  at what has been traced.
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
-  at the track — the ground there is the **formation**, `rail_offset` (40 cm) below the top
-  of rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
+  at the track — the ground there is the **formation**, `rail_offset` below the top of
+  rail, so the ballast bed lies on it instead of inside it — view distance limit per LOD
   level in the app, built while driving (see streaming above). The formation is sized like
-  the real thing (2026-08-29): a single track's Planum half-width of **4 m** (the ~2.6 m
-  ballast body plus shoulder), the embankment or cutting running from its edge to the
-  natural ground within **12 m** — roughly 1:2 at the heights a main line dam has — and the
-  gravel texture full on the formation, fading out by **7 m** so the slopes stay grass.
+  the real thing (2026-08-29, depth corrected 2026-08-31): `rail_offset` is the
+  Regeloberbau's own **696 mm** (`track_model::REGEL_PLANUM` — rail, pad, sleeper and
+  300 mm of ballast add up to it), where it used to be 40 cm and left the bed buried to
+  its crest; a single track's Planum half-width of **3 m** (the 4.85 m ballast body plus
+  the Randweg beside it), the embankment or cutting running from its edge to the natural
+  ground within **12 m** — roughly 1:2 at the heights a main line dam has — and the gravel
+  texture full on the formation, fading out by **5.5 m** so the slopes stay grass.
   The distance queries measure against the centreline **segments** rather than the 25 m
   samples, so the blend zone is where the line is, not where its samples happen to fall.
   **Edges without a formation** (`route::EdgeSource::formation`, default on): track the

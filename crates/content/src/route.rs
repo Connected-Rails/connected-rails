@@ -499,17 +499,27 @@ impl PowerArm {
     /// tip and the rest evenly in towards the body — so the wire meets the
     /// insulator string it is meant to hang on rather than the air beside it.
     pub fn offsets(&self, root: f64) -> Vec<f64> {
-        let per_side = (self.conductors as f64 / 2.0).round().max(1.0);
+        // Zero means an unenergised telecom crossarm, which still receives one
+        // wire on either side for the scenery representation.
+        let total = if self.conductors > 0 {
+            self.conductors as usize
+        } else {
+            2
+        };
+        if self.half_width <= 0.02 {
+            return vec![0.0];
+        }
+        let per_side = (total / 2).max(1);
         let mut out = Vec::new();
-        for i in 0..per_side as usize {
-            let x = self.half_width * (per_side - i as f64) / per_side;
-            let x = x.max(root + 0.9);
-            if self.half_width <= 0.02 {
-                out.push(0.0);
-            } else {
-                out.push(-x);
-                out.push(x);
-            }
+        if total % 2 == 1 {
+            out.push(0.0);
+        }
+        for i in 0..per_side {
+            let equal_bay = self.half_width * (per_side - i) as f64 / per_side as f64;
+            let clearance = (root + 0.9).min(self.half_width * 0.55);
+            let x = equal_bay.max(clearance);
+            out.push(-x);
+            out.push(x);
         }
         out
     }

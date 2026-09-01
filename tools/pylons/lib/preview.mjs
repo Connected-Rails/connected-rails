@@ -101,7 +101,9 @@ function scaleRule(rgba, width, height, originY, metresPerPixel) {
 export function renderSheet(types, directory) {
   mkdirSync(directory, { recursive: true });
   const structureColour = [0.72, 0.74, 0.76];
-  const fittingColour = [0.6, 0.45, 0.36];
+  const fittingColour = (type) => type.build.fitting === 'composite'
+    ? [0.62, 0.64, 0.66]
+    : [0.6, 0.45, 0.36];
 
   for (const type of types) {
     const height = (type.height_m[0] + type.height_m[1]) / 2;
@@ -123,7 +125,7 @@ export function renderSheet(types, directory) {
     const mpp = Math.max((height * 1.12) / (panelHeight - 40), (widest * 1.12) / panelWidth);
 
     panels.forEach((panel, i) => {
-      const { structure, fittings } = buildMast(type, { detail: panel.detail, height });
+      const { structure, fittings, hardware } = buildMast(type, { detail: panel.detail, height });
       const common = {
         width,
         height: panelHeight,
@@ -134,7 +136,8 @@ export function renderSheet(types, directory) {
         rgba,
       };
       raster(structure, { ...common, colour: structureColour });
-      raster(fittings, { ...common, colour: fittingColour });
+      raster(hardware, { ...common, colour: [0.58, 0.6, 0.62] });
+      raster(fittings, { ...common, colour: fittingColour(type) });
     });
     scaleRule(rgba, width, panelHeight, panelHeight - 24, mpp);
     writeFileSync(join(directory, `${type.id}.png`), encodePng(rgba, width, panelHeight));
@@ -151,7 +154,7 @@ export function renderSheet(types, directory) {
   for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
   types.forEach((type, i) => {
     const height = (type.height_m[0] + type.height_m[1]) / 2;
-    const { structure, fittings } = buildMast(type, { detail: 0, height });
+    const { structure, fittings, hardware } = buildMast(type, { detail: 0, height });
     const common = {
       width: sheetWidth,
       height: sheetHeight,
@@ -162,7 +165,8 @@ export function renderSheet(types, directory) {
       rgba,
     };
     raster(structure, { ...common, colour: structureColour });
-    raster(fittings, { ...common, colour: fittingColour });
+    raster(hardware, { ...common, colour: [0.58, 0.6, 0.62] });
+    raster(fittings, { ...common, colour: fittingColour(type) });
   });
   scaleRule(rgba, sheetWidth, sheetHeight, sheetHeight - 20, mpp);
   writeFileSync(join(directory, 'alle.png'), encodePng(rgba, sheetWidth, sheetHeight));
@@ -190,7 +194,7 @@ export function ink(type, detail, metresPerPixel, { height, axis = 'front', supe
   const canvasHeight = Math.ceil((h * 1.1) / mpp);
   if (width * canvasHeight > 40e6) throw new Error('preview canvas too large');
   const rgba = new Uint8Array(width * canvasHeight * 4);
-  const { structure, fittings } = buildMast(type, { detail, height: h });
+  const { structure, fittings, hardware } = buildMast(type, { detail, height: h });
   const common = {
     width,
     height: canvasHeight,
@@ -201,6 +205,7 @@ export function ink(type, detail, metresPerPixel, { height, axis = 'front', supe
     rgba,
   };
   raster(structure, { ...common, colour: [1, 1, 1] });
+  raster(hardware, { ...common, colour: [1, 1, 1] });
   raster(fittings, { ...common, colour: [1, 1, 1] });
   let covered = 0;
   for (let i = 3; i < rgba.length; i += 4) if (rgba[i] !== 0) covered++;
@@ -290,7 +295,7 @@ export function renderHandovers(types, directory, bands) {
       const { w, h } = sizes[i];
       for (const [k, detail] of [cell.fine, cell.coarse].entries()) {
         const small = new Uint8Array(w * h * 4);
-        const { structure, fittings } = buildMast(type, { detail, height });
+        const { structure, fittings, hardware } = buildMast(type, { detail, height });
         const common = {
           width: w,
           height: h,
@@ -301,6 +306,7 @@ export function renderHandovers(types, directory, bands) {
           rgba: small,
         };
         raster(structure, { ...common, colour: [0.78, 0.8, 0.82] });
+        raster(hardware, { ...common, colour: [0.58, 0.6, 0.62] });
         raster(fittings, { ...common, colour: [0.62, 0.47, 0.38] });
         // Nearest-neighbour up, so a half-covered pixel stays a half-covered
         // pixel instead of being smoothed into a lie.

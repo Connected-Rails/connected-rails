@@ -6,6 +6,6 @@
     lateral_offset: 0.0,
     yaw_deg: 0.0,
     height: 0.0,
-    lod_distances: [869, 1928, 4000, 4000],
+    lod_distances: [869, 1928, 3314, 4000],
     tags: ["freileitung", "hochspannung", "380kv", "modern", "epoch-6", "trag"],
 )

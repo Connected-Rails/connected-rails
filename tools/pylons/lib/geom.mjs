@@ -195,6 +195,50 @@ export function member(out, a, b, wu, wv = wu, capped = false) {
 }
 
 /**
+ * A hot-rolled L section between two nodes.
+ *
+ * German lattice towers are assembled from angle steel, not square tubing.
+ * At normal viewing distances the distinction disappears, so lower LODs keep
+ * the cheaper box. In LOD0 two thin, overlapping flanges make the actual
+ * right-angle section: a hard outer arris, a shadowed inside corner and two
+ * broad zinc faces. Each flange remains a closed convex piece, which also lets
+ * the winding audit judge it unambiguously.
+ */
+export function angleMember(out, a, b, wu, wv = wu, capped = false) {
+  const axis = sub(b, a);
+  if (length(axis) < 1e-6) return out;
+  const { u, v } = frame(axis);
+  // Rolled tower angles are thin compared with their legs. Do not let a small
+  // brace fall below 8 mm, or its inner corner aliases before the first LOD.
+  const thickness = Math.min(Math.min(wu, wv) * 0.22, Math.max(0.008, Math.min(wu, wv) * 0.12));
+  const shifted = (p, du, dv) => add(add(p, scale(u, du)), scale(v, dv));
+
+  // The vertical flange occupies the full outside leg. The horizontal flange
+  // starts exactly at its inner face instead of overlapping it; their shared
+  // faces have opposite winding, so back-face culling leaves no z-fighting.
+  const verticalU = -(wu - thickness) / 2;
+  member(
+    out,
+    shifted(a, verticalU, 0),
+    shifted(b, verticalU, 0),
+    thickness,
+    wv,
+    capped,
+  );
+  const horizontalU = thickness / 2;
+  const horizontalV = -(wv - thickness) / 2;
+  member(
+    out,
+    shifted(a, horizontalU, horizontalV),
+    shifted(b, horizontalU, horizontalV),
+    wu - thickness,
+    thickness,
+    capped,
+  );
+  return out;
+}
+
+/**
  * A tapered tube from `a` (radius `r0`) to `b` (radius `r1`), `sides` facets.
  * Concrete and wooden poles, insulator sheds and the steel tube of a compact
  * mast — everything round in the kit.
@@ -230,7 +274,17 @@ export function tube(out, a, b, r0, r1, sides = 8, capped = true, smooth = true)
     const out_ = add(scale(u, Math.cos(t)), scale(v, Math.sin(t)));
     return normalise(add(scale(out_, len), scale(w, r0 - r1)));
   };
-  const step = (2 * Math.PI * Math.max(r0, r1)) / sides;
+  const circumference = 2 * Math.PI * Math.max(r0, r1);
+  // Keep approximately metre-sized texels, but close a round section on an
+  // *integer* texture repeat. Using the literal circumference as the final U
+  // put (for example) U=0 next to U=0.82 on a wooden pole's closing edge: the
+  // image itself tiles perfectly, yet those are unrelated places in it, so a
+  // hard vertical colour seam ran along every non-integer circumference. A
+  // pole gets one repeat around it; a seven-metre compact-mast circumference
+  // gets seven. Density stays within half a repeat per circumference and the
+  // first and last samples now actually meet.
+  const wraps = Math.max(1, Math.round(circumference));
+  const step = wraps / sides;
   for (let i = 0; i < sides; i++) {
     const j = (i + 1) % sides;
     const ni = radial(i);
@@ -238,16 +292,16 @@ export function tube(out, a, b, r0, r1, sides = 8, capped = true, smooth = true)
     quad(
       out,
       lo[i],
-      hi[i],
-      hi[j],
       lo[j],
+      hi[j],
+      hi[i],
       [
         [i * step, 0],
-        [i * step, len],
-        [(i + 1) * step, len],
         [(i + 1) * step, 0],
+        [(i + 1) * step, len],
+        [i * step, len],
       ],
-      smooth ? [ni, ni, nj, nj] : undefined,
+      smooth ? [ni, nj, nj, ni] : undefined,
     );
   }
   if (capped) {
@@ -418,7 +472,7 @@ export function weather(geometry, { ground = 6.0, floor = 0.74, jitter = 0.05, s
  * `build_pylons.mjs --check` runs it over the catalogue.
  */
 export function facing(geometry) {
-  const { positions: p, normals: n, indices: idx, pieces } = geometry;
+  const { positions: p, indices: idx, pieces } = geometry;
   const centre = new Map();
   const count = new Map();
   for (let i = 0; i < p.length / 3; i++) {
@@ -442,7 +496,21 @@ export function facing(geometry) {
     const fx = (p[i * 3] + p[j * 3] + p[k * 3]) / 3 - c[0];
     const fy = (p[i * 3 + 1] + p[j * 3 + 1] + p[k * 3 + 1]) / 3 - c[1];
     const fz = (p[i * 3 + 2] + p[j * 3 + 2] + p[k * 3 + 2]) / 3 - c[2];
-    const d = fx * n[i * 3] + fy * n[i * 3 + 1] + fz * n[i * 3 + 2];
+    // Winding, not the supplied vertex normal, decides which side survives
+    // backface culling. A smooth tube can carry perfectly outward normals on
+    // triangles wound inward; that was exactly why every round pole looked
+    // lit correctly yet disappeared when viewed from outside. Derive the face
+    // direction from its positions so this check tests what the GPU tests.
+    const abx = p[j * 3] - p[i * 3];
+    const aby = p[j * 3 + 1] - p[i * 3 + 1];
+    const abz = p[j * 3 + 2] - p[i * 3 + 2];
+    const acx = p[k * 3] - p[i * 3];
+    const acy = p[k * 3 + 1] - p[i * 3 + 1];
+    const acz = p[k * 3 + 2] - p[i * 3 + 2];
+    const nx = aby * acz - abz * acy;
+    const ny = abz * acx - abx * acz;
+    const nz = abx * acy - aby * acx;
+    const d = fx * nx + fy * ny + fz * nz;
     // A face through the piece's own centre says nothing either way — the two
     // triangles of a flat cap on a zero-thickness stub are the case.
     if (Math.abs(d) < 1e-6) continue;

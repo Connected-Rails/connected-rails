@@ -95,18 +95,16 @@ function fbm(u, v, fu, fv, seed, octaves = 4, gain = 0.5) {
 }
 
 /**
- * How many zinc crystals fit across a metre.
+ * How many residual zinc crystals fit across a metre.
  *
- * A **24 mm** facet, which is the middle of the band a hot-dip bath throws on
- * structural steel (5 mm to about 50 mm on thick sections). This number is the
- * one thing that decides whether the material reads as galvanising or as
- * crumpled foil: at the 11 it started on, a crystal was 90 mm — wider than most
- * braces on the mast, so a bar carried one or two of them and the spangle
- * stopped being a surface finish and became the shape of the bar. It is also
- * why the pattern stayed visible at a hundred metres, where real spangle is
- * long gone.
+ * An in-service mast no longer presents the high-contrast flowers of a fresh
+ * bath: weathering turns the coating into a soft, fairly uniform matte grey.
+ * The 10 mm cells below survive only as a very low-contrast roughness change.
+ * They must disappear from the colour within a few metres and never alter the
+ * normal. The old 24 mm, high-contrast cells were the polygonal camouflage in
+ * close photographs of the model.
  */
-const SPANGLE_CELLS = 42;
+const SPANGLE_CELLS = 96;
 
 /**
  * The zinc spangle: which crystal facet a point belongs to, and how far it is
@@ -157,8 +155,12 @@ function normalsFrom(height, size, strength) {
   const at = (x, y) => height[(((y % size) + size) % size) * size + (((x % size) + size) % size)];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
-      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+      // Keep the same physical slope when a map's resolution changes. The
+      // unscaled finite difference halves when 512 becomes 1024 even though
+      // the represented one-metre surface did not become flatter.
+      const physicalStrength = strength * (size / 512);
+      const dx = (at(x + 1, y) - at(x - 1, y)) * physicalStrength;
+      const dy = (at(x, y + 1) - at(x, y - 1)) * physicalStrength;
       const len = Math.hypot(dx, dy, 1);
       const o = (y * size + x) * 4;
       rgba[o] = Math.round(((-dx / len) * 0.5 + 0.5) * 255);
@@ -204,9 +206,10 @@ function colour(size, fill) {
 /**
  * **Hot-dip galvanised steel**, twenty years into its service life.
  *
- * A metre of it holds a couple of thousand zinc crystals; each is a shade of
- * its own and, more to the point, a *gloss* of its own, and a slow mottle of
- * weathering runs over the lot.
+ * A metre of it holds thousands of zinc crystals, but after years outdoors
+ * their visible contrast is almost gone beneath a zinc-carbonate patina. A
+ * slow mottle of weathering remains; individual crystals only whisper in the
+ * roughness at inspection distance.
  *
  * **Weathered zinc is not a mirror.** Fresh galvanising is a metal with a
  * reflectance near 0.85, and `metallic` near one over a bright base colour
@@ -215,9 +218,8 @@ function colour(size, fill) {
  * blows out against the very sky it is mirroring. What a mast on a line
  * actually wears is zinc *carbonate*, the chalky grey skin of its first years,
  * and that is a **dielectric** over the metal. So the weathering field drives
- * the metallic, and it drives it into a narrow band low down: `0.08` where the
- * skin is thickest to `0.36` on a facet still bright. What is left is a broad
- * dim sheen rather than a reflection, which is what galvanising has.
+ * the metallic, and it drives it into a narrow band close to dielectric. What
+ * is left is a broad dim sheen rather than a white reflection of the sky.
  *
  * **And it is flat.** The spangle is a pattern in *reflectance*, not in relief:
  * the crystals freeze level with each other and you cannot feel the boundaries
@@ -233,35 +235,41 @@ function galvanised(size) {
   const gloss = new Float32Array(size * size);
   const metal = new Float32Array(size * size);
   const chalk = new Float32Array(size * size);
+  const brown = new Float32Array(size * size);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const u = x / size;
       const v = y / size;
       const cell = spangle(u, v, SPANGLE_CELLS, 7);
       const facet = hash(cell.id, 3, 41);
-      // The facet boundary is a couple of texels wide however many cells there
-      // are — the width is a property of the crystal, not of the tile.
-      const edge = clamp01(cell.edge * SPANGLE_CELLS * 2.4);
+      // Zero on a narrow crystal boundary, one in the facet. This only reaches
+      // colour and roughness: crystal boundaries have no macroscopic relief.
+      const edge = clamp01(cell.edge * SPANGLE_CELLS * 5.5);
       // Weathering: a slow field that decides which facets have gone dull.
       const weather = fbm(u, v, 3, 3, 13, 4);
-      // The mill's rolling marks, which run *along* the bar — `v` in this
-      // pipeline, on a member as on a tube (`geom.mjs`). 60 cycles over two
-      // octaves is 120 at the top, which is the budget at 512 px.
-      const grain = fbm(u, v, 6, 60, 29, 2);
+      // The mill's rolling marks run along the bar (`v`). They are fine enough
+      // not to read as bands but still four texels wide at the top octave.
+      const grain = fbm(u, v, 12, 112, 29, 2);
       // The waviness a coating freezes into as it drains off the section.
-      const peel = fbm(u, v, 14, 14, 83, 2);
+      const peel = fbm(u, v, 40, 40, 83, 3);
       // Pitting: where the zinc has gone and the steel underneath is working.
-      // 30 over three octaves tops out at 120 — 8 mm pits, which is what they
-      // are; at 40 the top octave was finer than the map and came out as noise.
-      const pit = Math.max(0, fbm(u, v, 30, 30, 61, 3) - 0.66) * 2.4;
+      const pit = Math.max(0, fbm(u, v, 56, 56, 61, 3) - 0.68) * 2.8;
       const i = y * size + x;
-      height[i] = edge * 0.06 + peel * 0.22 + grain * 0.1 - pit * 0.35;
+      height[i] = peel * 0.12 + grain * 0.055 - pit * 0.18;
       // How far this spot has gone over to the chalky carbonate skin.
-      const dull = clamp01(weather * 1.15 + pit * 0.5 - 0.1);
-      shade[i] = 0.56 + (facet - 0.5) * 0.07 - (1 - edge) * 0.02 - dull * 0.07;
-      gloss[i] = 0.6 + (facet - 0.5) * 0.08 + dull * 0.26 + (1 - edge) * 0.03;
-      metal[i] = 0.36 - dull * 0.28;
+      const dull = clamp01(weather * 1.10 + pit * 0.35 - 0.06);
+      // The simulator's open-sky lighting lifts a neutral mid-grey strongly.
+      // Keep the stored surface in the sRGB 82–101 band so the lit mast still
+      // separates from a bright sky instead of becoming nearly white.
+      shade[i] = 0.398 - dull * 0.074 + (facet - 0.5) * 0.014 - (1 - edge) * 0.007;
+      // Patina is broad and matte; remnants of younger zinc retain a dim,
+      // rough metal response. Neither end behaves like polished aluminium.
+      gloss[i] = 0.67 + dull * 0.17 + (facet - 0.5) * 0.040 + (1 - edge) * 0.018;
+      metal[i] = 0.20 - dull * 0.145;
       chalk[i] = dull;
+      // Decades-old galvanising develops occasional light-brown fields without
+      // exposing red structural steel. Keep it sparse and low in saturation.
+      brown[i] = clamp01((weather - 0.69) * 2.2 + pit * 0.30);
     }
   }
   return {
@@ -269,9 +277,11 @@ function galvanised(size) {
       const i = y * size + x;
       const s = shade[i];
       const d = chalk[i];
-      // Bright zinc is very slightly blue; the carbonate over it is very
-      // slightly warm, which is the only colour in the material.
-      return [s * (0.978 + d * 0.035), s * (0.993 + d * 0.007), s * (1.0 - d * 0.03)];
+      const b = brown[i];
+      // Bare zinc is slightly cool. The patina neutralises it rather than
+      // turning it beige; only old, damaged fields acquire a restrained warm
+      // cast, while stronger soil colour still comes from vertex dirt.
+      return [s * (0.965 + d * 0.020 + b * 0.080), s * (0.985 - b * 0.025), s * (1.02 - d * 0.010 - b * 0.105)];
     }),
     orm: orm(size, (x, y) => ({
       occlusion: 1,
@@ -280,7 +290,7 @@ function galvanised(size) {
     })),
     // Gently: the height field is under a millimetre from end to end, and a
     // strength that suited an embossed spangle turns a millimetre into a dent.
-    normal: normalsFrom(height, size, 1.0),
+    normal: normalsFrom(height, size, 0.72),
   };
 }
 
@@ -299,7 +309,9 @@ function galvanised(size) {
  * texel wide and the map filled up with the aliasing of it. The aggregate now
  * sits at 16 cycles over three — 62 mm down to 8 mm, every step of it wider
  * than four texels — and the surface reads as concrete because the things on
- * it are the size concrete's things are.
+ * it are the size concrete's things are. The first correction still left the
+ * aggregate as broad six-centimetre clouds; this pass moves the visible skin
+ * into the 5–25 mm range and reserves large scales for dampness only.
  */
 function concrete(size) {
   const height = new Float32Array(size * size);
@@ -313,15 +325,17 @@ function concrete(size) {
       // the pole and the only one still there at fifty metres.
       const weather = fbm(u, v, 2, 2, 131, 4);
       // The mould's seam and the drips down it: narrow across, long along.
-      const mould = fbm(u, v, 20, 2, 97, 2);
+      const mould = fbm(u, v, 28, 3, 97, 2);
       // Aggregate showing through the skin, and the blow-holes beside it.
-      const stone = fbm(u, v, 16, 16, 71, 3);
-      const pore = Math.max(0, fbm(u, v, 24, 24, 5, 2) - 0.62) * 2.6;
+      const stone = fbm(u, v, 40, 40, 71, 3);
+      const fines = fbm(u, v, 96, 96, 173, 2);
+      const pore = Math.max(0, fbm(u, v, 64, 64, 5, 2) - 0.66) * 2.9;
       const i = y * size + x;
-      height[i] = stone * 0.30 + mould * 0.12 - pore * 0.55;
+      height[i] = stone * 0.17 + fines * 0.055 + mould * 0.07 - pore * 0.34;
       damp[i] = clamp01(weather * 1.2 - 0.1);
       shade[i] =
-        0.63 + (stone - 0.5) * 0.09 + (mould - 0.5) * 0.05 - damp[i] * 0.12 - pore * 0.10;
+        0.625 + (stone - 0.5) * 0.055 + (fines - 0.5) * 0.018 +
+        (mould - 0.5) * 0.035 - damp[i] * 0.105 - pore * 0.07;
     }
   }
   return {
@@ -343,8 +357,81 @@ function concrete(size) {
         metallic: 0,
       };
     }),
-    normal: normalsFrom(height, size, 1.0),
+    normal: normalsFrom(height, size, 0.72),
   };
+}
+
+/** A few explicit, seamless knots; random noise almost never makes a knot. */
+function woodKnots(u, v, seed) {
+  const cellsU = 6;
+  const cellsV = 4;
+  const ix = Math.floor(u * cellsU);
+  const iy = Math.floor(v * cellsV);
+  let core = 0;
+  let rim = 0;
+  for (let j = -1; j <= 1; j++) {
+    for (let i = -1; i <= 1; i++) {
+      const gx = ix + i;
+      const gy = iy + j;
+      const wx = ((gx % cellsU) + cellsU) % cellsU;
+      const wy = ((gy % cellsV) + cellsV) % cellsV;
+      if (hash(wx, wy, seed) < 0.72) continue;
+      const cx = (gx + 0.18 + hash(wx, wy, seed + 11) * 0.64) / cellsU;
+      const cy = (gy + 0.18 + hash(wx, wy, seed + 29) * 0.64) / cellsV;
+      const ru = 0.026 + hash(wx, wy, seed + 47) * 0.025;
+      const rv = 0.040 + hash(wx, wy, seed + 71) * 0.040;
+      const du = (u - cx) / ru;
+      const dv = (v - cy) / rv;
+      const angle = Math.atan2(dv, du);
+      const phase = hash(wx, wy, seed + 101) * Math.PI * 2;
+      // A branch scar follows torn fibres; it is approximately elliptical but
+      // never the perfect stamped oval that a plain radial falloff produces.
+      const torn =
+        1 + Math.sin(angle * 3 + phase) * 0.11 + Math.sin(angle * 7 - phase * 0.7) * 0.055;
+      const d = Math.hypot(du, dv) * torn;
+      core = Math.max(core, clamp01(1 - d));
+      rim = Math.max(rim, Math.exp(-Math.pow((d - 0.82) / 0.18, 2)));
+    }
+  }
+  return { core, rim };
+}
+
+/** Sparse, tapered drying checks instead of a dark noise cloud. */
+function woodChecks(u, v, seed) {
+  const cellsU = 11;
+  const cellsV = 2;
+  const ix = Math.floor(u * cellsU);
+  const iy = Math.floor(v * cellsV);
+  let cleft = 0;
+  let lip = 0;
+  for (let j = -1; j <= 1; j++) {
+    for (let i = -1; i <= 1; i++) {
+      const gx = ix + i;
+      const gy = iy + j;
+      const wx = ((gx % cellsU) + cellsU) % cellsU;
+      const wy = ((gy % cellsV) + cellsV) % cellsV;
+      if (hash(wx, wy, seed) < 0.78) continue;
+      const cx = (gx + 0.15 + hash(wx, wy, seed + 13) * 0.70) / cellsU;
+      const cy = (gy + 0.18 + hash(wx, wy, seed + 31) * 0.64) / cellsV;
+      const halfLength = 0.14 + hash(wx, wy, seed + 47) * 0.18;
+      const halfWidth = 0.0035 + hash(wx, wy, seed + 59) * 0.0065;
+      const along = (v - cy) / halfLength;
+      if (Math.abs(along) >= 1) continue;
+      const phase = hash(wx, wy, seed + 79) * Math.PI * 2;
+      // A check follows a fibre but never a ruler: it wanders by a few
+      // millimetres, forks in the middle, and tapers away at both ends.
+      const wander =
+        Math.sin(along * Math.PI * 1.7 + phase) * halfWidth * 0.55 +
+        Math.sin(along * Math.PI * 4.1 - phase * 0.6) * halfWidth * 0.22;
+      const across = Math.abs((u - cx - wander) / halfWidth);
+      const taper = Math.pow(1 - along * along, 0.65);
+      const centre = Math.exp(-across * across * 2.6) * taper;
+      const edge = Math.exp(-Math.pow((across - 1.35) / 0.52, 2)) * taper;
+      cleft = Math.max(cleft, centre);
+      lip = Math.max(lip, edge);
+    }
+  }
+  return { cleft, lip };
 }
 
 /**
@@ -367,65 +454,74 @@ function wood(size) {
   const height = new Float32Array(size * size);
   const shade = new Float32Array(size * size);
   const dark = new Float32Array(size * size);
+  const wash = new Float32Array(size * size);
+  const ridge = new Float32Array(size * size);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const u = x / size;
       const v = y / size;
-      // Growth rings drawn out along the pole: a lathe cuts them into bands
-      // that run its whole length, wobbling as the trunk did.
-      //
-      // **Sharpened, and this is what the material was missing.** Value noise
-      // interpolates, so everything built out of it is blobs with no edges, and
-      // a cosine is smooth by definition — the pole came out as a soft brown
-      // gradient that read as blurred however many texels it had. Wood is the
-      // opposite: late wood meets early wood at a hard line. The power curve
-      // widens the pale band and keeps the dark edge crisp, which is what a
-      // lathe leaves.
-      const wobble = fbm(u, v, 2, 3, 17, 3) * 0.4;
-      const band = 0.5 - 0.5 * Math.cos(2 * Math.PI * (u * 14 + wobble));
-      const ring = Math.pow(band, 0.45);
-      // The fibre along the grain, **ridged** so it makes lines rather than
-      // clouds: the fold at the middle of the noise is a crease, and raising it
-      // to a power narrows the crease into a fibre.
-      const noiseF = fbm(u, v, 24, 3, 53, 3);
-      const fibre = Math.pow(1 - Math.abs(2 * noiseF - 1), 2.2);
-      // Checks: the long splits a pole dries into, narrow across and running
-      // most of its length.
-      const check = Math.max(0, fbm(u, v, 10, 1, 211, 2) - 0.66) * 3.0;
-      // Knots: where a branch was, a hand's width across and darker than
-      // anything else on the pole.
-      const knot = Math.max(0, fbm(u, v, 5, 2, 311, 2) - 0.66) * 3.2;
+      // Two bands of grain. The medium one carries the material through the
+      // mip chain; the fine one prevents a close pole or crossarm from looking
+      // as though its colour was stretched over ten-pixel-wide stripes. Their
+      // top octaves are 112 and 224 cycles/m respectively, both inside the
+      // four-texel frequency budget of a 1024 map.
+      const mediumNoise = fbm(u, v, 28, 4, 17, 3);
+      const fineNoise = fbm(u, v, 112, 7, 137, 2);
+      const medium = Math.pow(1 - Math.abs(2 * mediumNoise - 1), 3.6);
+      const fine = Math.pow(1 - Math.abs(2 * fineNoise - 1), 2.4);
+      const fibre = medium * 0.58 + fine * 0.42;
+      // Slow stain and vertical wash marks belong to the treatment, not to the
+      // wood grain. Keeping them separate lets dark creosote be a little less
+      // rough while the sun-bleached raised fibres go grey and chalky.
+      const stain = fbm(u, v, 3, 2, 229, 4);
+      const drip = fbm(u, v, 13, 2, 251, 3);
+      const treatment = clamp01(stain * 0.72 + drip * 0.28);
+      const check = woodChecks(u, v, 211);
+      // Noise made broad dark clouds but essentially no actual knots. Place a
+      // handful of 5–10 cm elliptical branch scars, with a dark core and rim.
+      const knot = woodKnots(u, v, 311);
       const i = y * size + x;
-      height[i] = fibre * 0.16 + ring * 0.10 - check * 0.85 - knot * 0.25;
-      dark[i] = clamp01(check * 0.8 + knot * 0.9);
-      // The rings carry more than twice what they did. At seven metres a pole
-      // is forty pixels wide and the third mip level is what gets sampled, so
-      // the only thing left to see is the fourteen bands round it — and at four
-      // and a half per cent of the shade there was nothing left to see.
-      shade[i] = 0.29 + ring * 0.10 + fibre * 0.05 - dark[i] * 0.14;
+      ridge[i] = fibre;
+      wash[i] = treatment;
+      height[i] =
+        (medium - 0.5) * 0.11 + (fine - 0.5) * 0.060 -
+        check.cleft * 0.72 + check.lip * 0.13 - knot.core * 0.34 + knot.rim * 0.12;
+      dark[i] = clamp01(check.cleft * 0.92 + knot.core + knot.rim * 0.34);
+      // A narrow 45–90 sRGB range: enough local contrast to survive filtering,
+      // without turning the pole into fresh orange construction timber.
+      shade[i] =
+        0.255 + (medium - 0.5) * 0.075 + (fine - 0.5) * 0.055 +
+        (treatment - 0.5) * 0.060 - dark[i] * 0.145;
     }
   }
   return {
     colour: colour(size, (x, y) => {
       const i = y * size + x;
       const s = shade[i];
-      // Creosote: dark, warm and *desaturated*. The first cut multiplied a
-      // brighter shade by (1, 0.78, 0.58), which is the orange of fresh sawn
-      // pine — a fifty-year-old pole beside a railway is nearly black.
       const d = dark[i];
-      return [s * (1.0 - d * 0.05), s * (0.84 - d * 0.04), s * (0.71 - d * 0.06)];
+      const bleached = 1 - wash[i];
+      // Old creosote is a neutral charcoal-brown in its wet streaks and a
+      // slightly warmer, greyer brown where weather has lifted it from the
+      // raised fibres. Reducing saturation as it bleaches avoids the former
+      // pink/orange cast under a bright sky.
+      return [
+        s * (0.98 - d * 0.05),
+        s * (0.87 + bleached * 0.025 - d * 0.04),
+        s * (0.76 + bleached * 0.045 - d * 0.05),
+      ];
     }),
     orm: orm(size, (x, y) => {
       const i = y * size + x;
       return {
         occlusion: 1 - clamp01(-height[i] * 0.7),
-        // Tar is not gloss: a treated pole is matte all over, a shade less so
-        // where the weather has washed the creosote out of the raised grain.
-        roughness: 0.88 - clamp01(height[i]) * 0.06 + dark[i] * 0.04,
+        // Intact treatment keeps a very broad, dim sheen; exposed fibres and
+        // the lips of cracks are dry. Nothing approaches polished timber.
+        roughness:
+          0.90 - wash[i] * 0.10 - ridge[i] * 0.025 + dark[i] * 0.055,
         metallic: 0,
       };
     }),
-    normal: normalsFrom(height, size, 1.6),
+    normal: normalsFrom(height, size, 1.22),
   };
 }
 
@@ -441,7 +537,7 @@ export const PAINTERS = {
 };
 
 /** Paints one material's three maps at `size` x `size`. */
-export function paint(structure, size = 256) {
+export function paint(structure, size = 1024) {
   const painter = PAINTERS[structure];
   if (!painter) throw new Error(`no painter for ${structure}`);
   return { id: painter.id, ...painter.paint(size) };

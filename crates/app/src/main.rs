@@ -136,6 +136,115 @@ pub struct TerrainInfo(pub TerrainStats);
 #[derive(Resource)]
 struct FrameLimit(u32);
 
+/// What a `--screenshot` run renders at without `--window`.
+///
+/// 1080p, because the levels of detail are cut for it: `tools/pylons` and
+/// `tools/trees` both size their hand-over distances on 1440 lines at the 45°
+/// field of view, and a picture judged at a quarter of that judges the wrong
+/// level.
+const SHOT_SIZE: (u32, u32) = (1920, 1080);
+
+/// The picture a windowless run draws into, and how big it is.
+///
+/// Every camera that would otherwise draw to the window is pointed at this image
+/// instead ([`retarget_offscreen`]), and it is what [`exit_after_frames`] writes
+/// to disk. Absent in an ordinary run, where the window is the target.
+#[derive(Resource)]
+struct Offscreen {
+    image: Handle<Image>,
+}
+
+/// Builds the image a windowless run draws into.
+///
+/// `PreStartup`, because the menu spawns its camera in `Startup` and the target
+/// has to exist by then.
+fn open_offscreen(
+    size: Res<OffscreenSize>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    let (width, height) = size.0;
+    let mut image = Image::new_fill(
+        bevy::render::render_resource::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        &[0, 0, 0, 255],
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        bevy::asset::RenderAssetUsages::default(),
+    );
+    image.texture_descriptor.usage = bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
+        | bevy::render::render_resource::TextureUsages::COPY_SRC
+        | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING;
+    commands.insert_resource(Offscreen {
+        image: images.add(image),
+    });
+}
+
+/// How big [`open_offscreen`] makes it — the command line's answer, carried in
+/// because `main` cannot touch `Assets<Image>` before the plugins are built.
+#[derive(Resource)]
+struct OffscreenSize((u32, u32));
+
+/// Points every window-bound camera at the offscreen image.
+///
+/// Centrally rather than at each spawn site: the world camera, the menu's 2D
+/// camera and anything added later all want the same target, while the cab
+/// displays (`displays.rs`) already carry a `RenderTarget` of their own and are
+/// left alone by the `Without` filter.
+fn retarget_offscreen(
+    offscreen: Res<Offscreen>,
+    mut cameras: Query<(Entity, &Camera, &mut bevy::camera::RenderTarget)>,
+    views: Query<(Entity, &Camera), With<OffscreenView>>,
+    marked: Query<Entity, With<bevy::ui::IsDefaultUiCamera>>,
+    mut commands: Commands,
+) {
+    for (entity, _, mut target) in &mut cameras {
+        // Every `Camera` has a `RenderTarget` — it is a required component, and
+        // its default is the primary window. So this rewrites rather than
+        // inserts, and the window variant is the one to catch: a camera left
+        // pointing at a window that does not exist renders no view, and the
+        // atmosphere's environment probe then unwraps an empty uniform and
+        // brings the render schedule down with it.
+        if matches!(*target, bevy::camera::RenderTarget::Window(_)) {
+            *target = bevy::camera::RenderTarget::Image(offscreen.image.clone().into());
+            // `WorldView` says which image is the player's view: the crop grows
+            // around it and the woods are culled against it, and both key on a
+            // window otherwise (`world_render::draws_the_world`).
+            commands
+                .entity(entity)
+                .insert((OffscreenView, world_render::WorldView));
+        }
+    }
+    // **And the HUD has to be told where to go.** Bevy hands an unassigned UI
+    // node to the highest-order camera *that draws to the primary window*
+    // (`bevy_ui::DefaultUiCamera`); with no window that is nobody, and a
+    // `--screenshot --hud full` came out as a cab with no instruments in front
+    // of it. So the same rule is applied by hand over the cameras that took the
+    // window's place — the world camera during a run, the menu's own during the
+    // menu — and the marker moves with it, because Bevy allows exactly one.
+    let ui = views
+        .iter()
+        .max_by_key(|(e, c)| (c.order, *e))
+        .map(|(e, _)| e);
+    for entity in &marked {
+        if Some(entity) != ui {
+            commands
+                .entity(entity)
+                .remove::<bevy::ui::IsDefaultUiCamera>();
+        }
+    }
+    if let Some(entity) = ui.filter(|e| marked.get(*e).is_err()) {
+        commands.entity(entity).insert(bevy::ui::IsDefaultUiCamera);
+    }
+}
+
+/// A camera that stands in for the window in a windowless run.
+#[derive(Component)]
+struct OffscreenView;
+
 /// Target file from `--screenshot <file.png>`.
 #[derive(Resource)]
 struct ShotPath(String);
@@ -182,6 +291,12 @@ fn main() {
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
     }
+    // `--window 1920x1080` — a fixed size for reproducible screenshots, the
+    // editors' convention. Without it a `--screenshot` run gets [`SHOT_SIZE`].
+    let window_size = flag("--window").and_then(|s| {
+        let (w, h) = s.split_once('x')?;
+        Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?))
+    });
     // Without `--frames`, about a second of run-up is enough for an image.
     let frame_limit = flag("--frames")
         .and_then(|n| n.parse::<u32>().ok())
@@ -224,14 +339,36 @@ fn main() {
     #[cfg_attr(not(feature = "dlss"), allow(unused_variables))]
     let dlss = settings::pre_render_plugins(&mut app);
     let graphics = app.world().resource::<settings::Graphics>().clone();
+    // **A `--screenshot` run opens no window at all.** It renders into an image
+    // and writes that: there is no surface, so nothing appears on the desktop,
+    // nothing steals focus, and — the point — nothing the compositor does can
+    // change the size of the result. Whatever else the machine is doing while
+    // the shot is taken, the picture comes out at the size asked for, and a
+    // before-and-after pair is actually comparable.
+    //
+    // Merely hiding the window is not enough, and that was the first attempt: a
+    // Wayland compositor maps it anyway, and the size then follows the desktop
+    // rather than the command line.
+    let offscreen = shot.as_ref().map(|_| window_size.unwrap_or(SHOT_SIZE));
+    let mut window = Window {
+        title: i18n::t!("window-simulator"),
+        mode: settings::window_mode(&graphics),
+        present_mode: settings::present_mode(&graphics),
+        ..default()
+    };
+    if let Some((w, h)) = window_size {
+        window.resolution = bevy::window::WindowResolution::new(w, h);
+    }
     let default_plugins = DefaultPlugins
         .set(WindowPlugin {
-            primary_window: Some(Window {
-                title: i18n::t!("window-simulator"),
-                mode: settings::window_mode(&graphics),
-                present_mode: settings::present_mode(&graphics),
-                ..default()
-            }),
+            primary_window: offscreen.is_none().then_some(window),
+            // Without a window there is nothing whose closing could end the run;
+            // `exit_after_frames` writes the `AppExit` instead.
+            exit_condition: if offscreen.is_some() {
+                bevy::window::ExitCondition::DontExit
+            } else {
+                bevy::window::ExitCondition::OnAllClosed
+            },
             ..default()
         })
         // The mixer is kira's (`audio.rs`); Bevy's own audio would open a second output
@@ -245,8 +382,35 @@ fn main() {
     } else {
         default_plugins.disable::<bevy::anti_alias::dlss::DlssInitPlugin>()
     };
-    app.add_plugins(default_plugins)
-        .add_plugins(app_icon::plugin)
+    // No window means no winit event loop to drive the frames, so the run loop
+    // comes from the schedule runner instead — the standard headless pairing.
+    //
+    // The shaders are compiled synchronously with it. Bevy compiles them on the
+    // task pool by default, and doing that from several threads at once trips
+    // wgpu's error scopes (`Mismatched pop_error_scope call`) often enough to
+    // lose one run in three — which for a screenshot run means no picture at
+    // all. A picture is worth more than the second of start-up, and this way
+    // every pipeline is also *ready* when the shot is taken.
+    let default_plugins =
+        match offscreen {
+            Some(_) => default_plugins.disable::<bevy::winit::WinitPlugin>().set(
+                bevy::render::RenderPlugin {
+                    synchronous_pipeline_compilation: true,
+                    ..default()
+                },
+            ),
+            None => default_plugins,
+        };
+    app.add_plugins(default_plugins);
+    if let Some(size) = offscreen {
+        app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
+            std::time::Duration::ZERO,
+        ))
+        .insert_resource(OffscreenSize(size))
+        .add_systems(PreStartup, open_offscreen)
+        .add_systems(PreUpdate, retarget_offscreen);
+    }
+    app.add_plugins(app_icon::plugin)
         // FSR 3 upscaling (`fsr.rs`): its render-side systems and pipelines, next to
         // the anti-aliasing Bevy's own plugins put up.
         .add_plugins(fsr::FsrPlugin)
@@ -459,9 +623,11 @@ fn main() {
 /// run is how the rendering is measured (the forest test of
 /// `tools/trees/bench_forest.mjs` is one), and reading them off a screenshot of
 /// the F6 overlay is neither scriptable nor precise.
+#[allow(clippy::too_many_arguments)]
 fn exit_after_frames(
     limit: Res<FrameLimit>,
     shot: Option<Res<ShotPath>>,
+    offscreen: Option<Res<Offscreen>>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     // None in the menu: there is no terrain there, and `--menu <page> --screenshot`
     // is exactly how its pages get photographed.
@@ -493,9 +659,11 @@ fn exit_after_frames(
         return;
     };
     if *count == limit.0 {
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(shot.0.clone()));
+        let target = match offscreen.as_deref() {
+            Some(offscreen) => Screenshot::image(offscreen.image.clone()),
+            None => Screenshot::primary_window(),
+        };
+        commands.spawn(target).observe(save_to_disk(shot.0.clone()));
     }
     // The capture goes through the render thread: it only lands on disk a few frames later.
     if *count >= limit.0 + 10 {
@@ -1147,6 +1315,11 @@ fn setup(
             // Seeded where the wayside camera would put itself — beside the track,
             // looking at the train. Without it the free camera would wake at the raw
             // origin: rail-head height, inside the lead vehicle.
+            //
+            // `--fly` and `--look` move both ends of that: a screenshot has no hands
+            // on the mouse, so without them the free camera can only ever photograph
+            // the train, and anything taller than about ten metres runs out of the
+            // top of the frame however far back the camera stands.
             let mut state = ui::CameraState {
                 mode: ui::CameraMode::Fly,
                 ..default()
@@ -1157,12 +1330,15 @@ fn setup(
                 let up = origin.dir_to_render(pose.up);
                 let forward = origin.dir_to_render(pose.tangent);
                 let right = forward.cross(up).normalize_or_zero();
-                state.fly = Some(pos + right * 25.0 + up * 6.0);
-                let at = (pos + up * 2.0 - state.fly.unwrap()).normalize();
-                state.pitch = at.y.asin();
+                let at = |offset: Vec3| pos + right * offset.x + up * offset.y + forward * offset.z;
+                let eye = at(view_offset("--fly").unwrap_or(Vec3::new(25.0, 6.0, 0.0)));
+                let target = at(view_offset("--look").unwrap_or(Vec3::new(0.0, 2.0, 0.0)));
+                state.fly = Some(eye);
+                let dir = (target - eye).normalize_or_zero();
+                state.pitch = dir.y.asin();
                 // The angles of the walk's view convention: forward is
                 // (−sin yaw · cos pitch, sin pitch, −cos yaw · cos pitch).
-                state.yaw = (-at.x).atan2(-at.z);
+                state.yaw = (-dir.x).atan2(-dir.z);
             }
             commands.insert_resource(state);
         }
@@ -1242,6 +1418,28 @@ fn parse_pair(text: &str, separator: char) -> Option<(u32, u32)> {
 
 pub(crate) fn arg(name: &str) -> Option<String> {
     std::env::args().skip_while(|a| a != name).nth(1)
+}
+
+/// `--fly 12,30,-40` as a place in the player train's own frame: metres to the
+/// **right** of it, **up** from the rail head, and **forward** along the track.
+///
+/// The train is the only landmark a command line can name without a projection —
+/// a lat/lon would have to be converted through UTM and the render origin to say
+/// the same thing, and the content whose model is being photographed is placed
+/// relative to the track in the first place.
+fn view_offset(name: &str) -> Option<Vec3> {
+    let value = arg(name)?;
+    let parts: Vec<f32> = value
+        .split(',')
+        .filter_map(|p| p.trim().parse().ok())
+        .collect();
+    match parts[..] {
+        [right, up, forward] => Some(Vec3::new(right, up, forward)),
+        _ => {
+            warn!("{name} {value}: expected right,up,forward in metres");
+            None
+        }
+    }
 }
 
 /// Every value of a repeatable command line option, in order.

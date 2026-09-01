@@ -6,6 +6,6 @@
     lateral_offset: 0.0,
     yaw_deg: 0.0,
     height: 0.0,
-    lod_distances: [156, 347, 1199, 1825],
+    lod_distances: [156, 347, 663, 1825],
     tags: ["freileitung", "mittelspannung", "20kv", "trafo", "epoch-3", "epoch-4", "epoch-5", "epoch-6"],
 )

@@ -88,11 +88,11 @@ pub const PRESETS: &[PowerPreset] = &[
         object: "pylons:einebenenmast_380_trag",
         tension_object: "pylons:einebenenmast_380_abspann",
         height: 42.0,
-        root: 1.60,
+        root: 1.10,
         span: 400.0,
         arms: &[PowerArm {
-            at: 36.54,
-            half_width: 20.00,
+            at: 33.14,
+            half_width: 22.60,
             conductors: 6,
         }],
     },
@@ -100,18 +100,18 @@ pub const PRESETS: &[PowerPreset] = &[
         id: "donaumast-380",
         object: "pylons:donaumast_380_trag",
         tension_object: "pylons:donaumast_380_abspann",
-        height: 60.0,
-        root: 1.70,
+        height: 55.0,
+        root: 1.05,
         span: 400.0,
         arms: &[
             PowerArm {
-                at: 54.60,
-                half_width: 7.00,
+                at: 44.50,
+                half_width: 11.00,
                 conductors: 2,
             },
             PowerArm {
-                at: 46.20,
-                half_width: 12.00,
+                at: 30.30,
+                half_width: 16.00,
                 conductors: 4,
             },
         ],
@@ -121,22 +121,22 @@ pub const PRESETS: &[PowerPreset] = &[
         object: "pylons:tonnenmast_380_trag",
         tension_object: "pylons:tonnenmast_380_abspann",
         height: 71.0,
-        root: 1.60,
+        root: 1.10,
         span: 400.0,
         arms: &[
             PowerArm {
-                at: 66.03,
-                half_width: 8.00,
+                at: 63.05,
+                half_width: 9.50,
                 conductors: 2,
             },
             PowerArm {
-                at: 58.93,
-                half_width: 11.00,
+                at: 51.05,
+                half_width: 11.50,
                 conductors: 2,
             },
             PowerArm {
-                at: 50.41,
-                half_width: 9.00,
+                at: 41.30,
+                half_width: 10.00,
                 conductors: 2,
             },
         ],
@@ -146,17 +146,17 @@ pub const PRESETS: &[PowerPreset] = &[
         object: "pylons:donaumast_220_trag",
         tension_object: "pylons:donaumast_220_abspann",
         height: 45.0,
-        root: 1.30,
+        root: 1.00,
         span: 375.0,
         arms: &[
             PowerArm {
-                at: 40.50,
-                half_width: 5.00,
+                at: 36.00,
+                half_width: 8.00,
                 conductors: 2,
             },
             PowerArm {
-                at: 34.20,
-                half_width: 8.50,
+                at: 28.50,
+                half_width: 11.50,
                 conductors: 4,
             },
         ],
@@ -165,23 +165,23 @@ pub const PRESETS: &[PowerPreset] = &[
         id: "tannenbaummast-220",
         object: "pylons:tannenbaummast_220_trag",
         tension_object: "pylons:tannenbaummast_220_abspann",
-        height: 47.5,
-        root: 1.30,
+        height: 43.0,
+        root: 1.00,
         span: 325.0,
         arms: &[
             PowerArm {
-                at: 44.18,
-                half_width: 5.50,
-                conductors: 2,
-            },
-            PowerArm {
-                at: 38.48,
-                half_width: 7.00,
-                conductors: 2,
-            },
-            PowerArm {
-                at: 31.83,
+                at: 32.75,
                 half_width: 8.50,
+                conductors: 2,
+            },
+            PowerArm {
+                at: 26.00,
+                half_width: 12.25,
+                conductors: 2,
+            },
+            PowerArm {
+                at: 18.55,
+                half_width: 13.25,
                 conductors: 2,
             },
         ],
@@ -191,17 +191,17 @@ pub const PRESETS: &[PowerPreset] = &[
         object: "pylons:donaumast_110_trag",
         tension_object: "pylons:donaumast_110_abspann",
         height: 30.0,
-        root: 1.00,
+        root: 0.80,
         span: 275.0,
         arms: &[
             PowerArm {
-                at: 26.70,
-                half_width: 3.00,
+                at: 24.00,
+                half_width: 4.50,
                 conductors: 2,
             },
             PowerArm {
-                at: 22.20,
-                half_width: 5.50,
+                at: 18.70,
+                half_width: 8.00,
                 conductors: 4,
             },
         ],
@@ -211,10 +211,10 @@ pub const PRESETS: &[PowerPreset] = &[
         object: "pylons:einebenenmast_110_trag",
         tension_object: "pylons:einebenenmast_110_abspann",
         height: 26.0,
-        root: 1.10,
+        root: 0.80,
         span: 275.0,
         arms: &[PowerArm {
-            at: 22.36,
+            at: 20.00,
             half_width: 9.00,
             conductors: 6,
         }],
@@ -223,23 +223,23 @@ pub const PRESETS: &[PowerPreset] = &[
         id: "kombimast-380-110",
         object: "pylons:kombimast_380_110_trag",
         tension_object: "pylons:kombimast_380_110_abspann",
-        height: 72.5,
-        root: 1.80,
+        height: 65.0,
+        root: 1.15,
         span: 375.0,
         arms: &[
             PowerArm {
-                at: 68.15,
-                half_width: 7.00,
+                at: 54.50,
+                half_width: 11.00,
                 conductors: 2,
             },
             PowerArm {
-                at: 60.17,
-                half_width: 12.00,
+                at: 40.30,
+                half_width: 16.00,
                 conductors: 4,
             },
             PowerArm {
-                at: 48.58,
-                half_width: 8.00,
+                at: 28.50,
+                half_width: 17.50,
                 conductors: 6,
             },
         ],
@@ -252,7 +252,7 @@ pub const PRESETS: &[PowerPreset] = &[
         root: 1.10,
         span: 200.0,
         arms: &[PowerArm {
-            at: 28.60,
+            at: 26.20,
             half_width: 15.00,
             conductors: 6,
         }],
@@ -266,17 +266,17 @@ pub const PRESETS: &[PowerPreset] = &[
         span: 325.0,
         arms: &[
             PowerArm {
-                at: 48.83,
+                at: 47.62,
                 half_width: 4.00,
                 conductors: 2,
             },
             PowerArm {
-                at: 43.05,
+                at: 41.85,
                 half_width: 6.00,
                 conductors: 2,
             },
             PowerArm {
-                at: 37.27,
+                at: 36.07,
                 half_width: 6.00,
                 conductors: 2,
             },
@@ -286,12 +286,12 @@ pub const PRESETS: &[PowerPreset] = &[
         id: "bahnstrommast-110",
         object: "pylons:bahnstrommast_110_trag",
         tension_object: "pylons:bahnstrommast_110_abspann",
-        height: 27.5,
+        height: 31.0,
         root: 0.90,
         span: 300.0,
         arms: &[PowerArm {
-            at: 23.93,
-            half_width: 4.50,
+            at: 24.00,
+            half_width: 8.60,
             conductors: 4,
         }],
     },
@@ -299,18 +299,18 @@ pub const PRESETS: &[PowerPreset] = &[
         id: "bahnstrommast-110-zweiebenen",
         object: "pylons:bahnstrommast_110_zweiebenen_trag",
         tension_object: "pylons:bahnstrommast_110_zweiebenen_abspann",
-        height: 32.0,
+        height: 34.0,
         root: 0.95,
         span: 300.0,
         arms: &[
             PowerArm {
-                at: 28.48,
-                half_width: 4.50,
+                at: 26.00,
+                half_width: 8.60,
                 conductors: 4,
             },
             PowerArm {
-                at: 24.00,
-                half_width: 4.50,
+                at: 21.30,
+                half_width: 7.60,
                 conductors: 4,
             },
         ],
@@ -353,17 +353,17 @@ pub const PRESETS: &[PowerPreset] = &[
         object: "pylons:stahlgittermast_20kv_trag",
         tension_object: "pylons:stahlgittermast_20kv_abspann",
         height: 15.0,
-        root: 0.50,
+        root: 0.325,
         span: 115.0,
         arms: &[
             PowerArm {
-                at: 13.80,
-                half_width: 1.30,
+                at: 14.20,
+                half_width: 2.00,
                 conductors: 3,
             },
             PowerArm {
-                at: 12.00,
-                half_width: 1.30,
+                at: 12.20,
+                half_width: 2.00,
                 conductors: 3,
             },
         ],
@@ -858,6 +858,20 @@ mod tests {
             "{inner} in ({}, {outer})",
             preset.root
         );
+        assert!((inner - outer / 2.0).abs() < 1e-9, "equal electrical bays");
+    }
+
+    #[test]
+    fn an_odd_crossarm_has_one_centre_conductor() {
+        let arm = PowerArm {
+            at: 10.0,
+            half_width: 1.2,
+            conductors: 3,
+        };
+        let offsets = arm.offsets(0.12);
+        assert_eq!(offsets.len(), 3);
+        assert_eq!(offsets.iter().filter(|x| x.abs() < 1e-9).count(), 1);
+        assert!(offsets.contains(&-1.2) && offsets.contains(&1.2));
     }
 
     /// The mast turns so that its crossarms stand across the line, and it

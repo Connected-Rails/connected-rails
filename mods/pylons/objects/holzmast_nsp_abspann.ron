@@ -6,6 +6,6 @@
     lateral_offset: 0.0,
     yaw_deg: 0.0,
     height: 0.0,
-    lod_distances: [139, 308, 866, 1564],
+    lod_distances: [139, 308, 512, 1564],
     tags: ["freileitung", "niederspannung", "holzmast", "historisch", "epoch-2", "epoch-3", "epoch-4", "abspann"],
 )

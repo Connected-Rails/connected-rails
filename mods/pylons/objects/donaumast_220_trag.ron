@@ -6,6 +6,6 @@
     lateral_offset: 0.0,
     yaw_deg: 0.0,
     height: 0.0,
-    lod_distances: [226, 501, 2260, 4000],
+    lod_distances: [226, 501, 1738, 4000],
     tags: ["freileitung", "hochspannung", "220kv", "gittermast", "epoch-3", "epoch-4", "epoch-5", "epoch-6", "trag"],
 )

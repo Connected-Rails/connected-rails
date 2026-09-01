@@ -2,9 +2,10 @@
 //
 // A lattice mast is a few hundred straight steel members and nothing else, so
 // the whole vocabulary is: a box between two points, a tapered tube between two
-// points, and a way to glue the results together. Flat normals throughout —
-// angle steel has edges, and smoothing them costs vertices to hide the one
-// thing that makes a lattice read as steel.
+// points, and a way to glue the results together. Flat normals on everything
+// straight — angle steel has edges, and smoothing them costs vertices to hide
+// the one thing that makes a lattice read as steel — and smooth ones round a
+// `tube`, which is the one shape here that is genuinely curved.
 //
 // Axes are the game's (`MODS.md`, *Track objects*): +Y up, the model's front
 // along −Z. A mast is built with its crossarms along ±X, so the line it carries
@@ -16,7 +17,8 @@
  * `uvs` are in **metres**, not in `0…1`: the texture tiles once per metre
  * (`tools/pylons/lib/texture.mjs`), so the grain of the zinc is the same size
  * on a 36 cm leg as on a 6 cm brace, which is the one thing that stops a
- * tiled material from reading as wallpaper.
+ * tiled material from reading as wallpaper. `v` runs **along** a piece and `u`
+ * across or around it, on a `member` as on a `tube`.
  *
  * `colors` carry the weathering — see `tint`.
  */
@@ -78,8 +80,11 @@ const WHITE = [1, 1, 1, 1];
  *
  * `uv` is the four corners' texture coordinates in metres; without it they are
  * measured off the quad's own edges, which is right for anything rectangular.
+ *
+ * `normals` gives the four corners their own normals instead of the face's —
+ * what makes a round section read as round (see [`tube`]).
  */
-export function quad(out, a, b, c, d, uv) {
+export function quad(out, a, b, c, d, uv, normals) {
   const n = normalise(cross(sub(b, a), sub(c, a)));
   const base = out.positions.length / 3;
   const t = out.tint ?? WHITE;
@@ -92,8 +97,9 @@ export function quad(out, a, b, c, d, uv) {
   ];
   for (let i = 0; i < 4; i++) {
     const p = corners[i];
+    const vn = normals ? normals[i] : n;
     out.positions.push(p[0], p[1], p[2]);
-    out.normals.push(n[0], n[1], n[2]);
+    out.normals.push(vn[0], vn[1], vn[2]);
     out.uvs.push(map[i][0], map[i][1]);
     out.colors.push(t[0], t[1], t[2], t[3]);
     out.pieces.push(out.piece ?? 0);
@@ -148,23 +154,87 @@ export function member(out, a, b, wu, wv = wu, capped = false) {
   const b10 = corner(b, 1, -1);
   const b11 = corner(b, 1, 1);
   const b01 = corner(b, -1, 1);
-  // `u` runs along the bar in metres and `v` across it, so the grain follows
-  // the steel rather than the triangle.
+  // `v` runs along the bar in metres and `u` across it, so the grain follows
+  // the steel rather than the triangle — and it is the same way round as on a
+  // `tube`, whose `u` goes round the pole. One convention for the whole kit:
+  // **`v` along the piece, `u` across or around it.** The materials assume it
+  // (`texture.mjs` draws the mill's rolling marks along `v`, the wood's grain
+  // along `v`), so a member mapped the other way round had the marks running
+  // across the bar.
   const len = length(sub(b, a));
   const face = (w) => [
     [0, 0],
-    [len, 0],
-    [len, w],
-    [0, w],
+    [w, 0],
+    [w, len],
+    [0, len],
   ];
-  quad(out, a00, b00, b10, a10, face(wu));
-  quad(out, a10, b10, b11, a11, face(wv));
-  quad(out, a11, b11, b01, a01, face(wu));
-  quad(out, a01, b01, b00, a00, face(wv));
+  // A cap is `wu` by `wv` and nothing to do with the length; mapping it off
+  // `face` stretched a metre of material over a 20 cm end.
+  const cap = [
+    [0, 0],
+    [0, wv],
+    [wu, wv],
+    [wu, 0],
+  ];
+  // **The corners go round the way that puts the normal outside.** They did not:
+  // every side of every box in the kit was wound inside out, so with
+  // single-sided materials the near face of a bar was culled and what the eye
+  // got was the inside of the far one — the right silhouette, the wrong depth
+  // by the thickness of the bar, and the shading of a surface lit from behind.
+  // On a lattice of four hundred crossing members that reads as some bars being
+  // in front of others they are in fact behind. `--check` asserts it now.
+  quad(out, a00, a10, b10, b00, face(wu));
+  quad(out, a10, a11, b11, b10, face(wv));
+  quad(out, a11, a01, b01, b11, face(wu));
+  quad(out, a01, a00, b00, b01, face(wv));
   if (capped) {
-    quad(out, a00, a10, a11, a01, face(wv));
-    quad(out, b01, b11, b10, b00, face(wv));
+    quad(out, a00, a01, a11, a10, cap);
+    quad(out, b01, b00, b10, b11, cap);
   }
+  return out;
+}
+
+/**
+ * A hot-rolled L section between two nodes.
+ *
+ * German lattice towers are assembled from angle steel, not square tubing.
+ * At normal viewing distances the distinction disappears, so lower LODs keep
+ * the cheaper box. In LOD0 two thin, overlapping flanges make the actual
+ * right-angle section: a hard outer arris, a shadowed inside corner and two
+ * broad zinc faces. Each flange remains a closed convex piece, which also lets
+ * the winding audit judge it unambiguously.
+ */
+export function angleMember(out, a, b, wu, wv = wu, capped = false) {
+  const axis = sub(b, a);
+  if (length(axis) < 1e-6) return out;
+  const { u, v } = frame(axis);
+  // Rolled tower angles are thin compared with their legs. Do not let a small
+  // brace fall below 8 mm, or its inner corner aliases before the first LOD.
+  const thickness = Math.min(Math.min(wu, wv) * 0.22, Math.max(0.008, Math.min(wu, wv) * 0.12));
+  const shifted = (p, du, dv) => add(add(p, scale(u, du)), scale(v, dv));
+
+  // The vertical flange occupies the full outside leg. The horizontal flange
+  // starts exactly at its inner face instead of overlapping it; their shared
+  // faces have opposite winding, so back-face culling leaves no z-fighting.
+  const verticalU = -(wu - thickness) / 2;
+  member(
+    out,
+    shifted(a, verticalU, 0),
+    shifted(b, verticalU, 0),
+    thickness,
+    wv,
+    capped,
+  );
+  const horizontalU = thickness / 2;
+  const horizontalV = -(wv - thickness) / 2;
+  member(
+    out,
+    shifted(a, horizontalU, horizontalV),
+    shifted(b, horizontalU, horizontalV),
+    wu - thickness,
+    thickness,
+    capped,
+  );
   return out;
 }
 
@@ -172,10 +242,21 @@ export function member(out, a, b, wu, wv = wu, capped = false) {
  * A tapered tube from `a` (radius `r0`) to `b` (radius `r1`), `sides` facets.
  * Concrete and wooden poles, insulator sheds and the steel tube of a compact
  * mast — everything round in the kit.
+ *
+ * **Smooth around the circumference, flat everywhere else.** The rest of this
+ * file is flat-shaded on purpose — angle steel has edges and smoothing them
+ * costs vertices to hide the one thing that makes a lattice read as steel — but
+ * a *round* section is the opposite case, and the same rule applied to it gave
+ * the compact mast a body that read as folded sheet: a ten-sided prism with
+ * seventy-centimetre faces, each its own flat grey. The corner normals here are
+ * the cone's true normals, so ten sides are enough to read as round and the
+ * silhouette is out by five centimetres on a two-metre tube. Pass `smooth =
+ * false` for something that really is a prism.
  */
-export function tube(out, a, b, r0, r1, sides = 8, capped = true) {
+export function tube(out, a, b, r0, r1, sides = 8, capped = true, smooth = true) {
   out.piece = (out.piece ?? 0) + 1;
   const { u, v } = frame(sub(b, a));
+  const w = normalise(sub(b, a));
   const ring = (p, r) => {
     const pts = [];
     for (let i = 0; i < sides; i++) {
@@ -187,15 +268,41 @@ export function tube(out, a, b, r0, r1, sides = 8, capped = true) {
   const lo = ring(a, r0);
   const hi = ring(b, r1);
   const len = length(sub(b, a));
-  const step = (2 * Math.PI * Math.max(r0, r1)) / sides;
+  // The outward normal of a truncated cone: radial, tilted back by the taper.
+  const radial = (i) => {
+    const t = (i / sides) * Math.PI * 2;
+    const out_ = add(scale(u, Math.cos(t)), scale(v, Math.sin(t)));
+    return normalise(add(scale(out_, len), scale(w, r0 - r1)));
+  };
+  const circumference = 2 * Math.PI * Math.max(r0, r1);
+  // Keep approximately metre-sized texels, but close a round section on an
+  // *integer* texture repeat. Using the literal circumference as the final U
+  // put (for example) U=0 next to U=0.82 on a wooden pole's closing edge: the
+  // image itself tiles perfectly, yet those are unrelated places in it, so a
+  // hard vertical colour seam ran along every non-integer circumference. A
+  // pole gets one repeat around it; a seven-metre compact-mast circumference
+  // gets seven. Density stays within half a repeat per circumference and the
+  // first and last samples now actually meet.
+  const wraps = Math.max(1, Math.round(circumference));
+  const step = wraps / sides;
   for (let i = 0; i < sides; i++) {
     const j = (i + 1) % sides;
-    quad(out, lo[i], hi[i], hi[j], lo[j], [
-      [i * step, 0],
-      [i * step, len],
-      [(i + 1) * step, len],
-      [(i + 1) * step, 0],
-    ]);
+    const ni = radial(i);
+    const nj = radial(j);
+    quad(
+      out,
+      lo[i],
+      lo[j],
+      hi[j],
+      hi[i],
+      [
+        [i * step, 0],
+        [(i + 1) * step, 0],
+        [(i + 1) * step, len],
+        [i * step, len],
+      ],
+      smooth ? [ni, nj, nj, ni] : undefined,
+    );
   }
   if (capped) {
     for (let i = 1; i < sides - 1; i++) {
@@ -350,4 +457,65 @@ export function weather(geometry, { ground = 6.0, floor = 0.74, jitter = 0.05, s
     geometry.colors[i * 4 + 3] = 1;
   }
   return geometry;
+}
+
+/**
+ * How many of a geometry's triangles face **outward**, and how many face in.
+ *
+ * A face is outward when its normal points away from the centre of the piece it
+ * belongs to — `pieces` is what says which piece that is, so a lattice of four
+ * hundred bars is judged bar by bar rather than against the middle of the mast.
+ *
+ * This exists because `member` was wound inside out for the whole life of the
+ * kit and nothing caught it: the silhouette is the same either way, so a
+ * picture of a mast looks right and only the depth and the shading are wrong.
+ * `build_pylons.mjs --check` runs it over the catalogue.
+ */
+export function facing(geometry) {
+  const { positions: p, indices: idx, pieces } = geometry;
+  const centre = new Map();
+  const count = new Map();
+  for (let i = 0; i < p.length / 3; i++) {
+    const k = pieces[i];
+    const c = centre.get(k) ?? [0, 0, 0];
+    c[0] += p[i * 3];
+    c[1] += p[i * 3 + 1];
+    c[2] += p[i * 3 + 2];
+    centre.set(k, c);
+    count.set(k, (count.get(k) ?? 0) + 1);
+  }
+  for (const [k, c] of centre) {
+    const m = count.get(k);
+    centre.set(k, [c[0] / m, c[1] / m, c[2] / m]);
+  }
+  let out = 0;
+  let inward = 0;
+  for (let t = 0; t < idx.length; t += 3) {
+    const [i, j, k] = [idx[t], idx[t + 1], idx[t + 2]];
+    const c = centre.get(pieces[i]);
+    const fx = (p[i * 3] + p[j * 3] + p[k * 3]) / 3 - c[0];
+    const fy = (p[i * 3 + 1] + p[j * 3 + 1] + p[k * 3 + 1]) / 3 - c[1];
+    const fz = (p[i * 3 + 2] + p[j * 3 + 2] + p[k * 3 + 2]) / 3 - c[2];
+    // Winding, not the supplied vertex normal, decides which side survives
+    // backface culling. A smooth tube can carry perfectly outward normals on
+    // triangles wound inward; that was exactly why every round pole looked
+    // lit correctly yet disappeared when viewed from outside. Derive the face
+    // direction from its positions so this check tests what the GPU tests.
+    const abx = p[j * 3] - p[i * 3];
+    const aby = p[j * 3 + 1] - p[i * 3 + 1];
+    const abz = p[j * 3 + 2] - p[i * 3 + 2];
+    const acx = p[k * 3] - p[i * 3];
+    const acy = p[k * 3 + 1] - p[i * 3 + 1];
+    const acz = p[k * 3 + 2] - p[i * 3 + 2];
+    const nx = aby * acz - abz * acy;
+    const ny = abz * acx - abx * acz;
+    const nz = abx * acy - aby * acx;
+    const d = fx * nx + fy * ny + fz * nz;
+    // A face through the piece's own centre says nothing either way — the two
+    // triangles of a flat cap on a zero-thickness stub are the case.
+    if (Math.abs(d) < 1e-6) continue;
+    if (d > 0) out++;
+    else inward++;
+  }
+  return { out, inward };
 }

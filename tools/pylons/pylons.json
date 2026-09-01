@@ -1,1462 +1,1465 @@
 {
+ "_comment": [
+  "The atlas of overhead line supports that stand along a German railway line.",
+  "One entry per distinguishable silhouette, not per manufacturer's drawing — a",
+  "route needs the shapes a passenger can tell apart from a moving train, and",
+  "that is the mast picture (Mastbild), the material and the height.",
+  "",
+  "See README.md for the sources behind every number and for the licence survey",
+  "of the models the geometry can come from.",
+  "",
+  "id: kebab-case, `<shape>-<voltage>`; the file stem a track object would use.",
+  "name_de / name_en: the German term is the real one — `Donaumast` is what the",
+  "  drawings say. The English name is descriptive and exists for the atlas only;",
+  "  user-visible text goes through i18n, never through this file.",
+  "category: transmission | distribution | railway-power | telecom",
+  "osm: the OpenStreetMap tags this type is mapped with. `design` is the key that",
+  "  carries the silhouette (wiki.openstreetmap.org/wiki/Key:design) — the route",
+  "  editor's Overpass import can pick the type straight from it.",
+  "voltage_kv / frequency_hz: 50 Hz for the public grid, 16.7 Hz for Bahnstrom.",
+  "circuits: three-phase systems on the mast; a Bahnstrom circuit is two-pole.",
+  "conductors: live conductors in total, earth wires excluded.",
+  "earth_wires: 0, 1 or 2 above the topmost crossarm.",
+  "structure: steel-lattice | steel-tube | spun-concrete | wood",
+  "height_m: [min, max] over ground, to the mast tip including the earth peak.",
+  "crossarms: top to bottom. `width_m` is the full width tip to tip and",
+  "  `conductors` counts both sides together; `at_frac` is the lower chord's",
+  "  conductor height as a share of the mast's, and `depth_m` is the vertical",
+  "  truss depth from that chord to the upper root joint at the body.",
+  "span_m: [min, max] distance to the next mast on level ground.",
+  "roles: which functions this shape is built in — suspension (Tragmast),",
+  "  tension (Abspannmast), angle (Winkelmast), terminal (Endmast),",
+  "  branch (Abzweigmast), transposition (Verdrillungsmast).",
+  "region: nationwide | west | east | rare — where in Germany it dominates.",
+  "epochs: German model railway epochs the shape belongs to (III = 1945-1970,",
+  "  IV = 1970-1990, V = 1990-2006, VI = 2007-). Feeds the `epoch-*` object tags.",
+  "confidence: `sourced` when every number in the entry is backed by a citation",
+  "  in README.md, `estimated` when the shape is documented but the dimensions",
+  "  are read off photographs and the neighbouring sourced types.",
+  "tags: what a route editor content drawer filters on.",
+  "build: what the generator needs beyond the shape (tools/pylons/lib/kit.mjs).",
+  "  kind: lattice | pole | tube | portal — which body is assembled.",
+  "  base_m / shaft_m: the square (or the diameter) at the foot and at the top.",
+  "  waist: knee where the steep lower batter changes to the shallow upper",
+  "    taper, as a share of the height; 1.0 for one continuous taper.",
+  "  panels / shaft_panels: bracing panels below and above the waist.",
+  "  leg_m / brace_m / arm_m: member sizes.",
+  "  peak_m / peaks: the earth-wire peak's height and how many there are.",
+  "  fitting: suspension | composite | pin | bell — what hangs or stands at a",
+  "    conductor. `composite` is a grey silicone long rod, not a cap chain.",
+  "  insulator_m plus insulator_discs or insulator_sheds: the fitting's length",
+  "    and repeating units. Follows the **fitting**, not the body: a 20 kV",
+  "    lattice pole carries",
+  "    the same 35 cm pin insulator a concrete pole does."
+ ],
+ "finish": {
   "_comment": [
-    "The atlas of overhead line supports that stand along a German railway line.",
-    "One entry per distinguishable silhouette, not per manufacturer's drawing — a",
-    "route needs the shapes a passenger can tell apart from a moving train, and",
-    "that is the mast picture (Mastbild), the material and the height.",
-    "",
-    "See README.md for the sources behind every number and for the licence survey",
-    "of the models the geometry can come from.",
-    "",
-    "id: kebab-case, `<shape>-<voltage>`; the file stem a track object would use.",
-    "name_de / name_en: the German term is the real one — `Donaumast` is what the",
-    "  drawings say. The English name is descriptive and exists for the atlas only;",
-    "  user-visible text goes through i18n, never through this file.",
-    "category: transmission | distribution | railway-power | telecom",
-    "osm: the OpenStreetMap tags this type is mapped with. `design` is the key that",
-    "  carries the silhouette (wiki.openstreetmap.org/wiki/Key:design) — the route",
-    "  editor's Overpass import can pick the type straight from it.",
-    "voltage_kv / frequency_hz: 50 Hz for the public grid, 16.7 Hz for Bahnstrom.",
-    "circuits: three-phase systems on the mast; a Bahnstrom circuit is two-pole.",
-    "conductors: live conductors in total, earth wires excluded.",
-    "earth_wires: 0, 1 or 2 above the topmost crossarm.",
-    "structure: steel-lattice | steel-tube | spun-concrete | wood",
-    "height_m: [min, max] over ground, to the mast tip including the earth peak.",
-    "crossarms: top to bottom. `width_m` is the full width tip to tip and",
-    "  `conductors` counts both sides together; `at_frac` is the arm's height as a",
-    "  share of the mast's, and `depth_m` how deep its truss is at the body.",
-    "span_m: [min, max] distance to the next mast on level ground.",
-    "roles: which functions this shape is built in — suspension (Tragmast),",
-    "  tension (Abspannmast), angle (Winkelmast), terminal (Endmast),",
-    "  branch (Abzweigmast), transposition (Verdrillungsmast).",
-    "region: nationwide | west | east | rare — where in Germany it dominates.",
-    "epochs: German model railway epochs the shape belongs to (III = 1945-1970,",
-    "  IV = 1970-1990, V = 1990-2006, VI = 2007-). Feeds the `epoch-*` object tags.",
-    "confidence: `sourced` when every number in the entry is backed by a citation",
-    "  in README.md, `estimated` when the shape is documented but the dimensions",
-    "  are read off photographs and the neighbouring sourced types.",
-    "tags: what a route editor content drawer filters on.",
-    "build: what the generator needs beyond the shape (tools/pylons/lib/kit.mjs).",
-    "  kind: lattice | pole | tube | portal — which body is assembled.",
-    "  base_m / shaft_m: the square (or the diameter) at the foot and at the top.",
-    "  waist: where the batter stops and the parallel shaft begins, as a share of",
-    "    the height; 1.0 for a body that tapers all the way.",
-    "  panels / shaft_panels: bracing panels below and above the waist.",
-    "  leg_m / brace_m / arm_m: member sizes.",
-    "  peak_m / peaks: the earth-wire peak's height and how many there are.",
-    "  fitting: suspension | pin | bell — what hangs or stands at a conductor.",
-    "  insulator_m / insulator_discs: the fitting's length and how many discs it",
-    "    has. Follows the **fitting**, not the body: a 20 kV lattice pole carries",
-    "    the same 35 cm pin insulator a concrete pole does."
+   "How the steel looks. Nothing here is per type — it applies to every lattice",
+   "mast in the atlas and belongs in the material, not in the geometry."
   ],
-  "finish": {
-    "_comment": [
-      "How the steel looks. Nothing here is per type — it applies to every lattice",
-      "mast in the atlas and belongs in the material, not in the geometry."
-    ],
-    "steel_lattice": "hot-dip galvanised, weathering from bright metallic grey to a flat dull grey over about ten years; no paint",
-    "aviation_marking": "red/white banding on the top third and orange marker balls (Warnkugeln, 60 cm) on the earth wire near crossings and airfields",
-    "insulators": "long rod or cap-and-pin strings, porcelain brown or glass green on old lines, grey silicone composite on anything built after about 1995",
-    "signage": "a yellow-and-black lightning arrow plate and the mast number stencilled about 3 m above the foot",
-    "bird_protection": "black-and-white bird deflectors on the earth wire, insulator hoods on medium voltage — mandatory on new lines since the 2002 amendment of the BNatSchG"
-  },
-  "types": [
+  "steel_lattice": "hot-dip galvanised, weathering from bright metallic grey to a flat dull grey over about ten years; no paint",
+  "aviation_marking": "red/white banding on the top third and orange marker balls (Warnkugeln, 60 cm) on the earth wire near crossings and airfields",
+  "insulators": "long rod or cap-and-pin strings, porcelain brown or glass green on old lines, grey silicone composite on anything built after about 1995",
+  "signage": "a yellow-and-black lightning arrow plate and the mast number stencilled about 3 m above the foot",
+  "bird_protection": "black-and-white bird deflectors on the earth wire, insulator hoods on medium voltage — mandatory on new lines since the 2002 amendment of the BNatSchG"
+ },
+ "types": [
+  {
+   "id": "einebenenmast-380",
+   "name_de": "Einebenenmast",
+   "name_en": "single-level tower",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "one-level"
+   },
+   "voltage_kv": 380,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    37,
+    47
+   ],
+   "crossarms": [
     {
-      "id": "einebenenmast-380",
-      "name_de": "Einebenenmast",
-      "name_en": "single-level tower",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "one-level"
-      },
-      "voltage_kv": 380,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        37,
-        47
-      ],
-      "crossarms": [
-        {
-          "width_m": 40,
-          "conductors": 6,
-          "at_frac": 0.87,
-          "depth_m": 3.4
-        }
-      ],
-      "span_m": [
-        300,
-        500
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle"
-      ],
-      "region": "east",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "sourced",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "380kv",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The lowest of the extra-high-voltage shapes and the widest. One long crossarm carries all six conductors side by side, which keeps the mast short but needs a wide cleared strip — the reason it is rare in forest. Standard on the 380 kV grid of the eastern states.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 9.0,
-        "shaft_m": 3.2,
-        "waist": 0.7,
-        "panels": 8,
-        "shaft_panels": 3,
-        "leg_m": 0.34,
-        "brace_m": 0.15,
-        "arm_m": 0.18,
-        "peak_m": 4.0,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "donaumast-380",
-      "name_de": "Donaumast",
-      "name_en": "Danube tower",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "donau"
-      },
-      "voltage_kv": 380,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        55,
-        65
-      ],
-      "crossarms": [
-        {
-          "width_m": 14,
-          "conductors": 2,
-          "at_frac": 0.91,
-          "depth_m": 2.6
-        },
-        {
-          "width_m": 24,
-          "conductors": 4,
-          "at_frac": 0.77,
-          "depth_m": 3.2
-        }
-      ],
-      "span_m": [
-        300,
-        500
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "transposition"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "sourced",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "380kv",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The default German extra-high-voltage mast and the one to build first. Two conductors per circuit on the wide lower crossarm, one on the narrow upper one — a compromise between the wide single level and the tall barrel. Named after the 110 kV line of 1927 along the Danube from Regensburg to the Kachlet power station.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 9.5,
-        "shaft_m": 3.4,
-        "waist": 0.64,
-        "panels": 9,
-        "shaft_panels": 4,
-        "leg_m": 0.36,
-        "brace_m": 0.16,
-        "arm_m": 0.19,
-        "peak_m": 4.5,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "tonnenmast-380",
-      "name_de": "Tonnenmast",
-      "name_en": "barrel tower",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "barrel"
-      },
-      "voltage_kv": 380,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        66,
-        76
-      ],
-      "crossarms": [
-        {
-          "width_m": 16,
-          "conductors": 2,
-          "at_frac": 0.93,
-          "depth_m": 2.6
-        },
-        {
-          "width_m": 22,
-          "conductors": 2,
-          "at_frac": 0.83,
-          "depth_m": 3.0
-        },
-        {
-          "width_m": 18,
-          "conductors": 2,
-          "at_frac": 0.71,
-          "depth_m": 3.0
-        }
-      ],
-      "span_m": [
-        300,
-        500
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle"
-      ],
-      "region": "rare",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "sourced",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "380kv",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "Three crossarms with the middle one widest, so the conductors sit on a barrel-shaped outline and no conductor hangs directly under another — ice shed from above cannot reach it. The tallest and narrowest of the three, uncommon in Germany but the norm in Britain, Switzerland and Poland; worth having for a border route.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 10.0,
-        "shaft_m": 3.2,
-        "waist": 0.6,
-        "panels": 10,
-        "shaft_panels": 5,
-        "leg_m": 0.36,
-        "brace_m": 0.16,
-        "arm_m": 0.19,
-        "peak_m": 4.0,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "donaumast-220",
-      "name_de": "Donaumast 220 kV",
-      "name_en": "Danube tower, 220 kV",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "donau"
-      },
-      "voltage_kv": 220,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        40,
-        50
-      ],
-      "crossarms": [
-        {
-          "width_m": 10,
-          "conductors": 2,
-          "at_frac": 0.9,
-          "depth_m": 2.2
-        },
-        {
-          "width_m": 17,
-          "conductors": 4,
-          "at_frac": 0.76,
-          "depth_m": 2.6
-        }
-      ],
-      "span_m": [
-        300,
-        450
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "220kv",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The same shape as the 380 kV Donaumast, roughly three quarters the size and with single instead of bundled conductors. The 220 kV level is the old backbone, largely built in the 1950s and 60s and steadily being replaced by 380 kV — a line of these reads as \"not renewed since epoch III\".",
-      "build": {
-        "kind": "lattice",
-        "base_m": 7.5,
-        "shaft_m": 2.6,
-        "waist": 0.64,
-        "panels": 8,
-        "shaft_panels": 4,
-        "leg_m": 0.28,
-        "brace_m": 0.13,
-        "arm_m": 0.15,
-        "peak_m": 3.6,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "tannenbaummast-220",
-      "name_de": "Tannenbaummast",
-      "name_en": "fir-tree tower",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "three-level"
-      },
-      "voltage_kv": 220,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        40,
-        55
-      ],
-      "crossarms": [
-        {
-          "width_m": 11,
-          "conductors": 2,
-          "at_frac": 0.93,
-          "depth_m": 2.0
-        },
-        {
-          "width_m": 14,
-          "conductors": 2,
-          "at_frac": 0.81,
-          "depth_m": 2.2
-        },
-        {
-          "width_m": 17,
-          "conductors": 2,
-          "at_frac": 0.67,
-          "depth_m": 2.4
-        }
-      ],
-      "span_m": [
-        250,
-        400
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "transposition"
-      ],
-      "region": "rare",
-      "epochs": [
-        "II",
-        "III",
-        "IV"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "220kv",
-        "gittermast",
-        "historisch",
-        "epoch-2",
-        "epoch-3",
-        "epoch-4"
-      ],
-      "notes": "Three crossarms widening downwards, the silhouette of the 1920s and 30s. The unequal conductor spacing it produces has to be evened out by transposition masts every few kilometres, which is why later designs left it behind. Surviving stretches are a strong period marker for an epoch II/III route.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 8.0,
-        "shaft_m": 2.6,
-        "waist": 0.58,
-        "panels": 9,
-        "shaft_panels": 4,
-        "leg_m": 0.28,
-        "brace_m": 0.13,
-        "arm_m": 0.15,
-        "peak_m": 3.2,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "donaumast-110",
-      "name_de": "Donaumast 110 kV",
-      "name_en": "Danube tower, 110 kV",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "donau"
-      },
-      "voltage_kv": 110,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        25,
-        35
-      ],
-      "crossarms": [
-        {
-          "width_m": 6,
-          "conductors": 2,
-          "at_frac": 0.89,
-          "depth_m": 1.6
-        },
-        {
-          "width_m": 11,
-          "conductors": 4,
-          "at_frac": 0.74,
-          "depth_m": 1.9
-        }
-      ],
-      "span_m": [
-        200,
-        350
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "branch"
-      ],
-      "region": "west",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "110kv",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The regional distribution level and by far the most common lattice mast a train passes. In the old federal states two circuits on a Donaumast is the standard; the mast is small enough to stand in a field boundary and to cross a railway at right angles on a single span.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 5.5,
-        "shaft_m": 2.0,
-        "waist": 0.62,
-        "panels": 7,
-        "shaft_panels": 3,
-        "leg_m": 0.22,
-        "brace_m": 0.1,
-        "arm_m": 0.12,
-        "peak_m": 2.8,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "einebenenmast-110",
-      "name_de": "Einebenenmast 110 kV",
-      "name_en": "single-level tower, 110 kV",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "one-level"
-      },
-      "voltage_kv": 110,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        22,
-        30
-      ],
-      "crossarms": [
-        {
-          "width_m": 18,
-          "conductors": 6,
-          "at_frac": 0.86,
-          "depth_m": 2.2
-        }
-      ],
-      "span_m": [
-        200,
-        350
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "branch"
-      ],
-      "region": "east",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "110kv",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The eastern counterpart to the 110 kV Donaumast: all six conductors on one crossarm. Swapping this shape for the Donaumast is the cheapest way to make a route read as Saxony rather than the Rhineland.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 6.0,
-        "shaft_m": 2.2,
-        "waist": 0.66,
-        "panels": 7,
-        "shaft_panels": 3,
-        "leg_m": 0.22,
-        "brace_m": 0.1,
-        "arm_m": 0.12,
-        "peak_m": 2.6,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "kombimast-380-110",
-      "name_de": "Kombinationsmast 380/110 kV",
-      "name_en": "combined tower, 380/110 kV",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "donau"
-      },
-      "voltage_kv": [
-        380,
-        110
-      ],
-      "frequency_hz": 50,
-      "circuits": 4,
-      "conductors": 12,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        65,
-        80
-      ],
-      "crossarms": [
-        {
-          "width_m": 14,
-          "conductors": 2,
-          "at_frac": 0.94,
-          "depth_m": 2.6
-        },
-        {
-          "width_m": 24,
-          "conductors": 4,
-          "at_frac": 0.83,
-          "depth_m": 3.2
-        },
-        {
-          "width_m": 16,
-          "conductors": 6,
-          "at_frac": 0.67,
-          "depth_m": 2.6
-        }
-      ],
-      "span_m": [
-        300,
-        450
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "380kv",
-        "110kv",
-        "gittermast",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "Two voltage levels on one mast — a 380 kV Donaumast on top, two 110 kV circuits in a single level below. Carrying 380, 220 and 110 kV together is normal practice and saves a second corridor; the mast grows tall and busy and is the most recognisable object on a modern trunk route.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 11.0,
-        "shaft_m": 3.6,
-        "waist": 0.6,
-        "panels": 11,
-        "shaft_panels": 5,
-        "leg_m": 0.4,
-        "brace_m": 0.17,
-        "arm_m": 0.2,
-        "peak_m": 4.5,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "portalmast-380",
-      "name_de": "Portalmast",
-      "name_en": "portal tower",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "portal"
-      },
-      "voltage_kv": 380,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        25,
-        40
-      ],
-      "crossarms": [
-        {
-          "width_m": 30,
-          "conductors": 6,
-          "at_frac": 0.88,
-          "depth_m": 2.4
-        }
-      ],
-      "span_m": [
-        100,
-        300
-      ],
-      "roles": [
-        "terminal",
-        "tension"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "380kv",
-        "umspannwerk",
-        "gittermast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "Two legs under one beam. It stands where a line ends — at the gantry of a substation — and where a wide crossing has to be spanned low, over a canal or a motorway. Not a line mast: one or two of them, at the point where the line meets a switchyard.",
-      "build": {
-        "kind": "portal",
-        "base_m": 3.6,
-        "shaft_m": 2.2,
-        "waist": 1.0,
-        "panels": 7,
-        "shaft_panels": 0,
-        "leg_m": 0.32,
-        "brace_m": 0.15,
-        "arm_m": 0.24,
-        "peak_m": 2.5,
-        "peaks": 2,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "kompaktmast-380",
-      "name_de": "Kompaktmast",
-      "name_en": "compact tower",
-      "category": "transmission",
-      "osm": {
-        "power": "tower",
-        "design": "asymmetric"
-      },
-      "voltage_kv": 380,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 1,
-      "structure": "steel-tube",
-      "height_m": [
-        45,
-        60
-      ],
-      "crossarms": [
-        {
-          "width_m": 8,
-          "conductors": 2,
-          "at_frac": 0.93,
-          "depth_m": 1.2
-        },
-        {
-          "width_m": 12,
-          "conductors": 2,
-          "at_frac": 0.82,
-          "depth_m": 1.2
-        },
-        {
-          "width_m": 12,
-          "conductors": 2,
-          "at_frac": 0.71,
-          "depth_m": 1.2
-        }
-      ],
-      "span_m": [
-        250,
-        400
-      ],
-      "roles": [
-        "suspension",
-        "tension"
-      ],
-      "region": "rare",
-      "epochs": [
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "hochspannung",
-        "380kv",
-        "modern",
-        "epoch-6"
-      ],
-      "notes": "The current answer to public resistance against new corridors: a closed steel tube instead of a lattice, conductors pulled in tight, up to half the corridor width at the same height. Still exceptional in Germany while it is routine in Denmark and the Netherlands, so it belongs on a route only if that route is explicitly present-day.",
-      "build": {
-        "kind": "tube",
-        "base_m": 2.2,
-        "shaft_m": 1.1,
-        "waist": 1.0,
-        "panels": 0,
-        "shaft_panels": 0,
-        "leg_m": 0.0,
-        "brace_m": 0.0,
-        "arm_m": 0.5,
-        "peak_m": 3.0,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.0,
-        "insulator_discs": 14
-      }
-    },
-    {
-      "id": "bahnstrommast-110",
-      "name_de": "Bahnstrommast",
-      "name_en": "railway power tower",
-      "category": "railway-power",
-      "osm": {
-        "power": "tower",
-        "design": "one-level"
-      },
-      "voltage_kv": 110,
-      "frequency_hz": 16.7,
-      "circuits": 2,
-      "conductors": 4,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        25,
-        30
-      ],
-      "crossarms": [
-        {
-          "width_m": 9,
-          "conductors": 4,
-          "at_frac": 0.87,
-          "depth_m": 1.7
-        }
-      ],
-      "span_m": [
-        250,
-        350
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "branch"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "II",
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "sourced",
-      "tags": [
-        "freileitung",
-        "bahnstrom",
-        "110kv",
-        "gittermast",
-        "db",
-        "epoch-2",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The one every electrified line has, and the one a railway simulator cannot do without: about 28 m tall, one crossarm, four conductors — two two-pole circuits at 110 kV, 16.7 Hz, run as 2 x 55 kV against earth — and roughly 300 m between masts. It usually follows the track at a distance of one or two fields and turns towards it at a substation.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 5.0,
-        "shaft_m": 1.8,
-        "waist": 0.64,
-        "panels": 7,
-        "shaft_panels": 3,
-        "leg_m": 0.2,
-        "brace_m": 0.09,
-        "arm_m": 0.12,
-        "peak_m": 2.8,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "bahnstrommast-110-zweiebenen",
-      "name_de": "Bahnstrommast, zweiebenig",
-      "name_en": "railway power tower, two levels",
-      "category": "railway-power",
-      "osm": {
-        "power": "tower",
-        "design": "two-level"
-      },
-      "voltage_kv": 110,
-      "frequency_hz": 16.7,
-      "circuits": 4,
-      "conductors": 8,
-      "earth_wires": 1,
-      "structure": "steel-lattice",
-      "height_m": [
-        28,
-        36
-      ],
-      "crossarms": [
-        {
-          "width_m": 9,
-          "conductors": 4,
-          "at_frac": 0.89,
-          "depth_m": 1.7
-        },
-        {
-          "width_m": 9,
-          "conductors": 4,
-          "at_frac": 0.75,
-          "depth_m": 1.7
-        }
-      ],
-      "span_m": [
-        250,
-        350
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "II",
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "sourced",
-      "tags": [
-        "freileitung",
-        "bahnstrom",
-        "110kv",
-        "gittermast",
-        "db",
-        "unterwerk",
-        "epoch-2",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "Two crossarms, four circuits. Two cases: the feed into a substation, where several circuits arrive together, and the oldest lines — everything built up to about 1927 had two crossarms with the upper one wider, after that the single level became the rule.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 5.5,
-        "shaft_m": 1.9,
-        "waist": 0.62,
-        "panels": 8,
-        "shaft_panels": 3,
-        "leg_m": 0.22,
-        "brace_m": 0.1,
-        "arm_m": 0.12,
-        "peak_m": 2.8,
-        "peaks": 1,
-        "fitting": "suspension",
-        "insulator_m": 3.4,
-        "insulator_discs": 16
-      }
-    },
-    {
-      "id": "betonmast-20kv-einebene",
-      "name_de": "Betonmast, Einebenenanordnung",
-      "name_en": "concrete pole, single level",
-      "category": "distribution",
-      "osm": {
-        "power": "pole",
-        "design": "one-level"
-      },
-      "voltage_kv": 20,
-      "frequency_hz": 50,
-      "circuits": 1,
-      "conductors": 3,
-      "earth_wires": 0,
-      "structure": "spun-concrete",
-      "height_m": [
-        10,
-        14
-      ],
-      "crossarms": [
-        {
-          "width_m": 2.4,
-          "conductors": 3,
-          "at_frac": 0.93,
-          "depth_m": 0.25
-        }
-      ],
-      "span_m": [
-        70,
-        120
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "terminal"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "mittelspannung",
-        "20kv",
-        "betonmast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The grey spun-concrete pole with one steel crossarm and three standing cap insulators — the line that feeds a village, crossing fields at the height of a house. Wood is the exception in Germany, unlike in Scandinavia or North America; concrete and steel tube carry the medium-voltage grid.",
-      "build": {
-        "kind": "pole",
-        "base_m": 0.34,
-        "shaft_m": 0.2,
-        "waist": 1.0,
-        "panels": 0,
-        "shaft_panels": 0,
-        "leg_m": 0.0,
-        "brace_m": 0.0,
-        "arm_m": 0.09,
-        "peak_m": 0.0,
-        "peaks": 0,
-        "fitting": "pin",
-        "insulator_m": 0.35,
-        "insulator_discs": 3
-      }
-    },
-    {
-      "id": "betonmast-20kv-dreieck",
-      "name_de": "Betonmast, Dreiecksanordnung",
-      "name_en": "concrete pole, triangle",
-      "category": "distribution",
-      "osm": {
-        "power": "pole",
-        "design": "triangle"
-      },
-      "voltage_kv": 20,
-      "frequency_hz": 50,
-      "circuits": 1,
-      "conductors": 3,
-      "earth_wires": 0,
-      "structure": "spun-concrete",
-      "height_m": [
-        10,
-        14
-      ],
-      "crossarms": [
-        {
-          "width_m": 0.0,
-          "conductors": 1,
-          "at_frac": 1.0,
-          "depth_m": 0.0
-        },
-        {
-          "width_m": 1.8,
-          "conductors": 2,
-          "at_frac": 0.88,
-          "depth_m": 0.22
-        }
-      ],
-      "span_m": [
-        70,
-        120
-      ],
-      "roles": [
-        "suspension",
-        "angle"
-      ],
-      "region": "east",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "mittelspannung",
-        "20kv",
-        "betonmast",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "One conductor on the tip and two on a short arm, or single insulators mounted alternately on the pole itself without an arm at all. The alternating mounting is the preferred form in the north and east and gives the line a visibly different rhythm from the flat crossarm of the west.",
-      "build": {
-        "kind": "pole",
-        "base_m": 0.34,
-        "shaft_m": 0.2,
-        "waist": 1.0,
-        "panels": 0,
-        "shaft_panels": 0,
-        "leg_m": 0.0,
-        "brace_m": 0.0,
-        "arm_m": 0.09,
-        "peak_m": 0.0,
-        "peaks": 0,
-        "fitting": "pin",
-        "insulator_m": 0.35,
-        "insulator_discs": 3
-      }
-    },
-    {
-      "id": "stahlgittermast-20kv",
-      "name_de": "Stahlgittermast, Mittelspannung",
-      "name_en": "lattice pole, medium voltage",
-      "category": "distribution",
-      "osm": {
-        "power": "tower",
-        "design": "one-level"
-      },
-      "voltage_kv": 20,
-      "frequency_hz": 50,
-      "circuits": 2,
-      "conductors": 6,
-      "earth_wires": 0,
-      "structure": "steel-lattice",
-      "height_m": [
-        12,
-        18
-      ],
-      "crossarms": [
-        {
-          "width_m": 2.6,
-          "conductors": 3,
-          "at_frac": 0.92,
-          "depth_m": 0.5
-        },
-        {
-          "width_m": 2.6,
-          "conductors": 3,
-          "at_frac": 0.8,
-          "depth_m": 0.5
-        }
-      ],
-      "span_m": [
-        80,
-        150
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "branch"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "II",
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "mittelspannung",
-        "20kv",
-        "gittermast",
-        "epoch-2",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "A small riveted or bolted lattice, mostly older than the concrete poles around it and kept where two circuits or a long span are needed. Often the mast that carries the line over the railway.",
-      "build": {
-        "kind": "lattice",
-        "base_m": 2.2,
-        "shaft_m": 1.0,
-        "waist": 0.6,
-        "panels": 6,
-        "shaft_panels": 3,
-        "leg_m": 0.12,
-        "brace_m": 0.06,
-        "arm_m": 0.08,
-        "peak_m": 0.0,
-        "peaks": 0,
-        "fitting": "pin",
-        "insulator_m": 0.35,
-        "insulator_discs": 3
-      }
-    },
-    {
-      "id": "masttrafo-20kv",
-      "name_de": "Masttransformatorstation",
-      "name_en": "pole-mounted transformer",
-      "category": "distribution",
-      "osm": {
-        "power": "pole",
-        "design": "one-level",
-        "transformer": "distribution"
-      },
-      "voltage_kv": [
-        20,
-        0.4
-      ],
-      "frequency_hz": 50,
-      "circuits": 1,
-      "conductors": 3,
-      "earth_wires": 0,
-      "structure": "spun-concrete",
-      "height_m": [
-        9,
-        12
-      ],
-      "crossarms": [
-        {
-          "width_m": 2.4,
-          "conductors": 3,
-          "at_frac": 0.93,
-          "depth_m": 0.25
-        }
-      ],
-      "span_m": [
-        70,
-        120
-      ],
-      "roles": [
-        "branch",
-        "terminal"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "III",
-        "IV",
-        "V",
-        "VI"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "freileitung",
-        "mittelspannung",
-        "20kv",
-        "trafo",
-        "epoch-3",
-        "epoch-4",
-        "epoch-5",
-        "epoch-6"
-      ],
-      "notes": "The end of the medium-voltage line: a transformer on a platform halfway up the pole, three fuse cut-outs above it, the low-voltage cable running down the shaft into the ground. One per hamlet, and a piece of scenery that says \"rural Germany\" faster than any building.",
-      "build": {
-        "kind": "pole",
-        "base_m": 0.36,
-        "shaft_m": 0.22,
-        "waist": 1.0,
-        "panels": 0,
-        "shaft_panels": 0,
-        "leg_m": 0.0,
-        "brace_m": 0.0,
-        "arm_m": 0.09,
-        "peak_m": 0.0,
-        "peaks": 0,
-        "fitting": "pin",
-        "insulator_m": 0.35,
-        "insulator_discs": 3
-      }
-    },
-    {
-      "id": "holzmast-nsp",
-      "name_de": "Niederspannungsmast, Holz",
-      "name_en": "low-voltage pole, wood",
-      "category": "distribution",
-      "osm": {
-        "power": "pole",
-        "design": "one-level"
-      },
-      "voltage_kv": 0.4,
-      "frequency_hz": 50,
-      "circuits": 1,
-      "conductors": 4,
-      "earth_wires": 0,
-      "structure": "wood",
-      "height_m": [
-        8,
-        10
-      ],
-      "crossarms": [
-        {
-          "width_m": 1.6,
-          "conductors": 4,
-          "at_frac": 0.9,
-          "depth_m": 0.18
-        }
-      ],
-      "span_m": [
-        30,
-        50
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle",
-        "terminal"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "II",
-        "III",
-        "IV"
-      ],
-      "confidence": "sourced",
-      "tags": [
-        "freileitung",
-        "niederspannung",
-        "holzmast",
-        "historisch",
-        "epoch-2",
-        "epoch-3",
-        "epoch-4"
-      ],
-      "notes": "Impregnated pine, 90 to 340 mm across, four conductors — three phases and the neutral — and climbing irons for the linesman. The village street overhead line, almost everywhere replaced by cable since the 1970s, so it dates a scene as firmly as a steam locomotive does.",
-      "build": {
-        "kind": "pole",
-        "base_m": 0.26,
-        "shaft_m": 0.17,
-        "waist": 1.0,
-        "panels": 0,
-        "shaft_panels": 0,
-        "leg_m": 0.0,
-        "brace_m": 0.0,
-        "arm_m": 0.08,
-        "peak_m": 0.0,
-        "peaks": 0,
-        "fitting": "pin",
-        "insulator_m": 0.35,
-        "insulator_discs": 3
-      }
-    },
-    {
-      "id": "fernmeldemast-bahn",
-      "name_de": "Streckenfernmeldemast",
-      "name_en": "lineside telegraph pole",
-      "category": "telecom",
-      "osm": {
-        "communication": "line",
-        "support": "pole"
-      },
-      "voltage_kv": 0,
-      "frequency_hz": 0,
-      "circuits": 0,
-      "conductors": 0,
-      "earth_wires": 0,
-      "structure": "wood",
-      "height_m": [
-        6,
-        9
-      ],
-      "crossarms": [
-        {
-          "width_m": 1.4,
-          "conductors": 0,
-          "at_frac": 0.95,
-          "depth_m": 0.14
-        },
-        {
-          "width_m": 1.4,
-          "conductors": 0,
-          "at_frac": 0.84,
-          "depth_m": 0.14
-        }
-      ],
-      "span_m": [
-        50,
-        70
-      ],
-      "roles": [
-        "suspension",
-        "tension",
-        "angle"
-      ],
-      "region": "nationwide",
-      "epochs": [
-        "I",
-        "II",
-        "III",
-        "IV"
-      ],
-      "confidence": "estimated",
-      "tags": [
-        "fernmeldeleitung",
-        "holzmast",
-        "historisch",
-        "db",
-        "epoch-1",
-        "epoch-2",
-        "epoch-3",
-        "epoch-4"
-      ],
-      "notes": "Not a power line at all, but it stands where a power line would and it is the object that says \"railway\" most loudly on an old route: a creosoted pole every sixty metres beside the track, two or three short crossarms, six to twenty white porcelain double-bell insulators carrying the block and telephone wires. Pulled down along with the wires as cable and radio took over from the 1970s on; the bare poles then stood for years.",
-      "build": {
-        "kind": "pole",
-        "base_m": 0.24,
-        "shaft_m": 0.16,
-        "waist": 1.0,
-        "panels": 0,
-        "shaft_panels": 0,
-        "leg_m": 0.0,
-        "brace_m": 0.0,
-        "arm_m": 0.07,
-        "peak_m": 0.0,
-        "peaks": 0,
-        "fitting": "bell",
-        "insulator_m": 0.3,
-        "insulator_discs": 2
-      }
+     "width_m": 45.2,
+     "conductors": 6,
+     "at_frac": 0.789,
+     "depth_m": 3.4
     }
-  ]
+   ],
+   "span_m": [
+    300,
+    500
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle"
+   ],
+   "region": "east",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "sourced",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "380kv",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The lowest of the extra-high-voltage shapes and the widest. One long crossarm carries all six conductors side by side, which keeps the mast short but needs a wide cleared strip — the reason it is rare in forest. Standard on the 380 kV grid of the eastern states.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 7.8,
+    "shaft_m": 2.2,
+    "waist": 0.28,
+    "panels": 4,
+    "shaft_panels": 6,
+    "leg_m": 0.34,
+    "brace_m": 0.15,
+    "arm_m": 0.18,
+    "peak_m": 5.5,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 3.4,
+    "insulator_discs": 23
+   }
+  },
+  {
+   "id": "donaumast-380",
+   "name_de": "Donaumast",
+   "name_en": "Danube tower",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "donau"
+   },
+   "voltage_kv": 380,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    53.5,
+    56.5
+   ],
+   "crossarms": [
+    {
+     "width_m": 22,
+     "conductors": 2,
+     "at_frac": 0.8091,
+     "depth_m": 2.5
+    },
+    {
+     "width_m": 32,
+     "conductors": 4,
+     "at_frac": 0.5509,
+     "depth_m": 3.2
+    }
+   ],
+   "span_m": [
+    300,
+    500
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "transposition"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "sourced",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "380kv",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The default German extra-high-voltage mast and the one to build first. Two conductors per circuit on the wide lower crossarm, one on the narrow upper one — a compromise between the wide single level and the tall barrel. Named after the 110 kV line of 1927 along the Danube from Regensburg to the Kachlet power station.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 9.5,
+    "shaft_m": 2.1,
+    "waist": 0.27,
+    "panels": 4,
+    "shaft_panels": 7,
+    "leg_m": 0.36,
+    "brace_m": 0.16,
+    "arm_m": 0.19,
+    "peak_m": 8.0,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 3.4,
+    "insulator_discs": 23
+   }
+  },
+  {
+   "id": "tonnenmast-380",
+   "name_de": "Tonnenmast",
+   "name_en": "barrel tower",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "barrel"
+   },
+   "voltage_kv": 380,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    66,
+    76
+   ],
+   "crossarms": [
+    {
+     "width_m": 19,
+     "conductors": 2,
+     "at_frac": 0.888,
+     "depth_m": 2.0
+    },
+    {
+     "width_m": 23,
+     "conductors": 2,
+     "at_frac": 0.719,
+     "depth_m": 2.5
+    },
+    {
+     "width_m": 20,
+     "conductors": 2,
+     "at_frac": 0.5817,
+     "depth_m": 1.25
+    }
+   ],
+   "span_m": [
+    300,
+    500
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle"
+   ],
+   "region": "rare",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "sourced",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "380kv",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "Three crossarms with the middle one widest, so the conductors sit on a barrel-shaped outline and no conductor hangs directly under another — ice shed from above cannot reach it. The tallest and narrowest of the three, uncommon in Germany but the norm in Britain, Switzerland and Poland; worth having for a border route.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 7.0,
+    "shaft_m": 2.2,
+    "waist": 0.27,
+    "panels": 4,
+    "shaft_panels": 8,
+    "leg_m": 0.36,
+    "brace_m": 0.16,
+    "arm_m": 0.19,
+    "peak_m": 5.95,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 3.4,
+    "insulator_discs": 23
+   }
+  },
+  {
+   "id": "donaumast-220",
+   "name_de": "Donaumast 220 kV",
+   "name_en": "Danube tower, 220 kV",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "donau"
+   },
+   "voltage_kv": 220,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    40,
+    50
+   ],
+   "crossarms": [
+    {
+     "width_m": 16,
+     "conductors": 2,
+     "at_frac": 0.8,
+     "depth_m": 2.5
+    },
+    {
+     "width_m": 23,
+     "conductors": 4,
+     "at_frac": 0.6333,
+     "depth_m": 3.0
+    }
+   ],
+   "span_m": [
+    300,
+    450
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "220kv",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The same shape as the 380 kV Donaumast, roughly three quarters the size and with single instead of bundled conductors. The 220 kV level is the old backbone, largely built in the 1950s and 60s and steadily being replaced by 380 kV — a line of these reads as \"not renewed since epoch III\".",
+   "build": {
+    "kind": "lattice",
+    "base_m": 7.5,
+    "shaft_m": 2.0,
+    "waist": 0.22,
+    "panels": 3,
+    "shaft_panels": 7,
+    "leg_m": 0.28,
+    "brace_m": 0.13,
+    "arm_m": 0.15,
+    "peak_m": 6.5,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 2.2,
+    "insulator_discs": 15
+   }
+  },
+  {
+   "id": "tannenbaummast-220",
+   "name_de": "Tannenbaummast",
+   "name_en": "fir-tree tower",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "three-level"
+   },
+   "voltage_kv": 220,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    43,
+    43
+   ],
+   "crossarms": [
+    {
+     "width_m": 17,
+     "conductors": 2,
+     "at_frac": 0.7616,
+     "depth_m": 1.85
+    },
+    {
+     "width_m": 24.5,
+     "conductors": 2,
+     "at_frac": 0.6047,
+     "depth_m": 2.7
+    },
+    {
+     "width_m": 26.5,
+     "conductors": 2,
+     "at_frac": 0.4314,
+     "depth_m": 3.1
+    }
+   ],
+   "span_m": [
+    250,
+    400
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "transposition"
+   ],
+   "region": "rare",
+   "epochs": [
+    "II",
+    "III",
+    "IV"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "220kv",
+    "gittermast",
+    "historisch",
+    "epoch-2",
+    "epoch-3",
+    "epoch-4"
+   ],
+   "notes": "Three crossarms widening downwards, the silhouette of the 1920s and 30s. The unequal conductor spacing it produces has to be evened out by transposition masts every few kilometres, which is why later designs left it behind. Surviving stretches are a strong period marker for an epoch II/III route.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 6.5,
+    "shaft_m": 2.0,
+    "waist": 0.21,
+    "panels": 3,
+    "shaft_panels": 7,
+    "leg_m": 0.28,
+    "brace_m": 0.13,
+    "arm_m": 0.15,
+    "peak_m": 8.4,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 2.2,
+    "insulator_discs": 15
+   }
+  },
+  {
+   "id": "donaumast-110",
+   "name_de": "Donaumast 110 kV",
+   "name_en": "Danube tower, 110 kV",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "donau"
+   },
+   "voltage_kv": 110,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    25,
+    35
+   ],
+   "crossarms": [
+    {
+     "width_m": 9,
+     "conductors": 2,
+     "at_frac": 0.8,
+     "depth_m": 1.8
+    },
+    {
+     "width_m": 16,
+     "conductors": 4,
+     "at_frac": 0.6233,
+     "depth_m": 2.2
+    }
+   ],
+   "span_m": [
+    200,
+    350
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "branch"
+   ],
+   "region": "west",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "110kv",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The regional distribution level and by far the most common lattice mast a train passes. In the old federal states two circuits on a Donaumast is the standard; the mast is small enough to stand in a field boundary and to cross a railway at right angles on a single span.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 5.2,
+    "shaft_m": 1.6,
+    "waist": 0.23,
+    "panels": 3,
+    "shaft_panels": 6,
+    "leg_m": 0.22,
+    "brace_m": 0.1,
+    "arm_m": 0.12,
+    "peak_m": 4.2,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 1.3,
+    "insulator_discs": 9
+   }
+  },
+  {
+   "id": "einebenenmast-110",
+   "name_de": "Einebenenmast 110 kV",
+   "name_en": "single-level tower, 110 kV",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "one-level"
+   },
+   "voltage_kv": 110,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    22,
+    30
+   ],
+   "crossarms": [
+    {
+     "width_m": 18,
+     "conductors": 6,
+     "at_frac": 0.7692,
+     "depth_m": 2.0
+    }
+   ],
+   "span_m": [
+    200,
+    350
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "branch"
+   ],
+   "region": "east",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "110kv",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The eastern counterpart to the 110 kV Donaumast: all six conductors on one crossarm. Swapping this shape for the Donaumast is the cheapest way to make a route read as Saxony rather than the Rhineland.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 4.8,
+    "shaft_m": 1.6,
+    "waist": 0.25,
+    "panels": 3,
+    "shaft_panels": 5,
+    "leg_m": 0.22,
+    "brace_m": 0.1,
+    "arm_m": 0.12,
+    "peak_m": 4.0,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 1.3,
+    "insulator_discs": 9
+   }
+  },
+  {
+   "id": "kombimast-380-110",
+   "name_de": "Kombinationsmast 380/110 kV",
+   "name_en": "combined tower, 380/110 kV",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "donau"
+   },
+   "voltage_kv": [
+    380,
+    110
+   ],
+   "frequency_hz": 50,
+   "circuits": 4,
+   "conductors": 12,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    60,
+    70
+   ],
+   "crossarms": [
+    {
+     "width_m": 22,
+     "conductors": 2,
+     "at_frac": 0.8385,
+     "depth_m": 2.5
+    },
+    {
+     "width_m": 32,
+     "conductors": 4,
+     "at_frac": 0.62,
+     "depth_m": 3.2
+    },
+    {
+     "width_m": 35,
+     "conductors": 6,
+     "at_frac": 0.4385,
+     "depth_m": 3.0
+    }
+   ],
+   "span_m": [
+    300,
+    450
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "380kv",
+    "110kv",
+    "gittermast",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "Two voltage levels on one mast — a 380 kV Donaumast on top, two 110 kV circuits in a single level below. Carrying 380, 220 and 110 kV together is normal practice and saves a second corridor; the mast grows tall and busy and is the most recognisable object on a modern trunk route.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 10.5,
+    "shaft_m": 2.3,
+    "waist": 0.22,
+    "panels": 4,
+    "shaft_panels": 9,
+    "leg_m": 0.4,
+    "brace_m": 0.17,
+    "arm_m": 0.2,
+    "peak_m": 8.0,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 3.4,
+    "insulator_discs": 23
+   }
+  },
+  {
+   "id": "portalmast-380",
+   "name_de": "Portalmast",
+   "name_en": "portal tower",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "portal"
+   },
+   "voltage_kv": 380,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    25,
+    40
+   ],
+   "crossarms": [
+    {
+     "width_m": 30,
+     "conductors": 6,
+     "at_frac": 0.8062,
+     "depth_m": 2.4
+    }
+   ],
+   "span_m": [
+    100,
+    300
+   ],
+   "roles": [
+    "terminal",
+    "tension"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "380kv",
+    "umspannwerk",
+    "gittermast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "Two legs under one beam. It stands where a line ends — at the gantry of a substation — and where a wide crossing has to be spanned low, over a canal or a motorway. Not a line mast: one or two of them, at the point where the line meets a switchyard.",
+   "build": {
+    "kind": "portal",
+    "base_m": 3.6,
+    "shaft_m": 2.2,
+    "waist": 1.0,
+    "panels": 7,
+    "shaft_panels": 0,
+    "leg_m": 0.32,
+    "brace_m": 0.15,
+    "arm_m": 0.24,
+    "peak_m": 2.5,
+    "peaks": 2,
+    "fitting": "suspension",
+    "insulator_m": 3.4,
+    "insulator_discs": 23
+   }
+  },
+  {
+   "id": "kompaktmast-380",
+   "name_de": "Kompaktmast",
+   "name_en": "compact tower",
+   "category": "transmission",
+   "osm": {
+    "power": "tower",
+    "design": "asymmetric"
+   },
+   "voltage_kv": 380,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 1,
+   "structure": "steel-tube",
+   "height_m": [
+    45,
+    60
+   ],
+   "crossarms": [
+    {
+     "width_m": 8,
+     "conductors": 2,
+     "at_frac": 0.9071,
+     "depth_m": 1.2
+    },
+    {
+     "width_m": 12,
+     "conductors": 2,
+     "at_frac": 0.7971,
+     "depth_m": 1.2
+    },
+    {
+     "width_m": 12,
+     "conductors": 2,
+     "at_frac": 0.6871,
+     "depth_m": 1.2
+    }
+   ],
+   "span_m": [
+    250,
+    400
+   ],
+   "roles": [
+    "suspension",
+    "tension"
+   ],
+   "region": "rare",
+   "epochs": [
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "hochspannung",
+    "380kv",
+    "modern",
+    "epoch-6"
+   ],
+   "notes": "The current answer to public resistance against new corridors: a closed steel tube instead of a lattice, conductors pulled in tight, up to half the corridor width at the same height. Still exceptional in Germany while it is routine in Denmark and the Netherlands, so it belongs on a route only if that route is explicitly present-day.",
+   "build": {
+    "kind": "tube",
+    "base_m": 2.2,
+    "shaft_m": 1.1,
+    "waist": 1.0,
+    "panels": 0,
+    "shaft_panels": 0,
+    "leg_m": 0.0,
+    "brace_m": 0.0,
+    "arm_m": 0.5,
+    "peak_m": 3.0,
+    "peaks": 1,
+    "fitting": "composite",
+    "insulator_m": 4.0,
+    "insulator_sheds": 64
+   }
+  },
+  {
+   "id": "bahnstrommast-110",
+   "name_de": "Bahnstrommast",
+   "name_en": "railway power tower",
+   "category": "railway-power",
+   "osm": {
+    "power": "tower",
+    "design": "one-level"
+   },
+   "voltage_kv": 110,
+   "frequency_hz": 16.7,
+   "circuits": 2,
+   "conductors": 4,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    28,
+    34
+   ],
+   "crossarms": [
+    {
+     "width_m": 17.2,
+     "conductors": 4,
+     "at_frac": 0.7742,
+     "depth_m": 1.4
+    }
+   ],
+   "span_m": [
+    250,
+    350
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "branch"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "II",
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "sourced",
+   "tags": [
+    "freileitung",
+    "bahnstrom",
+    "110kv",
+    "gittermast",
+    "db",
+    "epoch-2",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The one every electrified line has, and the one a railway simulator cannot do without: about 28 m tall, one crossarm, four conductors — two two-pole circuits at 110 kV, 16.7 Hz, run as 2 x 55 kV against earth — and roughly 300 m between masts. It usually follows the track at a distance of one or two fields and turns towards it at a substation.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 5.2,
+    "shaft_m": 1.8,
+    "waist": 0.30,
+    "panels": 4,
+    "shaft_panels": 6,
+    "leg_m": 0.2,
+    "brace_m": 0.09,
+    "arm_m": 0.12,
+    "peak_m": 5.6,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 1.3,
+    "insulator_discs": 9
+   }
+  },
+  {
+   "id": "bahnstrommast-110-zweiebenen",
+   "name_de": "Bahnstrommast, zweiebenig",
+   "name_en": "railway power tower, two levels",
+   "category": "railway-power",
+   "osm": {
+    "power": "tower",
+    "design": "two-level"
+   },
+   "voltage_kv": 110,
+   "frequency_hz": 16.7,
+   "circuits": 4,
+   "conductors": 8,
+   "earth_wires": 1,
+   "structure": "steel-lattice",
+   "height_m": [
+    31,
+    37
+   ],
+   "crossarms": [
+    {
+     "width_m": 17.2,
+     "conductors": 4,
+     "at_frac": 0.7647,
+     "depth_m": 1.5
+    },
+    {
+     "width_m": 15.2,
+     "conductors": 4,
+     "at_frac": 0.6265,
+     "depth_m": 1.4
+    }
+   ],
+   "span_m": [
+    250,
+    350
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "II",
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "sourced",
+   "tags": [
+    "freileitung",
+    "bahnstrom",
+    "110kv",
+    "gittermast",
+    "db",
+    "unterwerk",
+    "epoch-2",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "Two crossarms, four circuits. Two cases: the feed into a substation, where several circuits arrive together, and the oldest lines — everything built up to about 1927 had two crossarms with the upper one wider, after that the single level became the rule.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 5.5,
+    "shaft_m": 1.9,
+    "waist": 0.28,
+    "panels": 4,
+    "shaft_panels": 7,
+    "leg_m": 0.22,
+    "brace_m": 0.1,
+    "arm_m": 0.12,
+    "peak_m": 5.8,
+    "peaks": 1,
+    "fitting": "suspension",
+    "insulator_m": 1.3,
+    "insulator_discs": 9
+   }
+  },
+  {
+   "id": "betonmast-20kv-einebene",
+   "name_de": "Betonmast, Einebenenanordnung",
+   "name_en": "concrete pole, single level",
+   "category": "distribution",
+   "osm": {
+    "power": "pole",
+    "design": "one-level"
+   },
+   "voltage_kv": 20,
+   "frequency_hz": 50,
+   "circuits": 1,
+   "conductors": 3,
+   "earth_wires": 0,
+   "structure": "spun-concrete",
+   "height_m": [
+    10,
+    14
+   ],
+   "crossarms": [
+    {
+     "width_m": 2.4,
+     "conductors": 3,
+     "at_frac": 0.93,
+     "depth_m": 0.25
+    }
+   ],
+   "span_m": [
+    70,
+    120
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "terminal"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "mittelspannung",
+    "20kv",
+    "betonmast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The grey spun-concrete pole with one steel crossarm and three standing cap insulators — the line that feeds a village, crossing fields at the height of a house. Wood is the exception in Germany, unlike in Scandinavia or North America; concrete and steel tube carry the medium-voltage grid.",
+   "build": {
+    "kind": "pole",
+    "base_m": 0.34,
+    "shaft_m": 0.2,
+    "waist": 1.0,
+    "panels": 0,
+    "shaft_panels": 0,
+    "leg_m": 0.0,
+    "brace_m": 0.0,
+    "arm_m": 0.09,
+    "peak_m": 0.0,
+    "peaks": 0,
+    "fitting": "pin",
+    "insulator_m": 0.35,
+    "insulator_discs": 3
+   }
+  },
+  {
+   "id": "betonmast-20kv-dreieck",
+   "name_de": "Betonmast, Dreiecksanordnung",
+   "name_en": "concrete pole, triangle",
+   "category": "distribution",
+   "osm": {
+    "power": "pole",
+    "design": "triangle"
+   },
+   "voltage_kv": 20,
+   "frequency_hz": 50,
+   "circuits": 1,
+   "conductors": 3,
+   "earth_wires": 0,
+   "structure": "spun-concrete",
+   "height_m": [
+    10,
+    14
+   ],
+   "crossarms": [
+    {
+     "width_m": 0.0,
+     "conductors": 1,
+     "at_frac": 1.0,
+     "depth_m": 0.0
+    },
+    {
+     "width_m": 1.8,
+     "conductors": 2,
+     "at_frac": 0.88,
+     "depth_m": 0.22
+    }
+   ],
+   "span_m": [
+    70,
+    120
+   ],
+   "roles": [
+    "suspension",
+    "angle"
+   ],
+   "region": "east",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "mittelspannung",
+    "20kv",
+    "betonmast",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "One conductor on the tip and two on a short arm, or single insulators mounted alternately on the pole itself without an arm at all. The alternating mounting is the preferred form in the north and east and gives the line a visibly different rhythm from the flat crossarm of the west.",
+   "build": {
+    "kind": "pole",
+    "base_m": 0.34,
+    "shaft_m": 0.2,
+    "waist": 1.0,
+    "panels": 0,
+    "shaft_panels": 0,
+    "leg_m": 0.0,
+    "brace_m": 0.0,
+    "arm_m": 0.09,
+    "peak_m": 0.0,
+    "peaks": 0,
+    "fitting": "pin",
+    "insulator_m": 0.35,
+    "insulator_discs": 3
+   }
+  },
+  {
+   "id": "stahlgittermast-20kv",
+   "name_de": "Stahlgittermast, Mittelspannung",
+   "name_en": "lattice pole, medium voltage",
+   "category": "distribution",
+   "osm": {
+    "power": "tower",
+    "design": "one-level"
+   },
+   "voltage_kv": 20,
+   "frequency_hz": 50,
+   "circuits": 2,
+   "conductors": 6,
+   "earth_wires": 0,
+   "structure": "steel-lattice",
+   "height_m": [
+    12,
+    18
+   ],
+   "crossarms": [
+    {
+     "width_m": 4.0,
+     "conductors": 3,
+     "at_frac": 0.9467,
+     "depth_m": 0.5
+    },
+    {
+     "width_m": 4.0,
+     "conductors": 3,
+     "at_frac": 0.8133,
+     "depth_m": 0.55
+    }
+   ],
+   "span_m": [
+    80,
+    150
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "branch"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "II",
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "mittelspannung",
+    "20kv",
+    "gittermast",
+    "epoch-2",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "A small riveted or bolted lattice, mostly older than the concrete poles around it and kept where two circuits or a long span are needed. Often the mast that carries the line over the railway.",
+   "build": {
+    "kind": "lattice",
+    "base_m": 1.8,
+    "shaft_m": 0.65,
+    "waist": 0.30,
+    "panels": 3,
+    "shaft_panels": 5,
+    "leg_m": 0.12,
+    "brace_m": 0.06,
+    "arm_m": 0.08,
+    "peak_m": 0.0,
+    "peaks": 0,
+    "fitting": "pin",
+    "insulator_m": 0.35,
+    "insulator_discs": 3
+   }
+  },
+  {
+   "id": "masttrafo-20kv",
+   "name_de": "Masttransformatorstation",
+   "name_en": "pole-mounted transformer",
+   "category": "distribution",
+   "osm": {
+    "power": "pole",
+    "design": "one-level",
+    "transformer": "distribution"
+   },
+   "voltage_kv": [
+    20,
+    0.4
+   ],
+   "frequency_hz": 50,
+   "circuits": 1,
+   "conductors": 3,
+   "earth_wires": 0,
+   "structure": "spun-concrete",
+   "height_m": [
+    9,
+    12
+   ],
+   "crossarms": [
+    {
+     "width_m": 2.4,
+     "conductors": 3,
+     "at_frac": 0.93,
+     "depth_m": 0.25
+    }
+   ],
+   "span_m": [
+    70,
+    120
+   ],
+   "roles": [
+    "branch",
+    "terminal"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "III",
+    "IV",
+    "V",
+    "VI"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "freileitung",
+    "mittelspannung",
+    "20kv",
+    "trafo",
+    "epoch-3",
+    "epoch-4",
+    "epoch-5",
+    "epoch-6"
+   ],
+   "notes": "The end of the medium-voltage line: a transformer on a platform halfway up the pole, three fuse cut-outs above it, the low-voltage cable running down the shaft into the ground. One per hamlet, and a piece of scenery that says \"rural Germany\" faster than any building.",
+   "build": {
+    "kind": "pole",
+    "base_m": 0.36,
+    "shaft_m": 0.22,
+    "waist": 1.0,
+    "panels": 0,
+    "shaft_panels": 0,
+    "leg_m": 0.0,
+    "brace_m": 0.0,
+    "arm_m": 0.09,
+    "peak_m": 0.0,
+    "peaks": 0,
+    "fitting": "pin",
+    "insulator_m": 0.35,
+    "insulator_discs": 3
+   }
+  },
+  {
+   "id": "holzmast-nsp",
+   "name_de": "Niederspannungsmast, Holz",
+   "name_en": "low-voltage pole, wood",
+   "category": "distribution",
+   "osm": {
+    "power": "pole",
+    "design": "one-level"
+   },
+   "voltage_kv": 0.4,
+   "frequency_hz": 50,
+   "circuits": 1,
+   "conductors": 4,
+   "earth_wires": 0,
+   "structure": "wood",
+   "height_m": [
+    8,
+    10
+   ],
+   "crossarms": [
+    {
+     "width_m": 1.6,
+     "conductors": 4,
+     "at_frac": 0.9,
+     "depth_m": 0.18
+    }
+   ],
+   "span_m": [
+    30,
+    50
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle",
+    "terminal"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "II",
+    "III",
+    "IV"
+   ],
+   "confidence": "sourced",
+   "tags": [
+    "freileitung",
+    "niederspannung",
+    "holzmast",
+    "historisch",
+    "epoch-2",
+    "epoch-3",
+    "epoch-4"
+   ],
+   "notes": "Impregnated pine, 90 to 340 mm across, four conductors — three phases and the neutral — and climbing irons for the linesman. The village street overhead line, almost everywhere replaced by cable since the 1970s, so it dates a scene as firmly as a steam locomotive does.",
+   "build": {
+    "kind": "pole",
+    "base_m": 0.26,
+    "shaft_m": 0.17,
+    "waist": 1.0,
+    "panels": 0,
+    "shaft_panels": 0,
+    "leg_m": 0.0,
+    "brace_m": 0.0,
+    "arm_m": 0.08,
+    "peak_m": 0.0,
+    "peaks": 0,
+    "fitting": "spool",
+    "insulator_m": 0.18,
+    "insulator_discs": 2
+   }
+  },
+  {
+   "id": "fernmeldemast-bahn",
+   "name_de": "Streckenfernmeldemast",
+   "name_en": "lineside telegraph pole",
+   "category": "telecom",
+   "osm": {
+    "communication": "line",
+    "support": "pole"
+   },
+   "voltage_kv": 0,
+   "frequency_hz": 0,
+   "circuits": 0,
+   "conductors": 0,
+   "earth_wires": 0,
+   "structure": "wood",
+   "height_m": [
+    6,
+    9
+   ],
+   "crossarms": [
+    {
+     "width_m": 1.4,
+     "conductors": 0,
+     "at_frac": 0.95,
+     "depth_m": 0.14
+    },
+    {
+     "width_m": 1.4,
+     "conductors": 0,
+     "at_frac": 0.84,
+     "depth_m": 0.14
+    }
+   ],
+   "span_m": [
+    50,
+    70
+   ],
+   "roles": [
+    "suspension",
+    "tension",
+    "angle"
+   ],
+   "region": "nationwide",
+   "epochs": [
+    "I",
+    "II",
+    "III",
+    "IV"
+   ],
+   "confidence": "estimated",
+   "tags": [
+    "fernmeldeleitung",
+    "holzmast",
+    "historisch",
+    "db",
+    "epoch-1",
+    "epoch-2",
+    "epoch-3",
+    "epoch-4"
+   ],
+   "notes": "Not a power line at all, but it stands where a power line would and it is the object that says \"railway\" most loudly on an old route: a creosoted pole every sixty metres beside the track, two or three short crossarms, six to twenty white porcelain double-bell insulators carrying the block and telephone wires. Pulled down along with the wires as cable and radio took over from the 1970s on; the bare poles then stood for years.",
+   "build": {
+    "kind": "pole",
+    "base_m": 0.24,
+    "shaft_m": 0.16,
+    "waist": 1.0,
+    "panels": 0,
+    "shaft_panels": 0,
+    "leg_m": 0.0,
+    "brace_m": 0.0,
+    "arm_m": 0.07,
+    "peak_m": 0.0,
+    "peaks": 0,
+    "fitting": "bell",
+    "insulator_m": 0.3,
+    "insulator_discs": 2
+   }
+  }
+ ]
 }

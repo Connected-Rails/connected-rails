@@ -5,11 +5,19 @@
 //! ```text
 //! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N] [--height M]
 //!                        [--window WxH] [--drawer [objects|signal-types|signal-models|track-types]]
+//!                        [--ai <ai.ron>] [--detect] [--at KM]
+//!                        [--detect-run [--corridor M] [--keep-clear M] [--model <id>]]
 //! ```
 //!
 //! Without a line file the example line is loaded. The overlay configuration is created
 //! on first start and can be reloaded at runtime (F5).
+//!
+//! `--detect-run` is the imagery detection along the track without a window and
+//! without a click: it runs, commits and writes the line file back, for a module
+//! being rebuilt from its sources beside `import-module`. The dialog remains the
+//! way a person should do this — it shows the report before anything is written.
 
+mod ai;
 mod areas;
 mod content_drawer;
 mod envelope;
@@ -319,8 +327,16 @@ struct DeviceMarker;
 #[derive(Resource)]
 struct ConfigPath(String);
 
+/// Path of the model registry (`ai.ron`) — see [`ai`].
+#[derive(Resource)]
+pub struct AiPath(pub String);
+
 #[derive(Resource)]
 struct FrameLimit(u32);
+
+/// Options from `--detect-run`, taken by the system that performs it.
+#[derive(Resource)]
+struct DetectRun(Option<ai::AiOptions>);
 
 /// Target file from `--screenshot <file.png>`.
 #[derive(Resource)]
@@ -342,6 +358,9 @@ pub struct Request {
     pub import_roads: bool,
     /// Open the overhead line import dialog (menu, see [`power`]).
     pub import_power: bool,
+    /// Open the dialog that reads the imagery with a local model (menu, see
+    /// [`ai`]).
+    pub detect_imagery: bool,
     pub retry_failed: bool,
     pub load_config: bool,
     pub save_config: bool,
@@ -364,6 +383,33 @@ fn main() {
     };
     let line_path = args.first().filter(|a| !a.starts_with("--")).cloned();
     let config_path = flag("--imagery").unwrap_or_else(|| "imagery.ron".into());
+    // The model registry lives beside the imagery configuration, and is
+    // written the first time a model is asked for — see `ai::draw`.
+    let ai_path = flag("--ai").unwrap_or_else(|| "ai.ron".into());
+    // `--detect` opens the imagery detection dialog at start, for the same
+    // reason `--drawer` opens the content drawer: a screenshot run has no
+    // keyboard and no mouse, and a dialog nobody can open cannot be looked at.
+    let detect = args.iter().any(|a| a == "--detect");
+    // `--detect-run` does not open the dialog, it *is* the dialog: the run
+    // along the track, committed, and the line written back. For a module
+    // being rebuilt from its sources by a script, beside `import-module`.
+    // The dialog stays the way a person should do this — it shows the report
+    // before anything is written — so this prints the same report to the log
+    // and then writes anyway, which is what a script asked for.
+    let detect_run = args.iter().any(|a| a == "--detect-run").then(|| {
+        let mut options = ai::AiOptions::default();
+        if let Some(m) = flag("--corridor").and_then(|v| v.parse::<f64>().ok()) {
+            options.corridor = m;
+        }
+        if let Some(m) = flag("--keep-clear").and_then(|v| v.parse::<f64>().ok()) {
+            options.keep_clear = m;
+        }
+        if let Some(id) = flag("--model") {
+            options.model = id;
+        }
+        options
+    });
+    let detect_run_wanted = detect_run.is_some();
     let shot = flag("--screenshot");
     // `--window 1280x2000` — fixed size for reproducible screenshots, the
     // vehicle editor's convention.
@@ -378,6 +424,11 @@ fn main() {
     let frame_limit = flag("--frames")
         .and_then(|n| n.parse::<u32>().ok())
         .or_else(|| shot.as_ref().map(|_| 60));
+    // `--at 4.2`: which kilometre of the line to look at. A five kilometre
+    // module has one interesting corner and it is rarely the middle, which is
+    // where the view starts without this; from the middle at the height it
+    // takes to see the far end, what is there is a pixel.
+    let look_at = LookAt(flag("--at").and_then(|v| v.parse::<f64>().ok()));
     // `--height`: where the view starts above the line [m] — a screenshot of
     // the trees wants 60 m, one of the module 900.
     let start_height = flag("--height")
@@ -438,8 +489,11 @@ fn main() {
     })
     .insert_resource(ClearColor(Color::srgb(0.08, 0.09, 0.11)))
     .insert_resource(ConfigPath(config_path))
+    .insert_resource(AiPath(ai_path))
+    .insert_resource(DetectRun(detect_run))
     .insert_resource(LinePath(line_path))
     .insert_resource(StartHeight(start_height))
+    .insert_resource(look_at)
     .init_resource::<Request>()
     .insert_resource(EditorState {
         // `--drawer [category]`: the drawer is a keyboard away
@@ -462,6 +516,14 @@ fn main() {
     .init_resource::<fields::FieldImport>()
     .init_resource::<power::PowerImport>()
     .init_resource::<roads::RoadImport>()
+    // Not through `Request`: `overlay_control` takes that whole resource once
+    // per frame, and it runs before the pass the dialogs are drawn in — a flag
+    // set at start-up would be gone before anyone read it.
+    .insert_resource(if detect {
+        ai::AiImport::opened()
+    } else {
+        ai::AiImport::default()
+    })
     .init_resource::<terrain::Marks>()
     .init_resource::<tools::GhostPreview>()
     // A glTF spawns its own children, and a render layer does not reach them by
@@ -480,6 +542,7 @@ fn main() {
             fields::draw,
             roads::draw,
             power::draw,
+            ai::draw,
         )
             .chain(),
     )
@@ -519,6 +582,12 @@ fn main() {
         )
             .chain(),
     );
+    if detect_run_wanted {
+        // After the first frame, so the line, the mods and the imagery
+        // configuration are all in place; the run itself blocks that frame for
+        // as long as it takes, which is what a headless run is for.
+        app.add_systems(Update, detect_headless);
+    }
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
@@ -531,6 +600,10 @@ fn main() {
 
 #[derive(Resource)]
 struct LinePath(Option<String>);
+
+/// Which kilometre of the line to look at, from `--at`.
+#[derive(Resource, Clone, Copy)]
+struct LookAt(Option<f64>);
 
 /// View height at start, from `--height`.
 #[derive(Resource)]
@@ -559,7 +632,7 @@ fn setup(
     mut commands: Commands,
     config_path: Res<ConfigPath>,
     line_path: Res<LinePath>,
-    start_height: Res<StartHeight>,
+    (start_height, look_at): (Res<StartHeight>, Res<LookAt>),
     assets: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -588,11 +661,27 @@ fn setup(
         }
     };
 
-    // View point at the middle of the line; an empty line starts over the example area.
-    let focus_position = match net.edges().get(net.edges().len() / 2) {
-        Some(middle) => middle.eval(middle.length() / 2.0).pos,
-        None => geo::to_ecef_deg(52.0, 10.0, 146.0),
-    };
+    // View point at the middle of the line, or wherever `--at` says; an empty
+    // line starts over the example area.
+    let focus_position = match look_at.0 {
+        Some(km) => {
+            let mut left = km * 1_000.0;
+            let mut at = None;
+            for edge in net.edges() {
+                if left <= edge.length() {
+                    at = Some(edge.eval(left.clamp(0.0, edge.length())).pos);
+                    break;
+                }
+                left -= edge.length();
+            }
+            at.or_else(|| net.edges().last().map(|e| e.eval(e.length()).pos))
+        }
+        None => net
+            .edges()
+            .get(net.edges().len() / 2)
+            .map(|middle| middle.eval(middle.length() / 2.0).pos),
+    }
+    .unwrap_or_else(|| geo::to_ecef_deg(52.0, 10.0, 146.0));
     let origin = RenderOrigin::new(focus_position);
 
     // Load (or create) the overlay configuration.
@@ -1407,6 +1496,51 @@ fn confirm_close(
     }
 }
 
+/// `--detect-run`: one pass of the imagery detection, written into the line.
+///
+/// Runs on the second frame and never again, blocking for however many minutes
+/// the tiles and the inference take, then leaves. Anything that goes wrong is
+/// an error on stderr and a non-zero exit, because a script that half-ran this
+/// and said nothing would be worse than one that did not run it at all.
+fn detect_headless(
+    mut run: ResMut<DetectRun>,
+    mut line: ResMut<Line>,
+    // Grouped only because a system stops at seven parameters.
+    (state, objects, overlay, ai_path): (
+        Res<EditorState>,
+        Res<TrackObjects>,
+        Res<Overlay>,
+        Res<AiPath>,
+    ),
+    mut frame: Local<u32>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    *frame += 1;
+    if *frame < 2 {
+        return;
+    }
+    let Some(options) = run.0.take() else {
+        return;
+    };
+    match ai::headless(
+        &mut line,
+        &state,
+        &objects,
+        overlay.config().clone(),
+        &ai_path.0,
+        options,
+    ) {
+        Ok(summary) => {
+            info!("{summary}");
+            exit.write(AppExit::Success);
+        }
+        Err(message) => {
+            error!("{message}");
+            exit.write(AppExit::from_code(1));
+        }
+    }
+}
+
 /// Exits the editor after the given number of frames — with `--screenshot` the window is
 /// captured beforehand.
 fn exit_after_frames(
@@ -1554,6 +1688,7 @@ mod tests {
             autumn_model: None,
             winter_model: None,
             lod_distances: Vec::new(),
+            footprint: None,
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
         };
         let mut map = std::collections::BTreeMap::new();

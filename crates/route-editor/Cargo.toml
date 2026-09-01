@@ -18,6 +18,7 @@ world-coords = { workspace = true }
 content = { workspace = true }
 fields = { workspace = true }
 imagery = { workspace = true }
+vision = { workspace = true }
 world-render = { workspace = true }
 glam = { workspace = true }
 bevy = { workspace = true }

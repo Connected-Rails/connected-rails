@@ -14,5 +14,5 @@ pub use config::{
     predefined_providers,
 };
 pub use geocode::Place;
-pub use source::{DecodedTile, ImagerySource, TileState};
+pub use source::{BlockingSource, DecodedTile, ImagerySource, TileState};
 pub use tiles::TileId;

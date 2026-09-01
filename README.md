@@ -328,6 +328,7 @@ or the whole corridor.
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `fields` | Farmland from the state agricultural registers (InVeKoS): which state a place is in, the WFS clients, crop code mapping, geometry clean-up, phenology |
+| `vision` | Reading the aerial imagery with a local model: the model registry, a pure-Rust ONNX runtime, the walk over the imagery, and the car parks a crowd of cars implies (ch. 15) |
 | `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, farmland, track objects, floating-origin anchoring |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); multiplayer and the dedicated server on lightyear (ch. 20); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
@@ -798,6 +799,8 @@ be laid, which never touches one already lying there.
 | `3` Walk area | The same for a polygon people are about on — some wander between spots inside it, the rest stand. The panel sets how many, the share that walks, and the height above the ground |
 | **Module** | |
 | `2` Envelope | Reshapes the module boundary: drag a corner, a click on a side adds one there, `Delete` removes the selected one. Everything the module owns has to lie inside it — the landscape strictly, the track up to the boundary itself |
+| **Imagery** | |
+| `2` AI area | Clicks outline the patch of ground a model is let loose on, Enter or right-click closes it. The other way to say it is a corridor along the track, which needs no gesture — see **File ▸ Detect from imagery…** below |
 
 A turnout no longer needs a tool of its own: laying from the middle of a track *is* the
 switch, split and wired on finish, and whether it is faced or trailed is in the first drag.
@@ -910,6 +913,116 @@ loads, evictions and usage.
 | `L` | Offline mode |
 | `C` / `R` | Clear cache / reset failed attempts |
 | `F5` / `F2` | Load / save configuration |
+
+### Detecting from the aerial imagery
+
+The photograph the editor drapes over the ground is a survey of the real place, and most of
+what a builder does is transcribe it: every car in the station car park, one click each.
+**File ▸ Detect from imagery…** has a local model do it.
+
+Everything runs on this machine. The runtime is [tract], a pure-Rust ONNX implementation
+compiled into the editor — there is no service to sign up to, nothing is uploaded, and a
+module can be built on a train with no signal.
+
+**Where it looks is the point.** A model let loose on a whole module would fetch a square
+of imagery a hundred times bigger than the line and take an hour about it. So the dialog
+asks for one of two areas:
+
+* **Along the track** — a corridor of a stated width, which reaches the station forecourt
+  and the goods yard without walking the fields behind them, or
+* **In the drawn area** — the ring drawn with the *AI area* tool, or the circle the select
+  tool last grew round something.
+
+Both carry the same second condition, **Keep clear of track**: whichever area was chosen,
+nothing is placed within that many metres of a rail. A car standing in the four-foot is
+worse than no car at all.
+
+**And nothing is placed on a carriageway.** A photograph shows the cars that were driving
+when it was taken as readily as the ones that were parked, and nothing in the picture tells
+them apart — but a parked car left in a running lane is a road blocked for the simulator's
+own traffic, which is worse than a car park a few cars short. So every find whose middle
+falls inside a road's width is dropped. Measured to the kerb and no further: a car at the
+roadside has its centre just beyond it, and kerbside parking is most of the traffic beside a
+street. A car park this dialog paved on an earlier run carries `parking` and is not a street
+— otherwise a second run could not fill the bays the first one found. The rule can only hold
+to roads that are in the file, so a module whose roads have not been imported yet is told
+so in the report rather than quietly given a lorry in the fast lane.
+
+The run happens on a thread of its own with a progress bar and a Stop that means it, and
+**nothing is written until Commit** — the report says what was found and what is installed
+to place it with, and the whole run is one undo step.
+
+For a module being rebuilt from its sources by a script there is `--detect-run`, beside
+`import-module`:
+
+```bash
+trainsim-route-editor mods/example/lines/boerde.ron --detect-run \
+    [--corridor 80] [--keep-clear 8] [--model dota-obb]
+```
+
+It runs the same detection along the track, commits it and writes the line file back,
+printing the progress and the report to the log. The dialog stays the way a person should
+do this — reading the report before a few hundred objects go into a module is the point of
+it — and the flag is for the case where nobody is sitting in front of it.
+
+**Car parks are not detected.** They are the cars: a cluster of them is fitted with a
+rectangle along the rows they stand in and paved with an unmarked asphalt area, which is an
+ordinary road afterwards and can be dragged about like one.
+
+#### Models
+
+The models are **data, not code**: `ai.ron`, written next to `imagery.ron` the first time
+the dialog is opened, lists what the editor knows how to talk to — the file, the input size,
+the head, the ground resolution the model was trained at, and what each of its classes is
+worth on a module:
+
+```ron
+(
+    id: "dota-obb",
+    name: "YOLOv8 OBB (DOTA v1)",
+    file: "models/yolov8n-obb.onnx",
+    input: (width: 1024, height: 1024),
+    head: Oriented(confidence: 0.25, iou: 0.45),
+    classes: [
+        // …the model's own list, in the model's own order.
+        (name: "large vehicle", place: "lorry", size: (9.0, 2.5)),
+        (name: "small vehicle", place: "car", size: (4.4, 1.8)),
+    ],
+    ground_sample: 0.3,   // m per pixel the model was trained on
+)
+```
+
+`place` is a **tag**, and the editor places an object carrying it from whatever mods are
+installed — `mods/cars` brings seven European vehicles, from a Kleinwagen to a Kastenwagen,
+built by `tools/cars/` out of generated FBX models: plinth removed, interior removed,
+windows turned into dark glass where that is the better picture, and four levels of detail
+each. A detector for level crossings, containers or solar farms is therefore an entry in
+this file and a mod with objects tagged for it, and no Rust at all. `size` is the real
+footprint of the class: a "car" eleven metres long is two cars the model ran together, and
+it is dropped rather than placed.
+
+**Which object, of the ones carrying the tag, is decided by how long the find is.** One tag
+holds more than one size of thing — `lorry` here is a 4.82 m Transporter and a 6.30 m
+Kastenwagen — and taking either at random stands half the vans a metre and a half out of
+their bays. So an object states its `footprint` (MODS.md, *Scenery objects*) and nothing
+longer than the space goes into it: below about six metres the Kastenwagen is simply not a
+candidate. Among what does fit the choice stays what it always was, decided by the place
+itself, so the same imagery always draws the same car and a row of bays is still a row of
+different ones rather than five copies of the largest estate.
+
+**The weights ship with nobody.** Every detector worth using for aerial work is either too
+big to travel with a route editor or licensed so it may not. `ai.ron` says where each one's
+`.onnx` is expected and the dialog says plainly when it is not there yet. The model this was
+built for is Ultralytics' YOLOv8-OBB trained on DOTA v1 (AGPL-3.0) — an *oriented* head,
+which matters: it says which way each car points, and a car park is nothing but that.
+
+```bash
+pip install ultralytics
+yolo export model=yolov8n-obb.pt format=onnx imgsz=1024
+mv yolov8n-obb.onnx models/          # next to ai.ron
+```
+
+[tract]: https://github.com/sonos/tract
 
 ## Scenarios
 

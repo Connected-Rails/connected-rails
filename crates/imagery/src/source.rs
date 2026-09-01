@@ -253,6 +253,66 @@ impl Drop for ImagerySource {
     }
 }
 
+/// A source for work that is not a frame: an import, a batch, anything that
+/// runs on a thread of its own and wants the tile *now*.
+///
+/// [`ImagerySource`] is built for the map: ask for a tile, carry on drawing,
+/// pick it up when it arrives. A background job has the opposite shape — it
+/// can afford to wait and cannot afford to poll — so it gets its own door to
+/// the same cache and the same provider. What the editor has already looked
+/// at is on disk, and a run over ground the user has just been flying over
+/// starts without touching the network at all.
+pub struct BlockingSource {
+    config: ImageryConfig,
+    cache: TileCache,
+}
+
+impl BlockingSource {
+    pub fn new(config: ImageryConfig) -> Self {
+        let cache = TileCache::new(&config.cache);
+        Self { config, cache }
+    }
+
+    /// The provider this source reads from.
+    pub fn provider(&self) -> Option<&crate::config::Provider> {
+        self.config.provider()
+    }
+
+    /// One tile, cache first. `None` where it cannot be had — offline with a
+    /// cold cache, a hole in the coverage, a service that is down.
+    pub fn tile(&mut self, tile: TileId) -> Option<DecodedTile> {
+        let provider = self.config.provider()?.clone();
+        let key = CacheKey::new(&provider.id, tile);
+        let extension = provider.format.extension();
+        if let Some(bytes) = self.cache.get(&key, extension)
+            && let Loaded::Tile(decoded) = decode(tile, &bytes)
+        {
+            return Some(*decoded);
+        }
+        if self.config.cache.offline {
+            return None;
+        }
+        let url = provider.tile_url(tile);
+        let timeout = std::time::Duration::from_secs(self.config.request.timeout_seconds.max(1));
+        for attempt in 0..=self.config.request.retries {
+            match download(&url, &self.config.request.user_agent, timeout) {
+                Ok(bytes) if !bytes.is_empty() => {
+                    let _ = self.cache.store(key.clone(), extension, bytes.clone());
+                    if let Loaded::Tile(decoded) = decode(tile, &bytes) {
+                        return Some(*decoded);
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+            if attempt < self.config.request.retries {
+                std::thread::sleep(std::time::Duration::from_millis(200 * (attempt as u64 + 1)));
+            }
+        }
+        None
+    }
+}
+
 /// Run a load job: download, store, decode.
 fn run_job(job: Job) {
     let mut last_error = String::new();

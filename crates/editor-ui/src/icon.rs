@@ -95,6 +95,9 @@ pub enum Icon {
     TopDown,
     /// The right-hand properties panel — a frame with its right column.
     PanelRight,
+    /// Reading the imagery with a model — a viewfinder's corner brackets
+    /// round the boxes it has drawn on what it found.
+    Ai,
 }
 
 /// Size of a toolbox button: the toolbox is a column of icons alone, so each
@@ -419,6 +422,39 @@ fn draw(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 at(0.10, 0.90),
             ]);
             vec![Shape::closed_line(outline, stroke)]
+        }
+        // Reading the imagery: the corner brackets of a viewfinder, and inside
+        // them the two boxes a detector draws round what it has found. Not a
+        // brain and not a spark — what this does is look at a picture.
+        Icon::Ai => {
+            let bracket = |x: f32, y: f32, dx: f32, dy: f32| {
+                line(vec![at(x + dx, y), at(x, y), at(x, y + dy)])
+            };
+            let mut shapes = vec![
+                bracket(0.08, 0.14, 0.20, 0.18),
+                bracket(0.92, 0.14, -0.20, 0.18),
+                bracket(0.08, 0.90, 0.20, -0.18),
+                bracket(0.92, 0.90, -0.20, -0.18),
+            ];
+            shapes.push(Shape::closed_line(
+                vec![
+                    at(0.24, 0.38),
+                    at(0.52, 0.38),
+                    at(0.52, 0.56),
+                    at(0.24, 0.56),
+                ],
+                stroke,
+            ));
+            shapes.push(Shape::closed_line(
+                vec![
+                    at(0.58, 0.58),
+                    at(0.80, 0.58),
+                    at(0.80, 0.76),
+                    at(0.58, 0.76),
+                ],
+                stroke,
+            ));
+            shapes
         }
         // The envelope: a closed run of sides with its corners marked, which is
         // what the tool edits — the corners, not the area.

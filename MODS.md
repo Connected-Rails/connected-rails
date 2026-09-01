@@ -84,6 +84,22 @@ A tag names the *entry*, not the placement: a mast tagged `epoch-4` stays that m
 line puts it. Nothing in the simulator reads tags — they exist for finding things in the
 editor, and adding one can never change how a run behaves.
 
+**One tag does more than filter a list.** The route editor's imagery detection (README,
+*Detecting from the aerial imagery*) places objects by tag: a model's class list names
+`car`, and the editor drops a random object tagged `car` from the installed mods wherever
+it found one in the photograph. So a mod full of lorries becomes what a lorry detector
+places by carrying the tag its `ai.ron` entry names, and nothing else has to be written on
+either side. Tag what should be placed automatically, and leave the tag off the entry that
+should not — a wreck, a museum piece, the one that is already standing somewhere by hand.
+
+**Give those entries a `footprint`.** One tag holds more than one size of thing —
+`lorry` in `mods/cars` is a 4.82 m Transporter and a 6.30 m Sprinter — and the detection
+measures every find it makes. With the sizes stated it will not put the Sprinter in a
+space that has room for the Transporter; without them it picks between the two by
+coin, and half the vans in a car park stand a metre and a half out of their bays. The
+choice among what does fit stays the random-but-stable one, so a row of spaces is still a
+row of different cars.
+
 ## Vehicles
 
 `vehicles/*.ron` is a `VehicleSpec` — plain data. See `mods/example/vehicles/br101_afb.ron`:
@@ -1556,6 +1572,19 @@ enough pixels, so a forty metre fir hands over at a hundred metres and is drawn 
 a half kilometres, while a two metre blackthorn hands over at twenty and is gone at seven
 hundred — and a hedge of blackthorn drawn to two kilometres is tens of thousands of draw
 calls for nothing.
+
+**How much ground it covers.** Optional, and it decides nothing for an object a person
+places by hand — but the imagery detection has nothing to go on but a box measured off a
+photograph, and it is what stops a seven-metre van being dropped into a space that holds
+a hatchback:
+
+```ron
+// Length along the model's own front-to-back axis, width across it.
+footprint: Some((length: 6.30, width: 2.35)),
+```
+
+Width is over whatever sticks out: a van's mirrors are what touches the car in the next
+bay. A mast, a board or a hut states neither and is never measured.
 
 A **crossed-quad impostor as the coarsest level wants a late hand-over**, not an early
 one. Two quads at a right angle are the least that works — a single fixed billboard

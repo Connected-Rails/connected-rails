@@ -18,6 +18,7 @@ members = [
     "crates/signal-editor",
     "crates/editor-ui",
     "crates/world-render",
+    "crates/vision",
 ]
 
 [workspace.package]
@@ -57,6 +58,7 @@ world-coords = { path = "crates/world-coords" }
 track-model = { path = "crates/track-model" }
 sim-core = { path = "crates/sim-core" }
 content = { path = "crates/content" }
+vision = { path = "crates/vision" }
 mod-runtime = { path = "crates/mod-runtime" }
 ai-driver = { path = "crates/ai-driver" }
 imagery = { path = "crates/imagery" }

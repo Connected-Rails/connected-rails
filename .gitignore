@@ -1,16 +1,22 @@
 # Rust
 /target/
 
-# Kachel-Cache des Luftbild-Overlays
+# Tile cache of the aerial imagery overlay
 /cache/
 
-# Aufnahmen aus --screenshot
+# Shots from --screenshot
 /screenshots/
 
-# Konfiguration, die beim ersten Start entsteht (enthält ggf. eigene Zugangsschlüssel)
+# Configuration written on first start (may hold your own access keys)
 /imagery.ron
+# The model registry of the imagery detection, and the weights it points at.
+# Neither may travel with the repository: the file names local paths, and a
+# detector is tens of megabytes under a licence of its own (README, *Detecting
+# from the aerial imagery*).
+/ai.ron
+/models/
 
-# Betriebssystem
+# Operating system
 Thumbs.db
 .DS_Store
 

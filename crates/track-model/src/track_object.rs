@@ -9,6 +9,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How much ground an object covers, in metres.
+///
+/// It exists for the placement that does not have a person behind it. A
+/// builder dropping a van by hand can see whether it fits; the imagery
+/// detection (`crates/vision`) has nothing but a box measured off a
+/// photograph, and without knowing how long the models are it will put a
+/// seven-metre Sprinter into a bay that holds a Polo. Optional, because for
+/// most scenery it decides nothing — a mast is a mast wherever it stands.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Footprint {
+    /// Along the model's own front-to-back axis \[m\].
+    pub length: f64,
+    /// Across it \[m\], including whatever sticks out — a van's mirrors are
+    /// what touches the car beside it.
+    pub width: f64,
+}
+
 /// A placeable 3D object and the pose its author defined relative to the track.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackObject {
@@ -47,6 +64,10 @@ pub struct TrackObject {
     /// calls for nothing.
     #[serde(default)]
     pub lod_distances: Vec<f32>,
+    /// How much ground the object covers, where that is worth knowing. See
+    /// [`Footprint`].
+    #[serde(default)]
+    pub footprint: Option<Footprint>,
     /// Free-form tags the mod author gives the entry, for finding it again in
     /// a catalogue of thousands: `["mast", "catenary", "epoch-4"]`. Lower-case
     /// kebab by convention — the editors normalise what is typed, and the
@@ -81,6 +102,10 @@ mod tests {
             autumn_model: None,
             winter_model: Some("example/assets/mast_winter.gltf".into()),
             lod_distances: vec![80.0, 260.0, 800.0, 2_500.0],
+            footprint: Some(Footprint {
+                length: 0.4,
+                width: 0.4,
+            }),
             tags: vec!["mast".into(), "epoch-4".into()],
         };
         assert_eq!(TrackObject::from_ron(&full.to_ron()).unwrap(), full);
@@ -93,5 +118,6 @@ mod tests {
         assert_eq!(minimal.yaw_deg, 0.0);
         assert_eq!(minimal.winter_model, None);
         assert!(minimal.lod_distances.is_empty());
+        assert_eq!(minimal.footprint, None);
     }
 }

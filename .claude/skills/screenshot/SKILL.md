@@ -30,6 +30,7 @@ bricht es mit „cannot open shared object file" ab.
 | `--screenshot <datei.png>` | Aufnahme des Fensters, danach Ende. Verzeichnis wird angelegt. |
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
 | `--height M` | Nur Moduleditor: Starthöhe des Blickpunkts über der Strecke in Metern (Vorgabe 900). 60 zeigt Bäume und Objekte, 900 das Modul. |
+| `--at KM` | Nur Moduleditor: welchen Kilometer der Strecke der Blick trifft (Vorgabe: die Mitte). Ein fünf Kilometer langes Modul hat eine interessante Ecke, und die ist selten die Mitte — aus der Mitte in der Höhe, die bis ans andere Ende reicht, ist das Gesuchte ein Pixel. |
 | `--drawer [kategorie]` | Nur Moduleditor: Inhalte-Schublade offen aufnehmen — sonst nur per `Ctrl`+`Space` erreichbar. Kategorie optional: `objects` (Vorgabe), `signal-types`, `signal-models`, `track-types`. |
 | `--tool <name>` | Nur Moduleditor: mit diesem Werkzeug in der Hand starten — der Werkzeug-Abschnitt zeigt nur die Optionen des aktiven. Namen wie die i18n-Keys ohne Präfix: `select`, `draw`, `split`, `join`, `offset`, `crossover`, `gradient`, `area`, `device`, `object`, `marker`, `tree`, `forest`, `brush`, `terrain-raise`, `terrain-lower`, `terrain-level`, `terrain-rail`, `tile`, `walk-path`, `walk-area`, `envelope`. |
 

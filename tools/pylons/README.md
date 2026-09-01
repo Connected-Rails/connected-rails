@@ -27,6 +27,7 @@ is 40 cm too short is a one-line edit to the catalogue and a re-run.
 ```bash
 node tools/pylons/build_pylons.mjs
 node tools/pylons/build_pylons.mjs --only donaumast-380,bahnstrommast-110
+node tools/pylons/build_pylons.mjs --check      # every face outward? writes nothing
 node tools/pylons/build_pylons.mjs --report     # triangle budget, writes nothing
 node tools/pylons/build_pylons.mjs --preview    # picture sheets into /tmp/pylon-preview
 node tools/pylons/build_pylons.mjs --ink        # what each level does to the mast's ink
@@ -60,6 +61,7 @@ stands on is the same five pieces in different proportions:
 | **body** | four battered legs with X bracing to a waist, then a parallel shaft (`lattice`); or a tapered tube (`pole`, `tube`); or two legs under a beam (`portal`) |
 | **crossarm** | two parallel trusses joined across, the top chord horizontal and the bottom chord running up to the tip |
 | **fitting** | a cap-and-pin string hanging under the arm, a standing pin insulator, or the double-bell porcelain of a telegraph pole |
+| **tube** | anything genuinely round: a concrete or wooden pole, the body of a compact mast, an insulator shed |
 | **earth peak** | a small pyramid of the same lattice on the body top; one, two or none |
 | **foundation** | four concrete stubs — the part of a mast actually seen from a train, because the grass grows up to them |
 
@@ -74,6 +76,26 @@ a wider base and heavier members — and its insulator strings lie along the
 conductors instead of hanging under them, which is what a viewer actually reads
 an Abspannmast off from a moving train.
 
+**Every face has to point outward, and for the whole life of the kit they did
+not.** `member` — the box that four hundred of a lattice mast are made of — was
+wound inside out on all four sides and both caps. Nothing caught it, because the
+*silhouette* is the same either way: with a single-sided material the near face
+of a bar is culled and what the eye gets is the inside of the far one, so a mast
+looks right in a picture and is wrong by the thickness of a bar in depth and lit
+from the wrong side. In a lattice, where four hundred members cross, that reads
+as bars being in front of others they are behind. `--check` asserts it now, per
+piece, over every level of every variant — a shape whose normals point at its
+own centre fails the build.
+
+**Flat normals everywhere straight, smooth ones round a `tube`.** Angle steel
+has edges and smoothing them costs vertices to hide the one thing that makes a
+lattice read as steel — but a round section is the opposite case, and the same
+rule applied to it gave the compact mast a body that read as folded sheet: a
+ten-sided prism with seventy-centimetre faces, each its own flat grey. The
+corner normals of a `tube` are now the cone's true normals, so ten sides read as
+round and the silhouette is out by five centimetres on a two-metre tube. The
+concrete and wooden poles were faceted the same way and are fixed with it.
+
 **Height is not a variant.** The atlas gives a band, the placement gives a
 scale, and a mast scaled by a tenth either way is the same drawing built taller
 — which is what a manufacturer does too. Two files per type instead of eight,
@@ -83,10 +105,29 @@ and a line of Donaumasten still varies along its length.
 
 | level | what it is | 380 kV Donaumast |
 | --- | --- | --- |
-| `mast_LOD0` | every member, every insulator disc, the foundations | 3 024 triangles |
-| `mast_LOD1` | half the bracing panels, half the discs, coarser round sections | 1 416 |
-| `mast_LOD2` | a quarter of the panels, one truss per crossarm instead of two, insulators without discs | 432 |
+| `mast_LOD0` | every member with **closed ends**, every insulator cap, the foundations | 5 056 triangles |
+| `mast_LOD1` | half the bracing panels, open ends, a third of the caps, coarser round sections | 1 632 |
+| `mast_LOD2` | a quarter of the panels, one truss per crossarm instead of two, insulators without caps | 432 |
 | `mast_LOD3` | the outline: legs, arm bars, a stub where each insulator was | 240 |
+
+A tension mast is heavier again — 6 784 at `LOD0` for the same type — because it
+carries two strings at every conductor point instead of one.
+
+**The ends are closed at `LOD0` and open below it.** A member is an open box by
+default and every one of the 276 pieces of a Donaumast was left that way; while
+the sides were wound inside out it never showed, because the interior of the far
+face stood in for the exterior of the near one. Closing the winding opened every
+end at once and a joint became a bar you could see down. Two quads an end is
+four triangles and 276 of them is half the structure again — worth it at `LOD0`
+and nowhere else, because `LOD1` starts at 278 m on a Donaumast, where a 15 cm
+bar is half a pixel and the hole in it a good deal less.
+
+**And a member runs half its own width past both nodes.** Drawn node to node,
+two bars meeting at an angle leave a wedge between their square ends — shallow
+at a right angle, deep at the twenty degrees a diagonal makes with a chord.
+Riveted steel does not have those; the bars lap and are bolted through. The
+overlap costs no triangles and is capped at a fifth of the length so a short
+stub cannot double.
 
 **The bands come off the members, not off the mast.** The first cut of this
 scaled them by the mast's height, which puts a 12 m concrete pole with a 9 cm
@@ -124,8 +165,16 @@ The mast then visibly darkens as the train approaches, which is the one thing a
 level of detail must not do. So `lib/kit.mjs` widens what is left
 (`MEMBER_SCALE`, `ARM_SCALE`), and **`--ink` is what says by how much**: it
 supersamples each level at the distance it hands over at and reports the
-coverage against the level before it. Every hand-over in the catalogue is inside
-±20 %, most inside ±10 %.
+coverage against the level before it. Most hand-overs are inside ±10 %.
+
+**Five are not, and they are the closing of the bar ends' doing.** Capping every
+member at `LOD0` and drawing every insulator cap there put ink into the finest
+level that the coarse ones do not have, so `LOD1` and `LOD2` now come out 20 to
+26 % light on five types (`donaumast-110` and `bahnstrommast-110` at `LOD2`,
+`tonnenmast-380` at `LOD3`, `masttrafo-20kv` at `LOD3` the other way round, and
+`kompaktmast-380`'s `LOD3` is never reached at all). `MEMBER_SCALE` and
+`ARM_SCALE` want re-tuning against `--ink`; until then those five darken
+slightly as a train approaches.
 
 Two things `--ink` caught that no triangle count would have:
 
@@ -144,25 +193,67 @@ Two things `--ink` caught that no triangle count would have:
 
 Three painted maps per material, tiling **once per metre** — the UVs are in
 metres, so the grain is the same size on a 36 cm leg as on a 6 cm brace, which
-is what stops a tiled material from reading as wallpaper. Nine PNGs of 256 px
-serve all thirty-three models, under a megabyte for the lot, and they are
-generated (`lib/texture.mjs`) rather than scanned:
+is what stops a tiled material from reading as wallpaper. `v` runs **along** a
+piece and `u` across or around it, on a `member` as on a `tube`, so a material
+can draw something that follows the steel. Nine PNGs of 256 px serve all
+thirty-three models, under a megabyte for the lot, and they are generated
+(`lib/texture.mjs`) rather than scanned:
 
 | material | what is painted |
 | --- | --- |
-| **verzinkt** | the zinc **spangle** — a Voronoi of crystal facets a few centimetres across, each with its own shade and its own gloss — over a slow weathering field, plus rolling marks and pitting |
-| **beton** | the sand and the odd larger stone a centrifuged pole throws to its outer wall, the faint long streaks of the mould, and a slow dirt field |
-| **holz** | the grain running the length of the pole, the fibre across it, and the checks a pole dries into |
+| **verzinkt** | the zinc **spangle** — a Voronoi of crystal facets 24 mm across, each with its own shade and its own gloss — over a slow weathering field, plus the mill's rolling marks, the orange peel of a dipped coating, and pitting |
+| **beton** | the aggregate showing through a centrifuged pole's skin and the blow-holes beside it, the mould's seam running down it, and the slow grey-green of a surface that is wet more often than dry |
+| **holz** | the growth rings drawn out the length of the pole, the fibre along them, the **checks** it dries into and the **knots** where its branches were |
 
-**Weathered zinc is not a mirror**, and getting that wrong is what a first
-attempt did: fresh galvanising is a metal with a reflectance near 0.85, so
-`metallic = 1` and a bright base colour gave a mast that reflected the whole sky
-and blew out white against it. What a mast on a line actually wears is zinc
-*carbonate*, the chalky grey skin that forms in the first year or two — and that
-is a **dielectric** layer over the metal. So the weathering field drives the
-metallic as well as the roughness: a facet still bright reads as metal, one gone
-chalky reads as the mineral covering it, and the mast comes out the mid grey a
-mast is.
+**The tile has to be seamless, and for a long time it was not.** `fbm` took the
+frequency and the wrap period as two separate arguments, and of the twelve terms
+the three materials are made of, exactly one happened to match — the other
+eleven broke at the tile boundary, so every surface carried a **grid of seams a
+metre apart**. A lattice hid it, because no member is a metre wide in both
+directions; the compact mast's two-metre tube showed it as a brick wall. The
+period is derived from the frequency now, per axis, so it cannot come apart
+again.
+
+**Nothing is drawn finer than the map can hold, and nothing finer than the eye
+can keep**, which is a budget: the highest octave of any term stays at or below
+a quarter of `TEXTURE_SIZE` in cycles per metre — four texels a cycle. Both
+halves of that rule were broken and each broke a material in its own direction.
+The concrete drew its sand at 120 cycles a metre over three octaves, so the top
+octave was half a texel wide and the map filled with the aliasing of it: a pole
+read as **sandpaper** close up. The wood drew its fibre the same way and lost it
+the other way round — the detail was so fine that the first mip level averaged
+it flat, and a creosoted pole ten metres off was a **smooth pink stick**. What
+carries a material at the distance it is actually seen from is centimetres, not
+millimetres: the checks, the knots, the mould streaks, the aggregate.
+
+Three numbers in `galvanised` decide whether a mast reads as steel, and all
+three were wrong to begin with:
+
+**Weathered zinc is not a mirror.** Fresh galvanising is a metal with a
+reflectance near 0.85, and a `metallic` near one over a bright base colour gives
+a mast that reflects the whole sky — under the image-based light Bevy's
+atmosphere casts back (`world_render::sky`) that is not a subtle error, it is a
+blue-white mast blowing out against the very sky it is mirroring. What a mast on
+a line actually wears is zinc *carbonate*, the chalky grey skin of its first
+years, and that is a **dielectric** over the metal. So the weathering field
+drives the metallic into a narrow band low down — `0.08` where the skin is
+thickest to `0.36` on a facet still bright — and the base colour sits at the
+mid grey a mast is (sRGB 118–142), not at the 169 it started on. What is left
+is a broad dim sheen rather than a reflection, which is what galvanising has.
+
+**A crystal is 24 mm, not 90.** At the 11 cells per metre the spangle started
+on, a facet was wider than most braces on the mast: a bar carried one or two of
+them, so the spangle stopped being a surface finish and became the shape of the
+bar, and it stayed visible at a hundred metres where real spangle is long gone.
+`SPANGLE_CELLS` is the number, and 42 per metre puts a facet in the middle of
+the band a hot-dip bath throws on structural steel.
+
+**And it is flat.** The spangle is a pattern in *reflectance*, not in relief —
+the crystals freeze level with one another. Putting them in the height field,
+where they were at four fifths of it, embossed every crystal and turned a bar of
+angle iron into beaten metal at the first raking light. What relief the surface
+does have is the orange peel a dipped coating freezes into, the rolling marks
+and the pitting, all of it under a millimetre.
 
 On top of the maps every vertex carries a **colour** (`geom.mjs`, `weather`):
 per-member shade, because four hundred bars galvanised in the same bath still
@@ -176,6 +267,30 @@ about which end of the leg it is on.
 lattice mast stands on. A galvanised-steel material on the foundation stubs is
 the sort of thing nobody notices until they walk up to one, at which point the
 mast is standing on four metal blocks.
+
+**A cap is 146 mm**, which is the standard cap-and-pin unit, and the number of
+them is what the voltage decides: about 9 at 110 kV, 15 at 220 kV, 23 at 380 kV.
+The catalogue gave *every* type the same 3.4 m and 16 caps — a 213 mm pitch,
+half again what a cap is, so each had to be drawn fat to close the gap and a
+string read as a screw thread; and a 110 kV mast wore the insulation of a
+380 kV one. `insulator_m` and `insulator_discs` now follow the voltage, and
+`LOD0` draws every cap rather than a fixed five-eighths of them.
+
+**The brown was written as if it were sRGB.** `baseColorFactor` is linear:
+0.40, 0.30, 0.24 is sRGB 168, a milky cream, and under the sky's image-based
+light at a roughness of 0.24 the strings came out pale pink. Fired brown glaze
+is sRGB 94, 58, 44. The atlas's `finish.insulators` is the reference — porcelain
+brown or glass green on old lines, grey silicone composite on anything after
+about 1995, which the compact mast ought to have and does not yet.
+
+**Where the insulators go** (`conductorPoints`) had two faults, and both showed
+on the small masts, because that is where an arm is short. The inner limit was a
+fixed 90 cm, and a low-voltage pole's crossarm is 1.6 m across — so both points
+on a side were pushed to the same place and the four conductors of a village
+line came out as two insulators. And an odd count was rounded up: three
+conductors on one level, the commonest medium-voltage arrangement in Germany,
+was drawn as four. The limit now scales with the arm and the odd conductor
+stands over the pole, which is where it stands on the prototype.
 
 The fittings stay constants: an insulator is glazed porcelain, smooth enough
 that there is no microstructure worth a map and small enough that there would be

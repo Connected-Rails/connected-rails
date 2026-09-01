@@ -56,7 +56,7 @@ use fields::CropClass;
 use fields::phenology::{self, Stage};
 
 use crate::{
-    Season, TextureMips,
+    Season, TextureMips, WorldView,
     farmland::{FieldSurface, linear},
     sky::Sky,
     weather::{WeatherExt, WeatherMaterial},
@@ -1378,11 +1378,11 @@ pub fn update_field_plants(
     )>,
     // The camera that draws the *world*, not the first active one in it —
     // see `draws_the_world`.
-    cameras: Query<(&Camera, &RenderTarget, &GlobalTransform), With<Camera3d>>,
+    cameras: Query<(&Camera, &RenderTarget, Has<WorldView>, &GlobalTransform), With<Camera3d>>,
 ) {
     let Some((.., camera)) = cameras
         .iter()
-        .find(|(camera, target, _)| crate::draws_the_world(camera, target))
+        .find(|(camera, target, world_view, _)| crate::draws_the_world(camera, target, *world_view))
     else {
         return;
     };

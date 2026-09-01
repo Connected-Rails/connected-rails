@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 use track_model::TrackObject;
 
 use crate::people::{PERSON_CULL, Passengers, WalkwayHost, person_bundle, spawn_strollers};
-use crate::{Season, asset_path};
+use crate::{Season, WorldView, asset_path};
 
 /// Past this distance no tree is drawn [m] — what a species that names no
 /// bands of its own is culled at.
@@ -194,13 +194,13 @@ pub fn cull_distant_woods(
     // The camera that draws the world — see `draws_the_world`. Measuring a
     // wood's distance to a cab display, a cloud panorama or one of the route
     // editor's catalogue thumbnails culls by the wrong thing entirely.
-    cameras: Query<(&Camera, &RenderTarget, &GlobalTransform), With<Camera3d>>,
+    cameras: Query<(&Camera, &RenderTarget, Has<WorldView>, &GlobalTransform), With<Camera3d>>,
     mut woods: Query<(&GlobalTransform, &Wood, &mut Visibility)>,
     mut reported: Local<usize>,
 ) {
     let Some(eye) = cameras
         .iter()
-        .find(|(camera, target, _)| crate::draws_the_world(camera, target))
+        .find(|(camera, target, world_view, _)| crate::draws_the_world(camera, target, *world_view))
         .map(|(.., at)| at.translation())
     else {
         return;

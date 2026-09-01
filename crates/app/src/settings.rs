@@ -743,6 +743,9 @@ pub fn present_mode(graphics: &Graphics) -> PresentMode {
 /// Fullscreen and vertical sync onto the live window. Both are compared first: an
 /// assignment marks `Window` changed, and winit answers a changed window mode by
 /// recreating the surface even when nothing about it actually moved.
+///
+/// A `--screenshot` run has no window at all (`main.rs`), and this does nothing
+/// there.
 fn apply_window(graphics: Res<Graphics>, mut window: Query<&mut Window, With<PrimaryWindow>>) {
     let Ok(mut window) = window.single_mut() else {
         return;

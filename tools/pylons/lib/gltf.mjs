@@ -11,12 +11,13 @@
 // **Three maps per material, painted rather than photographed.** A flat base
 // colour with a metallic and a roughness number is a correct PBR material and
 // still reads as plastic, because what makes galvanising look like galvanising
-// is the *spangle* — zinc crystals a centimetre across, each at its own gloss —
-// and that lives in the roughness, not in the colour. So a mast carries a base
-// colour, an ORM and a normal map (`lib/texture.mjs`), all tiling once per
-// metre: the UVs are in metres, so the grain is the same size on a 36 cm leg as
-// on a 6 cm brace. Nine PNGs of 256 px serve all thirty-three models — under a
-// megabyte for the lot, because they are generated and not scanned.
+// is the *spangle* — zinc crystals a couple of centimetres across, each at its
+// own gloss — and that lives in the roughness, not in the colour and not in the
+// relief. So a mast carries a base colour, an ORM and a normal map
+// (`lib/texture.mjs`), all tiling once per metre: the UVs are in metres, so the
+// grain is the same size on a 36 cm leg as on a 6 cm brace. Nine PNGs of 256 px
+// serve all thirty-three models — under a megabyte for the lot, because they
+// are generated and not scanned.
 //
 // On top of that every vertex carries a **colour**: per-member value jitter and
 // the dirt that gathers towards a mast's foot. The texture says what the

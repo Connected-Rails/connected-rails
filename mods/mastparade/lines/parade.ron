@@ -1,0 +1,104 @@
+// Every mast of the `pylons` catalogue, once, in a row 70 m north of the track.
+//
+//   cargo run -p app -- --line mastparade:parade --camera fly
+//
+// Scratch content for looking at the models — not part of the shipped mods.
+// Ordered by voltage, 80 m apart, the first 200 m ahead of the train's front —
+// so the odometer in the HUD names the one abeam: mast n is at 80 n + 120
+// metres. Every one faces the track head-on (`yaw_deg: 0`), which is the view a
+// drawing of a pylon is made in.
+(
+    name: "Mastparade",
+    year: Some(2026),
+    fictional: true,
+    nodes: [Buffer, Buffer],
+    edges: [
+        (
+            from: 0,
+            to: 1,
+            start: Geo(point: (lat: 52.0, lon: 10.0, height: 100.0), heading_deg: 90.0),
+            segments: [(len: 3350.6, k0: 0.0, dk: 0.0)],
+            grade: [(0.0, 0.0)],
+            cant: [],
+            speed: [(0.0, 120.0)],
+            track_type: [],
+            electrification: [(0.0, "ac-15kv")],
+            formation: true,
+        ),
+    ],
+    trees: [
+        //  1  km 0.200  Tonnenmast (Tragmast)
+        (object: "pylons:tonnenmast_380_trag", lat: 52.0006291, lon: 10.0056868, yaw_deg: 0.0, scale: 1.0),
+        //  2  km 0.280  Tonnenmast (Abspannmast)
+        (object: "pylons:tonnenmast_380_abspann", lat: 52.0006291, lon: 10.0068516, yaw_deg: 0.0, scale: 1.0),
+        //  3  km 0.360  Kombinationsmast 380/110 kV (Tragmast)
+        (object: "pylons:kombimast_380_110_trag", lat: 52.0006291, lon: 10.0080163, yaw_deg: 0.0, scale: 1.0),
+        //  4  km 0.440  Kombinationsmast 380/110 kV (Abspannmast)
+        (object: "pylons:kombimast_380_110_abspann", lat: 52.0006291, lon: 10.0091810, yaw_deg: 0.0, scale: 1.0),
+        //  5  km 0.520  Donaumast (Tragmast)
+        (object: "pylons:donaumast_380_trag", lat: 52.0006291, lon: 10.0103458, yaw_deg: 0.0, scale: 1.0),
+        //  6  km 0.600  Donaumast (Abspannmast)
+        (object: "pylons:donaumast_380_abspann", lat: 52.0006291, lon: 10.0115105, yaw_deg: 0.0, scale: 1.0),
+        //  7  km 0.680  Kompaktmast (Tragmast)
+        (object: "pylons:kompaktmast_380_trag", lat: 52.0006291, lon: 10.0126753, yaw_deg: 0.0, scale: 1.0),
+        //  8  km 0.760  Kompaktmast (Abspannmast)
+        (object: "pylons:kompaktmast_380_abspann", lat: 52.0006291, lon: 10.0138400, yaw_deg: 0.0, scale: 1.0),
+        //  9  km 0.840  Einebenenmast (Tragmast)
+        (object: "pylons:einebenenmast_380_trag", lat: 52.0006291, lon: 10.0150047, yaw_deg: 0.0, scale: 1.0),
+        // 10  km 0.920  Einebenenmast (Abspannmast)
+        (object: "pylons:einebenenmast_380_abspann", lat: 52.0006291, lon: 10.0161695, yaw_deg: 0.0, scale: 1.0),
+        // 11  km 1.000  Portalmast (Abspannmast)
+        (object: "pylons:portalmast_380_abspann", lat: 52.0006291, lon: 10.0173342, yaw_deg: 0.0, scale: 1.0),
+        // 12  km 1.080  Tannenbaummast (Tragmast)
+        (object: "pylons:tannenbaummast_220_trag", lat: 52.0006291, lon: 10.0184989, yaw_deg: 0.0, scale: 1.0),
+        // 13  km 1.160  Tannenbaummast (Abspannmast)
+        (object: "pylons:tannenbaummast_220_abspann", lat: 52.0006291, lon: 10.0196637, yaw_deg: 0.0, scale: 1.0),
+        // 14  km 1.240  Donaumast 220 kV (Tragmast)
+        (object: "pylons:donaumast_220_trag", lat: 52.0006291, lon: 10.0208284, yaw_deg: 0.0, scale: 1.0),
+        // 15  km 1.320  Donaumast 220 kV (Abspannmast)
+        (object: "pylons:donaumast_220_abspann", lat: 52.0006291, lon: 10.0219932, yaw_deg: 0.0, scale: 1.0),
+        // 16  km 1.400  Donaumast 110 kV (Tragmast)
+        (object: "pylons:donaumast_110_trag", lat: 52.0006291, lon: 10.0231579, yaw_deg: 0.0, scale: 1.0),
+        // 17  km 1.480  Donaumast 110 kV (Abspannmast)
+        (object: "pylons:donaumast_110_abspann", lat: 52.0006291, lon: 10.0243226, yaw_deg: 0.0, scale: 1.0),
+        // 18  km 1.560  Einebenenmast 110 kV (Tragmast)
+        (object: "pylons:einebenenmast_110_trag", lat: 52.0006291, lon: 10.0254874, yaw_deg: 0.0, scale: 1.0),
+        // 19  km 1.640  Einebenenmast 110 kV (Abspannmast)
+        (object: "pylons:einebenenmast_110_abspann", lat: 52.0006291, lon: 10.0266521, yaw_deg: 0.0, scale: 1.0),
+        // 20  km 1.720  Bahnstrommast, zweiebenig (Tragmast)
+        (object: "pylons:bahnstrommast_110_zweiebenen_trag", lat: 52.0006291, lon: 10.0278168, yaw_deg: 0.0, scale: 1.0),
+        // 21  km 1.800  Bahnstrommast, zweiebenig (Abspannmast)
+        (object: "pylons:bahnstrommast_110_zweiebenen_abspann", lat: 52.0006291, lon: 10.0289816, yaw_deg: 0.0, scale: 1.0),
+        // 22  km 1.880  Bahnstrommast (Tragmast)
+        (object: "pylons:bahnstrommast_110_trag", lat: 52.0006291, lon: 10.0301463, yaw_deg: 0.0, scale: 1.0),
+        // 23  km 1.960  Bahnstrommast (Abspannmast)
+        (object: "pylons:bahnstrommast_110_abspann", lat: 52.0006291, lon: 10.0313111, yaw_deg: 0.0, scale: 1.0),
+        // 24  km 2.040  Stahlgittermast, Mittelspannung (Tragmast)
+        (object: "pylons:stahlgittermast_20kv_trag", lat: 52.0006291, lon: 10.0324758, yaw_deg: 0.0, scale: 1.0),
+        // 25  km 2.120  Stahlgittermast, Mittelspannung (Abspannmast)
+        (object: "pylons:stahlgittermast_20kv_abspann", lat: 52.0006291, lon: 10.0336405, yaw_deg: 0.0, scale: 1.0),
+        // 26  km 2.200  Betonmast, Einebenenanordnung (Tragmast)
+        (object: "pylons:betonmast_20kv_einebene_trag", lat: 52.0006291, lon: 10.0348053, yaw_deg: 0.0, scale: 1.0),
+        // 27  km 2.280  Betonmast, Einebenenanordnung (Abspannmast)
+        (object: "pylons:betonmast_20kv_einebene_abspann", lat: 52.0006291, lon: 10.0359700, yaw_deg: 0.0, scale: 1.0),
+        // 28  km 2.360  Betonmast, Dreiecksanordnung (Tragmast)
+        (object: "pylons:betonmast_20kv_dreieck_trag", lat: 52.0006291, lon: 10.0371347, yaw_deg: 0.0, scale: 1.0),
+        // 29  km 2.440  Masttransformatorstation
+        (object: "pylons:masttrafo_20kv", lat: 52.0006291, lon: 10.0382995, yaw_deg: 0.0, scale: 1.0),
+        // 30  km 2.520  Niederspannungsmast, Holz (Tragmast)
+        (object: "pylons:holzmast_nsp_trag", lat: 52.0006291, lon: 10.0394642, yaw_deg: 0.0, scale: 1.0),
+        // 31  km 2.600  Niederspannungsmast, Holz (Abspannmast)
+        (object: "pylons:holzmast_nsp_abspann", lat: 52.0006291, lon: 10.0406290, yaw_deg: 0.0, scale: 1.0),
+        // 32  km 2.680  Streckenfernmeldemast (Tragmast)
+        (object: "pylons:fernmeldemast_bahn_trag", lat: 52.0006291, lon: 10.0417937, yaw_deg: 0.0, scale: 1.0),
+        // 33  km 2.760  Streckenfernmeldemast (Abspannmast)
+        (object: "pylons:fernmeldemast_bahn_abspann", lat: 52.0006291, lon: 10.0429584, yaw_deg: 0.0, scale: 1.0),
+    ],
+    anchor: Some((lat: 52.0, lon: 10.0243911, height: 100.0)),
+    envelope: [
+        (lat: 51.9930, lon: 9.9950),
+        (lat: 51.9930, lon: 10.0546),
+        (lat: 52.0070, lon: 10.0546),
+        (lat: 52.0070, lon: 9.9950),
+    ],
+)

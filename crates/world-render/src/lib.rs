@@ -1289,10 +1289,21 @@ pub fn mip_textures(
 /// week and what wood culling would have done in the editor.
 ///
 /// `Camera` requires `RenderTarget`, so a camera without one of its own is
-/// already the primary window's.
-pub fn draws_the_world(camera: &Camera, target: &RenderTarget) -> bool {
-    camera.is_active && matches!(target, RenderTarget::Window(_))
+/// already the primary window's. A run with no window at all says so with
+/// [`WorldView`] — the window is then not the mark of the real view, and
+/// without the marker a headless screenshot would grow its crop around the
+/// origin and cull nothing.
+pub fn draws_the_world(camera: &Camera, target: &RenderTarget, world_view: bool) -> bool {
+    camera.is_active && (world_view || matches!(target, RenderTarget::Window(_)))
 }
+
+/// The camera that stands in for the window where there is none.
+///
+/// A `--screenshot` run of the simulator opens no window and renders into an
+/// image (`app::main`); this says which of the images is the player's view, as
+/// against the cab displays and the cloud panorama.
+#[derive(Component)]
+pub struct WorldView;
 
 /// Appends the mip chain to a plain RGBA8 image and sets a sampler that uses
 /// it. `false` where the image is not one to touch: compressed, layered, or

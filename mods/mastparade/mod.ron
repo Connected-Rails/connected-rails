@@ -1,0 +1,11 @@
+// Scratch module: every mast of the `pylons` catalogue in one row, to look at.
+// Not part of the shipped content — delete with `rm -rf mods/mastparade`.
+(
+    id: "mastparade",
+    name: "Mastparade",
+    version: "0.1.0",
+    author: "Connected Rails",
+    description: "All 33 pylon variants in a row beside 2 km of straight track, for comparison against the prototype.",
+    depends: ["pylons"],
+    enabled: true,
+)

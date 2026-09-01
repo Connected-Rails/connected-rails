@@ -1,0 +1,97 @@
+// The whole pylon catalogue in one row, 150 m apart, for the model audit.
+// Written by tools/pylons/shoot.mjs --write; scratch content, not shipped.
+(
+    name: "Mastaudit",
+    year: Some(2026),
+    fictional: true,
+    nodes: [Buffer, Buffer],
+    edges: [
+        (
+            from: 0,
+            to: 1,
+            start: Geo(point: (lat: 52.0, lon: 10.0, height: 100.0), heading_deg: 90.0),
+            segments: [(len: 5540.6, k0: 0.0, dk: 0.0)],
+            grade: [(0.0, 0.0)],
+            cant: [],
+            speed: [(0.0, 120.0)],
+            track_type: [],
+            electrification: [(0.0, "ac-15kv")],
+            formation: true,
+        ),
+    ],
+    trees: [
+        //  1  tonnenmast_380_trag
+        (object: "pylons:tonnenmast_380_trag", lat: 52.0006291, lon: 10.0049589, yaw_deg: 0.0, scale: 1.0),
+        //  2  tonnenmast_380_abspann
+        (object: "pylons:tonnenmast_380_abspann", lat: 52.0006291, lon: 10.0071428, yaw_deg: 0.0, scale: 1.0),
+        //  3  kombimast_380_110_trag
+        (object: "pylons:kombimast_380_110_trag", lat: 52.0006291, lon: 10.0093266, yaw_deg: 0.0, scale: 1.0),
+        //  4  kombimast_380_110_abspann
+        (object: "pylons:kombimast_380_110_abspann", lat: 52.0006291, lon: 10.0115105, yaw_deg: 0.0, scale: 1.0),
+        //  5  donaumast_380_trag
+        (object: "pylons:donaumast_380_trag", lat: 52.0006291, lon: 10.0136944, yaw_deg: 0.0, scale: 1.0),
+        //  6  donaumast_380_abspann
+        (object: "pylons:donaumast_380_abspann", lat: 52.0006291, lon: 10.0158783, yaw_deg: 0.0, scale: 1.0),
+        //  7  kompaktmast_380_trag
+        (object: "pylons:kompaktmast_380_trag", lat: 52.0006291, lon: 10.0180622, yaw_deg: 0.0, scale: 1.0),
+        //  8  kompaktmast_380_abspann
+        (object: "pylons:kompaktmast_380_abspann", lat: 52.0006291, lon: 10.0202461, yaw_deg: 0.0, scale: 1.0),
+        //  9  einebenenmast_380_trag
+        (object: "pylons:einebenenmast_380_trag", lat: 52.0006291, lon: 10.0224299, yaw_deg: 0.0, scale: 1.0),
+        // 10  einebenenmast_380_abspann
+        (object: "pylons:einebenenmast_380_abspann", lat: 52.0006291, lon: 10.0246138, yaw_deg: 0.0, scale: 1.0),
+        // 11  portalmast_380_abspann
+        (object: "pylons:portalmast_380_abspann", lat: 52.0006291, lon: 10.0267977, yaw_deg: 0.0, scale: 1.0),
+        // 12  tannenbaummast_220_trag
+        (object: "pylons:tannenbaummast_220_trag", lat: 52.0006291, lon: 10.0289816, yaw_deg: 0.0, scale: 1.0),
+        // 13  tannenbaummast_220_abspann
+        (object: "pylons:tannenbaummast_220_abspann", lat: 52.0006291, lon: 10.0311655, yaw_deg: 0.0, scale: 1.0),
+        // 14  donaumast_220_trag
+        (object: "pylons:donaumast_220_trag", lat: 52.0006291, lon: 10.0333493, yaw_deg: 0.0, scale: 1.0),
+        // 15  donaumast_220_abspann
+        (object: "pylons:donaumast_220_abspann", lat: 52.0006291, lon: 10.0355332, yaw_deg: 0.0, scale: 1.0),
+        // 16  donaumast_110_trag
+        (object: "pylons:donaumast_110_trag", lat: 52.0006291, lon: 10.0377171, yaw_deg: 0.0, scale: 1.0),
+        // 17  donaumast_110_abspann
+        (object: "pylons:donaumast_110_abspann", lat: 52.0006291, lon: 10.0399010, yaw_deg: 0.0, scale: 1.0),
+        // 18  einebenenmast_110_trag
+        (object: "pylons:einebenenmast_110_trag", lat: 52.0006291, lon: 10.0420849, yaw_deg: 0.0, scale: 1.0),
+        // 19  einebenenmast_110_abspann
+        (object: "pylons:einebenenmast_110_abspann", lat: 52.0006291, lon: 10.0442688, yaw_deg: 0.0, scale: 1.0),
+        // 20  bahnstrommast_110_zweiebenen_trag
+        (object: "pylons:bahnstrommast_110_zweiebenen_trag", lat: 52.0006291, lon: 10.0464526, yaw_deg: 0.0, scale: 1.0),
+        // 21  bahnstrommast_110_zweiebenen_abspann
+        (object: "pylons:bahnstrommast_110_zweiebenen_abspann", lat: 52.0006291, lon: 10.0486365, yaw_deg: 0.0, scale: 1.0),
+        // 22  bahnstrommast_110_trag
+        (object: "pylons:bahnstrommast_110_trag", lat: 52.0006291, lon: 10.0508204, yaw_deg: 0.0, scale: 1.0),
+        // 23  bahnstrommast_110_abspann
+        (object: "pylons:bahnstrommast_110_abspann", lat: 52.0006291, lon: 10.0530043, yaw_deg: 0.0, scale: 1.0),
+        // 24  stahlgittermast_20kv_trag
+        (object: "pylons:stahlgittermast_20kv_trag", lat: 52.0006291, lon: 10.0551882, yaw_deg: 0.0, scale: 1.0),
+        // 25  stahlgittermast_20kv_abspann
+        (object: "pylons:stahlgittermast_20kv_abspann", lat: 52.0006291, lon: 10.0573721, yaw_deg: 0.0, scale: 1.0),
+        // 26  betonmast_20kv_einebene_trag
+        (object: "pylons:betonmast_20kv_einebene_trag", lat: 52.0006291, lon: 10.0595559, yaw_deg: 0.0, scale: 1.0),
+        // 27  betonmast_20kv_einebene_abspann
+        (object: "pylons:betonmast_20kv_einebene_abspann", lat: 52.0006291, lon: 10.0617398, yaw_deg: 0.0, scale: 1.0),
+        // 28  betonmast_20kv_dreieck_trag
+        (object: "pylons:betonmast_20kv_dreieck_trag", lat: 52.0006291, lon: 10.0639237, yaw_deg: 0.0, scale: 1.0),
+        // 29  masttrafo_20kv
+        (object: "pylons:masttrafo_20kv", lat: 52.0006291, lon: 10.0661076, yaw_deg: 0.0, scale: 1.0),
+        // 30  holzmast_nsp_trag
+        (object: "pylons:holzmast_nsp_trag", lat: 52.0006291, lon: 10.0682915, yaw_deg: 0.0, scale: 1.0),
+        // 31  holzmast_nsp_abspann
+        (object: "pylons:holzmast_nsp_abspann", lat: 52.0006291, lon: 10.0704754, yaw_deg: 0.0, scale: 1.0),
+        // 32  fernmeldemast_bahn_trag
+        (object: "pylons:fernmeldemast_bahn_trag", lat: 52.0006291, lon: 10.0726592, yaw_deg: 0.0, scale: 1.0),
+        // 33  fernmeldemast_bahn_abspann
+        (object: "pylons:fernmeldemast_bahn_abspann", lat: 52.0006291, lon: 10.0748431, yaw_deg: 0.0, scale: 1.0),
+    ],
+    anchor: Some((lat: 52.0, lon: 10.0403334, height: 100.0)),
+    envelope: [
+        (lat: 51.9930, lon: 9.9950),
+        (lat: 51.9930, lon: 10.0865),
+        (lat: 52.0070, lon: 10.0865),
+        (lat: 52.0070, lon: 9.9950),
+    ],
+)

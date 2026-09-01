@@ -46,6 +46,36 @@ const BRACE_SHARE = [1, 0.5, 0.25, 0];
 const TUBE_SIDES = [10, 8, 6, 4];
 
 /**
+ * A steel member whose ends are **closed at the finest level**.
+ *
+ * `geom::member` leaves them open by default, and for the whole life of the kit
+ * every one of the 276 pieces of a Donaumast was an open box. Nothing showed,
+ * because the sides were wound inside out and the far one's interior stood in
+ * for the near one's exterior — closing the winding opened every end at once,
+ * and a joint became a bar you could see down.
+ *
+ * Only at `LOD0`: two quads an end is four triangles, and 276 members of them
+ * is half the structure again. `LOD1` starts at 278 m on a Donaumast, where a
+ * 15 cm bar is half a pixel and the hole in it a good deal less.
+ */
+function bar(out, a, b, wu, wv, detail) {
+  // **And it runs a little past both ends.** A member is drawn from node to
+  // node, so where two of them meet at an angle their square ends leave a wedge
+  // between them — shallow at a right angle, deep at the twenty degrees a
+  // diagonal makes with a chord. Riveted steel does not have those: the bars
+  // lap and are bolted through. Running each one past its node by half its own
+  // width buries the end in whatever it meets and costs no triangles; the cap
+  // on 20 % of the length keeps a short stub from doubling.
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const len = Math.hypot(d[0], d[1], d[2]);
+  if (len < 1e-6) return out;
+  const over = Math.min(Math.max(wu, wv) * 0.5, len * 0.2) / len;
+  const from = [a[0] - d[0] * over, a[1] - d[1] * over, a[2] - d[2] * over];
+  const to = [b[0] + d[0] * over, b[1] + d[1] * over, b[2] + d[2] * over];
+  return member(out, from, to, wu, wv, detail === 0);
+}
+
+/**
  * How much thicker a member is drawn at each level.
  *
  * A coarse level is not the same mast with fewer triangles — it is a **paler**
@@ -114,7 +144,7 @@ function latticeBody(out, { base, shaft, waist, top, panels, shaftPanels, leg, b
     const a = corners(levels[i]);
     const b = corners(levels[i + 1]);
     const width = lerp(leg, leg * 0.6, levels[i] / top);
-    for (let c = 0; c < 4; c++) member(out, a[c], b[c], width, width);
+    for (let c = 0; c < 4; c++) bar(out, a[c], b[c], width, width, detail);
   }
 
   const share = BRACE_SHARE[detail];
@@ -131,9 +161,9 @@ function latticeBody(out, { base, shaft, waist, top, panels, shaftPanels, leg, b
       // The X of the panel, plus the horizontal tie that closes its top. Real
       // masts alternate the diagonal's direction face to face; at the size a
       // panel covers on screen the X reads as both.
-      member(out, a[c], b[d], brace, brace);
-      member(out, a[d], b[c], brace, brace);
-      member(out, b[c], b[d], brace * 0.8, brace * 0.8);
+      bar(out, a[c], b[d], brace, brace, detail);
+      bar(out, a[d], b[c], brace, brace, detail);
+      bar(out, b[c], b[d], brace * 0.8, brace * 0.8, detail);
     }
   }
   return out;
@@ -165,9 +195,9 @@ function crossarmHalf(out, { y, root, tip, depth, zRoot, zTip, size, detail }) {
     const topRoot = [root, y, z0];
     const topTip = [tip, y, z1];
     const botRoot = [root, y - depth, z0];
-    member(out, topRoot, topTip, size, size);
-    member(out, botRoot, topTip, size * 0.85, size * 0.85);
-    member(out, topRoot, botRoot, size * 0.7, size * 0.7);
+    bar(out, topRoot, topTip, size, size, detail);
+    bar(out, botRoot, topTip, size * 0.85, size * 0.85, detail);
+    bar(out, topRoot, botRoot, size * 0.7, size * 0.7, detail);
     if (BRACE_SHARE[detail] > 0) {
       // Web members between the two chords, spaced so a long 380 kV arm gets
       // four or five and a 20 kV bracket gets one.
@@ -176,9 +206,9 @@ function crossarmHalf(out, { y, root, tip, depth, zRoot, zTip, size, detail }) {
         const t = i / bays;
         const upper = [lerp(root, tip, t), y, lerp(z0, z1, t)];
         const lower = [lerp(root, tip, t), lerp(y - depth, y, t), lerp(z0, z1, t)];
-        member(out, upper, lower, size * 0.55, size * 0.55);
+        bar(out, upper, lower, size * 0.55, size * 0.55, detail);
         const back = [lerp(root, tip, (i - 1) / bays), y - depth * (1 - (i - 1) / bays), lerp(z0, z1, (i - 1) / bays)];
-        member(out, back, upper, size * 0.5, size * 0.5);
+        bar(out, back, upper, size * 0.5, size * 0.5, detail);
       }
     }
   };
@@ -196,15 +226,15 @@ function crossarmHalf(out, { y, root, tip, depth, zRoot, zTip, size, detail }) {
     const t = i / bays;
     const x = lerp(root, tip, t);
     const z = lerp(zRoot, zTip, t);
-    member(out, [x, y, -z], [x, y, z], size * 0.5, size * 0.5);
+    bar(out, [x, y, -z], [x, y, z], size * 0.5, size * 0.5, detail);
   }
   return out;
 }
 
 /** A flat bracket instead of a truss — what a concrete or wooden pole carries. */
-function bracket(out, { y, root, tip, size, zRoot, depth }) {
-  member(out, [root, y, 0], [tip, y, 0], size, size * 1.4);
-  if (depth > 0.05) member(out, [root, y - depth, 0], [tip * 0.75, y, 0], size * 0.7, size * 0.7);
+function bracket(out, { y, root, tip, size, zRoot, depth, detail }) {
+  bar(out, [root, y, 0], [tip, y, 0], size, size * 1.4, detail);
+  if (depth > 0.05) bar(out, [root, y - depth, 0], [tip * 0.75, y, 0], size * 0.7, size * 0.7, detail);
   void zRoot;
   return out;
 }
@@ -219,14 +249,20 @@ function insulatorString(out, { at, length, discs, direction, detail }) {
   const dir = direction ?? [0, -1, 0];
   const end = [x + dir[0] * length, y + dir[1] * length, z + dir[2] * length];
   const rod = Math.max(0.05, length * 0.03);
-  member(out, [x, y, z], end, rod, rod);
+  bar(out, [x, y, z], end, rod, rod, detail);
   if (detail >= 2) return out;
   // The discs are the expensive part of a mast, not the steel: sixteen of them
   // per string, six strings on a Donaumast, and a capped ten-sided tube each
   // came to more triangles than the whole lattice. They are drawn as open
   // six-sided rings — a disc is a centimetre of screen at the distance the
   // fine level survives to, and its silhouette is all that is left of it.
-  const n = Math.max(4, Math.round(discs / (detail + 1) / 1.6));
+  // **Every cap at the finest level.** The atlas counts them off the real
+  // 146 mm unit, and a constant thinning even at LOD0 spread sixteen of them
+  // over three and a half metres — a 21 cm pitch, half again what a cap is, so
+  // each one had to be drawn fat to close the gap and the string read as a
+  // screw thread. From LOD1 the thinning is steep, because a 15 cm disc is a
+  // pixel at forty metres and gone at eighty.
+  const n = Math.max(4, Math.round(discs / (detail * 2 + 1)));
   const r = Math.max(0.08, length * 0.045);
   for (let i = 0; i < n; i++) {
     const t = (i + 0.5) / n;
@@ -344,18 +380,36 @@ function transformer(out, { y, diameter }) {
 }
 
 /**
- * Where the conductors sit on one arm, as x offsets from the mast centre.
+ * Where the conductors sit on one arm, as **signed** x offsets from the mast
+ * centre — the whole arm, both sides, and the middle one where there is one.
  *
- * `conductors` counts both sides, so half of them hang each side: the outermost
- * at the tip, the rest evenly in towards the body but never closer to it than
- * the body itself is wide.
+ * The outermost sits at the tip and the rest come evenly in towards the body,
+ * no closer to it than it is wide. Two things were wrong with the first cut and
+ * both showed on the small masts, which is where an arm is short:
+ *
+ * **The inner limit was a fixed 90 cm**, and a low-voltage pole's arm is 1.6 m
+ * across — so both points on a side were pushed to the same place and the four
+ * conductors of a village line came out as two insulators.
+ *
+ * **An odd count was rounded up.** Three conductors on one level is the
+ * commonest medium-voltage arrangement in Germany, and it was drawn as four.
+ * The odd one belongs over the pole, which is where it stands on the prototype.
  */
 export function conductorPoints(halfWidth, conductors, rootX) {
-  const perSide = Math.max(1, Math.round(conductors / 2));
-  const xs = [];
+  // A telegraph pole carries wires without the atlas counting them as
+  // conductors; one a side is what its crossarm is for.
+  const total = conductors > 0 ? conductors : 2;
+  if (halfWidth <= 0.02) {
+    return [0];
+  }
+  // Never more than half way in: a clearance that does not scale with the arm
+  // collapses every point on a short one into the same spot.
+  const inner = Math.min(rootX + 0.9, halfWidth * 0.55);
+  const perSide = Math.floor(total / 2);
+  const xs = total % 2 === 1 ? [0] : [];
   for (let i = 0; i < perSide; i++) {
-    const x = (halfWidth * (perSide - i)) / perSide;
-    xs.push(Math.max(x, rootX + 0.9));
+    const x = perSide === 1 ? halfWidth : halfWidth - ((halfWidth - inner) * i) / (perSide - 1);
+    xs.push(-x, x);
   }
   return xs;
 }
@@ -455,15 +509,15 @@ export function buildMast(type, { role = 'suspension', height, detail = 0 } = {}
     if (halfWidth > 0.02) {
       const half = empty();
       if (flat) {
-        bracket(half, { y, root: rootX * 0.6, tip: halfWidth, size: b.arm_m, zRoot: 0, depth });
+        bracket(half, { y, root: rootX * 0.6, tip: halfWidth, size: b.arm_m, zRoot: 0, depth, detail });
       } else if (b.kind === 'portal') {
         // The beam is one piece across both legs, so it is built whole here.
-        member(structure, [-halfWidth, y, 0], [halfWidth, y, 0], b.arm_m, b.arm_m * 1.6);
-        member(structure, [-halfWidth, y - depth, 0], [halfWidth, y - depth, 0], b.arm_m * 0.8, b.arm_m * 0.8);
+        bar(structure, [-halfWidth, y, 0], [halfWidth, y, 0], b.arm_m, b.arm_m * 1.6, detail);
+        bar(structure, [-halfWidth, y - depth, 0], [halfWidth, y - depth, 0], b.arm_m * 0.8, b.arm_m * 0.8, detail);
         const bays = 8;
         for (let i = 0; i <= bays; i++) {
           const x = lerp(-halfWidth, halfWidth, i / bays);
-          member(structure, [x, y - depth, 0], [x, y, 0], b.arm_m * 0.5, b.arm_m * 0.5);
+          bar(structure, [x, y - depth, 0], [x, y, 0], b.arm_m * 0.5, b.arm_m * 0.5, detail);
         }
       } else {
         crossarmHalf(half, {
@@ -482,8 +536,8 @@ export function buildMast(type, { role = 'suspension', height, detail = 0 } = {}
 
     const xs = conductorPoints(halfWidth, arm.conductors, Math.max(rootX, b.base_m * 0.3));
     for (const x of xs) {
-      for (const s of halfWidth > 0.02 ? [-1, 1] : [0]) {
-        const at = [s * x, y, 0];
+      {
+        const at = [x, y, 0];
         if (detail >= 3) {
           // A pin stands on the arm and a string hangs under it, and at this
           // distance the difference is which side of the arm the bar is on.
@@ -503,9 +557,14 @@ export function buildMast(type, { role = 'suspension', height, detail = 0 } = {}
         } else if (role === 'tension') {
           // Horizontal, pulling inwards along the line: the strings of an
           // Abspannmast lie in the direction of the conductors, one each side.
+          //
+          // They start **on the arm**. Starting them 40 cm out along the line
+          // left each one hanging in the air with a visible gap between it and
+          // the steel it is supposed to be shackled to; 12 cm is enough to keep
+          // the two apart where they meet and close enough to read as attached.
           for (const zDir of [-1, 1]) {
             insulatorString(fittings, {
-              at: [at[0], at[1] - 0.35, zDir * 0.4],
+              at: [at[0], at[1] - 0.25, zDir * 0.12],
               length: b.insulator_m,
               discs: b.insulator_discs,
               direction: [0, 0, zDir],

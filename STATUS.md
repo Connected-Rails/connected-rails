@@ -921,19 +921,136 @@ As of 2026-08-31 · `cargo test --workspace`: **1059 tests green** · clippy and
   *The materials are painted, not scanned.* A flat base colour with a metallic
   and a roughness number is a correct PBR material and still reads as plastic,
   because what makes galvanising look like galvanising is the **spangle** — zinc
-  crystals a few centimetres across, each at its own gloss — and that lives in
-  the roughness. So `lib/texture.mjs` paints a base colour, an ORM and a normal
-  map for the zinc, the spun concrete and the creosoted pine, all tiling once
-  per metre (the UVs are in metres, so the grain is the same size on a 36 cm leg
-  as on a 6 cm brace): nine PNGs of 256 px for the whole catalogue, under a
-  megabyte. **Weathered zinc is not a mirror** — what a mast wears is the chalky
-  zinc carbonate of its first years, which is a dielectric over the metal, so
-  the weathering field drives the metallic as well as the roughness; the first
-  cut had `metallic = 1` and a mast that reflected the sky and blew out white
-  against it. Per-vertex colours carry what the texture cannot: per-member shade
+  crystals a couple of centimetres across, each at its own gloss — and that
+  lives in the roughness. So `lib/texture.mjs` paints a base colour, an ORM and
+  a normal map for the zinc, the spun concrete and the creosoted pine, all
+  tiling once per metre (the UVs are in metres, so the grain is the same size on
+  a 36 cm leg as on a 6 cm brace; `v` runs along a piece and `u` across it, on a
+  member as on a tube): nine PNGs of 256 px for the whole catalogue, under a
+  megabyte. Per-vertex colours carry what the texture cannot: per-member shade
   and the dirt that gathers towards the foot. A third material was added for the
   concrete a lattice mast stands on — galvanised steel on the foundation stubs
   is the sort of thing nobody notices until they walk up to one.
+
+  *Every box in the kit was wound inside out.* `geom::member` — the primitive
+  four hundred of which make a lattice mast — put the normals of all four sides
+  and both caps at its own centre. Nothing caught it because the silhouette is
+  the same either way: with a single-sided material the near face of a bar is
+  culled and the eye gets the inside of the far one, so the mast looks right in
+  a picture and is wrong by the thickness of a bar in depth, and lit from the
+  side away from the sun. Across four hundred crossing members that reads as
+  bars standing in front of ones they are behind. `build_pylons.mjs --check`
+  now asserts the invariant per piece over every level of every variant.
+
+  *Closing the winding opened every bar end.* `member` leaves its ends open by
+  default and every one of the 276 pieces of a Donaumast was left that way —
+  invisible while the sides pointed inward, because the interior of the far face
+  stood in for the exterior of the near one, and a row of holes the moment that
+  was fixed. The ends are closed at `LOD0` now and left open below it, where a
+  15 cm bar is half a pixel; and every member runs half its own width past both
+  its nodes, so two bars meeting at an angle lap into each other instead of
+  leaving the wedge that square ends leave. `LOD0` for a Donaumast is 5 056
+  triangles, 6 784 for its tension variant.
+
+  *The insulators were the wrong size, the wrong number and the wrong colour.*
+  A cap-and-pin unit is 146 mm and the count is what the voltage decides — 9 at
+  110 kV, 15 at 220, 23 at 380 — and the catalogue gave every type the same
+  3.4 m and 16 caps: a 213 mm pitch, so each had to be drawn fat to close the
+  gap and a string read as a screw thread, and a 110 kV mast wore 380 kV
+  insulation. `LOD0` also drew a fixed five-eighths of them, which is where the
+  rest of the coarseness came from; it draws all of them now, at the cost of a
+  third more triangles on the finest level of a lattice mast (3 024 → 3 960 for
+  a Donaumast, 5 664 for its tension variant, which carries two strings a
+  point). And the brown was written as if `baseColorFactor` were sRGB — 0.40
+  linear is sRGB 168, a milky cream, which under the sky's image-based light at
+  a roughness of 0.24 came out pale pink. Fired glaze is sRGB 94, 58, 44.
+  **The tension strings did not touch the mast** either: they began 40 cm out
+  along the line and hung in the air beside the steel they are shackled to.
+
+  *And every surface in the catalogue carried a grid of seams a metre apart.*
+  `fbm` took its frequency and its wrap period as two separate arguments —
+  `fbm(u * 3, v * 3, 4, …)`, three cycles over a tile that wrapped every four —
+  and of the twelve terms the three materials are made of, exactly **one**
+  happened to match. The other eleven were discontinuous at the tile boundary.
+  On a lattice it never showed, because no member is a metre wide in both
+  directions; on the compact mast's two-metre tube it was a brick wall. The
+  signature now takes the frequency alone and derives the period from it, per
+  axis, so the mismatch cannot be written.
+
+  *A tube was not round.* The kit is flat-shaded on purpose — angle steel has
+  edges — and the same rule applied to the one shape that is genuinely curved
+  gave the compact mast a body reading as folded sheet: a ten-sided prism with
+  seventy-centimetre faces, each its own flat grey. `geom::tube` now gives its
+  corners the cone's true normals, so ten sides read as round; the concrete and
+  wooden poles were faceted the same way and came right with it.
+
+  *And every material was drawing at the wrong scale.* A frequency budget was
+  the fix: the highest octave of any term stays at or below a quarter of the
+  map's size in cycles per metre — four texels a cycle — and the map went from
+  256 px per metre to 512. Both halves of "nothing finer than the map can hold,
+  nothing finer than the eye can keep" had been broken, and each broke a
+  material in its own direction. The concrete drew its sand at 120 cycles over
+  three octaves, so the top octave was half a texel wide and the map filled with
+  the aliasing of it: a pole read as **sandpaper** from five metres. The wood
+  drew its fibre the same way and lost it the other way round — so fine that the
+  first mip level averaged it flat, so a creosoted pole ten metres off was a
+  **smooth pink stick**. What carries a material at the distance it is really
+  seen from is centimetres: the checks and knots of a pole, the aggregate and
+  blow-holes and mould seam of a concrete one. The wood's colour went with it,
+  from the orange of fresh sawn pine to the near-black of fifty-year-old
+  creosote. Nine PNGs, one megabyte for the catalogue.
+
+  *And the insulators were in the wrong places on the small masts*
+  (`conductorPoints`), which is where a crossarm is short. The inner limit was a
+  fixed 90 cm and a low-voltage pole's arm is 1.6 m across, so both points on a
+  side were pushed to the same spot and the four conductors of a village line
+  came out as two insulators; an odd count was rounded up, so the three
+  conductors of the commonest medium-voltage arrangement in Germany were drawn
+  as four. The limit scales with the arm now and the odd conductor stands over
+  the pole.
+
+  *The zinc took three tries, and all three failures were the same failure:*
+  believing a number instead of looking at a mast. **Weathered zinc is not a
+  mirror** — what a mast wears is the chalky zinc carbonate of its first years,
+  a dielectric over the metal, so the weathering field drives the metallic; the
+  first cut had `metallic = 1` and a mast that reflected the sky. Halving it was
+  not enough: at a mean 0.69 over a base colour of sRGB 169, under the
+  image-based light the atmosphere casts back (`world_render::sky`), a mast in
+  the cab view was still a blue-white lattice blowing out against the sky. It is
+  now a band of 0.08 to 0.36 over sRGB 118–142, which is a dim sheen rather than
+  a reflection. **A crystal is 24 mm, not 90** — at the 11 cells per metre it
+  started on, a facet was wider than most braces, so the spangle became the
+  shape of the bar rather than a finish on it, and it stayed legible at a
+  hundred metres. **And the spangle is flat**: it is a pattern in reflectance,
+  not in relief, and having it at four fifths of the height field embossed every
+  crystal and made a bar of angle iron read as beaten foil. The relief left is
+  the orange peel of a dipped coating, the mill's rolling marks and the pitting,
+  all of it under a millimetre — and the rolling marks now run *along* the bar,
+  which needed `member` to map `v` along the piece the way `tube` already did.
+
+  *A `--screenshot` run of the simulator opens no window.* It renders into an
+  image and writes that (`app::main`, `Offscreen`): no surface, so nothing
+  appears on the desktop, nothing takes the focus, and nothing the compositor
+  does can change the size of the result — `--window 2560x1440` or 1920x1080 by
+  default, the same pixels on every machine. Hiding the window was tried first
+  and is not enough: a Wayland compositor maps it anyway and then owns its size,
+  which is how a before-and-after pair came out at two different resolutions.
+  Three things had to follow the window out: the cameras are pointed at the
+  image (`RenderTarget` is a *required* component of `Camera`, so the window
+  variant is rewritten rather than inserted), the UI is given that camera
+  explicitly (`bevy_ui` hands an unassigned node to the highest-order camera
+  drawing to the *primary window*, which without one is nobody — the HUD was
+  simply absent), and `world_render::draws_the_world` learned the marker
+  `WorldView`, or the standing crop would grow around the origin of the line
+  instead of around the player. The shaders are compiled synchronously in such a
+  run as well: Bevy's parallel compilation trips wgpu's error scopes often
+  enough to lose one run in three, and a lost run is a missing picture.
+
+  *And the free camera can be aimed.* `--camera fly --fly 25,30,-80 --look 25,30,0`
+  places it and points it, in metres right of, above and ahead of the player
+  train. Without that a screenshot could only ever photograph the train, and
+  anything over about ten metres tall ran out of the top of the frame however far
+  back the camera stood — which is why the pylons could not be judged.
 
   *Nothing is downloaded, and that is a finding rather than a preference:* there
   is no correctly shaped German Donaumast, Tonnenmast or Bahnstrommast available
@@ -2027,6 +2144,22 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   `Motion` entry once a vehicle's plot disagrees.
 
 ## Sensible next steps
+
+0. **Why does a scatter object refuse to draw?** Found while photographing the pylon
+   catalogue and not yet understood, so it is first in the list. A scratch module holding
+   a single scenery object (`trees:`, which is what a mast is —
+   `content::power::masts`) draws **nothing**: the entities are there, the count says so
+   (eleven for one mast, matching a wood plus four levels of two or three primitives), no
+   wood is reported out of range, and the object never appears at any distance, from any
+   angle, at any frame count. The same object in a row of thirty-three in
+   `mods/mastparade/lines/parade.ron` draws fine at eighty metres. A second scratch line
+   with the same shape and sixty-metre spacing draws its masts in some places and not in
+   others. Whatever the rule is, it is not the levels of detail
+   (`world_render::scatter::band` hands LOD0 from zero), not `cull_distant_woods` (nothing
+   is hidden), and not the model. **It matters beyond the audit**: a module with one mast
+   on it is exactly what a branch line looks like. `tools/pylons/shoot.mjs` documents the
+   symptom and works around it.
+
 
 1. **The track is drawn in the editor, not imported.** OSM's way chain is traced from aerial
    imagery and carries neither design elements nor a usable vertical alignment; over the

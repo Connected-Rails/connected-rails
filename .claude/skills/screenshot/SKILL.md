@@ -19,6 +19,15 @@ cargo build -p app -p route-editor -p signal-editor -p vehicle-editor   # einmal
 
 Danach das PNG mit **Read** ansehen — das Bild ist die Antwort, nicht die Logausgabe.
 
+**Der Simulator macht das ohne Fenster.** Mit `--screenshot` legt `train-sim` gar
+kein Fenster an: er rendert in ein Bild und schreibt das. Nichts erscheint auf
+dem Desktop, nichts nimmt den Fokus, und — der Punkt — nichts kann die Größe
+verändern. Das Bild ist immer 1920x1080, `--window 2560x1440` setzt eine andere
+feste Größe. Vorher wurde das Fenster des Compositors fotografiert, und dessen
+Größe hing daran, was am Rechner sonst gerade lief; zwei Aufnahmen vor und nach
+einer Änderung waren dann nicht vergleichbar. Die drei Editoren öffnen weiterhin
+ein Fenster (`--window WxH` fixiert dort wenigstens die Größe).
+
 **Ohne `--features dev` bauen.** Ein Dev-Build linkt Bevy dynamisch; das Binary findet die
 DLL dann nur über `cargo run -p <crate> --features dev -- --screenshot …`, direkt aufgerufen
 bricht es mit „cannot open shared object file" ab.
@@ -29,6 +38,7 @@ bricht es mit „cannot open shared object file" ab.
 |---|---|
 | `--screenshot <datei.png>` | Aufnahme des Fensters, danach Ende. Verzeichnis wird angelegt. |
 | `--frames N` | Aufnahme erst nach N Frames (≈ N/60 Sekunden). Ohne Angabe: 60. |
+| `--window BxH` | Feste Bildgröße. Simulator: die Größe des fensterlosen Rendertargets (Vorgabe 1920x1080). Editoren: die Fenstergröße. |
 | `--height M` | Nur Moduleditor: Starthöhe des Blickpunkts über der Strecke in Metern (Vorgabe 900). 60 zeigt Bäume und Objekte, 900 das Modul. |
 | `--drawer [kategorie]` | Nur Moduleditor: Inhalte-Schublade offen aufnehmen — sonst nur per `Ctrl`+`Space` erreichbar. Kategorie optional: `objects` (Vorgabe), `signal-types`, `signal-models`, `track-types`. |
 | `--tool <name>` | Nur Moduleditor: mit diesem Werkzeug in der Hand starten — der Werkzeug-Abschnitt zeigt nur die Optionen des aktiven. Namen wie die i18n-Keys ohne Präfix: `select`, `draw`, `split`, `join`, `offset`, `crossover`, `gradient`, `area`, `device`, `object`, `marker`, `tree`, `forest`, `brush`, `terrain-raise`, `terrain-lower`, `terrain-level`, `terrain-rail`, `tile`, `walk-path`, `walk-area`, `envelope`. |
@@ -45,6 +55,8 @@ Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für gel
 | `--overlays` | Öffnet Tastenhilfe (F5) und Diagnose (F6) von Anfang an — sonst nur per Tastendruck erreichbar. |
 | `--menu [seite]` | Fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe), `line`, `loco`, `scenario`, `mods`, `settings`, `controls`. |
 | `--camera <modus>` | `outside` für die Außenkamera (Fahrzeugmodelle), `walk` für zu Fuß, `fly` für die Freikamera des Konsolenbefehls `fly` — alles sonst nur per Taste oder Konsole erreichbar. |
+| `--fly R,H,V` | Nur mit `--camera fly`: wo die Freikamera steht, in Metern **rechts**, **über** und **vor** dem Zug. Vorgabe `25,6,0`. |
+| `--look R,H,V` | Wohin sie schaut, im selben Bezug. Vorgabe `0,2,0` — der Zug. Ohne die beiden kann eine Aufnahme nur den Zug zeigen, und alles über etwa zehn Metern läuft oben aus dem Bild. |
 | `--time HH:MM` | Startuhrzeit der Fahrt, etwa `21:40` für den Nachthimmel. |
 | `--date JJJJ-MM-TT` | Startdatum — entscheidet über die Jahreszeit von Boden und Bewuchs. |
 | `--weather <preset>` | `clear`, `cloudy`, `overcast`, `fog`, `drizzle`, `rain`, `storm`, `thunderstorm`, `sleet`, `snow`, `blizzard`, `hail`, `frost`. Zusammen mit `--screenshot` sofort gesetzt statt eingezogen. |

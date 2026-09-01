@@ -13,4 +13,10 @@ fields = { workspace = true }
 glam = { workspace = true }
 # `jpeg`: the road and ground textures are compiled-in JPEGs — without the
 # feature the asset loader rejects them and every material waits forever.
-bevy = { workspace = true, features = ["jpeg"] }
+# `dds`: the vehicle atlases ship as block-compressed DDS *with a mip chain*.
+# Bevy generates no mipmaps for a loaded image, and a car park two hundred cars
+# deep is exactly where that shows — an untextured minification of a 512-pixel
+# atlas turns tail lamps and badges into coloured speckle that crawls as the
+# train moves. A mip chain is the only cure, and DDS is the one format that
+# carries one and that ImageMagick can write (`tools/cars/import_cars.mjs`).
+bevy = { workspace = true, features = ["jpeg", "dds"] }

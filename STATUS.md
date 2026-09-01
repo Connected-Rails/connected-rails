@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-31 · `cargo test --workspace`: **1059 tests green** · clippy and fmt clean.
+As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -638,6 +638,159 @@ As of 2026-08-31 · `cargo test --workspace`: **1059 tests green** · clippy and
   invisible and the toolbar's own imagery switch did nothing at all. It lies over them
   again, deliberately: the photo is what one traces *from*, and the switch is how one looks
   at what has been traced.
+- **Reading the imagery with a local model (2026-08-31, `crates/vision`, `route_editor::ai`,
+  `mods/cars`, `tools/cars/`):** the aerial photograph a route editor drapes over the ground
+  is a survey of the real place, and a builder transcribes it by hand — every car in the
+  station car park, one click each. File ▸ *Detect from imagery…* has a model do it. The
+  `vision` crate is the machinery: a **registry of models as data** (`ai.ron`, next to
+  `imagery.ron` — the file, the input, the head, and what each class is worth on a module),
+  a **pure-Rust ONNX runtime in process** ([tract], so there is no C++ runtime to ship, no
+  binary downloaded while building, and nothing that leaves the machine), a **virtual sheet**
+  of the imagery that holds only the tiles the windows it is asked for stand on, and a walk
+  over that sheet in overlapping windows whose duplicates are settled in metres on the
+  ground. A class of a model names a **tag**, not a model — the editor places a random
+  object carrying it from whatever mods are installed — so the next detector is an entry in
+  `ai.ron` and a mod, not a change to any Rust.
+  *It is never let loose on the whole module:* the ground is either a corridor of a stated
+  width along the track or the area drawn in the viewport (the AI area tool, or the circle
+  the select tool last grew), and in both **nothing is placed within the stated clearance of
+  a rail** — 8 m by default, because a car standing in the four-foot is worse than no car at
+  all. The region is asked before a window is fetched, which is the difference between a
+  ribbon of tiles and a square of them.
+  The dialog is the way a person should do this — the report is read before a few hundred
+  objects go into a module — and `--detect-run` is the same thing for a script: the run
+  along the track, committed, and the line written back, beside `import-module`. The
+  arithmetic that settles the area, the model and the rules is one function (`ai::plan`)
+  that both go through, because two copies of it would drift and the one that drifted
+  would be the one nobody watches.
+  A third condition sits beside the clearance: **nothing is placed on a carriageway**
+  (`Region::off_the_carriageway`). A photograph shows what was driving as readily as what
+  was parked and nothing in it tells the two apart, but a parked car left in a running lane
+  is a road blocked for the simulator's own traffic — worse than a car park a few cars
+  short. Every find whose middle falls inside a road's width is dropped, measured to the
+  kerb and no further, because a car at the roadside has its centre just beyond it and
+  kerbside parking is most of the traffic beside a street; on the example module's own OSM
+  roads that is a half-width of 1.25 m on a field track to 7 m on a dual carriageway, and a
+  parked car clears every one of them. A ribbon this dialog paved as a car park carries
+  `parking` and is not counted as a street, or a second run could not fill the bays the
+  first one found. The rule can only hold to roads that are in the file, so a module without
+  them is told so in the report.
+  Which of the objects carrying a class's tag goes on a find is **decided by how
+  long the find is**, not by a coin: an object states its `footprint` (length and
+  width, `track_model::Footprint`) and nothing longer than the space measured goes
+  into it, so the 6.30 m Kastenwagen stops being a candidate below about six metres
+  while the 4.82 m Transporter carries the shorter ones — both answer to `lorry`,
+  and before the sizes were stated half the vans in a car park stood a metre and a
+  half out of their bays. Among what does fit the choice stays the place's own, so
+  the same imagery always draws the same car and a row of bays is a row of
+  different ones rather than five copies of the largest estate. The two ways
+  nothing fits want opposite answers and get them: all too long, the shortest goes
+  in and overhangs least; all too short — a twelve-metre lorry with nothing but
+  vans installed — the longest goes in. An object that states no footprint is never
+  measured, so every mod written before there was anywhere to state one behaves as
+  it did.
+  **Where a find lands is worked out at the height of the rails**, and worked out until
+  nothing is left over. `nearest_on_network` measures in three dimensions from a probe on
+  the ellipsoid, which under a German module is some hundred and forty metres below the
+  track; the foot of that perpendicular is not the foot of the one from the same point
+  lifted to the rails, the two differ by about the drop times the gradient, and an object
+  is rebuilt from its arc length and its lateral offset alone — so whatever was left
+  *along* the track was not merely inaccurate, it was discarded. On the Börde's grades,
+  which swing from −12 to +16 per mille, that was a median of 0.67 m and up to 1.76 m,
+  purely along the track and nothing sideways, ahead of the photograph beside a climb and
+  behind it beside a fall. Which is why it read as an intermittent fault and was not one.
+  Four passes of refinement bring it under five centimetres, and the test that says so
+  runs the module's own range of gradients.
+  A second suspect turned out innocent and is now pinned by a test: the model's box centre
+  and the tile grid are already in the same continuous space, so the mapping between them
+  is a bare scale, and adding the half-pixel that `resize` carries — which works in pixel
+  indices, a different convention — puts every find a fifth of a metre out instead of
+  fixing anything.
+  The example module carries the result: `boerde.ron` has **26 cars along its five
+  kilometres**, put there by `--detect-run` over an 80 m corridor — all of them at the
+  east end where the village is, all five `car` models represented (7 Hochdachkombi,
+  5 each of Geländewagen, Kleinwagen and Limousine, 4 Kompaktwagen), which is the spread
+  the random-among-what-fits rule exists for. The same run against a copy of the module
+  with its roads deleted finds 27, so the carriageway rule dropped exactly one — it
+  works, and it is not over-eager.
+  What it delivers first is the traffic beside the track: `mods/cars` is seven
+  vehicles — Kleinwagen, Kompaktwagen, Limousine, Geländewagen, Hochdachkombi,
+  Transporter and Kastenwagen — generated from photographs with a 3D tool,
+  exported as FBX and turned into props by `tools/cars/`. An eighth, a Kompakt-SUV,
+  is catalogued and skipped: its archive came without a colour atlas, and a white
+  shell beside seven textured cars reads as broken because it is. **The pipeline
+  is the work, not the download.** What arrives is one nameless mesh apiece, one
+  baked atlas and eleven thousand triangles of everything the generator thought it
+  saw, so there are no object names to go by and every step is a rule about
+  geometry: the **plinth** the generator stood the car on comes off (horizontal
+  faces below the tyres — three of the eight had one, one of them a fifth of the
+  model's surface); the **interior** goes, found by rasterising the mesh from 128
+  directions and keeping only what won a pixel from one of them (`lib/visible.mjs`,
+  about a sixth of every mesh); the **windows become dark glass**, where the
+  threshold between paint and glass is Otsu's over that vehicle's own glasshouse
+  rather than a constant — and where the two do not separate, the substitution is
+  dropped rather than forced, because a baked photograph of glass beats a
+  confident guess at where glass is. The mesh is also **wound right and re-normalled**: three per
+  cent of the triangles arrive facing inwards, which against a single-sided
+  material is a hole you see the lit far side of the shell through, and about one
+  normal in ten disagrees with the surface it sits on by more than sixty degrees.
+  Both are found with the pass that is already looking from every direction — a
+  face was seen *from* somewhere, so its outward side is the side facing there —
+  and the file's own normals are not read at all. Then **four levels of detail**
+  from a quadric decimator that carries texture coordinates and treats three lines
+  as borders it may not cross: the rim of an open shell, the seam where the texture
+  is cut open, and the edge between paint and glass. Two things in there were
+  wrong for a long time and both looked like texture faults while living in the
+  geometry. Welding merged corners **by position alone**, letting "the first
+  texture coordinate win" where they disagreed; on a tidy atlas that is a handful
+  of triangles along a seam, and on one of several hundred islands it is nearly
+  every shared corner, so every level below the finest had the sheet smeared over
+  it while LOD0 — which is never welded — was perfect. And the collapse queue
+  re-priced a whole one-ring but **re-offered only the survivor**, dropping every
+  edge between its neighbours for good: the queue ran dry thousands of sound
+  collapses early, two of the four levels came out byte for byte identical, and the
+  coarse ones were built from whatever survived rather than from the cheapest. Reading FBX at all is part of it — there is
+  no Blender on the machines this is built on, so `lib/fbx.mjs` is a binary FBX
+  reader in the length that actually takes.
+  The atlases ship as **1024² BC1 with a full mip chain** (683 KB against 3 MB of
+  source JPEG), which is why `world-render` now enables Bevy's `dds` feature: Bevy
+  generates no mipmaps for a loaded image, and an atlas full of tail lamps minified
+  ten to one is a car park of crawling coloured noise — which is exactly what the
+  first build of these looked like. The size is four times what a car would
+  ordinarily need because these are not ordinary atlases: photogrammetry packs
+  several hundred small scraps of photograph into the sheet, so what has to be
+  resolved is one scrap and not the sheet. For the same reason the **dead space
+  between the scraps is flooded** with the colour of the nearest one before
+  anything else happens (`lib/atlas.mjs`): nothing samples it deliberately and
+  everything samples it by accident — every downsample, every mip level and every
+  block-compressed 4×4 that straddles an island edge — and on screen that is a
+  white van with dark angular shards over its panels, which reads as crumpled foil.
+  Which part of the sheet is dead cannot be decided by looking at it (a tyre is as
+  dark as the background); it is decided by the model, whose texture coordinates
+  are rasterised into a mask, and about a third of each sheet is filled. The material dims the atlas to 82 %, because
+  these textures were baked with the light already in them and lighting them twice
+  bleaches them.
+  The **sizes are checked, not assumed**: the scale comes from the length alone, so
+  the catalogue's width and height are a prediction, and the build measures what came
+  out against them and warns past five per cent. That check earned its place twice — a
+  fleck of fifteen triangles floating above one car's roof, two hundredths of a per
+  cent of its surface, was making it nineteen per cent too tall in every number taken
+  off its bounding box; and four of the eight models turned out to be a different size
+  from the vehicle they are named after, so their catalogue lengths are now the best
+  fit over all three dimensions rather than the manufacturer's figure.
+  `--preview` draws the hand-over sheets that decide whether a level is good
+  enough. **Car parks are not detected** — they are the cars: a
+  cluster is fitted with an oriented rectangle along the rows the cars stand in and paved
+  with the road primitive the module already has (an unmarked asphalt ribbon, editable
+  afterwards like any road), which needs no new file format, no new mesh and no new tool.
+  Weights ship with nobody: `ai.ron` describes the models the editor knows how to talk to —
+  YOLOv8-OBB on DOTA is the one this was built for, because two of its fifteen classes are
+  exactly what a station car park is made of — and says where each one's `.onnx` is
+  expected. The backend is proved end to end by a 253-byte fixture whose every output is the
+  mean brightness of the window (`crates/vision/tests/`), so the byte-to-float scaling, the
+  tensor layout and the decoding are all held to account without a model in the repository.
+
+  [tract]: https://github.com/sonos/tract
 - **Terrain (ch. 14):** 512 m tiles only within the line corridor, grid spacing by distance
   from the track (4 m to 32 m instead of 1 m), skirts against LOD cracks, cutting/embankment
   at the track — the ground there is the **formation**, `rail_offset` below the top of

@@ -104,6 +104,10 @@ pub enum Tool {
     /// way to get the streets of a real place; this is for the track it did
     /// not cover, and for a fictional module.
     PlaceRoad,
+    /// The patch of ground a model is let loose on: clicks collect a ring,
+    /// Enter/right-click closes it. The other way to say it is a corridor
+    /// along the track, which needs no gesture at all — see [`crate::ai`].
+    AiArea,
 }
 
 /// What the Select tool holds.
@@ -263,7 +267,7 @@ pub type ToolEntry = (Tool, &'static str, editor_ui::Icon);
 /// with the tools of the one that is up. Which category a tool belongs to is
 /// the first thing a builder needs from a palette, and one category at a time
 /// keeps the lower box short enough to be read at a glance.
-pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 6] = [
+pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 7] = [
     (
         "tool-group-track",
         editor_ui::Icon::Track,
@@ -352,6 +356,11 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 6] = [
             "tool-envelope",
             editor_ui::Icon::Envelope,
         )],
+    ),
+    (
+        "tool-group-ai",
+        editor_ui::Icon::Ai,
+        &[(Tool::AiArea, "tool-ai-area", editor_ui::Icon::Ai)],
     ),
 ];
 
@@ -613,6 +622,11 @@ pub struct EditorState {
     /// Vertices of the walkway being drawn — footpath or walk area, the tool
     /// in hand says which (see [`crate::walkways`]).
     pub walk_points: Vec<EcefPos>,
+    /// The area a model is to be let loose on, closed and standing (see
+    /// [`crate::ai`]). Drawn with [`Tool::AiArea`], or taken from the circle
+    /// the select tool last grew. Not part of the document — it is a question
+    /// asked of the imagery, not something the module carries.
+    pub ai_area: Option<Vec<EcefPos>>,
     /// The vertex of the selected walkway that was last picked: what Delete
     /// takes out, and whose coordinates the panel shows.
     pub walk_vertex: Option<usize>,
@@ -790,7 +804,8 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         | Tool::PlaceWalkPath
         | Tool::PlaceWalkArea
         | Tool::PlaceField
-        | Tool::PlaceRoad => None,
+        | Tool::PlaceRoad
+        | Tool::AiArea => None,
     }
 }
 
@@ -2960,6 +2975,7 @@ pub fn tool_input(
             let status = match state.tool {
                 Tool::PlaceField => crate::fields::finish(&mut line, &mut state),
                 Tool::PlaceRoad => crate::roads::finish(&mut line, &mut state),
+                Tool::AiArea => crate::ai::finish(&mut state),
                 _ => crate::walkways::finish(&mut line, &mut state),
             };
             if let Some(status) = status {
@@ -3027,7 +3043,13 @@ pub fn tool_input(
                 if !ctrl {
                     state.marked.clear();
                 }
-                mark_circle(&mut state, &line, &marks, center, center.distance(p));
+                let radius = center.distance(p);
+                mark_circle(&mut state, &line, &marks, center, radius);
+                // The same gesture also says "this bit here" to a model: the
+                // circle is remembered as the area the AI dialog offers, so a
+                // builder who has just drawn one round a car park does not
+                // have to draw it again (see [`crate::ai`]).
+                crate::ai::area_from_circle(&mut state, center, radius);
             }
         }
     }
@@ -3437,6 +3459,13 @@ pub fn tool_input(
                 overlay.status = t!("status-outside-envelope");
                 return;
             }
+            state.walk_points.push(p);
+        }
+        Tool::AiArea => {
+            // Every click is the next corner of the ring. No envelope test:
+            // the ring says where to *look*, and looking a little past the
+            // module boundary costs nothing — what may be placed is decided
+            // by the region afterwards.
             state.walk_points.push(p);
         }
         // Handled above, where the button is held rather than only clicked.
@@ -4393,6 +4422,26 @@ pub fn draw_gizmos(
             origin.0.to_render(p) + up
         });
         gizmos.linestrip(points, accent);
+    }
+
+    if state.tool == Tool::AiArea && !state.walk_points.is_empty() {
+        let points = state.walk_points.iter().copied().chain(cursor).map(|p| {
+            let up = origin.0.dir_to_render(EnuFrame::at(p).up);
+            origin.0.to_render(p) + up
+        });
+        gizmos.linestrip(points, accent);
+    }
+    // The area that stands: drawn closed and only while the tool is up, so it
+    // is a reminder rather than clutter on every other tool's map.
+    if state.tool == Tool::AiArea
+        && let Some(area) = &state.ai_area
+        && area.len() >= 3
+    {
+        let points = area.iter().chain(area.first()).map(|p| {
+            let up = origin.0.dir_to_render(EnuFrame::at(*p).up);
+            origin.0.to_render(*p) + up
+        });
+        gizmos.linestrip(points, marked_color);
     }
 
     // Forest brush preview: the ring so far, the cursor as the next corner.

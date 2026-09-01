@@ -59,7 +59,10 @@ export class BufferBuilder {
     const count = geometry.positions.length / 3;
     const position = Buffer.from(new Float32Array(geometry.positions).buffer);
     const normal = Buffer.from(new Float32Array(geometry.normals).buffer);
-    const uv = Buffer.from(new Float32Array(geometry.uvs).buffer);
+    // A geometry with no texture coordinates leaves them out rather than
+    // writing zeroes: eight bytes a vertex is a third of a mesh that carries
+    // its colour in its vertices and samples nothing (`tools/cars`).
+    const uv = Buffer.from(new Float32Array(geometry.uvs ?? []).buffer);
     // Four bytes a vertex rather than sixteen: weathering is a shade, and a
     // shade has nowhere near eight bits of meaning in it, let alone twenty-four.
     const colorBytes = new Uint8Array(count * 4);
@@ -91,7 +94,7 @@ export class BufferBuilder {
       offsets: {
         position: this.#append(position),
         normal: this.#append(normal),
-        uv: this.#append(uv),
+        uv: uv.length ? this.#append(uv) : 0,
         color: this.#append(color),
         index: this.#append(index),
       },
@@ -164,12 +167,16 @@ export function writeGltf(options) {
           p.count,
           'VEC3',
         ),
-        TEXCOORD_0: accessor(
-          view(p.offsets.uv, p.lengths.uv, ARRAY_BUFFER, 8),
-          FLOAT,
-          p.count,
-          'VEC2',
-        ),
+        ...(p.lengths.uv
+          ? {
+              TEXCOORD_0: accessor(
+                view(p.offsets.uv, p.lengths.uv, ARRAY_BUFFER, 8),
+                FLOAT,
+                p.count,
+                'VEC2',
+              ),
+            }
+          : {}),
         COLOR_0: accessor(
           view(p.offsets.color, p.lengths.color, ARRAY_BUFFER, 4),
           UNSIGNED_BYTE,
@@ -214,9 +221,17 @@ export function writeGltf(options) {
         // The base colour is sRGB and the other two are linear; in glTF that
         // is implied by the slot, not declared, so the same image must never
         // be used for both kinds.
-        material.pbrMetallicRoughness.baseColorTexture = { index: m.maps.colour };
-        material.pbrMetallicRoughness.metallicRoughnessTexture = { index: m.maps.orm };
-        material.occlusionTexture = { index: m.maps.orm };
+        if (m.maps.colour !== undefined) {
+          material.pbrMetallicRoughness.baseColorTexture = { index: m.maps.colour };
+        }
+        // A material may carry a base colour and nothing else — a baked atlas
+        // out of a photogrammetry tool has no separate roughness or normal map
+        // to give, and writing slots that point nowhere is worse than not
+        // writing them.
+        if (m.maps.orm !== undefined) {
+          material.pbrMetallicRoughness.metallicRoughnessTexture = { index: m.maps.orm };
+          material.occlusionTexture = { index: m.maps.orm };
+        }
         // `null` explicitly disables a tangent-space map. Smooth low-sided
         // tubes need that: their tangent changes at each mesh segment and even
         // a nearly flat map otherwise reveals every segment as a vertical seam.

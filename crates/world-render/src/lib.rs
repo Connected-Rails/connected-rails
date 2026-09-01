@@ -1799,6 +1799,7 @@ mod tests {
             autumn_model: None,
             winter_model: None,
             lod_distances: Vec::new(),
+            footprint: None,
             tags: Vec::new(),
         }
     }

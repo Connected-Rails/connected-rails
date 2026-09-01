@@ -1,0 +1,23 @@
+[package]
+name = "vision"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+i18n = { workspace = true }
+world-coords = { workspace = true }
+imagery = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+# ONNX inference in process, pure Rust: no C++ runtime to ship, no binaries
+# downloaded at build time, and the same numbers on every platform. A detector
+# over a module's corridor is a few dozen windows, so a CPU runtime is fast
+# enough — see `crates/vision/src/onnx.rs`.
+tract-onnx = { version = "0.23", optional = true }
+
+[features]
+default = ["onnx"]
+# Off, the editor still lists the models and says the backend is missing —
+# so a build without the inference runtime is a build, not a broken editor.
+onnx = ["dep:tract-onnx"]

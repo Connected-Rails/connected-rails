@@ -669,6 +669,14 @@ is what foggy weather draws.
   scenery placements) → the compiler builds binary tiles (ch. 4.3).
 - **Importer:** OSM track data (rough alignment) + DGM (terrain height) as the starting point of a line;
   CRS reprojection happens here (ch. 4.2). No MaSzyna .scn importer (effort > benefit, different country).
+- **Reading the imagery (`vision`):** what OSM and the registers do not carry is in the
+  photograph the editor already drapes over the ground — the cars in the station car park,
+  the lorries at the goods shed. A **local** model reads it: an ONNX runtime compiled into
+  the editor, a registry of models as data (`ai.ron`), and placement by *tag*, so the next
+  detector is an entry in a file and a mod rather than a change to the editor. It is always
+  bounded — a corridor along the track or an area drawn in the viewport, and a clearance
+  from the rails that holds in both — because an unbounded run is neither affordable nor
+  reviewable. Whatever it finds is a proposal until it is committed, as one undo step.
 ### 15.1 Two editors, not one
 
 Building a line and building a vehicle share nothing: one is geodata, the other a model

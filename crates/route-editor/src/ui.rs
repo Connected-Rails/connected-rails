@@ -1196,6 +1196,10 @@ fn menu_bar(
                         ui.close();
                         request.import_power = true;
                     }
+                    if ui.button(t!("action-detect-imagery")).clicked() {
+                        ui.close();
+                        request.detect_imagery = true;
+                    }
                     ui.separator();
                     if ui.button(t!("action-load-imagery")).clicked() {
                         request.load_config = true;
@@ -1808,6 +1812,12 @@ fn detail_panel(
                         if state.tool == Tool::PlaceRoad {
                             ui.add_space(space::XS);
                             crate::roads::tool_rows(ui, line, state);
+                        }
+                        if state.tool == Tool::AiArea {
+                            ui.add_space(space::XS);
+                            if crate::ai::tool_rows(ui, state) {
+                                request.detect_imagery = true;
+                            }
                         }
                         if state.tool == Tool::Brush {
                             ui.add_space(space::XS);

@@ -26,5 +26,5 @@ pub use oberbau::{
 pub use position::{AdvanceError, PassedDevice, TrackPosition};
 pub use power::{Electrification, PowerSystem, electrification_from_id, electrification_id};
 pub use profile::StepProfile;
-pub use track_object::TrackObject;
+pub use track_object::{Footprint, TrackObject};
 pub use track_type::TrackType;

@@ -177,7 +177,12 @@ if (args.includes('--detail')) {
   // fit reads as cut off: the camera sits at half the mast's height, so the
   // margin is split between top and bottom and half of a tenth is nothing.
   const distance = (height * 1.45) / 2 / Math.tan(HALF_FOV);
-  eye = [RIGHT, height / 2, forward - distance];
+  // A straight look along the route also looks straight along the model's
+  // crossarm axis after placement. That collapses a 45 m one-level arm to a
+  // line and makes the silhouette audit useless. A shallow three-quarter view
+  // keeps the same framing distance while showing both arm span and truss
+  // depth.
+  eye = [RIGHT + distance * 0.42, height / 2, forward - distance * 0.9075];
   look = [RIGHT, height / 2, forward];
 }
 

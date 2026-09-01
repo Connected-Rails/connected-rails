@@ -225,10 +225,15 @@ fn retarget_offscreen(
     // of it. So the same rule is applied by hand over the cameras that took the
     // window's place — the world camera during a run, the menu's own during the
     // menu — and the marker moves with it, because Bevy allows exactly one.
-    let ui = views.iter().max_by_key(|(e, c)| (c.order, *e)).map(|(e, _)| e);
+    let ui = views
+        .iter()
+        .max_by_key(|(e, c)| (c.order, *e))
+        .map(|(e, _)| e);
     for entity in &marked {
         if Some(entity) != ui {
-            commands.entity(entity).remove::<bevy::ui::IsDefaultUiCamera>();
+            commands
+                .entity(entity)
+                .remove::<bevy::ui::IsDefaultUiCamera>();
         }
     }
     if let Some(entity) = ui.filter(|e| marked.get(*e).is_err()) {
@@ -386,15 +391,16 @@ fn main() {
     // lose one run in three — which for a screenshot run means no picture at
     // all. A picture is worth more than the second of start-up, and this way
     // every pipeline is also *ready* when the shot is taken.
-    let default_plugins = match offscreen {
-        Some(_) => default_plugins
-            .disable::<bevy::winit::WinitPlugin>()
-            .set(bevy::render::RenderPlugin {
-                synchronous_pipeline_compilation: true,
-                ..default()
-            }),
-        None => default_plugins,
-    };
+    let default_plugins =
+        match offscreen {
+            Some(_) => default_plugins.disable::<bevy::winit::WinitPlugin>().set(
+                bevy::render::RenderPlugin {
+                    synchronous_pipeline_compilation: true,
+                    ..default()
+                },
+            ),
+            None => default_plugins,
+        };
     app.add_plugins(default_plugins);
     if let Some(size) = offscreen {
         app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
@@ -657,9 +663,7 @@ fn exit_after_frames(
             Some(offscreen) => Screenshot::image(offscreen.image.clone()),
             None => Screenshot::primary_window(),
         };
-        commands
-            .spawn(target)
-            .observe(save_to_disk(shot.0.clone()));
+        commands.spawn(target).observe(save_to_disk(shot.0.clone()));
     }
     // The capture goes through the render thread: it only lands on disk a few frames later.
     if *count >= limit.0 + 10 {
@@ -1326,9 +1330,7 @@ fn setup(
                 let up = origin.dir_to_render(pose.up);
                 let forward = origin.dir_to_render(pose.tangent);
                 let right = forward.cross(up).normalize_or_zero();
-                let at = |offset: Vec3| {
-                    pos + right * offset.x + up * offset.y + forward * offset.z
-                };
+                let at = |offset: Vec3| pos + right * offset.x + up * offset.y + forward * offset.z;
                 let eye = at(view_offset("--fly").unwrap_or(Vec3::new(25.0, 6.0, 0.0)));
                 let target = at(view_offset("--look").unwrap_or(Vec3::new(0.0, 2.0, 0.0)));
                 state.fly = Some(eye);
@@ -1427,7 +1429,10 @@ pub(crate) fn arg(name: &str) -> Option<String> {
 /// relative to the track in the first place.
 fn view_offset(name: &str) -> Option<Vec3> {
     let value = arg(name)?;
-    let parts: Vec<f32> = value.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+    let parts: Vec<f32> = value
+        .split(',')
+        .filter_map(|p| p.trim().parse().ok())
+        .collect();
     match parts[..] {
         [right, up, forward] => Some(Vec3::new(right, up, forward)),
         _ => {

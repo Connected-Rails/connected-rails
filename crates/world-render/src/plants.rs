@@ -1380,10 +1380,9 @@ pub fn update_field_plants(
     // see `draws_the_world`.
     cameras: Query<(&Camera, &RenderTarget, Has<WorldView>, &GlobalTransform), With<Camera3d>>,
 ) {
-    let Some((.., camera)) = cameras
-        .iter()
-        .find(|(camera, target, world_view, _)| crate::draws_the_world(camera, target, *world_view))
-    else {
+    let Some((.., camera)) = cameras.iter().find(|(camera, target, world_view, _)| {
+        crate::draws_the_world(camera, target, *world_view)
+    }) else {
         return;
     };
     let eye = camera.translation();

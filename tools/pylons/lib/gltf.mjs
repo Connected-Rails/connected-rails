@@ -3,10 +3,10 @@
 // One file per mast variant, one node per level of detail named the way the app
 // reads levels off a model (`mast_LOD0` … `mast_LOD3`, see
 // `sim_core::train::lod_level`, `world_render::scatter`). A level may hold more
-// than one primitive, because a mast is two materials at most: the structure
-// (galvanised steel, spun concrete or creosoted wood) and the fittings (the
-// insulator strings). The renderer spawns one entity per primitive per level,
-// so the coarse levels drop the fittings and are one primitive again.
+// than one primitive: the structure (and metal fitting hardware), the
+// insulators, and on lattice masts the concrete foundations. The renderer
+// spawns one entity per primitive per level; a missing part simply leaves that
+// level with one primitive fewer.
 //
 // **Three maps per material, painted rather than photographed.** A flat base
 // colour with a metallic and a roughness number is a correct PBR material and
@@ -15,9 +15,9 @@
 // own gloss — and that lives in the roughness, not in the colour and not in the
 // relief. So a mast carries a base colour, an ORM and a normal map
 // (`lib/texture.mjs`), all tiling once per metre: the UVs are in metres, so the
-// grain is the same size on a 36 cm leg as on a 6 cm brace. Nine PNGs of 256 px
-// serve all thirty-three models — under a megabyte for the lot, because they
-// are generated and not scanned.
+// grain is the same size on a 36 cm leg as on a 6 cm brace. Nine tiling PNGs of
+// 1024 px serve every structural surface; the printed warning sign contributes
+// its own colour/ORM/normal triplet.
 //
 // On top of that every vertex carries a **colour**: per-member value jitter and
 // the dirt that gathers towards a mast's foot. The texture says what the
@@ -217,7 +217,12 @@ export function writeGltf(options) {
         material.pbrMetallicRoughness.baseColorTexture = { index: m.maps.colour };
         material.pbrMetallicRoughness.metallicRoughnessTexture = { index: m.maps.orm };
         material.occlusionTexture = { index: m.maps.orm };
-        material.normalTexture = { index: m.maps.normal, scale: m.normalScale ?? 1 };
+        // `null` explicitly disables a tangent-space map. Smooth low-sided
+        // tubes need that: their tangent changes at each mesh segment and even
+        // a nearly flat map otherwise reveals every segment as a vertical seam.
+        if (m.normalScale !== null && m.maps.normal !== undefined) {
+          material.normalTexture = { index: m.maps.normal, scale: m.normalScale ?? 1 };
+        }
       }
       return material;
     }),

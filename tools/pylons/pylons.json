@@ -23,8 +23,9 @@
   "structure: steel-lattice | steel-tube | spun-concrete | wood",
   "height_m: [min, max] over ground, to the mast tip including the earth peak.",
   "crossarms: top to bottom. `width_m` is the full width tip to tip and",
-  "  `conductors` counts both sides together; `at_frac` is the arm's height as a",
-  "  share of the mast's, and `depth_m` how deep its truss is at the body.",
+  "  `conductors` counts both sides together; `at_frac` is the lower chord's",
+  "  conductor height as a share of the mast's, and `depth_m` is the vertical",
+  "  truss depth from that chord to the upper root joint at the body.",
   "span_m: [min, max] distance to the next mast on level ground.",
   "roles: which functions this shape is built in — suspension (Tragmast),",
   "  tension (Abspannmast), angle (Winkelmast), terminal (Endmast),",
@@ -39,14 +40,16 @@
   "build: what the generator needs beyond the shape (tools/pylons/lib/kit.mjs).",
   "  kind: lattice | pole | tube | portal — which body is assembled.",
   "  base_m / shaft_m: the square (or the diameter) at the foot and at the top.",
-  "  waist: where the batter stops and the parallel shaft begins, as a share of",
-  "    the height; 1.0 for a body that tapers all the way.",
+  "  waist: knee where the steep lower batter changes to the shallow upper",
+  "    taper, as a share of the height; 1.0 for one continuous taper.",
   "  panels / shaft_panels: bracing panels below and above the waist.",
   "  leg_m / brace_m / arm_m: member sizes.",
   "  peak_m / peaks: the earth-wire peak's height and how many there are.",
-  "  fitting: suspension | pin | bell — what hangs or stands at a conductor.",
-  "  insulator_m / insulator_discs: the fitting's length and how many discs it",
-  "    has. Follows the **fitting**, not the body: a 20 kV lattice pole carries",
+  "  fitting: suspension | composite | pin | bell — what hangs or stands at a",
+  "    conductor. `composite` is a grey silicone long rod, not a cap chain.",
+  "  insulator_m plus insulator_discs or insulator_sheds: the fitting's length",
+  "    and repeating units. Follows the **fitting**, not the body: a 20 kV",
+  "    lattice pole carries",
   "    the same 35 cm pin insulator a concrete pole does."
  ],
  "finish": {
@@ -82,9 +85,9 @@
    ],
    "crossarms": [
     {
-     "width_m": 40,
+     "width_m": 45.2,
      "conductors": 6,
-     "at_frac": 0.87,
+     "at_frac": 0.789,
      "depth_m": 3.4
     }
    ],
@@ -118,15 +121,15 @@
    "notes": "The lowest of the extra-high-voltage shapes and the widest. One long crossarm carries all six conductors side by side, which keeps the mast short but needs a wide cleared strip — the reason it is rare in forest. Standard on the 380 kV grid of the eastern states.",
    "build": {
     "kind": "lattice",
-    "base_m": 9.0,
-    "shaft_m": 3.2,
-    "waist": 0.7,
-    "panels": 8,
-    "shaft_panels": 3,
+    "base_m": 7.8,
+    "shaft_m": 2.2,
+    "waist": 0.28,
+    "panels": 4,
+    "shaft_panels": 6,
     "leg_m": 0.34,
     "brace_m": 0.15,
     "arm_m": 0.18,
-    "peak_m": 4.0,
+    "peak_m": 5.5,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 3.4,
@@ -149,20 +152,20 @@
    "earth_wires": 1,
    "structure": "steel-lattice",
    "height_m": [
-    55,
-    65
+    53.5,
+    56.5
    ],
    "crossarms": [
     {
-     "width_m": 14,
+     "width_m": 22,
      "conductors": 2,
-     "at_frac": 0.91,
-     "depth_m": 2.6
+     "at_frac": 0.8091,
+     "depth_m": 2.5
     },
     {
-     "width_m": 24,
+     "width_m": 32,
      "conductors": 4,
-     "at_frac": 0.77,
+     "at_frac": 0.5509,
      "depth_m": 3.2
     }
    ],
@@ -198,14 +201,14 @@
    "build": {
     "kind": "lattice",
     "base_m": 9.5,
-    "shaft_m": 3.4,
-    "waist": 0.64,
-    "panels": 9,
-    "shaft_panels": 4,
+    "shaft_m": 2.1,
+    "waist": 0.27,
+    "panels": 4,
+    "shaft_panels": 7,
     "leg_m": 0.36,
     "brace_m": 0.16,
     "arm_m": 0.19,
-    "peak_m": 4.5,
+    "peak_m": 8.0,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 3.4,
@@ -233,22 +236,22 @@
    ],
    "crossarms": [
     {
-     "width_m": 16,
+     "width_m": 19,
      "conductors": 2,
-     "at_frac": 0.93,
-     "depth_m": 2.6
+     "at_frac": 0.888,
+     "depth_m": 2.0
     },
     {
-     "width_m": 22,
+     "width_m": 23,
      "conductors": 2,
-     "at_frac": 0.83,
-     "depth_m": 3.0
+     "at_frac": 0.719,
+     "depth_m": 2.5
     },
     {
-     "width_m": 18,
+     "width_m": 20,
      "conductors": 2,
-     "at_frac": 0.71,
-     "depth_m": 3.0
+     "at_frac": 0.5817,
+     "depth_m": 1.25
     }
    ],
    "span_m": [
@@ -281,15 +284,15 @@
    "notes": "Three crossarms with the middle one widest, so the conductors sit on a barrel-shaped outline and no conductor hangs directly under another — ice shed from above cannot reach it. The tallest and narrowest of the three, uncommon in Germany but the norm in Britain, Switzerland and Poland; worth having for a border route.",
    "build": {
     "kind": "lattice",
-    "base_m": 10.0,
-    "shaft_m": 3.2,
-    "waist": 0.6,
-    "panels": 10,
-    "shaft_panels": 5,
+    "base_m": 7.0,
+    "shaft_m": 2.2,
+    "waist": 0.27,
+    "panels": 4,
+    "shaft_panels": 8,
     "leg_m": 0.36,
     "brace_m": 0.16,
     "arm_m": 0.19,
-    "peak_m": 4.0,
+    "peak_m": 5.95,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 3.4,
@@ -317,16 +320,16 @@
    ],
    "crossarms": [
     {
-     "width_m": 10,
+     "width_m": 16,
      "conductors": 2,
-     "at_frac": 0.9,
-     "depth_m": 2.2
+     "at_frac": 0.8,
+     "depth_m": 2.5
     },
     {
-     "width_m": 17,
+     "width_m": 23,
      "conductors": 4,
-     "at_frac": 0.76,
-     "depth_m": 2.6
+     "at_frac": 0.6333,
+     "depth_m": 3.0
     }
    ],
    "span_m": [
@@ -360,14 +363,14 @@
    "build": {
     "kind": "lattice",
     "base_m": 7.5,
-    "shaft_m": 2.6,
-    "waist": 0.64,
-    "panels": 8,
-    "shaft_panels": 4,
+    "shaft_m": 2.0,
+    "waist": 0.22,
+    "panels": 3,
+    "shaft_panels": 7,
     "leg_m": 0.28,
     "brace_m": 0.13,
     "arm_m": 0.15,
-    "peak_m": 3.6,
+    "peak_m": 6.5,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 2.2,
@@ -390,27 +393,27 @@
    "earth_wires": 1,
    "structure": "steel-lattice",
    "height_m": [
-    40,
-    55
+    43,
+    43
    ],
    "crossarms": [
     {
-     "width_m": 11,
-     "conductors": 2,
-     "at_frac": 0.93,
-     "depth_m": 2.0
-    },
-    {
-     "width_m": 14,
-     "conductors": 2,
-     "at_frac": 0.81,
-     "depth_m": 2.2
-    },
-    {
      "width_m": 17,
      "conductors": 2,
-     "at_frac": 0.67,
-     "depth_m": 2.4
+     "at_frac": 0.7616,
+     "depth_m": 1.85
+    },
+    {
+     "width_m": 24.5,
+     "conductors": 2,
+     "at_frac": 0.6047,
+     "depth_m": 2.7
+    },
+    {
+     "width_m": 26.5,
+     "conductors": 2,
+     "at_frac": 0.4314,
+     "depth_m": 3.1
     }
    ],
    "span_m": [
@@ -443,15 +446,15 @@
    "notes": "Three crossarms widening downwards, the silhouette of the 1920s and 30s. The unequal conductor spacing it produces has to be evened out by transposition masts every few kilometres, which is why later designs left it behind. Surviving stretches are a strong period marker for an epoch II/III route.",
    "build": {
     "kind": "lattice",
-    "base_m": 8.0,
-    "shaft_m": 2.6,
-    "waist": 0.58,
-    "panels": 9,
-    "shaft_panels": 4,
+    "base_m": 6.5,
+    "shaft_m": 2.0,
+    "waist": 0.21,
+    "panels": 3,
+    "shaft_panels": 7,
     "leg_m": 0.28,
     "brace_m": 0.13,
     "arm_m": 0.15,
-    "peak_m": 3.2,
+    "peak_m": 8.4,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 2.2,
@@ -479,16 +482,16 @@
    ],
    "crossarms": [
     {
-     "width_m": 6,
+     "width_m": 9,
      "conductors": 2,
-     "at_frac": 0.89,
-     "depth_m": 1.6
+     "at_frac": 0.8,
+     "depth_m": 1.8
     },
     {
-     "width_m": 11,
+     "width_m": 16,
      "conductors": 4,
-     "at_frac": 0.74,
-     "depth_m": 1.9
+     "at_frac": 0.6233,
+     "depth_m": 2.2
     }
    ],
    "span_m": [
@@ -522,15 +525,15 @@
    "notes": "The regional distribution level and by far the most common lattice mast a train passes. In the old federal states two circuits on a Donaumast is the standard; the mast is small enough to stand in a field boundary and to cross a railway at right angles on a single span.",
    "build": {
     "kind": "lattice",
-    "base_m": 5.5,
-    "shaft_m": 2.0,
-    "waist": 0.62,
-    "panels": 7,
-    "shaft_panels": 3,
+    "base_m": 5.2,
+    "shaft_m": 1.6,
+    "waist": 0.23,
+    "panels": 3,
+    "shaft_panels": 6,
     "leg_m": 0.22,
     "brace_m": 0.1,
     "arm_m": 0.12,
-    "peak_m": 2.8,
+    "peak_m": 4.2,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 1.3,
@@ -560,8 +563,8 @@
     {
      "width_m": 18,
      "conductors": 6,
-     "at_frac": 0.86,
-     "depth_m": 2.2
+     "at_frac": 0.7692,
+     "depth_m": 2.0
     }
    ],
    "span_m": [
@@ -595,15 +598,15 @@
    "notes": "The eastern counterpart to the 110 kV Donaumast: all six conductors on one crossarm. Swapping this shape for the Donaumast is the cheapest way to make a route read as Saxony rather than the Rhineland.",
    "build": {
     "kind": "lattice",
-    "base_m": 6.0,
-    "shaft_m": 2.2,
-    "waist": 0.66,
-    "panels": 7,
-    "shaft_panels": 3,
+    "base_m": 4.8,
+    "shaft_m": 1.6,
+    "waist": 0.25,
+    "panels": 3,
+    "shaft_panels": 5,
     "leg_m": 0.22,
     "brace_m": 0.1,
     "arm_m": 0.12,
-    "peak_m": 2.6,
+    "peak_m": 4.0,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 1.3,
@@ -629,27 +632,27 @@
    "earth_wires": 1,
    "structure": "steel-lattice",
    "height_m": [
-    65,
-    80
+    60,
+    70
    ],
    "crossarms": [
     {
-     "width_m": 14,
+     "width_m": 22,
      "conductors": 2,
-     "at_frac": 0.94,
-     "depth_m": 2.6
+     "at_frac": 0.8385,
+     "depth_m": 2.5
     },
     {
-     "width_m": 24,
+     "width_m": 32,
      "conductors": 4,
-     "at_frac": 0.83,
+     "at_frac": 0.62,
      "depth_m": 3.2
     },
     {
-     "width_m": 16,
+     "width_m": 35,
      "conductors": 6,
-     "at_frac": 0.67,
-     "depth_m": 2.6
+     "at_frac": 0.4385,
+     "depth_m": 3.0
     }
    ],
    "span_m": [
@@ -681,15 +684,15 @@
    "notes": "Two voltage levels on one mast — a 380 kV Donaumast on top, two 110 kV circuits in a single level below. Carrying 380, 220 and 110 kV together is normal practice and saves a second corridor; the mast grows tall and busy and is the most recognisable object on a modern trunk route.",
    "build": {
     "kind": "lattice",
-    "base_m": 11.0,
-    "shaft_m": 3.6,
-    "waist": 0.6,
-    "panels": 11,
-    "shaft_panels": 5,
+    "base_m": 10.5,
+    "shaft_m": 2.3,
+    "waist": 0.22,
+    "panels": 4,
+    "shaft_panels": 9,
     "leg_m": 0.4,
     "brace_m": 0.17,
     "arm_m": 0.2,
-    "peak_m": 4.5,
+    "peak_m": 8.0,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 3.4,
@@ -719,7 +722,7 @@
     {
      "width_m": 30,
      "conductors": 6,
-     "at_frac": 0.88,
+     "at_frac": 0.8062,
      "depth_m": 2.4
     }
    ],
@@ -791,19 +794,19 @@
     {
      "width_m": 8,
      "conductors": 2,
-     "at_frac": 0.93,
+     "at_frac": 0.9071,
      "depth_m": 1.2
     },
     {
      "width_m": 12,
      "conductors": 2,
-     "at_frac": 0.82,
+     "at_frac": 0.7971,
      "depth_m": 1.2
     },
     {
      "width_m": 12,
      "conductors": 2,
-     "at_frac": 0.71,
+     "at_frac": 0.6871,
      "depth_m": 1.2
     }
    ],
@@ -840,9 +843,9 @@
     "arm_m": 0.5,
     "peak_m": 3.0,
     "peaks": 1,
-    "fitting": "suspension",
-    "insulator_m": 2.9,
-    "insulator_discs": 20
+    "fitting": "composite",
+    "insulator_m": 4.0,
+    "insulator_sheds": 64
    }
   },
   {
@@ -861,15 +864,15 @@
    "earth_wires": 1,
    "structure": "steel-lattice",
    "height_m": [
-    25,
-    30
+    28,
+    34
    ],
    "crossarms": [
     {
-     "width_m": 9,
+     "width_m": 17.2,
      "conductors": 4,
-     "at_frac": 0.87,
-     "depth_m": 1.7
+     "at_frac": 0.7742,
+     "depth_m": 1.4
     }
    ],
    "span_m": [
@@ -906,15 +909,15 @@
    "notes": "The one every electrified line has, and the one a railway simulator cannot do without: about 28 m tall, one crossarm, four conductors — two two-pole circuits at 110 kV, 16.7 Hz, run as 2 x 55 kV against earth — and roughly 300 m between masts. It usually follows the track at a distance of one or two fields and turns towards it at a substation.",
    "build": {
     "kind": "lattice",
-    "base_m": 5.0,
+    "base_m": 5.2,
     "shaft_m": 1.8,
-    "waist": 0.64,
-    "panels": 7,
-    "shaft_panels": 3,
+    "waist": 0.30,
+    "panels": 4,
+    "shaft_panels": 6,
     "leg_m": 0.2,
     "brace_m": 0.09,
     "arm_m": 0.12,
-    "peak_m": 2.8,
+    "peak_m": 5.6,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 1.3,
@@ -937,21 +940,21 @@
    "earth_wires": 1,
    "structure": "steel-lattice",
    "height_m": [
-    28,
-    36
+    31,
+    37
    ],
    "crossarms": [
     {
-     "width_m": 9,
+     "width_m": 17.2,
      "conductors": 4,
-     "at_frac": 0.89,
-     "depth_m": 1.7
+     "at_frac": 0.7647,
+     "depth_m": 1.5
     },
     {
-     "width_m": 9,
+     "width_m": 15.2,
      "conductors": 4,
-     "at_frac": 0.75,
-     "depth_m": 1.7
+     "at_frac": 0.6265,
+     "depth_m": 1.4
     }
    ],
    "span_m": [
@@ -990,13 +993,13 @@
     "kind": "lattice",
     "base_m": 5.5,
     "shaft_m": 1.9,
-    "waist": 0.62,
-    "panels": 8,
-    "shaft_panels": 3,
+    "waist": 0.28,
+    "panels": 4,
+    "shaft_panels": 7,
     "leg_m": 0.22,
     "brace_m": 0.1,
     "arm_m": 0.12,
-    "peak_m": 2.8,
+    "peak_m": 5.8,
     "peaks": 1,
     "fitting": "suspension",
     "insulator_m": 1.3,
@@ -1174,16 +1177,16 @@
    ],
    "crossarms": [
     {
-     "width_m": 2.6,
+     "width_m": 4.0,
      "conductors": 3,
-     "at_frac": 0.92,
+     "at_frac": 0.9467,
      "depth_m": 0.5
     },
     {
-     "width_m": 2.6,
+     "width_m": 4.0,
      "conductors": 3,
-     "at_frac": 0.8,
-     "depth_m": 0.5
+     "at_frac": 0.8133,
+     "depth_m": 0.55
     }
    ],
    "span_m": [
@@ -1219,11 +1222,11 @@
    "notes": "A small riveted or bolted lattice, mostly older than the concrete poles around it and kept where two circuits or a long span are needed. Often the mast that carries the line over the railway.",
    "build": {
     "kind": "lattice",
-    "base_m": 2.2,
-    "shaft_m": 1.0,
-    "waist": 0.6,
-    "panels": 6,
-    "shaft_panels": 3,
+    "base_m": 1.8,
+    "shaft_m": 0.65,
+    "waist": 0.30,
+    "panels": 3,
+    "shaft_panels": 5,
     "leg_m": 0.12,
     "brace_m": 0.06,
     "arm_m": 0.08,
@@ -1375,9 +1378,9 @@
     "arm_m": 0.08,
     "peak_m": 0.0,
     "peaks": 0,
-    "fitting": "pin",
-    "insulator_m": 0.35,
-    "insulator_discs": 3
+    "fitting": "spool",
+    "insulator_m": 0.18,
+    "insulator_discs": 2
    }
   },
   {

@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/rosskastanie_a_herbst.gltf"),
     winter_model: Some("trees/assets/rosskastanie_a_winter.gltf"),
     lod_distances: [56, 400, 800, 2200],
+    footprint: Some((length: 13.5, width: 13.1)),
     tags: ["laubbaum", "stand-allee", "stand-stadt", "stand-park"],
 )

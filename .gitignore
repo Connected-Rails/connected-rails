@@ -9,12 +9,12 @@
 
 # Configuration written on first start (may hold your own access keys)
 /imagery.ron
-# The model registry of the imagery detection, and the weights it points at.
-# Neither may travel with the repository: the file names local paths, and a
-# detector is tens of megabytes under a licence of its own (README, *Detecting
-# from the aerial imagery*).
+# The model registry of the imagery detection: written on first start, and it
+# names local paths, so it belongs to the machine rather than to the repository.
+# The weights it points at *do* travel — `models/` is tracked, through Git LFS,
+# and `models/LICENSES.md` records what each one costs (README, *Detecting from
+# the aerial imagery*).
 /ai.ron
-/models/
 
 # Operating system
 Thumbs.db

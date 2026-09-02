@@ -1,10 +1,18 @@
 //! The model registry: what a model is, as a file the user can edit.
 //!
 //! `ai.ron` sits next to `imagery.ron` and is written on first start, exactly
-//! like the imagery configuration. It lists models, not weights — the weights
-//! are big, and most of them are licensed in a way that forbids shipping them
-//! with a game. Each entry says where its `.onnx` file is expected, and the
-//! editor says plainly when it is not there yet ([`ModelSpec::missing`]).
+//! like the imagery configuration. Two of its entries — the car detector and
+//! the tree crown detector — name weights that **ship with the game**, in
+//! `models/`, so that the feature works on a fresh clone with nothing fetched.
+//! The rest are descriptions of models a user may bring, and for those the
+//! entry says where the `.onnx` file is expected and the editor says plainly
+//! when it is not there yet ([`ModelSpec::missing`]).
+//!
+//! What ships is still a *description* plus a file, never a model built into
+//! the binary: swapping either detector is editing this file and dropping an
+//! `.onnx` beside it. The two that ship are converted from published
+//! pre-trained detectors by `tools/vision/export_models.py`, and they do not
+//! share a licence — `models/LICENSES.md` is the record.
 //!
 //! A [`ModelSpec`] is deliberately mechanical: how the picture goes in
 //! ([`InputSpec`]), what shape comes out ([`Head`]), and what each class means
@@ -96,6 +104,18 @@ pub enum Head {
     /// [rad]. This is the head worth having for parked cars — it says which
     /// way each one points, and a car park is nothing but that.
     Oriented { confidence: f32, iou: f32 },
+    /// An anchored dense head — torchvision's RetinaNet, which is what the
+    /// tree crown model is. Two tensors, `[1, anchors, classes]` of logits
+    /// and `[1, anchors, 4]` of offsets, and **no boxes in them at all**: an
+    /// offset is measured from the anchor it belongs to, and the anchors are
+    /// not in the file. They are rebuilt from the input size, which is why
+    /// this head exists as a variant rather than as another shape the
+    /// Ultralytics decoder copes with.
+    ///
+    /// It is here because it is what the shipped tree detector needs, and
+    /// that in turn because the only crown models worth having are published
+    /// this way — the whole DeepForest family is torchvision underneath.
+    Retina { confidence: f32, iou: f32 },
 }
 
 impl Default for Head {
@@ -110,31 +130,56 @@ impl Default for Head {
 impl Head {
     pub fn confidence(self) -> f32 {
         match self {
-            Head::Boxes { confidence, .. } | Head::Oriented { confidence, .. } => confidence,
+            Head::Boxes { confidence, .. }
+            | Head::Oriented { confidence, .. }
+            | Head::Retina { confidence, .. } => confidence,
         }
     }
 
     pub fn iou(self) -> f32 {
         match self {
-            Head::Boxes { iou, .. } | Head::Oriented { iou, .. } => iou,
+            Head::Boxes { iou, .. } | Head::Oriented { iou, .. } | Head::Retina { iou, .. } => iou,
         }
     }
 
-    /// Rows of the output tensor that come before the class scores.
+    /// Rows of the output tensor that come before the class scores — for the
+    /// two Ultralytics layouts, which are the ones read row by row.
     pub fn box_rows(self) -> usize {
         match self {
-            Head::Boxes { .. } => 4,
-            Head::Oriented { .. } => 4,
+            Head::Boxes { .. } | Head::Oriented { .. } | Head::Retina { .. } => 4,
         }
     }
 
     /// Rows after the class scores.
     pub fn tail_rows(self) -> usize {
         match self {
-            Head::Boxes { .. } => 0,
+            Head::Boxes { .. } | Head::Retina { .. } => 0,
             Head::Oriented { .. } => 1,
         }
     }
+}
+
+/// What a find of a class becomes on the module.
+///
+/// The two are different lists in the line file and different things to a
+/// builder. An object is placed against the track and carries a heading — a
+/// car points somewhere. A tree stands on the ground, points nowhere, and
+/// carries a size instead: what a photograph says about a tree is how wide its
+/// crown is, and that is the number that decides which of the installed trees
+/// is planted and how big it is grown.
+///
+/// A model says which of the two each of its classes is, so nothing in the
+/// pipeline below the registry has to know what a tree is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Placement {
+    /// Scenery placed against the track — `ObjectSource` in the line file.
+    #[default]
+    Object,
+    /// A tree in the line's own tree list, grown to the crown that was found —
+    /// `TreeSource`. Selectable and deletable one by one afterwards like any
+    /// other tree, whether it was planted by hand, by the forest brush or by
+    /// this.
+    Tree,
 }
 
 /// What one of the model's classes is worth on a module.
@@ -161,6 +206,26 @@ pub struct ClassSpec {
     /// Confidence this class needs, where it should differ from the head's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    /// What a find of this class becomes — see [`Placement`].
+    #[serde(default)]
+    pub kind: Placement,
+    /// Tag used instead of `place` where the crown reads as needle-leaf
+    /// ([`crate::canopy`]). Empty leaves `place` standing for every find,
+    /// which is what a model with species classes of its own wants — there the
+    /// model has already said what the tree is, and a guess from the pixels
+    /// would only overrule it.
+    #[serde(default)]
+    pub conifer: String,
+    /// Sizes accepted [m] on the long axis, where the factor of two around
+    /// `size` is the wrong rule.
+    ///
+    /// Trees need it and cars do not. Every car is within a factor of two of
+    /// every other car; a crown is anything from a three-metre thorn at the
+    /// fence to a twenty-five-metre oak in the station forecourt, and both are
+    /// right. Stating the range outright is honest about a class where the
+    /// size is not a check on the detection but the point of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<(f64, f64)>,
 }
 
 impl ClassSpec {
@@ -171,6 +236,9 @@ impl ClassSpec {
             place: String::new(),
             size: (0.0, 0.0),
             confidence: None,
+            kind: Placement::Object,
+            conifer: String::new(),
+            span: None,
         }
     }
 
@@ -180,6 +248,30 @@ impl ClassSpec {
             place: place.into(),
             size,
             confidence: None,
+            kind: Placement::Object,
+            conifer: String::new(),
+            span: None,
+        }
+    }
+
+    /// A class whose finds are planted: the tag for a broadleaf, the tag for a
+    /// needle-leaf where the crown reads as one, and the crown diameters the
+    /// class covers [m].
+    ///
+    /// `conifer` may be empty, and is for the single-class crown detectors
+    /// that most published tree models are: they say *tree* and nothing more,
+    /// and the split has to come from the pixels or not at all.
+    pub fn tree(name: &str, place: &str, conifer: &str, span: (f64, f64)) -> Self {
+        Self {
+            name: name.into(),
+            place: place.into(),
+            // The middle of the range is what an average crown of the class
+            // is, which is all `size` is ever asked for once `span` is set.
+            size: ((span.0 + span.1) / 2.0, (span.0 + span.1) / 2.0),
+            confidence: None,
+            kind: Placement::Tree,
+            conifer: conifer.into(),
+            span: Some(span),
         }
     }
 
@@ -190,10 +282,18 @@ impl ClassSpec {
     /// in adjacent bays bleed into each other — and rejecting on it would
     /// throw away half a full car park.
     pub fn plausible(&self, length: f64) -> bool {
+        if let Some((low, high)) = self.span {
+            return length >= low && length <= high;
+        }
         if self.size.0 <= 0.0 {
             return true;
         }
         length >= self.size.0 * 0.5 && length <= self.size.0 * 2.0
+    }
+
+    /// Whether finds of this class are planted rather than placed.
+    pub fn is_tree(&self) -> bool {
+        self.kind == Placement::Tree
     }
 }
 
@@ -345,10 +445,17 @@ impl VisionConfig {
 
 /// The models the editor knows how to talk to out of the box.
 ///
-/// None of them ships with the game: every one is a file the user exports or
-/// downloads, and `note` says from where. What ships is the description — the
-/// input size, the head, the class list in the right order — because that is
-/// the part that is tedious to get right and silently wrong when it is not.
+/// **Two of them ship with the game** — the car detector and the tree crown
+/// detector, in `models/` — so that the feature works on a fresh clone with
+/// nothing fetched and nothing signed up to. They are converted from published
+/// pre-trained detectors by `tools/vision/export_models.py`, and what they
+/// cost in licence terms is written down in `models/LICENSES.md`: the car one
+/// is AGPL-3.0 and the tree one MIT.
+///
+/// The rest are descriptions without weights, for a user bringing their own
+/// detector. What ships for those is the part that is tedious to get right and
+/// silently wrong when it is not — the input size, the head, the class list in
+/// the model's own order.
 pub fn predefined_models() -> Vec<ModelSpec> {
     vec![
         // The one the whole feature was built for. DOTA is aerial imagery with
@@ -386,8 +493,9 @@ pub fn predefined_models() -> Vec<ModelSpec> {
             ],
             ground_sample: 0.3,
             overlap: 0.2,
-            note: "Ultralytics yolov8n-obb, trained on DOTAv1 (AGPL-3.0). \
-                   Export: yolo export model=yolov8n-obb.pt format=onnx imgsz=1024"
+            note: "Ships with the game. Ultralytics yolov8n-obb on DOTAv1, \
+                   AGPL-3.0 — see models/LICENSES.md. Rebuilt by \
+                   tools/vision/export_models.py --only cars"
                 .into(),
         },
         // The same family without rotation — for anyone who already has a
@@ -415,6 +523,130 @@ pub fn predefined_models() -> Vec<ModelSpec> {
             overlap: 0.2,
             note: "Any single-stage detector exported from Ultralytics with these \
                    three classes; adjust `classes` to the model's own order."
+                .into(),
+        },
+        // The tree detector that ships. DeepForest is the crown model of the
+        // field — a torchvision RetinaNet trained on the NEON airborne survey,
+        // MIT licensed, and the reason [`Head::Retina`] exists at all.
+        //
+        // Only the backbone and the head are in the file: the resize, the
+        // normalisation and the suppression that the Python package does
+        // around them are this crate's own work already, and what it cannot do
+        // is guess anchors. Those are rebuilt from the input size.
+        ModelSpec {
+            id: "deepforest".into(),
+            name: "DeepForest (Baumkronen)".into(),
+            file: "models/deepforest-tree.onnx".into(),
+            input: InputSpec {
+                // A multiple of the coarsest feature stride, so the anchor
+                // grid follows from the size by division. DeepForest's own
+                // 800 is not, and its coarsest map is a cell wider than the
+                // division would say.
+                width: 768,
+                height: 768,
+                layout: Layout::Nchw,
+                order: ChannelOrder::Rgb,
+                scale: 1.0 / 255.0,
+                // ImageNet, which is what the backbone was trained under and
+                // what DeepForest's own transform subtracts.
+                mean: [0.485, 0.456, 0.406],
+                std: [0.229, 0.224, 0.225],
+            },
+            head: Head::Retina {
+                confidence: 0.3,
+                // Crowns touch and overlap in a closed wood, so the box that
+                // survives has to be allowed to sit close to its neighbour.
+                // DeepForest's own default is 0.05, which is stricter still.
+                iou: 0.1,
+            },
+            classes: vec![ClassSpec::tree(
+                "Tree",
+                "laubbaum",
+                "nadelbaum",
+                (2.5, 26.0),
+            )],
+            // Five centimetres, which is *not* the resolution of the survey it
+            // was trained on: DeepForest reads ten-centimetre imagery and
+            // doubles it before the network sees anything, so five is the
+            // scale a crown has to arrive at to be the number of pixels across
+            // the model expects. Where the provider cannot go that fine the
+            // window is enlarged instead, and the crowns come out softer —
+            // finer imagery is the single biggest thing that helps this model.
+            ground_sample: 0.05,
+            overlap: 0.3,
+            note: "Ships with the game. DeepForest (Weecology, MIT) trained on \
+                   the NEON airborne survey; backbone and head only, anchors \
+                   rebuilt by the editor. Rebuilt by \
+                   tools/vision/export_models.py --only trees"
+                .into(),
+        },
+        // Tree crowns. Every published crown detector is single-class — it
+        // says *tree* and nothing else, because that is what the aerial
+        // training sets are labelled with. What kind of tree it is comes from
+        // the crown itself (`canopy`), and how big it is from the box, which
+        // is the whole of what a photograph can say about a tree.
+        ModelSpec {
+            id: "tree-crowns".into(),
+            name: "YOLO (Baumkronen)".into(),
+            file: "models/tree-crowns.onnx".into(),
+            input: InputSpec {
+                width: 640,
+                height: 640,
+                ..Default::default()
+            },
+            head: Head::Boxes {
+                // Higher than the cars want. A wood is thousands of crowns
+                // and a false one is a tree in the middle of a meadow, which
+                // is more conspicuous than a car park with a gap in it.
+                confidence: 0.35,
+                iou: 0.4,
+            },
+            classes: vec![ClassSpec::tree(
+                "tree",
+                "laubbaum",
+                "nadelbaum",
+                (2.5, 26.0),
+            )],
+            // Ten centimetres is what the aerial crown sets are labelled at,
+            // and a crown is a much bigger thing than a car — the resolution
+            // is spent on telling two touching crowns apart.
+            ground_sample: 0.1,
+            // More than the cars: crowns of a closed wood run into each other
+            // across a window edge far more often than parked cars do.
+            overlap: 0.3,
+            note: "Any single-stage crown detector exported from Ultralytics — \
+                   train one on an aerial crown set (NEON/DeepForest labels, \
+                   Zenodo urban tree crowns). Export: yolo export model=crowns.pt \
+                   format=onnx imgsz=640"
+                .into(),
+        },
+        // The same thing from a model that was taught the difference. Where
+        // it exists it is the better answer, and the entry is here to say so:
+        // `conifer` stays empty, and the pixel guess is never consulted.
+        ModelSpec {
+            id: "tree-species".into(),
+            name: "YOLO (Baumarten)".into(),
+            file: "models/tree-species.onnx".into(),
+            input: InputSpec {
+                width: 640,
+                height: 640,
+                ..Default::default()
+            },
+            head: Head::Boxes {
+                confidence: 0.35,
+                iou: 0.4,
+            },
+            classes: vec![
+                ClassSpec::tree("broadleaf", "laubbaum", "", (2.5, 26.0)),
+                ClassSpec::tree("conifer", "nadelbaum", "", (2.0, 22.0)),
+                // A hedge or a thicket: low, wide, and never a standard tree.
+                ClassSpec::tree("shrub", "strauch", "", (1.0, 6.0)),
+            ],
+            ground_sample: 0.1,
+            overlap: 0.3,
+            note: "A crown detector with species classes of its own; adjust \
+                   `classes` to the model's order and the tags of the tree mods \
+                   you have installed."
                 .into(),
         },
     ]
@@ -472,6 +704,62 @@ mod tests {
         assert!(!car.plausible(11.0), "11 m is two cars run together");
         // A class without a stated size accepts whatever comes.
         assert!(ClassSpec::ignored("x").plausible(100.0));
+    }
+
+    /// The registry is a file the user has been editing since before there
+    /// were trees in it, and one written then has to keep working: every field
+    /// the tree classes added defaults to what a car class always meant.
+    #[test]
+    fn a_class_written_before_the_trees_still_reads() {
+        let old: ClassSpec =
+            ron::from_str(r#"(name: "small vehicle", place: "car", size: (4.4, 1.8))"#).unwrap();
+        assert_eq!(old.kind, Placement::Object);
+        assert!(old.conifer.is_empty());
+        assert_eq!(old.span, None);
+        assert!(!old.is_tree());
+        assert!(old.plausible(4.0));
+    }
+
+    #[test]
+    fn a_tree_class_says_it_is_one_and_survives_the_file() {
+        let config = VisionConfig::default();
+        let crowns = config.model_by_id("tree-crowns").unwrap();
+        assert_eq!(crowns.classes.len(), 1);
+        let tree = &crowns.classes[0];
+        assert!(tree.is_tree());
+        assert_eq!(tree.place, "laubbaum");
+        assert_eq!(
+            tree.conifer, "nadelbaum",
+            "the split has to come from the pixels"
+        );
+
+        // A model with species of its own never consults them.
+        let species = config.model_by_id("tree-species").unwrap();
+        assert_eq!(species.placing().count(), 3);
+        assert!(species.classes.iter().all(|c| c.conifer.is_empty()));
+        assert!(species.classes.iter().all(|c| c.is_tree()));
+
+        let text = ron::ser::to_string_pretty(&config, ron::ser::PrettyConfig::default()).unwrap();
+        assert_eq!(ron::from_str::<VisionConfig>(&text).unwrap(), config);
+    }
+
+    /// The whole reason `span` exists: a crown of three metres and a crown of
+    /// twenty-four are both trees, and the factor of two around one size would
+    /// have thrown away whichever end it was not centred on.
+    #[test]
+    fn a_stated_span_replaces_the_factor_of_two() {
+        let tree = ClassSpec::tree("tree", "laubbaum", "nadelbaum", (2.5, 26.0));
+        assert!(tree.plausible(2.5) && tree.plausible(26.0));
+        assert!(tree.plausible(3.0), "a thorn at the fence");
+        assert!(tree.plausible(24.0), "and an oak in the forecourt");
+        assert!(!tree.plausible(2.0), "below it, the shadow of a bush");
+        assert!(
+            !tree.plausible(40.0),
+            "and above it, half a wood the model ran together"
+        );
+        // Without a span the old rule still holds.
+        let car = ClassSpec::placed("small vehicle", "car", (4.4, 1.8));
+        assert!(car.plausible(4.4) && !car.plausible(11.0));
     }
 
     #[test]

@@ -27,12 +27,22 @@
 //!
 //! Car parks are not detected — they are inferred from the cars, and paved
 //! with the road the module already has (see [`vision::parking`]).
+//!
+//! Trees are the same walk with a different answer at the end of it. A class
+//! marked [`Placement::Tree`] does not become an object against the track: it
+//! becomes a row in the line's own tree list, at the place the crown was, in a
+//! species carrying the tag the model gave it, grown to the size the crown was
+//! measured at. That matters beyond tidiness — a tree in that list is drawn by
+//! the vegetation instancer, is picked by the select tool, joins a
+//! multi-selection and goes with one Delete, exactly like a tree planted by
+//! hand or baked by the forest brush. Nothing about a wood the model found is
+//! any harder to take back than a wood a person drew.
 
 use crate::tools::{EditorState, Selection};
 use crate::{AiPath, Line, TrackObjects};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
-use content::route::{CenterLine, ObjectSource, RoadPoint, RoadSource, RoadSurface};
+use content::route::{CenterLine, ObjectSource, RoadPoint, RoadSource, RoadSurface, TreeSource};
 use editor_ui::{colors, space};
 use i18n::t;
 use std::path::PathBuf;
@@ -41,7 +51,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use track_model::Footprint;
 use track_model::TrackNetwork;
-use vision::{GeoDetection, Lot, Progress, Region, Shape, VisionConfig};
+use vision::{GeoDetection, Lot, Placement, Progress, Region, Shape, VisionConfig};
 use world_coords::{EcefPos, EnuFrame, geo};
 
 /// Width of the dialog [px] — the road import's, so the two look alike.
@@ -68,6 +78,22 @@ const LOT_TAGS: [&str; 2] = [LOT_TAG, "ai"];
 /// row of lorries at a goods shed is not one, and neither is anything else a
 /// model may learn to find later.
 const CAR: &str = "car";
+/// How far from the crown that was measured a species may be and still be
+/// planted on it, as a factor either way.
+///
+/// Wider than the cars' rule, and deliberately: a car park is a grid of
+/// stated sizes, a wood is not. Half again in each direction spans the three
+/// individuals every species in `mods/trees` ships — the same species young,
+/// grown and old — so a crown of any size finds something to be.
+const SPREAD: f64 = 1.5;
+/// How far a planted tree may be grown or shrunk from its own size to stand as
+/// wide as the crown says.
+///
+/// The clamp is the point rather than a safety net. A thirty-metre spruce
+/// squeezed to a third is not a young spruce: the trunk stays as thick as a
+/// mature one and the needles come out the size of branches. Past the band the
+/// species was the wrong choice and the size is the lesser error of the two.
+const GROWTH: (f64, f64) = (0.6, 1.5);
 
 /// Which ground the run covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -92,6 +118,23 @@ pub struct AiOptions {
     pub keep_clear: f64,
     /// Place what the model finds.
     pub place_objects: bool,
+    /// Plant the trees it finds — the tree classes of the model, into the
+    /// line's own tree list.
+    pub place_trees: bool,
+    /// Which species the crowns become: `None` is what the model said, and
+    /// `Some("nadelwald")` is the stand of that name whatever it said.
+    ///
+    /// The escape hatch for the one thing the imagery cannot settle. A crown
+    /// detector says *tree*; whether it is a fir or a lime is read off the
+    /// crown's own look ([`vision::canopy`]) and at the resolution a provider
+    /// gives that is a hint, not a finding. A builder looking at the same
+    /// photograph can see it at a glance, and this is where they say so —
+    /// once, for the run, instead of correcting four hundred trees.
+    pub species: Option<String>,
+    /// How close a planted tree may come to a tree that already stands there
+    /// [m]. What makes a second run over the same wood a no-op rather than a
+    /// doubling of it.
+    pub tree_spacing: f64,
     /// Pave the car parks the cars stand in.
     pub pave_lots: bool,
     /// How many cars make a car park.
@@ -109,6 +152,12 @@ impl Default for AiOptions {
             // Clear of the six-foot, the cable route and the cess.
             keep_clear: 8.0,
             place_objects: true,
+            place_trees: true,
+            species: None,
+            // A crown is metres across; two trunks three metres apart are two
+            // trees anywhere but in a hedge, and a hedge is not what a crown
+            // detector finds.
+            tree_spacing: 3.0,
             pave_lots: true,
             min_lot_cars: 6,
         }
@@ -317,7 +366,7 @@ pub fn headless(
         true
     })?;
 
-    let (placed, paved) = commit(line, &report, &options, objects, true);
+    let placed = commit(line, &report, &options, objects, true);
     let path = line
         .path
         .clone()
@@ -327,19 +376,21 @@ pub fn headless(
     line.dirty = false;
 
     let what: Vec<String> = placed
+        .by_tag
         .iter()
         .map(|(tag, count)| format!("{count} × {tag}"))
         .collect();
     Ok(format!(
-        "{} found, {} placed ({}), {} car parks paved — written to {path}",
+        "{} found, {} placed and {} planted ({}), {} car parks paved — written to {path}",
         report.outcome.found.len(),
-        placed.values().sum::<usize>(),
+        placed.objects,
+        placed.trees,
         if what.is_empty() {
             "nothing installed to place them with".to_string()
         } else {
             what.join(", ")
         },
-        paved,
+        placed.lots,
     ))
 }
 
@@ -594,15 +645,17 @@ const FILLS: f64 = 0.6;
 /// An object without a footprint is not measured and stays eligible
 /// throughout. Most scenery has none, and a mod that never states its sizes
 /// should behave as it did before there was anywhere to state them.
-fn fitting<'a>(
-    candidates: &'a [(String, Option<Footprint>)],
-    detection: &GeoDetection,
+///
+/// `band` is how big the thing that goes there may be, and it is the one part
+/// of this that differs between a car park and a wood — see [`band_for`].
+fn fitting(
+    candidates: &[(String, Option<Footprint>)],
+    band: (f64, f64),
     seed: u64,
-) -> Option<&'a str> {
+) -> Option<&str> {
     let length = |c: &(String, Option<Footprint>)| c.1.map_or(f64::NAN, |f| f.length);
     let unmeasured = |c: &&(String, Option<Footprint>)| c.1.is_none();
-    let room = detection.length + SLACK;
-    let floor = detection.length * FILLS;
+    let (floor, room) = band;
 
     let suits: Vec<&(String, Option<Footprint>)> = candidates
         .iter()
@@ -628,6 +681,122 @@ fn fitting<'a>(
         .iter()
         .min_by(|a, b| length(a).total_cmp(&length(b)))
         .map(|(name, _)| name.as_str())
+}
+
+/// How big a thing may be to go on this find.
+///
+/// The two kinds are measured against different things and the difference is
+/// real. A bay is a *space*, and what goes in it must not stick out of it:
+/// the room is what was measured plus the slack the measurement is worth, and
+/// nothing may be so much smaller that it looks lost. A crown is not a space
+/// but the thing itself — the tree that goes there should be about that wide,
+/// too big and too small are the same error, and the range is symmetrical
+/// because a wood is.
+fn band_for(detection: &GeoDetection) -> (f64, f64) {
+    match detection.kind {
+        Placement::Object => (detection.length * FILLS, detection.length + SLACK),
+        Placement::Tree => (detection.length / SPREAD, detection.length * SPREAD),
+    }
+}
+
+/// How much bigger or smaller than its own size a tree is planted, so that it
+/// stands as wide as the crown in the photograph — see [`GROWTH`].
+///
+/// A species that states no crown is planted at its own size: `mods/trees`
+/// states one for every tree it has, and a mod that states none is saying it
+/// does not know, not that its trees are a metre across.
+fn grown(crown: f64, model: Option<Footprint>) -> f64 {
+    match model {
+        Some(model) if model.length > 0.1 => (crown / model.length).clamp(GROWTH.0, GROWTH.1),
+        _ => 1.0,
+    }
+}
+
+/// One find as a row in the line's own tree list.
+///
+/// No track reference and no heading. A tree stands at a place on the ground,
+/// and which way round it stands is a matter of taste — but not of chance: the
+/// turn is drawn from the place, so the same imagery always plants the same
+/// wood, and re-running a corridor after widening it does not spin every tree
+/// a builder has already looked at.
+fn tree_for(detection: &GeoDetection, object: &str, scale: f64, seed: u64) -> TreeSource {
+    TreeSource {
+        object: object.to_string(),
+        lat: detection.lat,
+        lon: detection.lon,
+        // A different part of the hash than the species pick uses, so that the
+        // two do not move together — a wood in which every lime faces north
+        // and every fir south is a wood nobody believes.
+        yaw_deg: (seed >> 32) as f64 % 360.0,
+        scale,
+    }
+}
+
+/// The size a tree is planted at where nothing measured it: seven tenths to
+/// one and three tenths of the model's own, which is the spread the forest
+/// brush bakes a wood with.
+fn natural(seed: u64) -> f64 {
+    0.7 + ((seed >> 16) & 0xffff) as f64 / 65_535.0 * 0.6
+}
+
+/// Where something already stands, in cells big enough that only the
+/// neighbouring ones have to be looked at.
+///
+/// The list this replaced was walked in full for every find, which a car park
+/// never noticed: fifty cars against a hundred objects is nothing. A wood is
+/// tens of thousands of rows and a run over a forested corridor finds
+/// thousands more, and the same code would be a hundred million distance tests
+/// on the main thread with the editor frozen in front of the user in the
+/// middle of a click.
+///
+/// ECEF throughout, and every point put in at the same height: the cells are
+/// then a metric box grid, the distance is the ordinary one, and a tree read
+/// off a photograph can be compared with a tree already in the file without
+/// either of them having to know how far below the rails the ellipsoid is.
+struct Occupied {
+    /// The distance the grid answers about, and the size of a cell — the two
+    /// are the same number on purpose, because that is what makes the
+    /// neighbouring twenty-seven cells the whole of the search.
+    within: f64,
+    at: std::collections::HashMap<(i64, i64, i64), Vec<EcefPos>>,
+}
+
+impl Occupied {
+    fn new(within: f64) -> Self {
+        Self {
+            within: within.max(0.5),
+            at: Default::default(),
+        }
+    }
+
+    fn key(&self, p: EcefPos) -> (i64, i64, i64) {
+        (
+            (p.0.x / self.within).floor() as i64,
+            (p.0.y / self.within).floor() as i64,
+            (p.0.z / self.within).floor() as i64,
+        )
+    }
+
+    fn add(&mut self, p: EcefPos) {
+        self.at.entry(self.key(p)).or_default().push(p);
+    }
+
+    fn taken(&self, p: EcefPos) -> bool {
+        let (x, y, z) = self.key(p);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let Some(cell) = self.at.get(&(x + dx, y + dy, z + dz)) else {
+                        continue;
+                    };
+                    if cell.iter().any(|q| q.distance(p) < self.within) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
 }
 
 /// The compass bearing of the track at a pose \[deg\], from north through
@@ -748,36 +917,69 @@ fn road_for(lot: &Lot) -> RoadSource {
     }
 }
 
-/// Writes the report into the line. Returns what was placed, per tag, and how
-/// many car parks were paved.
+/// What a commit did — for the status line, for the log of a headless run,
+/// and for the report the user reads before deciding.
+#[derive(Default)]
+pub struct Placed {
+    /// How many went in per tag. Objects and trees together: the tag is what
+    /// the model named and what the user recognises them by, and whether a
+    /// `laubbaum` became a row in one list or the other is this module's
+    /// business rather than the reader's.
+    pub by_tag: std::collections::BTreeMap<String, usize>,
+    pub objects: usize,
+    pub trees: usize,
+    pub lots: usize,
+}
+
+/// Every installed object carrying a tag, worked out once per tag and kept.
+///
+/// `laubbaum` on the shipped mods is sixty entries and a run finds thousands
+/// of crowns; scanning the catalogue for each of them is the same answer
+/// several thousand times.
+#[derive(Default)]
+struct Pool(std::collections::BTreeMap<String, Vec<(String, Option<Footprint>)>>);
+
+impl Pool {
+    fn of(&mut self, objects: &TrackObjects, tag: &str) -> &[(String, Option<Footprint>)] {
+        self.0
+            .entry(tag.to_string())
+            .or_insert_with(|| tagged(objects, tag))
+    }
+}
+
+/// Writes the report into the line.
 fn commit(
     line: &mut Line,
     report: &Report,
     options: &AiOptions,
     objects: &TrackObjects,
     snap: bool,
-) -> (std::collections::BTreeMap<String, usize>, usize) {
-    let mut placed: std::collections::BTreeMap<String, usize> = Default::default();
+) -> Placed {
+    let mut placed = Placed::default();
+    let mut pool = Pool::default();
+
     if options.place_objects {
         // Where something already stands, nothing is added: a second run over
         // ground that has been done is then a no-op rather than a doubling.
-        let taken: Vec<EcefPos> = line
-            .source
-            .objects
-            .iter()
-            .filter_map(|o| crate::tools::object_pos(&line.net, o))
-            .collect();
-        let mut candidates: std::collections::BTreeMap<String, Vec<(String, Option<Footprint>)>> =
-            Default::default();
+        // What this run places counts as standing too, from the moment it is
+        // decided on.
+        let mut taken = Occupied::new(OCCUPIED);
+        for object in &line.source.objects {
+            if let Some(p) = crate::tools::object_pos(&line.net, object) {
+                taken.add(p);
+            }
+        }
         let mut fresh = Vec::new();
-        for detection in &report.outcome.found {
-            let names = candidates
-                .entry(detection.place.clone())
-                .or_insert_with(|| tagged(objects, &detection.place));
+        for detection in report.outcome.found.iter().filter(|d| is_object(d)) {
+            let names = pool.of(objects, &detection.place);
             if names.is_empty() {
                 continue;
             }
-            let Some(name) = fitting(names, detection, seed(detection.lat, detection.lon)) else {
+            let Some(name) = fitting(
+                names,
+                band_for(detection),
+                seed(detection.lat, detection.lon),
+            ) else {
                 continue;
             };
             let Some(object) = object_for(line, detection, name.to_string(), snap) else {
@@ -786,22 +988,106 @@ fn commit(
             let Some(at) = crate::tools::object_pos(&line.net, &object) else {
                 continue;
             };
-            if taken.iter().any(|p| p.distance(at) < OCCUPIED) {
+            if taken.taken(at) {
                 continue;
             }
-            *placed.entry(detection.place.clone()).or_insert(0) += 1;
+            taken.add(at);
+            *placed.by_tag.entry(detection.place.clone()).or_insert(0) += 1;
+            placed.objects += 1;
             fresh.push(object);
         }
         line.source.objects.extend(fresh);
     }
-    let mut paved = 0;
+
+    if options.place_trees {
+        // The same rule as the objects', measured against the trees that are
+        // already there — including the ones this loop plants, so a stand of
+        // crowns the model reported twice does not become two woods in one.
+        let spacing = options.tree_spacing.max(0.0);
+        let mut standing = Occupied::new(spacing);
+        if spacing > 0.0 {
+            for tree in &line.source.trees {
+                standing.add(geo::to_ecef_deg(tree.lat, tree.lon, 0.0));
+            }
+        }
+        let mut fresh = Vec::new();
+        for detection in report.outcome.found.iter().filter(|d| !is_object(d)) {
+            // A wood is cut to the module's own outline, exactly as the forest
+            // brush's bake is: the run's area is drawn on the map by hand and
+            // can reach over the edge of what this module portrays.
+            if !line.source.envelope_contains(detection.lat, detection.lon) {
+                continue;
+            }
+            let at = geo::to_ecef_deg(detection.lat, detection.lon, 0.0);
+            if spacing > 0.0 && standing.taken(at) {
+                continue;
+            }
+            let tag = match &options.species {
+                Some(stand) => format!("{}{stand}", crate::STAND_TAG),
+                None => detection.place.clone(),
+            };
+            let species = pool.of(objects, &tag);
+            if species.is_empty() {
+                continue;
+            }
+            let seed = seed(detection.lat, detection.lon);
+            // Which tree goes here and how big, and there are two answers
+            // because there are two people being believed.
+            //
+            // Where the species come from the **model**, the crown decides
+            // both: the member whose own crown suits the one that was
+            // measured, grown the rest of the way. That is the whole point of
+            // measuring it.
+            //
+            // Where a **builder has named a stand**, they have overruled the
+            // photograph about what the wood is — and the size has to go with
+            // it. A crown detector reading a provider's imagery reports the
+            // sunlit top of a young spruce as two metres across; planting a
+            // spruce wood at that would be a wood of saplings, and picking
+            // the member that suits two metres would be a wood of junipers.
+            // So a named stand is planted the way the forest brush plants
+            // one: any of its members, at its own size, give or take a third.
+            let (name, scale) = match &options.species {
+                Some(_) => {
+                    let pick = species[(seed as usize) % species.len()].0.as_str();
+                    (pick, natural(seed))
+                }
+                None => {
+                    let Some(name) = fitting(species, band_for(detection), seed) else {
+                        continue;
+                    };
+                    let crown = species
+                        .iter()
+                        .find(|(candidate, _)| candidate == name)
+                        .and_then(|(_, footprint)| *footprint);
+                    (name, grown(detection.length, crown))
+                }
+            };
+            // Only now: a crown whose tag no mod carries plants nothing, and
+            // must not hold the ground against the tree of another tag beside
+            // it either.
+            if spacing > 0.0 {
+                standing.add(at);
+            }
+            *placed.by_tag.entry(tag).or_insert(0) += 1;
+            placed.trees += 1;
+            fresh.push(tree_for(detection, name, scale, seed));
+        }
+        line.source.trees.extend(fresh);
+    }
+
     if options.pave_lots {
         for lot in &report.lots {
             line.source.roads.push(road_for(lot));
-            paved += 1;
+            placed.lots += 1;
         }
     }
-    (placed, paved)
+    placed
+}
+
+/// Whether a find is placed against the track rather than planted on it.
+fn is_object(detection: &GeoDetection) -> bool {
+    detection.kind == Placement::Object
 }
 
 // ---------------------------------------------------------------------------
@@ -832,6 +1118,13 @@ pub fn draw(
     if request.detect_imagery {
         request.detect_imagery = false;
         dialog.open = true;
+        // An area drawn on the map is an answer to "where" already given. A
+        // builder who has just ringed a copse and opened this should not have
+        // to say so a second time in a radio button — and the corridor is one
+        // click away for whoever wanted that instead.
+        if state.ai_area.as_ref().is_some_and(|a| a.len() >= 3) {
+            dialog.options.area = Area::Selection;
+        }
     }
     if !dialog.open {
         return Ok(());
@@ -905,7 +1198,7 @@ pub fn draw(
             } else if dialog.report.is_some() {
                 close |= finished_panel(ui, dialog, &mut line, &mut state, &mut overlay, &objects);
             } else {
-                let answer = settings(ui, dialog, &line, &state, &config_dir);
+                let answer = settings(ui, dialog, &line, &state, &config_dir, &objects);
                 close |= answer.close;
                 begin = answer.start;
                 draw_area = answer.draw_area;
@@ -944,6 +1237,7 @@ fn settings(
     line: &Line,
     state: &EditorState,
     config_dir: &std::path::Path,
+    objects: &TrackObjects,
 ) -> Answer {
     let mut answer = Answer::default();
     ui.label(t!("ai-intro"));
@@ -958,6 +1252,16 @@ fn settings(
         .iter()
         .find(|m| m.id == dialog.options.model)
         .cloned();
+    // Only what this model can do. A crown detector has no car parks to pave
+    // and a car model has nothing to plant, and a row that decides nothing is
+    // a question the user has to answer for no reason.
+    let plants = chosen
+        .as_ref()
+        .is_some_and(|m| m.placing().any(|(_, class)| class.is_tree()));
+    let places = chosen
+        .as_ref()
+        .is_none_or(|m| m.placing().any(|(_, class)| !class.is_tree()))
+        || !plants;
 
     editor_ui::form_grid("ai-form")
         .num_columns(2)
@@ -1013,25 +1317,84 @@ fn settings(
             crate::ui::row(ui, "ai-keep-clear", |ui| {
                 editor_ui::field(ui, &mut dialog.options.keep_clear, 0.5, 0.0..=200.0, "m");
             });
-            crate::ui::row(ui, "ai-place-objects", |ui| {
-                ui.checkbox(&mut dialog.options.place_objects, "");
-            });
-            crate::ui::row(ui, "ai-pave-lots", |ui| {
-                ui.checkbox(&mut dialog.options.pave_lots, "");
-            });
-            if dialog.options.pave_lots {
-                crate::ui::row(ui, "ai-min-lot-cars", |ui| {
-                    let mut cars = dialog.options.min_lot_cars as f64;
-                    editor_ui::field(ui, &mut cars, 1.0, 3.0..=60.0, "");
-                    dialog.options.min_lot_cars = cars.round() as usize;
+            if places {
+                crate::ui::row(ui, "ai-place-objects", |ui| {
+                    ui.checkbox(&mut dialog.options.place_objects, "");
                 });
+            }
+            if plants {
+                crate::ui::row(ui, "ai-place-trees", |ui| {
+                    ui.checkbox(&mut dialog.options.place_trees, "");
+                });
+                if dialog.options.place_trees {
+                    // What the crowns become. The model finds where a tree is
+                    // and how wide; which tree it is, is the one thing a
+                    // photograph at this resolution cannot settle, so the
+                    // stands of the installed mods are offered beside it.
+                    crate::ui::row(ui, "ai-species", |ui| {
+                        let stands = objects.stands();
+                        let label = match &dialog.options.species {
+                            Some(stand) => stand.clone(),
+                            None => t!("ai-species-detected"),
+                        };
+                        egui::ComboBox::from_id_salt("ai-species-pick")
+                            .selected_text(label)
+                            .width(space::FIELD * 2.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut dialog.options.species,
+                                    None,
+                                    t!("ai-species-detected"),
+                                );
+                                for (stand, members) in &stands {
+                                    ui.selectable_value(
+                                        &mut dialog.options.species,
+                                        Some(stand.clone()),
+                                        format!("{stand} ({})", members.len()),
+                                    );
+                                }
+                            });
+                    });
+                    crate::ui::row(ui, "ai-tree-spacing", |ui| {
+                        editor_ui::field(
+                            ui,
+                            &mut dialog.options.tree_spacing,
+                            0.5,
+                            0.0..=50.0,
+                            "m",
+                        );
+                    });
+                }
+            }
+            if places {
+                crate::ui::row(ui, "ai-pave-lots", |ui| {
+                    ui.checkbox(&mut dialog.options.pave_lots, "");
+                });
+                if dialog.options.pave_lots {
+                    crate::ui::row(ui, "ai-min-lot-cars", |ui| {
+                        let mut cars = dialog.options.min_lot_cars as f64;
+                        editor_ui::field(ui, &mut cars, 1.0, 3.0..=60.0, "");
+                        dialog.options.min_lot_cars = cars.round() as usize;
+                    });
+                }
             }
         });
 
     // What the model will do on this module, said before it is started.
     ui.add_space(space::S);
     if let Some(model) = &chosen {
-        let tags: Vec<String> = model.placing().map(|(_, c)| c.place.clone()).collect();
+        // Both tags of a tree class. What a crown detector plants is a
+        // broadleaf *or* a fir depending on how the crown reads, and a line
+        // that named only the first would be telling half the truth about
+        // which mods have to be installed for the run to do anything.
+        let mut tags: Vec<String> = Vec::new();
+        for (_, class) in model.placing() {
+            for tag in [&class.place, &class.conifer] {
+                if !tag.is_empty() && !tags.contains(tag) {
+                    tags.push(tag.clone());
+                }
+            }
+        }
         ui.small(t!("ai-model-places", tags = tags.join(", ")));
         if !model.note.is_empty() {
             ui.small(&model.note);
@@ -1116,13 +1479,12 @@ fn finished_panel(
         *counts.entry(detection.place.as_str()).or_insert(0) += 1;
     }
     ui.label(
-        egui::RichText::new(t!(
-            "ai-found",
-            found = report.outcome.found.len(),
-            lots = report.lots.len()
-        ))
-        .color(colors::TEXT_STRONG),
+        egui::RichText::new(t!("ai-found", found = report.outcome.found.len()))
+            .color(colors::TEXT_STRONG),
     );
+    if !report.lots.is_empty() {
+        ui.label(t!("ai-found-lots", lots = report.lots.len()));
+    }
     ui.small(t!(
         "ai-cost",
         windows = report.outcome.windows,
@@ -1137,8 +1499,10 @@ fn finished_panel(
     // The rule that keeps finds out of the running lanes can only hold to the
     // roads that are in the file. Without them a car park and a carriageway
     // are the same grey rectangle in a photograph, and the run says so rather
-    // than quietly parking a lorry in the fast lane.
-    if streets(line).is_empty() {
+    // than quietly parking a lorry in the fast lane. Nothing to say on a run
+    // that only planted trees: a tree is not put in a lane by a missing road,
+    // it is kept out of one by the crown not being there in the photograph.
+    if report.outcome.found.iter().any(is_object) && streets(line).is_empty() {
         ui.colored_label(colors::WARN, t!("ai-no-roads"));
     }
 
@@ -1179,12 +1543,21 @@ fn finished_panel(
     if apply {
         let report = dialog.report.take().expect("checked above");
         let snap = state.place_snap_to_terrain;
-        let (placed, paved) = commit(line, &report, &dialog.options, objects, snap);
-        let total: usize = placed.values().sum();
-        overlay.status = t!("status-ai-placed", objects = total, lots = paved);
+        let placed = commit(line, &report, &dialog.options, objects, snap);
+        overlay.status = t!(
+            "status-ai-placed",
+            objects = placed.objects,
+            trees = placed.trees,
+            lots = placed.lots
+        );
         line.dirty = true;
         line.needs_rebuild = true;
+        // The indices of everything below the new rows are unchanged, but a
+        // multi-selection made before a run means something else after one —
+        // and a wood of two thousand fresh trees is not what anybody wants
+        // held when they next press Delete.
         state.selection = Selection::None;
+        state.marked.clear();
         return true;
     }
     if again {
@@ -1204,6 +1577,7 @@ mod tests {
         GeoDetection {
             class: 0,
             place: "car".into(),
+            kind: Placement::Object,
             score: 0.9,
             lat,
             lon,
@@ -1229,7 +1603,7 @@ mod tests {
         for step in 0..64 {
             let seeded = seed(51.0 + step as f64 * 1e-4, 7.0);
             assert_eq!(
-                fitting(&pool, &found, seeded),
+                fitting(&pool, band_for(&found), seeded),
                 Some("cars:transporter"),
                 "a 6.30 m van in a 5.00 m space",
             );
@@ -1242,7 +1616,13 @@ mod tests {
         let mut found = detection(51.0, 7.0, 0.0);
         found.length = 6.4;
         let drawn: std::collections::BTreeSet<&str> = (0..64)
-            .filter_map(|step| fitting(&pool, &found, seed(51.0 + step as f64 * 1e-4, 7.0)))
+            .filter_map(|step| {
+                fitting(
+                    &pool,
+                    band_for(&found),
+                    seed(51.0 + step as f64 * 1e-4, 7.0),
+                )
+            })
             .collect();
         assert_eq!(drawn.len(), 2, "both fit, so both should turn up");
     }
@@ -1260,12 +1640,18 @@ mod tests {
         let mut found = detection(51.0, 7.0, 0.0);
         found.length = 4.5;
         let drawn: std::collections::BTreeSet<&str> = (0..64)
-            .filter_map(|step| fitting(&pool, &found, seed(51.0 + step as f64 * 1e-4, 7.0)))
+            .filter_map(|step| {
+                fitting(
+                    &pool,
+                    band_for(&found),
+                    seed(51.0 + step as f64 * 1e-4, 7.0),
+                )
+            })
             .collect();
         assert_eq!(drawn.len(), 3, "all three fit within the slack");
         // And the same place twice is the same car.
-        let once = fitting(&pool, &found, seed(51.0, 7.0));
-        assert_eq!(once, fitting(&pool, &found, seed(51.0, 7.0)));
+        let once = fitting(&pool, band_for(&found), seed(51.0, 7.0));
+        assert_eq!(once, fitting(&pool, band_for(&found), seed(51.0, 7.0)));
     }
 
     #[test]
@@ -1274,7 +1660,13 @@ mod tests {
         let mut found = detection(51.0, 7.0, 0.0);
         found.length = 2.0;
         let drawn: std::collections::BTreeSet<&str> = (0..64)
-            .filter_map(|step| fitting(&pool, &found, seed(51.0 + step as f64 * 1e-4, 7.0)))
+            .filter_map(|step| {
+                fitting(
+                    &pool,
+                    band_for(&found),
+                    seed(51.0 + step as f64 * 1e-4, 7.0),
+                )
+            })
             .collect();
         assert_eq!(drawn, ["mod:hut"].into_iter().collect());
     }
@@ -1287,7 +1679,7 @@ mod tests {
         let mut found = detection(51.0, 7.0, 0.0);
         found.length = 2.0;
         assert_eq!(
-            fitting(&pool, &found, seed(51.0, 7.0)),
+            fitting(&pool, band_for(&found), seed(51.0, 7.0)),
             Some("cars:transporter"),
         );
     }
@@ -1301,7 +1693,7 @@ mod tests {
         let mut found = detection(51.0, 7.0, 0.0);
         found.length = 12.0;
         assert_eq!(
-            fitting(&pool, &found, seed(51.0, 7.0)),
+            fitting(&pool, band_for(&found), seed(51.0, 7.0)),
             Some("cars:kastenwagen"),
         );
     }
@@ -1309,7 +1701,7 @@ mod tests {
     #[test]
     fn nothing_installed_places_nothing() {
         let found = detection(51.0, 7.0, 0.0);
-        assert_eq!(fitting(&[], &found, 7), None);
+        assert_eq!(fitting(&[], band_for(&found), 7), None);
     }
 
     #[test]
@@ -1344,6 +1736,506 @@ mod tests {
             edge_lines: false,
             bridge: false,
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Trees
+    // -----------------------------------------------------------------
+
+    /// A crown as the walk reports one: round, so the two axes agree, and with
+    /// no heading worth the name.
+    fn tree_crown(lat: f64, lon: f64, across: f64) -> GeoDetection {
+        GeoDetection {
+            class: 0,
+            place: "laubbaum".into(),
+            kind: Placement::Tree,
+            score: 0.9,
+            lat,
+            lon,
+            length: across,
+            width: across * 0.95,
+            heading: 0.0,
+        }
+    }
+
+    fn species(name: &str, crown: f64) -> (String, Option<Footprint>) {
+        (
+            name.into(),
+            Some(Footprint {
+                length: crown,
+                width: crown * 0.97,
+            }),
+        )
+    }
+
+    /// The three individuals `mods/trees` ships of one species, and a fir for
+    /// the tag that is not asked for.
+    fn tree_catalogue() -> TrackObjects {
+        let object = |crown: f64, tags: &[&str]| track_model::TrackObject {
+            name: "x".into(),
+            model: "trees/assets/x.gltf".into(),
+            lateral_offset: 0.0,
+            yaw_deg: 0.0,
+            height: 0.0,
+            autumn_model: None,
+            winter_model: None,
+            lod_distances: Vec::new(),
+            footprint: Some(Footprint {
+                length: crown,
+                width: crown * 0.97,
+            }),
+            tags: tags.iter().map(|t| (*t).to_string()).collect(),
+        };
+        let mut map = std::collections::BTreeMap::new();
+        // Tagged as the shipped mod tags them: the kind, and the stands the
+        // species belongs to.
+        let broadleaf = ["laubbaum", "stand-laubwald", "stand-mischwald"];
+        let conifer = ["nadelbaum", "stand-nadelwald", "stand-mischwald"];
+        map.insert("trees:rotbuche_a".into(), object(9.0, &broadleaf));
+        map.insert("trees:rotbuche_b".into(), object(13.0, &broadleaf));
+        map.insert("trees:rotbuche_c".into(), object(18.0, &broadleaf));
+        map.insert("trees:fichte_a".into(), object(11.0, &conifer));
+        TrackObjects { map }
+    }
+
+    fn report_of(found: Vec<GeoDetection>) -> Report {
+        Report {
+            outcome: vision::Outcome {
+                found,
+                windows: 1,
+                blank: 0,
+                tiles: 1,
+            },
+            lots: Vec::new(),
+        }
+    }
+
+    fn tree_options() -> AiOptions {
+        AiOptions {
+            place_objects: true,
+            place_trees: true,
+            pave_lots: false,
+            ..Default::default()
+        }
+    }
+
+    /// The whole point of the tree kind: a crown does not become an object
+    /// bolted to an edge of the track graph, it becomes a row in the tree list
+    /// — which is the list the select tool picks from and Delete empties.
+    #[test]
+    fn a_crown_becomes_a_tree_and_not_an_object() {
+        let mut line = straight_line();
+        let report = report_of(vec![tree_crown(51.0005, 7.0005, 12.0)]);
+        let placed = commit(
+            &mut line,
+            &report,
+            &tree_options(),
+            &tree_catalogue(),
+            false,
+        );
+        assert_eq!(placed.trees, 1);
+        assert_eq!(placed.objects, 0);
+        assert_eq!(placed.by_tag.get("laubbaum"), Some(&1));
+        assert!(line.source.objects.is_empty(), "nothing against the track");
+        let tree = &line.source.trees[0];
+        assert!(tree.object.starts_with("trees:rotbuche"), "{}", tree.object);
+        assert!((tree.lat - 51.0005).abs() < 1e-9 && (tree.lon - 7.0005).abs() < 1e-9);
+        assert!((0.0..360.0).contains(&tree.yaw_deg));
+    }
+
+    /// A twelve-metre crown is planted as a twelve-metre tree, whichever of
+    /// the species the place happened to draw.
+    #[test]
+    fn a_tree_is_grown_to_the_crown_that_was_measured() {
+        let objects = tree_catalogue();
+        for step in 0..48 {
+            let mut line = straight_line();
+            let found = tree_crown(51.0 + step as f64 * 2e-4, 7.001, 12.0);
+            commit(
+                &mut line,
+                &report_of(vec![found]),
+                &tree_options(),
+                &objects,
+                false,
+            );
+            let tree = &line.source.trees[0];
+            let model = objects.map[&tree.object].footprint.unwrap().length;
+            let standing = model * tree.scale;
+            assert!(
+                (standing - 12.0).abs() < 0.5,
+                "{} at {:.2} stands {standing:.1} m across, not 12",
+                tree.object,
+                tree.scale,
+            );
+        }
+    }
+
+    /// Beyond the growth band the species was simply the wrong choice, and a
+    /// tree squeezed to a third of itself looks like one.
+    #[test]
+    fn a_tree_is_never_squeezed_past_recognition() {
+        assert!(
+            (grown(
+                12.0,
+                Some(Footprint {
+                    length: 12.0,
+                    width: 12.0
+                })
+            ) - 1.0)
+                .abs()
+                < 1e-9
+        );
+        assert_eq!(
+            grown(
+                2.0,
+                Some(Footprint {
+                    length: 18.0,
+                    width: 18.0
+                })
+            ),
+            GROWTH.0
+        );
+        assert_eq!(
+            grown(
+                40.0,
+                Some(Footprint {
+                    length: 9.0,
+                    width: 9.0
+                })
+            ),
+            GROWTH.1
+        );
+        // A mod that states no crown is not guessed at.
+        assert_eq!(grown(12.0, None), 1.0);
+    }
+
+    /// A builder who names a stand has overruled the photograph about what the
+    /// wood is, and the size goes with it: any member of the stand, at its own
+    /// size give or take a third. Planting the stand at the size the crowns
+    /// measured would be a spruce wood of saplings — a crown detector on a
+    /// provider's imagery reports the sunlit top of a young conifer, not its
+    /// spread.
+    #[test]
+    fn a_named_stand_is_planted_the_way_the_forest_brush_plants_one() {
+        let objects = tree_catalogue();
+        let options = AiOptions {
+            species: Some("nadelwald".into()),
+            ..tree_options()
+        };
+        let mut line = straight_line();
+        // Crowns of two metres — smaller than anything in the catalogue.
+        let found: Vec<GeoDetection> = (0..24)
+            .map(|i| tree_crown(51.0 + i as f64 * 3e-4, 7.004, 2.0))
+            .collect();
+        let placed = commit(&mut line, &report_of(found), &options, &objects, false);
+        assert_eq!(placed.trees, 24);
+        assert_eq!(
+            placed.by_tag.keys().collect::<Vec<_>>(),
+            vec!["stand-nadelwald"],
+            "counted under the stand that was asked for, not the model's tag"
+        );
+        for tree in &line.source.trees {
+            assert_eq!(
+                tree.object, "trees:fichte_a",
+                "the stand's only member, whatever the crown measured"
+            );
+            assert!(
+                (0.7..=1.3).contains(&tree.scale),
+                "planted at its own size, not shrunk to a two-metre crown: {}",
+                tree.scale
+            );
+        }
+
+        // Without the override the same crowns take the model's tag, and the
+        // measurement decides — which for a two-metre crown means the smallest
+        // broadleaf there is, shrunk as far as it may be.
+        let mut line = straight_line();
+        let found: Vec<GeoDetection> = (0..24)
+            .map(|i| tree_crown(51.0 + i as f64 * 3e-4, 7.004, 2.0))
+            .collect();
+        commit(
+            &mut line,
+            &report_of(found),
+            &tree_options(),
+            &objects,
+            false,
+        );
+        assert!(
+            line.source
+                .trees
+                .iter()
+                .all(|t| t.object == "trees:rotbuche_a" && t.scale == GROWTH.0),
+            "the shortest of the tag, at the floor of the growth band"
+        );
+    }
+
+    /// The imagery has not changed, so the wood must not either: a second run
+    /// over ground that was done adds nothing.
+    #[test]
+    fn a_second_run_over_the_same_wood_plants_nothing() {
+        let mut line = straight_line();
+        let objects = tree_catalogue();
+        let found: Vec<GeoDetection> = (0..12)
+            .map(|i| tree_crown(51.0 + i as f64 * 1e-4, 7.002, 10.0))
+            .collect();
+        let first = commit(
+            &mut line,
+            &report_of(found.clone()),
+            &tree_options(),
+            &objects,
+            false,
+        );
+        assert_eq!(first.trees, 12);
+        let again = commit(
+            &mut line,
+            &report_of(found),
+            &tree_options(),
+            &objects,
+            false,
+        );
+        assert_eq!(again.trees, 0, "every crown already has its tree");
+        assert_eq!(line.source.trees.len(), 12);
+    }
+
+    /// Two crowns a metre apart are one tree; the spacing is what says so, and
+    /// turning it off plants both.
+    #[test]
+    fn two_crowns_on_the_same_spot_become_one_tree() {
+        let objects = tree_catalogue();
+        let pair = vec![
+            tree_crown(51.0, 7.003, 10.0),
+            tree_crown(51.000009, 7.003, 10.0),
+        ];
+        let mut line = straight_line();
+        let placed = commit(
+            &mut line,
+            &report_of(pair.clone()),
+            &tree_options(),
+            &objects,
+            false,
+        );
+        assert_eq!(placed.trees, 1);
+
+        let mut line = straight_line();
+        let options = AiOptions {
+            tree_spacing: 0.0,
+            ..tree_options()
+        };
+        let placed = commit(&mut line, &report_of(pair), &options, &objects, false);
+        assert_eq!(placed.trees, 2, "no spacing asked for, none applied");
+    }
+
+    /// A drawn area can reach over the edge of what the module portrays, and
+    /// the forest brush cuts its wood to the envelope for the same reason.
+    #[test]
+    fn a_crown_outside_the_envelope_is_not_planted() {
+        let mut line = straight_line();
+        line.source.envelope = vec![
+            content::route::EnvelopePoint {
+                lat: 51.0,
+                lon: 7.0,
+            },
+            content::route::EnvelopePoint {
+                lat: 51.0,
+                lon: 7.01,
+            },
+            content::route::EnvelopePoint {
+                lat: 51.01,
+                lon: 7.01,
+            },
+            content::route::EnvelopePoint {
+                lat: 51.01,
+                lon: 7.0,
+            },
+        ];
+        let report = report_of(vec![
+            tree_crown(51.005, 7.005, 10.0),
+            tree_crown(51.5, 7.005, 10.0),
+        ]);
+        let placed = commit(
+            &mut line,
+            &report,
+            &tree_options(),
+            &tree_catalogue(),
+            false,
+        );
+        assert_eq!(placed.trees, 1, "only the one inside the module");
+        assert!(line.source.trees[0].lat < 51.01);
+    }
+
+    /// A run whose tag no installed mod carries plants nothing at all, rather
+    /// than a tree called "nadelbaum".
+    #[test]
+    fn a_tag_no_mod_carries_plants_nothing() {
+        let mut line = straight_line();
+        let mut found = tree_crown(51.0005, 7.0005, 12.0);
+        found.place = "mangrove".into();
+        let placed = commit(
+            &mut line,
+            &report_of(vec![found]),
+            &tree_options(),
+            &tree_catalogue(),
+            false,
+        );
+        assert_eq!(placed.trees, 0);
+        assert!(line.source.trees.is_empty());
+    }
+
+    /// Re-running a corridor after widening it must not reshuffle the wood a
+    /// builder has already looked at.
+    #[test]
+    fn the_same_place_always_plants_the_same_tree() {
+        let objects = tree_catalogue();
+        let plant = || {
+            let mut line = straight_line();
+            let report = report_of(vec![tree_crown(51.0007, 7.0009, 11.0)]);
+            commit(&mut line, &report, &tree_options(), &objects, false);
+            line.source.trees[0].clone()
+        };
+        assert_eq!(plant(), plant());
+    }
+
+    /// The species is drawn by the place from those that suit the crown — so a
+    /// small crown never draws the big individual, and the pick is still not
+    /// always the same tree.
+    #[test]
+    fn the_crown_decides_which_of_the_species_is_planted() {
+        let pool = vec![
+            species("trees:rotbuche_a", 9.0),
+            species("trees:rotbuche_b", 13.0),
+            species("trees:rotbuche_c", 18.0),
+        ];
+        let mut small = tree_crown(51.0, 7.0, 8.0);
+        small.length = 8.0;
+        let drawn: std::collections::BTreeSet<&str> = (0..64)
+            .filter_map(|step| {
+                let mut at = small.clone();
+                at.lat = 51.0 + step as f64 * 1e-4;
+                fitting(&pool, band_for(&at), seed(at.lat, at.lon))
+            })
+            .collect();
+        assert!(
+            !drawn.contains("trees:rotbuche_c"),
+            "an 18 m crown has no business on an 8 m one: {drawn:?}",
+        );
+        assert!(drawn.contains("trees:rotbuche_a"));
+    }
+
+    /// The band is the one thing that differs between a bay and a crown, and
+    /// it differs in both directions: a bay may not be overfilled, a crown may
+    /// be met from either side.
+    #[test]
+    fn a_crown_is_measured_symmetrically_and_a_bay_is_not() {
+        let (floor, room) = band_for(&tree_crown(51.0, 7.0, 10.0));
+        assert!((floor - 10.0 / SPREAD).abs() < 1e-9);
+        assert!((room - 10.0 * SPREAD).abs() < 1e-9);
+        let car = band_for(&detection(51.0, 7.0, 0.0));
+        assert!(
+            car.1 < 4.4 + 1.0,
+            "a bay gives half a metre, not half again"
+        );
+    }
+
+    /// The registry and the mod have to be talking about the same woods. A
+    /// class that says it covers crowns from two and a half metres to
+    /// twenty-six has to find something to plant at either end of that, or the
+    /// run quietly does nothing over half its own range — and the tags it
+    /// names have to be tags the installed trees actually carry.
+    ///
+    /// Reads `mods/trees` itself, like the pylon tests read `mods/pylons`:
+    /// the point is the shipped data, and a fixture would only prove that the
+    /// fixture agrees with itself.
+    #[test]
+    fn the_shipped_trees_cover_the_span_the_registry_claims() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../mods/trees/objects");
+        let mut map = std::collections::BTreeMap::new();
+        for entry in std::fs::read_dir(dir).expect("mods/trees ships with the repository") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("ron") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let object = track_model::TrackObject::from_ron(&text)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let stem = path.file_stem().unwrap().to_str().unwrap();
+            let crown = object
+                .footprint
+                .unwrap_or_else(|| panic!("{stem} states no crown, so it can never be planted"))
+                .length;
+            assert!(
+                (0.5..=40.0).contains(&crown),
+                "{stem} states a crown of {crown} m"
+            );
+            map.insert(format!("trees:{stem}"), object);
+        }
+        let objects = TrackObjects { map };
+        assert_eq!(objects.map.len(), 84, "the whole catalogue was read");
+
+        for id in ["tree-crowns", "tree-species"] {
+            let spec = VisionConfig::default().model_by_id(id).unwrap().clone();
+            for (_, class) in spec.placing() {
+                let (low, high) = class.span.expect("a tree class states its span");
+                for tag in [&class.place, &class.conifer] {
+                    if tag.is_empty() {
+                        continue;
+                    }
+                    let pool = tagged(&objects, tag);
+                    assert!(!pool.is_empty(), "{id}: no tree tagged {tag} is installed");
+                    let crowns: Vec<f64> =
+                        pool.iter().filter_map(|c| c.1).map(|f| f.length).collect();
+                    let (smallest, largest) = (
+                        crowns.iter().copied().fold(f64::MAX, f64::min),
+                        crowns.iter().copied().fold(0.0, f64::max),
+                    );
+                    let mut crown = low;
+                    while crown <= high {
+                        let mut found = tree_crown(51.0, 7.0, crown);
+                        found.place = tag.clone();
+                        let name = fitting(&pool, band_for(&found), seed(crown, 7.0))
+                            .unwrap_or_else(|| panic!("{id}/{tag}: nothing to plant on {crown} m"));
+                        let model = pool.iter().find(|(c, _)| c == name).unwrap().1;
+                        let standing = model.unwrap().length * grown(crown, model);
+                        let error = (standing - crown).abs() / crown;
+                        // Inside what the tag actually offers, the size that
+                        // was measured is the size that goes in — the species
+                        // is drawn from those that suit and then scaled the
+                        // rest of the way.
+                        let limit = if (smallest..=largest).contains(&crown) {
+                            0.01
+                        } else {
+                            // Outside it, the nearest the mod can manage: a
+                            // one-metre bush where the smallest installed is
+                            // two is planted at its floor, not skipped.
+                            1.0 / 3.0
+                        };
+                        assert!(
+                            error <= limit,
+                            "{id}/{tag}: a {crown:.2} m crown was planted as {name} \
+                             standing {standing:.2} m ({:.0}% out)",
+                            error * 100.0,
+                        );
+                        crown += 0.25;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The grid has to answer for a neighbour that fell on the other side of a
+    /// cell edge — the failure a hand-rolled bucket makes, and the one that
+    /// shows up as a doubled tree every few metres.
+    #[test]
+    fn the_occupancy_grid_sees_across_its_own_cell_edges() {
+        let mut taken = Occupied::new(3.0);
+        let at = |lat: f64, lon: f64| geo::to_ecef_deg(lat, lon, 0.0);
+        taken.add(at(51.0, 7.0));
+        // A metre north, whichever cell that lands in.
+        const METRE: f64 = 1.0 / 111_132.0;
+        for step in 0..200 {
+            let probe = at(51.0 + step as f64 * METRE * 0.05, 7.0);
+            let apart = at(51.0, 7.0).distance(probe);
+            assert_eq!(taken.taken(probe), apart < 3.0, "{apart:.2} m apart",);
         }
     }
 

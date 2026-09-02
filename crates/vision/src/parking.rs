@@ -210,6 +210,7 @@ mod tests {
                 cars.push(GeoDetection {
                     class: 0,
                     place: "car".into(),
+                    kind: crate::Placement::Object,
                     score: 0.9,
                     // Bays 2.6 m apart along a row, rows 6 m apart.
                     lat: 51.0 + row as f64 * 6.0 * METRE_LAT,

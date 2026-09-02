@@ -15,7 +15,7 @@
 //!   are settled in metres on the ground ([`merge`]) rather than in pixels,
 //!   because that is the one frame both windows agree in.
 
-use crate::model::ModelSpec;
+use crate::model::{ModelSpec, Placement};
 use crate::region::Region;
 use crate::sheet::Sheet;
 
@@ -40,8 +40,14 @@ pub struct Detection {
 pub struct GeoDetection {
     /// Index into [`ModelSpec::classes`].
     pub class: usize,
-    /// Tag of the objects that may be placed here — [`crate::ClassSpec::place`].
+    /// Tag of the objects that may be placed here — [`crate::ClassSpec::place`],
+    /// or the class's conifer tag where the crown read as one
+    /// ([`crate::canopy`]).
     pub place: String,
+    /// Whether this is placed against the track or planted on the ground —
+    /// [`crate::ClassSpec::kind`]. Carried on the find rather than looked up
+    /// again, so that everything downstream can work from the finds alone.
+    pub kind: Placement,
     pub score: f32,
     pub lat: f64,
     pub lon: f64,
@@ -172,7 +178,15 @@ pub fn run(
         );
         let raw = detector.detect(&scaled, spec.input.width, spec.input.height)?;
         for detection in suppress(raw, spec.head.iou()) {
-            if let Some(geo) = place(&detection, spec, sheet, x, y, window_w, window_h) {
+            // The scaled window goes with it: a crown is named from the pixels
+            // it covers, and this is the last point at which they are to hand.
+            let at = At {
+                left: x,
+                top: y,
+                width: window_w,
+                height: window_h,
+            };
+            if let Some(geo) = place(&detection, spec, sheet, at, &scaled) {
                 found.push(geo);
             }
         }
@@ -189,15 +203,23 @@ pub fn run(
     })
 }
 
+/// Where a window sits on the sheet and how much ground it covers, in sheet
+/// pixels — the frame a detection is mapped out of.
+#[derive(Debug, Clone, Copy)]
+struct At {
+    left: i64,
+    top: i64,
+    width: i64,
+    height: i64,
+}
+
 /// One detection from the model's own pixels onto the map.
 fn place(
     detection: &Detection,
     spec: &ModelSpec,
     sheet: &Sheet,
-    left: i64,
-    top: i64,
-    window_w: i64,
-    window_h: i64,
+    at: At,
+    pixels: &[u8],
 ) -> Option<GeoDetection> {
     let class = spec.classes.get(detection.class)?;
     if class.place.is_empty() || detection.score < spec.confidence_of(detection.class) {
@@ -214,10 +236,10 @@ fn place(
     // in pixel *indices*, where a whole number is the middle of a pixel; the
     // two conventions agree once both are put in the same one, and the test
     // below is what says so.)
-    let fx = window_w as f64 / spec.input.width.max(1) as f64;
-    let fy = window_h as f64 / spec.input.height.max(1) as f64;
-    let px = left as f64 + detection.cx as f64 * fx;
-    let py = top as f64 + detection.cy as f64 * fy;
+    let fx = at.width as f64 / spec.input.width.max(1) as f64;
+    let fy = at.height as f64 / spec.input.height.max(1) as f64;
+    let px = at.left as f64 + detection.cx as f64 * fx;
+    let py = at.top as f64 + detection.cy as f64 * fy;
     let (lat, lon) = sheet.lat_lon_at(px, py);
     let metres = sheet.meters_per_pixel(lat);
     let w = detection.w as f64 * fx * metres;
@@ -228,7 +250,14 @@ fn place(
     }
     Some(GeoDetection {
         class: detection.class,
-        place: class.place.clone(),
+        place: crate::canopy::tag_for(
+            class,
+            pixels,
+            spec.input.width,
+            spec.input.height,
+            detection,
+        ),
+        kind: class.kind,
         score: detection.score,
         lat,
         lon,
@@ -299,6 +328,22 @@ fn iou(a: &Detection, b: &Detection) -> f32 {
     }
 }
 
+/// How close two finds of the same size may be before the second is taken for
+/// the first seen again, as a share of the smaller one.
+///
+/// Cars stand in bays, and two of them are never closer than most of a car
+/// length; anything nearer than that came from a window seam.
+const APART: f64 = 0.6;
+
+/// The same for trees, and much smaller, because a wood is not a car park.
+///
+/// Crowns in a closed stand interlock: two twelve-metre limes whose centres
+/// are eight metres apart are two limes, and the car rule would quietly delete
+/// every second tree of a wood. What a seam produces is a metre or two of
+/// disagreement, so a third of the crown is still far more than a duplicate
+/// ever is and far less than a neighbour.
+const APART_TREES: f64 = 0.35;
+
 /// Settles the duplicates two overlapping windows produced, in metres.
 ///
 /// Distance rather than overlap: what the seam produces is the *same* car
@@ -310,7 +355,12 @@ pub fn merge(mut found: Vec<GeoDetection>) -> Vec<GeoDetection> {
     let mut kept: Vec<GeoDetection> = Vec::new();
     for candidate in found {
         let duplicate = kept.iter().any(|k| {
-            let limit = k.length.min(candidate.length) * 0.6;
+            let share = if k.kind == Placement::Tree || candidate.kind == Placement::Tree {
+                APART_TREES
+            } else {
+                APART
+            };
+            let limit = k.length.min(candidate.length) * share;
             distance(k.lat, k.lon, candidate.lat, candidate.lon) < limit.max(1.0)
         });
         if !duplicate {
@@ -446,6 +496,7 @@ mod tests {
         let car = |lat: f64, lon: f64, score: f32| GeoDetection {
             class: 10,
             place: "car".into(),
+            kind: Placement::Object,
             score,
             lat,
             lon,
@@ -560,8 +611,15 @@ mod tests {
         let length = (4.5 / metres) as f32;
         let mut car = detection(middle, middle, length, length / 2.4, 0.0);
         car.class = 0;
-        let found = place(&car, &spec, &sheet, left, top, window_w, window_h)
-            .expect("a car in the middle of the window");
+        let grey = vec![128u8; (spec.input.width * spec.input.height * 3) as usize];
+        let at = At {
+            left,
+            top,
+            width: window_w,
+            height: window_h,
+        };
+        let found =
+            place(&car, &spec, &sheet, at, &grey).expect("a car in the middle of the window");
         let (want_lat, want_lon) = sheet.lat_lon_at(
             left as f64 + window_w as f64 / 2.0,
             top as f64 + window_h as f64 / 2.0,
@@ -600,6 +658,164 @@ mod tests {
             assert_eq!(car.place, "car");
             assert!((car.length - 4.4).abs() < 1.5, "{}", car.length);
         }
+    }
+
+    /// A wood: one crown per window, in the middle, the size of a mature
+    /// broadleaf.
+    struct Wood {
+        metres: f64,
+    }
+
+    impl Detector for Wood {
+        fn detect(
+            &mut self,
+            _pixels: &[u8],
+            width: u32,
+            height: u32,
+        ) -> Result<Vec<Detection>, String> {
+            // The tree spec is trained at 0.1 m/px, so a crown is ten pixels
+            // to the metre in the model's own input.
+            let across = (self.metres * 10.0) as f32;
+            Ok(vec![Detection {
+                class: 0,
+                score: 0.9,
+                cx: width as f32 / 2.0,
+                cy: height as f32 / 2.0,
+                w: across,
+                h: across,
+                angle: 0.0,
+            }])
+        }
+    }
+
+    /// A sheet of one flat colour, so that the walk can be run over a wood
+    /// that reads as needles and one that reads as leaves.
+    fn sheet_of(colour: [u8; 3], shade: f64) -> Sheet {
+        Sheet::new(19, 256, 64, move |id| {
+            let mut pixels = vec![255u8; 256 * 256 * 4];
+            for y in 0..256 {
+                for x in 0..256 {
+                    // Lit and shadowed in stripes rather than halves, so that
+                    // a crown anywhere in the tile straddles both — the
+                    // contrast a cone has and a dome does not.
+                    let lit = if (x / 8) % 2 == 0 { 1.0 } else { 1.0 - shade };
+                    let at = (y * 256 + x) * 4;
+                    for c in 0..3 {
+                        pixels[at + c] = (colour[c] as f64 * lit) as u8;
+                    }
+                }
+            }
+            Some(DecodedTile {
+                tile: id,
+                width: 256,
+                height: 256,
+                pixels,
+            })
+        })
+    }
+
+    fn tree_spec() -> ModelSpec {
+        VisionConfig::default()
+            .model_by_id("tree-crowns")
+            .expect("the registry ships a crown detector")
+            .clone()
+    }
+
+    /// The tree end of the walk, from the imagery to what the editor plants:
+    /// the find is a tree rather than an object, it is as wide as the crown in
+    /// the picture, and the species tag came from what the crown looks like.
+    #[test]
+    fn a_wood_comes_out_as_trees_of_the_size_that_was_seen() {
+        let track = vec![vec![(51.0, 7.0), (51.0, 7.004)]];
+        let region = Region::new(Shape::Corridor { radius: 60.0 }, &track, 8.0, 32);
+        let spec = tree_spec();
+
+        // Dark, blue-green and hard-shadowed: a spruce plantation.
+        let mut sheet = sheet_of([46, 62, 48], 0.55);
+        let outcome = run(
+            &mut sheet,
+            &mut Wood { metres: 12.0 },
+            &spec,
+            &region,
+            &mut |_| true,
+        )
+        .unwrap();
+        assert!(!outcome.found.is_empty(), "the corridor was walked");
+        for tree in &outcome.found {
+            assert_eq!(tree.kind, Placement::Tree, "planted, not placed");
+            assert_eq!(tree.place, "nadelbaum", "a dark cone is a fir");
+            assert!(
+                (tree.length - 12.0).abs() < 1.5,
+                "{} m of crown, not 12",
+                tree.length
+            );
+            assert!(region.contains(tree.lat, tree.lon));
+        }
+
+        // The same wood in flat yellow-green: limes.
+        let mut sheet = sheet_of([86, 116, 54], 0.1);
+        let leafy = run(
+            &mut sheet,
+            &mut Wood { metres: 12.0 },
+            &spec,
+            &region,
+            &mut |_| true,
+        )
+        .unwrap();
+        assert!(leafy.found.iter().all(|t| t.place == "laubbaum"));
+        assert_eq!(
+            leafy.found.len(),
+            outcome.found.len(),
+            "the same crowns either way — only the species differs"
+        );
+    }
+
+    /// The span in the class is what says so: a crown of half a metre is not a
+    /// tree, and one the size of a football pitch is several run together.
+    #[test]
+    fn a_crown_of_an_impossible_size_is_dropped() {
+        let track = vec![vec![(51.0, 7.0), (51.0, 7.004)]];
+        let region = Region::new(Shape::Corridor { radius: 60.0 }, &track, 8.0, 32);
+        let spec = tree_spec();
+        for metres in [0.6, 40.0] {
+            let mut sheet = sheet_of([86, 116, 54], 0.1);
+            let outcome = run(
+                &mut sheet,
+                &mut Wood { metres },
+                &spec,
+                &region,
+                &mut |_| true,
+            )
+            .unwrap();
+            assert!(
+                outcome.found.is_empty(),
+                "{metres} m of crown was taken for a tree"
+            );
+        }
+    }
+
+    /// Two neighbouring crowns of a closed wood are two trees. The car rule
+    /// would have merged them, which is how a wood loses every second tree.
+    #[test]
+    fn two_crowns_of_a_closed_wood_stay_two_trees() {
+        let tree = |lat: f64, lon: f64| GeoDetection {
+            class: 0,
+            place: "laubbaum".into(),
+            kind: Placement::Tree,
+            score: 0.9,
+            lat,
+            lon,
+            length: 12.0,
+            width: 12.0,
+            heading: 0.0,
+        };
+        const METRE: f64 = 1.0 / 111_132.0;
+        // Eight metres apart: two limes whose crowns touch.
+        let two = merge(vec![tree(51.0, 7.0), tree(51.0 + 8.0 * METRE, 7.0)]);
+        assert_eq!(two.len(), 2);
+        // One metre apart: the same lime, seen in both windows over a seam.
+        let one = merge(vec![tree(51.0, 7.0), tree(51.0 + METRE, 7.0)]);
+        assert_eq!(one.len(), 1);
     }
 
     #[test]

@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/schlehe_c_herbst.gltf"),
     winter_model: Some("trees/assets/schlehe_c_winter.gltf"),
     lod_distances: [45, 400, 800, 700],
+    footprint: Some((length: 5.1, width: 4.7)),
     tags: ["strauch", "stand-hecke", "stand-feld", "stand-boeschung", "stand-bahndamm"],
 )

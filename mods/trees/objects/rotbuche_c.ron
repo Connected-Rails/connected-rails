@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/rotbuche_c_herbst.gltf"),
     winter_model: Some("trees/assets/rotbuche_c_winter.gltf"),
     lod_distances: [119, 510, 1020, 2500],
+    footprint: Some((length: 23.8, width: 23.6)),
     tags: ["laubbaum", "stand-laubwald", "stand-mischwald", "stand-allee"],
 )

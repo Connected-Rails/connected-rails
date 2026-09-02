@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/vogelkirsche_a_herbst.gltf"),
     winter_model: Some("trees/assets/vogelkirsche_a_winter.gltf"),
     lod_distances: [45, 400, 800, 2000],
+    footprint: Some((length: 7.1, width: 6.7)),
     tags: ["laubbaum", "stand-laubwald", "stand-feld", "stand-allee"],
 )

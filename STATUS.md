@@ -1318,6 +1318,114 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   ids were not renamed. The final 20,000-tree/8 km runtime check holds 140 fps (7.1 ms)
   in the debug build. `tools/trees/bench_forest.mjs` remains the runtime forest test.
 
+- **The detectors ship with the game (2026-09-02, `models/`, `tools/vision/`,
+  `vision::onnx`):** the imagery detection used to be a feature that did nothing until
+  the user went and found weights for it. Two models are now in the repository, under
+  Git LFS: `yolov8n-obb.onnx` for the vehicles (12.7 MB) and `deepforest-tree.onnx`
+  for the crowns (129 MB). `tools/vision/export_models.py` is the whole of what was
+  done to them — download the published pre-trained model, convert to ONNX — so
+  either can be rebuilt or replaced from one command.
+  **The two licences are not the same and the difference is not cosmetic.** The tree
+  detector is DeepForest (Weecology), **MIT**, and travels without conditions. The car
+  detector is Ultralytics YOLOv8n-OBB on DOTA, **AGPL-3.0**: shipping it means
+  redistributing an AGPL work, and while the EUPL names AGPL-3.0 among its compatible
+  licences so the combination is provided for, the combined work then travels under the
+  AGPL. Deleting that one file is supported and breaks nothing — the editor reports it
+  as not installed, and the trees, the imports and the rest carry on.
+  `models/LICENSES.md` says all of this in the place somebody will look.
+  **A second output layout had to be understood to get there** (`Head::Retina`). Every
+  crown detector worth having is a torchvision RetinaNet rather than an Ultralytics
+  export, and what such a model emits is two tensors — logits per anchor and offsets
+  per anchor — with *no boxes in them at all*, because an offset is measured from an
+  anchor and the anchors are not in the file. Exporting the Python postprocessing
+  instead would have meant a graph of dynamic shapes, non-maximum suppression and
+  control flow through a small pure-Rust runtime; the editor already scales the window,
+  subtracts the ImageNet mean and settles overlaps, so only the backbone and the head
+  are exported and the **anchor grid is rebuilt in Rust**. It is the one place in the
+  crate that reproduces somebody else's arithmetic rather than reading their output,
+  and it is tested against torchvision's own numbers — including the anchor whose half
+  width is 50.5 and which rounds to 50, because Python rounds halves to even and Rust
+  does not. A pixel there is a metre and a half of ground, silently.
+  The model is exported at **768 × 768 and read at 0.05 m per pixel**. Not 800, which is
+  what DeepForest's own transform resizes to: its coarsest feature map is 7 cells where
+  dividing 800 by the stride of 128 says 6, and at 768 every level divides exactly so
+  the grid follows from the input size alone. Not 0.1 either, which is the resolution of
+  the survey it was trained on — DeepForest doubles the image before the network sees
+  it, so five centimetres is the scale at which a crown arrives the number of pixels
+  across the model expects.
+  Checked against the source: on DeepForest's own test image the Python package finds 55
+  crowns and this pipeline finds 50 at a confidence of 0.3, with the boxes they share
+  agreeing to about a pixel — a tenth of a metre on that survey.
+
+- **Trees from the imagery (2026-09-02, `vision::canopy`, `route_editor::ai`,
+  `mods/trees`, `tools/trees/`):** the same walk over the same photograph now plants
+  woods as well as parking cars. A class of a model says which of the two it is
+  (`Placement`, one word in `ai.ron`), and a **tree class does not become an object
+  bolted to the track graph** — it becomes an ordinary row in the module's tree list.
+  That is the whole reason for the distinction: a tree in that list is drawn by the
+  vegetation instancer, is picked by the select tool, joins a multi-selection through
+  Ctrl-click or the select circle, and goes with one Delete, exactly like a tree planted
+  by hand or baked by the forest brush. Nothing about a wood the model found is harder
+  to take back than a wood a person drew.
+  **The size is the point, not a check on the detection.** A car is a car within a
+  factor of two of every other car, so `size` and its rule of two are enough; a crown is
+  anything from a three-metre thorn at the fence to a twenty-five-metre oak in the
+  forecourt and both are right, so a class may state its `span` outright and have the
+  factor of two stand aside. What is measured is then spent rather than discarded: the
+  species is drawn from those whose own crown is within half again either way — every
+  species in `mods/trees` ships as three individuals, the same tree young, grown and old
+  — and the one drawn is scaled the rest of the way, clamped to 0.6…1.5. The clamp is
+  the point and not a safety net: a thirty-metre spruce squeezed to a third is not a
+  young spruce, its trunk stays as thick as a mature one and its needles come out the
+  size of branches, and past the band the species was the wrong choice and the size is
+  the lesser of the two errors. So the 84 tree objects gained a `footprint`, measured off
+  the built `crown_LOD0` mesh by the importer rather than taken from the catalogue's
+  ratio, because what the file should say is what the tree actually spans.
+  **What kind of tree comes from the model where the model knows.** Every crown detector
+  published today is single-class — aerial sets are labelled *tree* and nothing more —
+  so where a class also names a `conifer` tag, `vision::canopy` asks the crown itself.
+  Two features, both **ratios**, because the imagery of one province is a stop brighter
+  than the next and a rule in absolute brightness would hold on one provider and be
+  nonsense on the other: the relative brightness spread inside the crown (a conifer is a
+  cone, lit hard on one side and shadowed on the other; a broadleaf is a scattering dome)
+  and the red channel against the blue (needles are blue-green, foliage is yellow-green
+  and in autumn frankly orange). Both have to agree before a crown is called a fir, so
+  the guess leans to the commoner tree beside a German line — and an autumn oak, which is
+  as shadowed as any spruce, is saved by its colour. It is a guess and the crate says so:
+  a model with species classes of its own leaves `conifer` empty and is never
+  second-guessed.
+  **What the crown cannot say, the builder does.** The first version of the species split
+  was two thresholds picked by reasoning about how a conifer is lit, and measuring them on
+  the imagery a provider actually gives said they were wrong: a spruce plantation in the
+  Sauerland came out 93 % broadleaf. The measurement is in `vision::canopy` — over the
+  detected crowns of that wood, broadleaves read a contrast of 0.10 (p90 0.19) against
+  0.22 for the spruce big enough to resolve and 0.13 for the spruce that is not, with the
+  warmth barely separating anything in summer. So the pivot moved from 0.25 to 0.20, the
+  warmth became what it is actually good for — vetoing the orange of an autumn crown, which
+  is shadowed exactly like a fir — and the honest conclusion was written into the module
+  head: at nineteen centimetres a pixel this is a hint, not a finding, and it needs crowns
+  of three metres and more to mean much.
+  Beside it the dialog gained **Species**: "as detected", or any stand the installed mods
+  describe. Naming one overrules the guess for the whole run — and takes the size with it,
+  which is the part that is not obvious. A crown detector on a provider's imagery reports
+  the sunlit top of a young conifer, about two metres; planting a spruce wood at that
+  measurement gives a wood of saplings, and choosing the member that suits two metres gives
+  a wood of junipers, because `mods/trees` has no young conifers. So a named stand is
+  planted the way the forest brush plants one — any member, at its own size give or take a
+  third — while a run that takes the species from the model still lets the crown decide
+  both. `--detect-run --stand nadelwald` is the same thing for a script.
+  Duplicate finds are settled at a **third** of the crown rather than the cars' three
+  fifths — two twelve-metre limes whose centres are eight metres apart are two limes, and
+  the car rule would have deleted every second tree of a closed wood — and a run is cut
+  to the module envelope like the forest brush's own bake. The occupancy test that keeps
+  a second run from doubling the first became a **grid** (`ai::Occupied`): a car park
+  never noticed fifty finds against a hundred objects, a wood is tens of thousands of
+  rows against thousands of finds, and the list it replaced would have been a hundred
+  million distance tests on the main thread with the editor frozen mid-click. The dialog
+  shows only the rows the chosen model has a use for — a crown detector has no car parks
+  to pave — and the progress bar, the Stop, the report before Commit and the one undo
+  step are the ones that were already there.
+
 - **Toolbox boxes and the right-hand panel (2026-08-24, route editor):** the editor's
   frame now matches the World Editor's. The toolbox became three card-framed boxes of
   paired icon columns — the categories, the active category's tools, and the active

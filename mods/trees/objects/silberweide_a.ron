@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/silberweide_a_herbst.gltf"),
     winter_model: Some("trees/assets/silberweide_a_winter.gltf"),
     lod_distances: [49, 400, 800, 2200],
+    footprint: Some((length: 12.3, width: 11.2)),
     tags: ["laubbaum", "stand-auwald", "stand-bach", "stand-feld"],
 )

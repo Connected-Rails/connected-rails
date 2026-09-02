@@ -29,7 +29,18 @@
 //! Region ──▶ sheet::Sheet ──▶ detect::run ──▶ Vec<GeoDetection> ──▶ parking::lots
 //!            (tiles, lazily)   (windows,          (metres,             (clusters,
 //!                               NMS)               headings)            rectangles)
+//!                                   │                    │
+//!                              canopy::tag_for      Placement::Tree
+//!                              (fir or lime)        (crown, not heading)
 //! ```
+//!
+//! A find is one of two things ([`Placement`]), and the difference runs
+//! through the whole crate. An **object** — a car, a lorry — is placed against
+//! the track and what matters about it is which way it points. A **tree** is
+//! planted on the ground and points nowhere; what matters about it is how wide
+//! its crown is, because that is what decides which of the installed trees
+//! goes there and how big it is grown. Both come out of the same walk over the
+//! same imagery, and which one a class is, is one word in `ai.ron`.
 //!
 //! What this crate does *not* do is decide what a detection becomes. A car in
 //! a photograph is a `GeoDetection` with a role of `"car"`; which model from
@@ -37,6 +48,7 @@
 //! goes into the line file at all is the editor's business
 //! (`route-editor/src/ai.rs`).
 
+pub mod canopy;
 pub mod detect;
 pub mod model;
 #[cfg(feature = "onnx")]
@@ -45,8 +57,9 @@ pub mod parking;
 pub mod region;
 pub mod sheet;
 
+pub use canopy::Crown;
 pub use detect::{Detection, Detector, GeoDetection, Outcome, Progress, run};
-pub use model::{ClassSpec, Head, InputSpec, Layout, ModelSpec, VisionConfig};
+pub use model::{ClassSpec, Head, InputSpec, Layout, ModelSpec, Placement, VisionConfig};
 pub use parking::{Lot, lots};
 pub use region::{Region, Shape};
 pub use sheet::Sheet;

@@ -38,6 +38,27 @@ SOFTWARE.
 The `editor-ui` and `screenshot` skills are project-specific and covered by the
 EUPL like the rest of the repository.
 
+## Detectors in `models/`
+
+The two weight files the imagery detection runs are pre-trained detectors from
+other projects, converted to ONNX by `tools/vision/export_models.py` and
+otherwise unmodified. They are under **different licences**, and
+[`models/LICENSES.md`](models/LICENSES.md) records both in full.
+
+`models/deepforest-tree.onnx` is **DeepForest** (Weecology, University of
+Florida) under the **MIT** licence, from
+<https://huggingface.co/weecology/deepforest-tree>, trained on the NSF NEON
+airborne survey. Cite Weinstein et al., *Remote Sensing* 11(11):1309 (2019).
+
+`models/yolov8n-obb.onnx` is **Ultralytics YOLOv8n-OBB** trained on DOTA v1.0,
+under the **GNU AGPL v3.0**. Redistributing the game with this file in it means
+redistributing an AGPL-3.0 work: the EUPL v1.2 names AGPL-3.0 among its
+compatible licences, so the combination is provided for, but the combined work
+then travels under the AGPL. DOTA itself is released for academic research.
+Deleting the file is supported and breaks nothing — the editor then reports the
+weights as not installed and everything else, the tree detector included,
+carries on.
+
 ## Star catalogue in `crates/world-render/src/stars.bin`
 
 The night sky is the real one. `stars.bin` holds the naked-eye stars — right

@@ -328,7 +328,7 @@ or the whole corridor.
 | `ai-driver` | AI train driver, look-ahead (ch. 11) |
 | `imagery` | Aerial imagery tiles: providers, Web Mercator maths, cache, fetching (ch. 15) |
 | `fields` | Farmland from the state agricultural registers (InVeKoS): which state a place is in, the WFS clients, crop code mapping, geometry clean-up, phenology |
-| `vision` | Reading the aerial imagery with a local model: the model registry, a pure-Rust ONNX runtime, the walk over the imagery, and the car parks a crowd of cars implies (ch. 15) |
+| `vision` | Reading the aerial imagery with a local model: the model registry, a pure-Rust ONNX runtime, the walk over the imagery, what a tree crown is made of, and the car parks a crowd of cars implies (ch. 15) |
 | `world-render` | Rendering shared by app and route editor: terrain tiles and splatting, vegetation, farmland, track objects, floating-origin anchoring |
 | `app` | Bevy app: rendering, cameras, input, HUD (ch. 12), sound on kira's mixer — spatial tracks, distance and cab-wall filtering, Doppler, reverb (ch. 13); multiplayer and the dedicated server on lightyear (ch. 20); text in Fira Sans and Fira Mono (`fonts/`, SIL OFL 1.1) |
 | `editor-ui` | Shared look and feel of the desktop editors: colors, typography (Inter), spacing, form widgets |
@@ -974,6 +974,81 @@ it — and the flag is for the case where nobody is sitting in front of it.
 rectangle along the rows they stand in and paved with an unmarked asphalt area, which is an
 ordinary road afterwards and can be dragged about like one.
 
+#### Trees
+
+A crown detector run over the same imagery plants the wood that is actually there. A class
+of a model can say it is a *tree* (`kind: Tree` in `ai.ron`), and then a find does not
+become an object bolted to the track graph — it becomes an ordinary row in the module's tree
+list, at the place the crown was, in a species from the installed tree mods, and **grown to
+the size the crown was measured at**. A twelve-metre crown gets a twelve-metre tree: the
+species is drawn from those whose own crown is within half again either way (`mods/trees`
+ships every species as three individuals — young, grown, old) and the one that is drawn is
+then scaled the rest of the way, within a band, because a spruce squeezed to a third of
+itself is not a young spruce but a spruce seen through the wrong end of a telescope.
+
+**The crown detector ships with the game**: `models/deepforest-tree.onnx`, which is
+[DeepForest](https://deepforest.readthedocs.io/) — the crown model of the field, a
+RetinaNet trained on the NEON airborne survey and MIT licensed. It reads a window at five
+centimetres a pixel, which is not the resolution it was trained on but the scale at which a
+crown arrives the number of pixels across it expects; the finer the imagery a provider
+gives, the better the crowns come out.
+
+**What kind of tree** comes from the model where the model knows. Every crown detector
+published today is single-class — DeepForest included, because *tree* is what aerial
+training sets are labelled with — so where a class names a `conifer` tag as well, the crown
+itself is asked: needles are dark, blue-green and hard-shadowed on one side, because a
+conifer is a cone; broadleaf foliage is a flatter, yellower dome, and in autumn frankly
+orange. Both tests have to agree before a crown is called a fir, so the guess leans to the
+commoner tree. It is a guess and the editor says so — a model with species classes of its
+own leaves `conifer` empty and is never second-guessed.
+
+**Which trees, in the end, is a question the photograph cannot always answer, and the
+dialog says so.** *Species* offers "as detected" — the model's class, and the crown's own
+look where the model knows only one — or any **stand** the installed mods describe
+(`stand-nadelwald`, `stand-laubwald`, `stand-mischwald`, …, the same stands the forest brush
+plants from). Naming one overrules the guess for the whole run, and the size goes with it:
+the stand is then planted the way the forest brush plants it — any of its members, at its
+own size give or take a third — because a crown detector reading a provider's imagery
+reports the sunlit top of a young conifer rather than its spread, and a spruce wood planted
+at that measurement would be a wood of saplings. Where the species come from the model, the
+crown decides both the member and the size, which is the point of measuring it.
+
+Everything that follows is what follows for any other tree. An AI-planted wood is drawn by
+the same vegetation instancer, is **picked by the select tool** like a tree planted by hand,
+joins a multi-selection through Ctrl-click or the select circle, and goes with one Delete —
+single trees or a whole marked stand. A run is one undo step, and nothing about a wood the
+model found is harder to take back than a wood a person drew. A second run over the same
+ground changes nothing rather than doubling it: **Keep trees apart** is the distance at
+which a crown counts as already planted.
+
+```ron
+(
+    id: "deepforest",
+    name: "DeepForest (Baumkronen)",
+    file: "models/deepforest-tree.onnx",
+    input: (width: 768, height: 768, mean: (0.485, 0.456, 0.406), std: (0.229, 0.224, 0.225)),
+    head: Retina(confidence: 0.3, iou: 0.1),
+    classes: [
+        (
+            name: "Tree",
+            kind: Tree,
+            place: "laubbaum",      // the tag a broadleaf crown is planted from
+            conifer: "nadelbaum",   // …and the one a dark, shadowed cone gets
+            span: Some((2.5, 26.0)),// crowns this class covers [m]
+        ),
+    ],
+    ground_sample: 0.05,
+)
+```
+
+`Retina` is the second output layout the editor reads, and it is there because every crown
+model worth having is one: a torchvision RetinaNet emits logits per anchor and offsets per
+anchor, with **no boxes at all** — an offset is measured from an anchor, and the anchors are
+not in the file. So the shipped model contains the backbone and the head and nothing else,
+and the editor rebuilds the anchor grid from the input size. `tools/vision/README.md` says
+why that is the better half of the bargain, and `Boxes` remains what an Ultralytics-exported
+crown detector of your own would use.
+
 #### Models
 
 The models are **data, not code**: `ai.ron`, written next to `imagery.ron` the first time
@@ -1004,7 +1079,9 @@ windows turned into dark glass where that is the better picture, and four levels
 each. A detector for level crossings, containers or solar farms is therefore an entry in
 this file and a mod with objects tagged for it, and no Rust at all. `size` is the real
 footprint of the class: a "car" eleven metres long is two cars the model ran together, and
-it is dropped rather than placed.
+it is dropped rather than placed. Where a factor of two around one size is the wrong rule —
+a crown is anything from a three-metre thorn to a twenty-five-metre oak and both are right —
+the class states the range outright as `span` instead.
 
 **Which object, of the ones carrying the tag, is decided by how long the find is.** One tag
 holds more than one size of thing — `lorry` here is a 4.82 m Transporter and a 6.30 m
@@ -1015,11 +1092,29 @@ candidate. Among what does fit the choice stays what it always was, decided by t
 itself, so the same imagery always draws the same car and a row of bays is still a row of
 different ones rather than five copies of the largest estate.
 
-**The weights ship with nobody.** Every detector worth using for aerial work is either too
-big to travel with a route editor or licensed so it may not. `ai.ron` says where each one's
-`.onnx` is expected and the dialog says plainly when it is not there yet. The model this was
-built for is Ultralytics' YOLOv8-OBB trained on DOTA v1 (AGPL-3.0) — an *oriented* head,
-which matters: it says which way each car points, and a car park is nothing but that.
+**Two detectors ship with the game**, in `models/`, so a fresh clone can read its own
+imagery with nothing fetched and nothing signed up to:
+
+| file | finds | from | licence |
+| --- | --- | --- | --- |
+| `models/yolov8n-obb.onnx` | cars, lorries | Ultralytics YOLOv8n-OBB on DOTA v1 | **AGPL-3.0** |
+| `models/deepforest-tree.onnx` | tree crowns | DeepForest (Weecology), NEON survey | MIT |
+
+They are Git LFS objects — `git lfs pull` on an old clone — and they are converted from the
+published pre-trained models by `tools/vision/export_models.py`, which is the whole of what
+was done to them.
+
+**The two licences are not the same, and the car one is the loud one.** Shipping
+`yolov8n-obb.onnx` means redistributing an AGPL-3.0 work; the EUPL this repository is under
+names AGPL-3.0 among its compatible licences, so the combination is provided for, but the
+combined work then travels under the AGPL. DOTA itself is released for academic research.
+If that does not suit how you intend to distribute this, **delete the file** — the editor
+then reports the weights as not installed and everything else, the tree detector included,
+carries on. [`models/LICENSES.md`](models/LICENSES.md) has the full record and
+[`tools/vision/README.md`](tools/vision/README.md) how to put another detector in its place.
+
+Bringing your own is the same two steps it always was — an entry in `ai.ron`, and the file
+where the entry says:
 
 ```bash
 pip install ultralytics

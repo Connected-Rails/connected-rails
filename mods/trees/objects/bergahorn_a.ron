@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/bergahorn_a_herbst.gltf"),
     winter_model: Some("trees/assets/bergahorn_a_winter.gltf"),
     lod_distances: [70, 400, 800, 2500],
+    footprint: Some((length: 15.3, width: 14.8)),
     tags: ["laubbaum", "stand-laubwald", "stand-mischwald", "stand-allee", "stand-bergwald"],
 )

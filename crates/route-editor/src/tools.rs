@@ -4813,6 +4813,68 @@ mod tests {
     /// The circle selection marks the point things inside — a device
     /// included — and the bulk delete removes them all in one step, with
     /// the signal references cleaned up so the result still compiles.
+    /// A wood the imagery detection planted is a wood of ordinary trees, and
+    /// this is how a builder takes back the part of it the model got wrong:
+    /// sweep the select circle over it, press Delete, and pick off what is
+    /// left one tree at a time. Nothing here knows where the trees came from,
+    /// which is the point of planting them into this list in the first place.
+    #[test]
+    fn trees_are_caught_by_the_circle_and_picked_off_one_by_one() {
+        let source = content::musterbahn();
+        let net = source.compile().unwrap().net;
+        let mut doc = Line {
+            source,
+            net,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        };
+        doc.source.trees.clear();
+        // A stand of four, three of them within a few metres of each other and
+        // one well away — the shape of a detection run over a copse.
+        const METRE: f64 = 1.0 / 111_132.0;
+        for (index, north) in [0.0, 4.0, 8.0, 400.0].into_iter().enumerate() {
+            doc.source.trees.push(TreeSource {
+                object: format!("trees:rotbuche_{}", ["a", "b", "c", "a"][index]),
+                lat: 51.0 + north * METRE,
+                lon: 7.0,
+                yaw_deg: 30.0 * index as f64,
+                scale: 1.0,
+            });
+        }
+        let marks = Marks::default();
+        let mut state = EditorState::default();
+
+        // The circle takes the three that stand together and leaves the fourth.
+        let centre = marks.tree(1, &doc.source.trees[1]);
+        mark_circle(&mut state, &doc, &marks, centre, 10.0);
+        let caught: Vec<Mark> = state
+            .marked
+            .iter()
+            .filter(|m| matches!(m, Mark::Tree(_)))
+            .copied()
+            .collect();
+        assert_eq!(caught.len(), 3, "the copse, not the tree across the field");
+        assert!(caught.contains(&Mark::Tree(0)) && caught.contains(&Mark::Tree(2)));
+
+        delete_marked(&mut doc, &mut state);
+        assert_eq!(doc.source.trees.len(), 1);
+        assert!(state.marked.is_empty());
+        assert!(
+            doc.source.trees[0].lat > 51.003,
+            "the one that was left is the far one"
+        );
+
+        // And a single tree goes on its own, through the same Delete.
+        state.selection = Selection::Tree(0);
+        delete_selection(&mut doc, &mut state);
+        assert!(doc.source.trees.is_empty());
+        assert_eq!(state.selection, Selection::None);
+    }
+
     #[test]
     fn circle_selection_marks_and_deletes() {
         let source = content::musterbahn();

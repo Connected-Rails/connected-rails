@@ -1,0 +1,36 @@
+{
+  "source_root": "~/.cache/connected-rails/mantissa-trees",
+  "source_page": "https://mantissa.xyz/free.html",
+  "variants": ["a", "b", "c"],
+  "species": [
+    {"id":"fichte","name":"Fichte","latin":"Picea abies","kind":"conifer","deciduous":false,"height":[26,38],"crown":0.42,"cull":2500,"source":"polyhaven_fir","tags":["nadelbaum","stand-nadelwald","stand-mischwald","stand-bergwald"]},
+    {"id":"kiefer","name":"Waldkiefer","latin":"Pinus sylvestris","kind":"conifer","deciduous":false,"height":[20,32],"crown":0.58,"cull":2500,"source":"polyhaven_pine","tags":["nadelbaum","stand-nadelwald","stand-mischwald","stand-heide"]},
+    {"id":"weisstanne","name":"Weißtanne","latin":"Abies alba","kind":"conifer","deciduous":false,"height":[28,42],"crown":0.38,"cull":2500,"source":"polyhaven_fir","offset":1,"tags":["nadelbaum","stand-nadelwald","stand-bergwald"]},
+    {"id":"laerche","name":"Europäische Lärche","latin":"Larix decidua","kind":"conifer","deciduous":true,"height":[24,36],"crown":0.42,"cull":2500,"source":"polyhaven_pine","offset":1,"tags":["nadelbaum","stand-nadelwald","stand-bergwald","stand-mischwald"]},
+    {"id":"douglasie","name":"Douglasie","latin":"Pseudotsuga menziesii","kind":"conifer","deciduous":false,"height":[30,45],"crown":0.40,"cull":2500,"source":"polyhaven_fir","offset":2,"tags":["nadelbaum","stand-nadelwald","stand-mischwald"]},
+    {"id":"wacholder","name":"Wacholder","latin":"Juniperus communis","kind":"conifer","deciduous":false,"height":[3,7],"crown":0.70,"cull":700,"source":"polyhaven_sapling","tags":["strauch","nadelbaum","stand-heide","stand-boeschung"]},
+
+    {"id":"rotbuche","name":"Rotbuche","latin":"Fagus sylvatica","kind":"broadleaf","deciduous":true,"height":[24,34],"crown":0.72,"cull":2500,"source":"generic","offset":0,"tags":["laubbaum","stand-laubwald","stand-mischwald","stand-allee"]},
+    {"id":"stieleiche","name":"Stieleiche","latin":"Quercus robur","kind":"broadleaf","deciduous":true,"height":[18,28],"crown":0.95,"cull":2500,"source":"generic","offset":3,"tags":["laubbaum","stand-laubwald","stand-mischwald","stand-allee","stand-feld"]},
+    {"id":"hainbuche","name":"Hainbuche","latin":"Carpinus betulus","kind":"broadleaf","deciduous":true,"height":[14,22],"crown":0.70,"cull":2000,"source":"generic","offset":6,"tags":["laubbaum","stand-laubwald","stand-mischwald","stand-hecke"]},
+    {"id":"sandbirke","name":"Sandbirke","latin":"Betula pendula","kind":"broadleaf","deciduous":true,"height":[14,24],"crown":0.50,"cull":2200,"source":"generic","offset":3,"bark":"birch","tags":["laubbaum","stand-mischwald","stand-heide","stand-boeschung","stand-pionier"]},
+    {"id":"schwarzerle","name":"Schwarzerle","latin":"Alnus glutinosa","kind":"broadleaf","deciduous":true,"height":[14,24],"crown":0.48,"cull":2000,"source":"generic","offset":9,"tags":["laubbaum","stand-auwald","stand-bach","stand-mischwald"]},
+    {"id":"bergahorn","name":"Bergahorn","latin":"Acer pseudoplatanus","kind":"broadleaf","deciduous":true,"height":[20,30],"crown":0.78,"cull":2500,"source":"maple","tags":["laubbaum","stand-laubwald","stand-mischwald","stand-allee","stand-bergwald"]},
+    {"id":"spitzahorn","name":"Spitzahorn","latin":"Acer platanoides","kind":"broadleaf","deciduous":true,"height":[16,26],"crown":0.80,"cull":2200,"source":"maple","tags":["laubbaum","stand-laubwald","stand-allee","stand-stadt"]},
+    {"id":"esche","name":"Gemeine Esche","latin":"Fraxinus excelsior","kind":"broadleaf","deciduous":true,"height":[22,34],"crown":0.66,"cull":2500,"source":"generic","offset":2,"tags":["laubbaum","stand-laubwald","stand-auwald","stand-mischwald"]},
+    {"id":"winterlinde","name":"Winterlinde","latin":"Tilia cordata","kind":"broadleaf","deciduous":true,"height":[20,30],"crown":0.72,"cull":2500,"source":"generic","offset":5,"tags":["laubbaum","stand-laubwald","stand-allee","stand-stadt"]},
+    {"id":"zitterpappel","name":"Zitterpappel","latin":"Populus tremula","kind":"broadleaf","deciduous":true,"height":[16,26],"crown":0.50,"cull":2200,"source":"generic","offset":8,"tags":["laubbaum","stand-pionier","stand-mischwald","stand-boeschung"]},
+    {"id":"pyramidenpappel","name":"Pyramidenpappel","latin":"Populus nigra 'Italica'","kind":"broadleaf","deciduous":true,"height":[22,34],"crown":0.23,"cull":2500,"source":"generic","offset":8,"tags":["laubbaum","stand-allee","stand-feld","stand-bahndamm"]},
+    {"id":"silberweide","name":"Silberweide","latin":"Salix alba","kind":"broadleaf","deciduous":true,"height":[14,24],"crown":0.90,"cull":2200,"source":"generic","offset":1,"tags":["laubbaum","stand-auwald","stand-bach","stand-feld"]},
+    {"id":"salweide","name":"Salweide","latin":"Salix caprea","kind":"broadleaf","deciduous":true,"height":[5,10],"crown":1.00,"cull":1200,"source":"generic","offset":4,"tags":["strauch","stand-boeschung","stand-bahndamm","stand-pionier","stand-bach"]},
+    {"id":"bergulme","name":"Bergulme","latin":"Ulmus glabra","kind":"broadleaf","deciduous":true,"height":[18,28],"crown":0.72,"cull":2200,"source":"generic","offset":7,"tags":["laubbaum","stand-laubwald","stand-auwald"]},
+    {"id":"rosskastanie","name":"Rosskastanie","latin":"Aesculus hippocastanum","kind":"broadleaf","deciduous":true,"height":[16,26],"crown":0.85,"cull":2200,"source":"generic","offset":0,"tags":["laubbaum","stand-allee","stand-stadt","stand-park"]},
+    {"id":"eberesche","name":"Eberesche","latin":"Sorbus aucuparia","kind":"broadleaf","deciduous":true,"height":[7,14],"crown":0.68,"cull":1600,"source":"generic","offset":3,"tags":["laubbaum","stand-boeschung","stand-bahndamm","stand-mischwald","stand-pionier"]},
+    {"id":"vogelkirsche","name":"Vogelkirsche","latin":"Prunus avium","kind":"broadleaf","deciduous":true,"height":[12,20],"crown":0.60,"cull":2000,"source":"generic","offset":6,"bark":"cherry","tags":["laubbaum","stand-laubwald","stand-feld","stand-allee"]},
+    {"id":"robinie","name":"Robinie","latin":"Robinia pseudoacacia","kind":"broadleaf","deciduous":true,"height":[12,24],"crown":0.66,"cull":2200,"source":"generic","offset":9,"tags":["laubbaum","stand-bahndamm","stand-boeschung","stand-pionier","stand-stadt"]},
+    {"id":"hasel","name":"Hasel","latin":"Corylus avellana","kind":"shrub","deciduous":true,"height":[3,6],"crown":1.10,"cull":900,"source":"generic","offset":2,"tags":["strauch","stand-hecke","stand-laubwald","stand-boeschung"]},
+    {"id":"weissdorn","name":"Weißdorn","latin":"Crataegus monogyna","kind":"shrub","deciduous":true,"height":[3,7],"crown":1.00,"cull":900,"source":"generic","offset":5,"tags":["strauch","stand-hecke","stand-feld","stand-boeschung"]},
+    {"id":"holunder","name":"Schwarzer Holunder","latin":"Sambucus nigra","kind":"shrub","deciduous":true,"height":[3,6],"crown":1.20,"cull":900,"source":"generic","offset":8,"tags":["strauch","stand-hecke","stand-bahndamm","stand-boeschung","stand-stadt"]},
+    {"id":"schlehe","name":"Schlehe","latin":"Prunus spinosa","kind":"shrub","deciduous":true,"height":[2,4],"crown":1.30,"cull":700,"source":"generic","offset":1,"tags":["strauch","stand-hecke","stand-feld","stand-boeschung","stand-bahndamm"]}
+  ]
+}

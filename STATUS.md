@@ -1275,141 +1275,48 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   because a crossarm changed on one side only puts the conductors beside the
   insulator strings instead of on them.
 
-- **Trees of Central Europe (2026-08-29, `mods/trees`, `tools/trees/`):** the
-  vegetation is generated, not modelled. `tools/trees/species.json` describes
-  twenty-eight species — spruce, pine, silver fir, larch, Douglas fir, juniper;
-  beech, oak, hornbeam, birch, alder, sycamore and Norway maple, ash, lime,
-  aspen, Lombardy poplar, white and goat willow, elm, horse chestnut, rowan,
-  wild cherry, black locust; hazel, hawthorn, elder, blackthorn — with their
-  heights, crown widths, branch parameters, bark and leaves, and
-  `build_trees.mjs` grows them with [ez-tree](https://github.com/dgreenheck/ez-tree)
-  (MIT; cloned at a pinned commit into `~/.cache`, never vendored). Out come
-  three differently seeded individuals per species (`_a`, `_b`, `_c`), each with
-  **four levels of detail** and **three seasons**: 237 models, 84 objects.
+- **Artist trees of Central Europe (2026-09-02, `mods/trees`, `tools/trees/`):** the
+  old ez-tree procedural catalogue and its texture/geometry generators were removed.
+  The 28 logical species and all 84 stable object ids now use modified models from
+  Midge “Mantissa” Sinnaeve’s CC0 broadleaf artist packs and Poly Haven's CC0
+  Fir Tree 01, Pine Tree 01 and Fir Sapling models; the birch, cherry and fir
+  packs supply additional optimised bark/foliage photographs. Exact-family forms
+  are used where available; the remaining catalogue species select one of ten
+  artist-authored growth forms and apply species height and crown proportions. The
+  provenance and the deliberate generic mappings are recorded in `mods/trees/LICENSES.md`.
 
-  *Variance* is three things at once: three shapes per species, the stands that
-  mix the species, and the yaw and scale every baked tree already carried.
+  `tools/trees/import_mantissa.py` is an import/optimisation tool, not a generator: it
+  retains source trunks, branches and spatially selected actual source leaves or
+  foliage cards. Poly Haven conifers start from their artist-authored clean LOD meshes.
+  It removes underground roots, bounds pathological collapse faces, downscales textures
+  and writes explicit glTF PBR metallic/roughness materials. Summer/autumn share the
+  geometry buffer; deciduous winter omits foliage. Every individual has full source-based
+  geometry in `LOD0`, reduced geometry from the same branches and foliage groups in `LOD1`,
+  an 8-triangle whole-tree `LOD2` and a 4-triangle crossed `LOD3`. The first visible
+  hand-over therefore cannot substitute a differently oriented render. Impostors begin
+  only at 15× tree height (at least 400 m), and the crossed version at 30× height (at least
+  800 m); the `LOD0` hand-over remains 3.5× height with a 45 m floor.
 
-  *The meshes* are cut for a wood, not for a hero shot. Averages are 5 500
-  triangles at `crown_LOD0`, 1 200 at `LOD1`, 270 at `LOD2` and **4** at
-  `LOD3` — two crossed quads carrying a picture of the tree, rasterised from
-  its own `LOD0` geometry against the very atlas the near levels sample, so the
-  silhouette and the colour agree across the switch. The leaf cards' normals
-  come out of the **canopy**, not out of the card: ez-tree points a card's
-  normal where it happened to put the card, so two neighbours can face opposite
-  ways, and under a low sun one is blown out while the other is black — a crown
-  two hundred metres off then reads as a mosaic of hard bright and dark blocks
-  rather than as foliage. Taken from the vertex's direction out of the middle of
-  the canopy instead, biased upwards for the sky light, the crown shades like
-  the rounded mass it is. `LOD1` and `LOD2` drop
-  every branch below a share of the trunk radius and leave the canopy where it
-  was, which is what ez-tree's own coarsest level cannot do (it keeps a ring of
-  three segments per branch — eleven hundred triangles of twig before a leaf).
-  Bark, two foliage cards and the impostor share **one 1024 × 512 atlas**, so a
-  level is one primitive and one material: four entities per tree instead of
-  eight, and one instanced draw per level instead of two. The foliage card is a
-  *spray* of fifteen to twenty leaves rather than one leaf — ten times fewer
-  quads for the same canopy — and the arrangement is botanical, which is what
-  tells an ash from an oak in a stand. The **leaves on it are photographs** out
-  of two CC0 libraries: ambientCG's `LeafSet` sheets of loose leaves (an oak
-  takes `LeafSet016` in summer and `LeafSet012` turned, a beech `LeafSet024` and
-  `LeafSet015`, an ash the whole compound sprays of `LeafSet002`) and Poly
-  Haven's fir and pine twig atlases for the conifers.
-  `tools/trees/fetch_foliage.mjs` pulls them into the cache, `lib/leaves.mjs`
-  flood-fills the opacity mask, cuts each leaf out and stamps it — *the
-  arrangement stays the pipeline's own*, which is the half of a card that
-  carries the species. Nothing of either library is redistributed; what ships is
-  the atlas composed from them, which CC0 allows without condition
-  (`THIRD_PARTY_LICENSES.md`). The **bark is still painted** per species: no
-  generic scan gives a birch its lenticels or a Scots pine its orange plates.
-
-  *The bands* are the object's own (`TrackObject::lod_distances`, new), scaled
-  to the plant's height: a thirty-eight metre spruce hands over at 95 m and is
-  drawn to 2.5 km, a two metre blackthorn hands over at 20 m and is gone at
-  700 m. The bands are **generous** — 4×, 14× and 40× the plant's height, which
-  on a 1440-line screen at sixty degrees is hand-overs at roughly 340, 100 and
-  35 pixels, or 120 m, 420 m and 1.2 km for a thirty metre beech. An earlier set
-  at less than half of that had a wood two hundred metres off reading as
-  streaks; it passed review because the review window was 1200 lines and the
-  same level looks finer there. `LOD3` starts **late**, at forty times the
-  height: it is two
-  quads crossed at a right angle, and whichever blade the camera looks along
-  edge-on is drawn as a narrow strip *through* the other, which at four hundred
-  pixels reads as a slice through the crown and under forty is invisible. One
-  quad is not the alternative — a fixed billboard vanishes the moment the
-  camera looks along it, and on a railway the angle to a tree sweeps through
-  every value as the train passes it. So `LOD2` carries the middle distance on
-  real geometry and costs its 270 triangles there. one normal **per blade**, the direction that blade faces. A flat
-  quad has one normal — a normal per *corner* lights its left half differently
-  from its right and splits every tree down the middle, which was the seam.
-  Straight up removes the seam but also removes front and back, so the billboard
-  never darkens with the sun behind it and a backlit wood glows at dawn. No
-  upward component either: `doubleSided` negates the normal on the far side, and
-  a tilt up comes back as a tilt down. Levels that start beyond
-  300 m carry `NotShadowCaster` — a crossed quad's shadow is a cross, and the
-  sun's own visibility pass over half a million tree entities is not free.
-
-  *A canopy is mostly holes*, and three things had to be put right before a wood
-  held together at a distance (all of them the renderer's, not the generator's):
-  the **mip chain keeps the coverage of the alpha** (`with_mipmaps`) — box
-  filtering halves it at every level, so by the fourth or fifth almost no texel
-  reached the cutoff and the foliage evaporated while the opaque trunks stayed;
-  the tree materials are switched to **alpha-to-coverage** once loaded, so a
-  leaf's edge is resolved by the sample mask instead of stepping from texel to
-  texel (Bevy falls back to the mask without MSAA); and the levels **crossfade**
-  over ±8 % of their hand-over distance instead of switching in one frame.
-
-  *The impostor's shading is measured against the level it replaces.* Rendering
-  the same wood once as `LOD0` and once forced to `LOD3`, and comparing the mean
-  luminance of the tree pixels against the sky behind them, is what says whether
-  the two match — and whether the billboard reacts to the sun at all, which a
-  reading of the shader had claimed but not shown. It does: backlit it comes out
-  at 0.510 of the sky against the meshed tree's 0.511, front-lit 0.597 against
-  0.598, and the directional swing between the two is a shade stronger than the
-  geometry's. The constants that produced that were the second try; the first
-  was a quarter too dark, which is a visible step at the hand-over that no
-  amount of reading the shader would have found.
-
-  *Culled by the tile.* The terrain streams to the view distance — four to seven
-  kilometres — while no tree is drawn past two and a half, so more than half the
-  resident tiles carry trees that cannot appear; each is still four entities,
-  each looked at once a frame for the camera and once more per shadow cascade
-  only to fail its own `VisibilityRange`. Every tile's trees therefore hang
-  under one `Wood` entity whose visibility is switched by distance, and both
-  `check_visibility` and the light's own pass give up on an entity with a false
-  `InheritedVisibility` before they touch its bounds. Measured on the 60 000
-  tree wood: **42 of 68 woods switched off**, so about three fifths of the tree
-  entities never reach a bounds test. The test is distance and not the frustum
-  on purpose — a tile behind the camera still throws its shadow into the picture
-  under a low sun, and the shadow pass reads the same inherited visibility.
-
-  *Measured* with `tools/trees/bench_forest.mjs`, which writes a throw-away mod
-  with a given number of trees over an 8 km line in a 2 km wide corridor and
-  runs it (`--frames 400`, debug build, vsync off, this machine):
-
-  | trees | fps | frame | entities |
-  | ----- | --- | ----- | -------- |
-  | 0 | 252 | 4.0 ms | 1 482 |
-  | 5 000 | 211 | 4.8 ms | 19 782 |
-  | 20 000 | 177 | 5.7 ms | 74 738 |
-  | 60 000 | 135 | 7.7 ms | 221 994 |
-  | 150 000 | 63 | 15.9 ms | 552 390 |
-
-  The cost is **linear in entities, flat in triangles** — the levels hold the
-  geometry budget wherever the density goes, and what is left is Bevy's
-  per-entity visibility pass at about 28 ns each. The shadow cutoff above was
-  worth 19 % at 60 000 trees and 21 % at 150 000. 60 000 trees is one per
-  250 m² of the whole corridor, which is a forested line; 150 000 is one per
-  100 m², which is denser than anything a line file would hold.
-
-  *Seasons* come free of the geometry: summer, autumn and an evergreen's winter
-  share one `.bin` and differ only in the sheet of leaves; a bare deciduous
-  crown is the one that needs its own. `--date 2026-10-18` and `--date
-  2026-01-20` show them.
-
-  The demo line and the example mod's three lines are planted with them, mixed
-  out of stands: mixed wood, spruce stand, embankment scrub, an avenue of
-  Lombardy poplars.
+  The checked-in audit covers **84 objects and 237 seasonal models**. Triangle maxima
+  are 161,169 (`LOD0`), 50,630 (`LOD1`), 8 (`LOD2`) and 4 (`LOD3`). LOD1 retains
+  at least 65% measured leaf surface and targets 80% projected crown coverage, with
+  source leaves capped at 1.55× size. All materials are dielectric PBR with
+  explicit roughness, every external buffer/texture reference resolves, and the four
+  ordered LOD nodes are present in every model. A normalized triangle-area audit also
+  rejects exploded collapse faces; the pine/larch LOD keeps enough branch topology to
+  avoid the former triangular sails. Structural trunks are reduced separately from
+  their dense crowns, and a six-band height audit rejects floating bases or missing
+  LOD1 trunk sections. The Japanese-maple mappings omit their source's nearly 458,000
+  disconnected microscopic branch faces, whose collapse created triangular sails,
+  while preserving the intact trunk, major branches and foliage. Poly Haven foliage is alpha-masked and writes
+  depth; the transparent cloud dome carries a far sorting bias, so clouds remain
+  behind foliage, windows and precipitation. The importer renders all summer variants
+  to `screenshots/trees-mantissa-contact-sheet.png` for whole-catalogue visual review;
+  geometry and seasonal impostors are always regenerated together, preventing a stale
+  far silhouette after a mesh correction.
+  Existing example/demo placements update automatically because `trees:<species>_<a|b|c>`
+  ids were not renamed. The final 20,000-tree/8 km runtime check holds 140 fps (7.1 ms)
+  in the debug build. `tools/trees/bench_forest.mjs` remains the runtime forest test.
 
 - **Toolbox boxes and the right-hand panel (2026-08-24, route editor):** the editor's
   frame now matches the World Editor's. The toolbox became three card-framed boxes of

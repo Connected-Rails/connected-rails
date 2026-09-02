@@ -1737,12 +1737,16 @@ pine, silver fir, larch, Douglas fir, juniper; beech, oak, hornbeam, birch, alde
 maples, ash, lime, aspen, Lombardy poplar, two willows, elm, horse chestnut, rowan, wild
 cherry, black locust; hazel, hawthorn, elder, blackthorn — each in three individually
 shaped variants (`_a`, `_b`, `_c`), four levels of detail, and summer, autumn and winter
-models. It is generated, not modelled: `tools/trees/species.json` describes the species,
-`tools/trees/build_trees.mjs` grows them with
-[ez-tree](https://github.com/dgreenheck/ez-tree), and the leaves on their cards are
-photographed leaves out of the CC0 libraries of [ambientCG](https://ambientcg.com) and
-[Poly Haven](https://polyhaven.com), cut out and arranged by the pipeline. See
-`tools/trees/README.md` to add one.
+models. Broadleaf geometry comes from Midge “Mantissa” Sinnaeve's hand-modelled
+CC0 packs; conifers use Poly Haven's CC0 Fir Tree 01, Pine Tree 01 and Fir Sapling
+models with their authored clean LOD meshes and foliage cards. Birch, cherry and
+fir photographs supply additional PBR textures. `tools/trees/catalogue.json` maps those
+forms to the logical species and `tools/trees/import_mantissa.py` creates game LODs without
+procedurally growing a trunk or crown. The first two levels retain source branches and
+actual source leaves or foliage cards: `LOD1` is a reduced 3D version of the same
+individual, with matching height, crown extents and centre. Whole-tree renders begin only
+at 400 m or farther and use that individual's exact LOD0 foliage selection. No LOD
+enlarges individual leaves. See `tools/trees/README.md` and `mods/trees/LICENSES.md`.
 
 #### Stands
 

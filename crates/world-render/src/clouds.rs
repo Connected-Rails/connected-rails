@@ -296,6 +296,15 @@ impl Material for DomeMaterial {
         AlphaMode::Premultiplied
     }
 
+    /// The sphere follows the camera, so its mesh centre has zero view distance.
+    /// Without a bias Bevy sorts it after every other transparent mesh, putting
+    /// clouds in front of alpha-blended foliage, windows and precipitation.
+    /// Treat its centre as one dome radius farther away; the actual sphere depth
+    /// test still keeps every opaque and alpha-masked surface in front.
+    fn depth_bias(&self) -> f32 {
+        -DOME_RADIUS
+    }
+
     fn enable_shadows() -> bool {
         false
     }
@@ -876,6 +885,15 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dome_sorts_behind_transparent_world_geometry() {
+        let dome = DomeMaterial {
+            panorama: Handle::default(),
+            params: DomeParams::default(),
+        };
+        assert_eq!(dome.depth_bias(), -DOME_RADIUS);
+    }
 
     /// The amortisation has to warm up and then visit every slot. Skip the warm-up
     /// and the first frames show whatever the texture memory held; skip a slot and

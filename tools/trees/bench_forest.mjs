@@ -11,6 +11,7 @@
 // Run:
 //   node tools/trees/bench_forest.mjs --trees 20000
 //   node tools/trees/bench_forest.mjs --trees 60000 --length 12000 --run
+//   node tools/trees/bench_forest.mjs --trees 300 --length 1000 --species fichte
 //
 // `--run` builds nothing: `cargo build -p app` first, then it starts
 // `target/debug/train-sim` with the overlays open and takes a screenshot into
@@ -48,8 +49,13 @@ function main() {
     const i = argv.indexOf(flag);
     return i >= 0 ? Number(argv[i + 1]) : fallback;
   };
+  const string = (flag, fallback) => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : fallback;
+  };
   const trees = number('--trees', 20_000);
   const length = number('--length', 8_000);
+  const onlySpecies = string('--species', null);
   const run = argv.includes('--run');
 
   rmSync(MOD, { recursive: true, force: true });
@@ -70,7 +76,7 @@ function main() {
 `,
     'utf8',
   );
-  writeFileSync(join(MOD, 'lines', 'wald.ron'), line(trees, length), 'utf8');
+  writeFileSync(join(MOD, 'lines', 'wald.ron'), line(trees, length, onlySpecies), 'utf8');
   const perTree = ((length * (HALF_WIDTH - CLEARANCE) * 2) / trees).toFixed(0);
   console.log(
     `mods/_forest_bench: ${trees} trees over ${length / 1000} km, ` +
@@ -94,7 +100,7 @@ function main() {
 }
 
 /** A straight line east from 52°/10° with a wood over the whole corridor. */
-function line(count, length) {
+function line(count, length, onlySpecies) {
   // Deterministic, so two runs measure the same wood.
   let state = 0x9e3779b9;
   const rnd = () => {
@@ -102,10 +108,14 @@ function line(count, length) {
     return state / 4294967296;
   };
   const species = [];
-  for (const [members, share] of [[MIXED, 0.5], [CONIFER, 0.35], [SCRUB, 0.15]]) {
-    for (const member of members) {
-      for (const variant of ['a', 'b', 'c']) {
-        for (let k = 0; k < Math.round(share * 20); k++) species.push(`trees:${member}_${variant}`);
+  if (onlySpecies) {
+    for (const variant of ['a', 'b', 'c']) species.push(`trees:${onlySpecies}_${variant}`);
+  } else {
+    for (const [members, share] of [[MIXED, 0.5], [CONIFER, 0.35], [SCRUB, 0.15]]) {
+      for (const member of members) {
+        for (const variant of ['a', 'b', 'c']) {
+          for (let k = 0; k < Math.round(share * 20); k++) species.push(`trees:${member}_${variant}`);
+        }
       }
     }
   }

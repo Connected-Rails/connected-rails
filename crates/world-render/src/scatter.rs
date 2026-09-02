@@ -13,10 +13,10 @@
 //! names its own distances ([`TrackObject::lod_distances`]) those are used, and
 //! that is the normal case for vegetation: a level is worth its triangles for
 //! as long as the plant covers enough pixels, which depends on how big it is.
-//! A forty metre fir hands over at eighty metres and is drawn to two and a
-//! half kilometres; a two metre blackthorn hands over at twenty and is gone at
-//! seven hundred. Objects that name nothing get [`LOD_BANDS`] and
-//! [`TREE_CULL`].
+//! A forty metre fir hands over at one hundred and forty metres and is drawn
+//! to two and a half kilometres; a two metre blackthorn keeps full detail to
+//! forty-five metres and is gone at seven hundred. Objects that name nothing get
+//! [`LOD_BANDS`] and [`TREE_CULL`].
 //!
 //! The model is only there once its glTF has loaded, which is some frames
 //! after the tile. Until then the tile carries [`PendingTrees`], and

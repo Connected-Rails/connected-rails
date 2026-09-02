@@ -23,6 +23,12 @@ updates:
       # same one so there is one layout engine in the tree. Bump it by hand
       # together with bevy.
       - dependency-name: taffy
+      # wgpu has to stay on the version bevy_render pins; `app` names it only for
+      # the types FSR hands to Bevy's own render device (`fsr.rs`), and wgpu-ffx
+      # links against the same one. A second wgpu in the tree makes `Device`,
+      # `Texture` and `TextureView` two unrelated types each. Bump it by hand
+      # together with bevy.
+      - dependency-name: wgpu
 
   - package-ecosystem: github-actions
     directory: /

@@ -513,12 +513,12 @@ big the plant is — a 30 m spruce hands from leaf geometry to its whole-tree im
 and is drawn to 2.5 km, while a small blackthorn keeps full detail to at least 45 m and is
 gone at 700 m.
 
-`mods/trees` fills them: twenty-eight species of Central Europe, three individually shaped
-individuals of each, four levels of detail, and summer, autumn and winter models. They are
+`mods/trees` fills them: forty-six trees, shrubs and understorey plants of Central Europe,
+three individually shaped individuals of each, four levels of detail, and seasonal models. They are
 optimised from Midge “Mantissa” Sinnaeve's hand-modelled
 [CC0 tree packs](https://mantissa.xyz/free.html) and Poly Haven's CC0
 [fir](https://polyhaven.com/a/fir_tree_01), [pine](https://polyhaven.com/a/pine_tree_01)
-and [sapling](https://polyhaven.com/a/fir_sapling) models; `tools/trees/import_mantissa.py`
+and [plant](https://polyhaven.com/models/plants) models; `tools/trees/import_mantissa.py`
 retains source branches and foliage for the first two levels and bakes multi-view
 whole-tree impostors only for distances of at least 400 m —
 see `tools/trees/README.md`. The route

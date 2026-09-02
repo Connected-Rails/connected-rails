@@ -6,6 +6,6 @@
     autumn_model: None,
     winter_model: Some("trees/assets/douglasie_b_winter.gltf"),
     lod_distances: [131, 562, 1125, 2500],
-    footprint: Some((length: 15, width: 14.7)),
+    footprint: Some((length: 14.8, width: 14.5)),
     tags: ["nadelbaum", "stand-nadelwald", "stand-mischwald"],
 )

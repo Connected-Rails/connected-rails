@@ -1,0 +1,11 @@
+// Große Brennnessel (Urtica dioica), 1 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Große Brennnessel B",
+    model: "trees/assets/brennnessel_b.gltf",
+    autumn_model: Some("trees/assets/brennnessel_b_herbst.gltf"),
+    winter_model: Some("trees/assets/brennnessel_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 500],
+    footprint: Some((length: 0.9, width: 0.8)),
+    tags: ["staude", "bodendecker", "stand-bahndamm", "stand-boeschung", "stand-bach", "stand-stadt"],
+)

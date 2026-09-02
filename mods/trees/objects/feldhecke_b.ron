@@ -1,0 +1,11 @@
+// Gemischte Feldhecke, 8 m section, 3 m high.
+// Composed from the CC0 artist vegetation documented in mods/trees/LICENSES.md.
+(
+    name: "Gemischte Feldhecke B",
+    model: "trees/assets/feldhecke_b.gltf",
+    autumn_model: Some("trees/assets/feldhecke_b_herbst.gltf"),
+    winter_model: Some("trees/assets/feldhecke_b_winter.gltf"),
+    lod_distances: [60, 120, 180, 250, 325, 400, 500, 600, 700, 800, 900, 1000],
+    footprint: Some((length: 8, width: 2.4)),
+    tags: ["hecke", "feldhecke", "stand-feld", "stand-boeschung", "stand-bahndamm"],
+)

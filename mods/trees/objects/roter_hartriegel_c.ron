@@ -1,0 +1,11 @@
+// Roter Hartriegel (Cornus sanguinea), 5 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Roter Hartriegel C",
+    model: "trees/assets/roter_hartriegel_c.gltf",
+    autumn_model: Some("trees/assets/roter_hartriegel_c_herbst.gltf"),
+    winter_model: Some("trees/assets/roter_hartriegel_c_winter.gltf"),
+    lod_distances: [45, 400, 800, 900],
+    footprint: Some((length: 5.5, width: 5.1)),
+    tags: ["strauch", "stand-hecke", "stand-auwald", "stand-feld", "stand-boeschung"],
+)

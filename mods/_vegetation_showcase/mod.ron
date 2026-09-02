@@ -1,0 +1,10 @@
+// Temporary in-game review scene for the shrub and understorey catalogue.
+(
+    id: "vegetation-showcase",
+    name: "Vegetationsschau",
+    version: "1.0.0",
+    author: "Connected Rails",
+    description: "Temporäre Ingame-Schaufläche der neuen Vegetation.",
+    depends: ["trees"],
+    enabled: true,
+)

@@ -1,9 +1,10 @@
 # Artist tree import
 
 `mods/trees` is built from hand-modelled CC0 trees by Midge “Mantissa”
-Sinnaeve and Poly Haven. It contains 28 catalogue species, three distinct
-individuals of each, four LOD levels and seasonal models. It no longer contains
-a procedural tree generator.
+Sinnaeve and Poly Haven. It contains 46 catalogue species and vegetation types,
+three distinct individuals of each, plus 15 repeatable hedge sections, seasonal
+models, four plant LODs and twelve hedge LODs. It no longer contains a procedural
+tree generator.
 
 The source models and textures are dedicated to the public domain under
 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The checked-in
@@ -26,14 +27,27 @@ Download the six free archives from the official
 | `cherry/` | `https://ftp.mantissa.xyz/resources/trees/mantissa_cherry_tree_pack.zip` |
 | `maple/` | `https://ftp.mantissa.xyz/resources/trees/mantissa_japanese_maple_pack.zip` |
 
-Download the 1K Blend packages and their 1K texture maps for these Poly Haven
-assets below `~/.cache/connected-rails/polyhaven/<asset>/`:
+Fetch the pinned 1K Blend packages and their referenced 1K texture maps through
+Poly Haven's public API:
+
+```bash
+python tools/trees/fetch_polyhaven.py
+```
+
+The downloader verifies Poly Haven's published MD5 sums and stores the sources
+below `~/.cache/connected-rails/polyhaven/<asset>/`:
 
 | cache directory | official CC0 asset |
 | --- | --- |
 | `fir_tree_01/` | [Fir Tree 01](https://polyhaven.com/a/fir_tree_01) |
 | `pine_tree_01/` | [Pine Tree 01](https://polyhaven.com/a/pine_tree_01) |
 | `fir_sapling/` | [Fir Sapling](https://polyhaven.com/a/fir_sapling) |
+| `shrub_01/` | [Shrub 01](https://polyhaven.com/a/shrub_01) |
+| `searsia_lucida/` | [Searsia Lucida](https://polyhaven.com/a/searsia_lucida) |
+| `wild_rooibos_bush/` | [Wild Rooibos Bush](https://polyhaven.com/a/wild_rooibos_bush) |
+| `fern_02/` | [Fern 02](https://polyhaven.com/a/fern_02) |
+| `nettle_plant/` | [Nettle Plant](https://polyhaven.com/a/nettle_plant) |
+| `periwinkle_plant/` | [Periwinkle Plant](https://polyhaven.com/a/periwinkle_plant) |
 
 The importer expects Blender 4.3 or newer and ImageMagick:
 
@@ -49,6 +63,47 @@ the source forms and bark UVs, and retains a spatially distributed selection of
 the actual Mantissa leaves. It removes underground root meshes, scales each
 form to the catalogue height/crown and decimates connected wood for the near
 LOD. It does not synthesize trunks, branches, needles or crowns.
+
+The eighteen added shrub and understorey entries use six further Poly Haven
+artist assets. Their scanned stem and foliage share one alpha atlas, so the
+importer keeps the complete authored mesh instead of trying to split it into a
+synthetic trunk and crown. Where the source supplies `LOD1`, that authored mesh
+is retained (the coarser authored LOD2 where available); Fern 02 is already small enough to keep its complete mesh in both
+near bands. Catalogue mappings provide German species names, natural size and
+habitat tags. They deliberately describe the role and growth form in the route,
+not a claim that a generic scan is a botanical reference specimen.
+
+## Hedges
+
+`tools/trees/build_hedges.py` composes the already imported CC0 artist plants
+into five repeatable hedge types, with three variations each: mixed field,
+hawthorn, privet, hornbeam and evergreen formal hedge. The 6 m formal sections
+and 8 m field sections overlap at their ends, so copies can be placed end to
+end without a visible gap. Reduced source geometry supplies the visible stems
+and irregular growth. A closed three-dimensional envelope of thousands of
+small cards, each mapped to one individual leaf in Poly Haven's CC0 atlas,
+provides clipped density without the conspicuous whole-hedge rectangle of a
+near billboard. No hedge-wide or whole-plant impostor is used. The far levels
+retain progressively smaller subsets of the reduced 3D source plants and enlarge
+only their thousands of individual leaf cards. Their twelve audited triangle maxima are
+84,351 / 81,151 / 54,303 / 54,103 / 40,579 / 40,379 / 33,517 / 33,317 /
+26,455 / 26,255 / 22,624 / 18,993. Projected leaf coverage rises to 100 / 311 /
+557 / 972 / 1,696 / 2,866 / 4,763 / 7,656 / 11,150 / 16,017 / 22,104 /
+30,250 percent across the distance levels. Handoffs at 60, 120, 180, 250, 325,
+400, 500, 600, 700, 800 and 900 m replace the former coarse jumps; the later
+levels retain 4,500–5,100 spatially distributed leaf cards instead of collapsing
+to a few oversized patches.
+Summer, autumn and winter stay in lockstep with the source plants, and the
+vegetation renderer still draws only one distance level.
+
+No additional third-party source is used: the hedge sections are arrangements
+of the Mantissa and Poly Haven material already recorded in `LICENSES.md`.
+Rebuild or audit them independently with:
+
+```bash
+python tools/trees/build_hedges.py
+python tools/trees/build_hedges.py --audit
+```
 
 ## What the object file says
 
@@ -66,8 +121,8 @@ Every glTF has exactly these nodes:
 
 | node | content | target budget |
 | --- | --- | ---: |
-| `crown_LOD0` | textured source wood and source foliage cards/leaves | about 69k–162k triangles |
-| `crown_LOD1` | reduced branches and foliage groups from the same source individual | about 16k–51k triangles |
+| `crown_LOD0` | textured source wood and source foliage cards/leaves | 392–176k triangles |
+| `crown_LOD1` | reduced branches and foliage groups from the same source individual | 392–54k triangles |
 | `crown_LOD2` | four-view whole-tree impostor | 8 triangles |
 | `crown_LOD3` | two-view crossed impostor | 4 triangles |
 

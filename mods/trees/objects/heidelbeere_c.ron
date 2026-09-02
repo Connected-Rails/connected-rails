@@ -1,0 +1,11 @@
+// Heidelbeere (Vaccinium myrtillus), 0.7 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Heidelbeere C",
+    model: "trees/assets/heidelbeere_c.gltf",
+    autumn_model: Some("trees/assets/heidelbeere_c_herbst.gltf"),
+    winter_model: Some("trees/assets/heidelbeere_c_winter.gltf"),
+    lod_distances: [45, 400, 800, 500],
+    footprint: Some((length: 1, width: 0.9)),
+    tags: ["bodendecker", "stand-laubwald", "stand-nadelwald", "stand-heide", "stand-bergwald"],
+)

@@ -1,0 +1,11 @@
+// Weißdornhecke, 6 m section, 2 m high.
+// Composed from the CC0 artist vegetation documented in mods/trees/LICENSES.md.
+(
+    name: "Weißdornhecke B",
+    model: "trees/assets/weissdornhecke_b.gltf",
+    autumn_model: Some("trees/assets/weissdornhecke_b_herbst.gltf"),
+    winter_model: Some("trees/assets/weissdornhecke_b_winter.gltf"),
+    lod_distances: [60, 120, 180, 250, 325, 400, 500, 600, 700, 800, 900, 1000],
+    footprint: Some((length: 6, width: 1.7)),
+    tags: ["hecke", "weissdorn", "stand-feld", "stand-boeschung", "stand-bahndamm"],
+)

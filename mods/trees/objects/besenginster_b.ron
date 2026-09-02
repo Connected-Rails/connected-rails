@@ -1,0 +1,11 @@
+// Besenginster (Cytisus scoparius), 1.75 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Besenginster B",
+    model: "trees/assets/besenginster_b.gltf",
+    autumn_model: None,
+    winter_model: Some("trees/assets/besenginster_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 600],
+    footprint: Some((length: 1.5, width: 1.3)),
+    tags: ["strauch", "stand-heide", "stand-pionier", "stand-boeschung", "stand-bahndamm"],
+)

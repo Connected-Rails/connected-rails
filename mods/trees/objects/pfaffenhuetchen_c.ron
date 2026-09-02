@@ -1,0 +1,11 @@
+// Pfaffenhütchen (Euonymus europaeus), 5 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Pfaffenhütchen C",
+    model: "trees/assets/pfaffenhuetchen_c.gltf",
+    autumn_model: Some("trees/assets/pfaffenhuetchen_c_herbst.gltf"),
+    winter_model: Some("trees/assets/pfaffenhuetchen_c_winter.gltf"),
+    lod_distances: [45, 400, 800, 900],
+    footprint: Some((length: 5, width: 4.6)),
+    tags: ["strauch", "stand-hecke", "stand-auwald", "stand-feld"],
+)

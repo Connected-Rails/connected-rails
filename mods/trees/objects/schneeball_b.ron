@@ -1,0 +1,11 @@
+// Gewöhnlicher Schneeball (Viburnum opulus), 3 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Gewöhnlicher Schneeball B",
+    model: "trees/assets/schneeball_b.gltf",
+    autumn_model: Some("trees/assets/schneeball_b_herbst.gltf"),
+    winter_model: Some("trees/assets/schneeball_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 800],
+    footprint: Some((length: 3.6, width: 3)),
+    tags: ["strauch", "stand-hecke", "stand-auwald", "stand-bach"],
+)

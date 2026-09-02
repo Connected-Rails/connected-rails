@@ -1,0 +1,11 @@
+// Faulbaum (Frangula alnus), 3.5 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Faulbaum B",
+    model: "trees/assets/faulbaum_b.gltf",
+    autumn_model: Some("trees/assets/faulbaum_b_herbst.gltf"),
+    winter_model: Some("trees/assets/faulbaum_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 900],
+    footprint: Some((length: 3.3, width: 3.2)),
+    tags: ["strauch", "stand-auwald", "stand-bach", "stand-laubwald"],
+)

@@ -1,0 +1,11 @@
+// Ligusterhecke, 6 m section, 1.3 m high.
+// Composed from the CC0 artist vegetation documented in mods/trees/LICENSES.md.
+(
+    name: "Ligusterhecke A",
+    model: "trees/assets/ligusterhecke_a.gltf",
+    autumn_model: Some("trees/assets/ligusterhecke_a_herbst.gltf"),
+    winter_model: Some("trees/assets/ligusterhecke_a_winter.gltf"),
+    lod_distances: [60, 120, 180, 250, 325, 400, 500, 600, 700, 800, 900, 1000],
+    footprint: Some((length: 6, width: 1.3)),
+    tags: ["hecke", "formhecke", "stand-stadt", "stand-park", "stand-feld"],
+)

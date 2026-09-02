@@ -1,0 +1,11 @@
+// Kleines Immergrün (Vinca minor), 0.35 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Kleines Immergrün C",
+    model: "trees/assets/immergruen_c.gltf",
+    autumn_model: None,
+    winter_model: Some("trees/assets/immergruen_c_winter.gltf"),
+    lod_distances: [45, 400, 800, 500],
+    footprint: Some((length: 0.5, width: 0.5)),
+    tags: ["bodendecker", "stand-laubwald", "stand-park", "stand-stadt"],
+)

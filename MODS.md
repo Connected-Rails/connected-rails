@@ -1753,14 +1753,18 @@ trees: [
 ],
 ```
 
-The **`trees` mod** ships the vegetation of Central Europe: twenty-eight species — spruce,
+The **`trees` mod** ships the vegetation of Central Europe: forty-six catalogue entries — spruce,
 pine, silver fir, larch, Douglas fir, juniper; beech, oak, hornbeam, birch, alder, two
 maples, ash, lime, aspen, Lombardy poplar, two willows, elm, horse chestnut, rowan, wild
-cherry, black locust; hazel, hawthorn, elder, blackthorn — each in three individually
-shaped variants (`_a`, `_b`, `_c`), four levels of detail, and summer, autumn and winter
-models. Broadleaf geometry comes from Midge “Mantissa” Sinnaeve's hand-modelled
+cherry, black locust; hazel, hawthorn, elder, blackthorn. The shrub layer adds dog rose,
+blackberry, raspberry, dogwood, spindle, guelder rose, alder buckthorn, privet, broom,
+bilberry, heather, holly, barberry, fly honeysuckle and sea buckthorn; bracken, nettle and
+periwinkle cover the understorey. Each has three individually shaped variants (`_a`,
+`_b`, `_c`), four levels of detail and seasonal models. Broadleaf geometry comes from Midge “Mantissa” Sinnaeve's hand-modelled
 CC0 packs; conifers use Poly Haven's CC0 Fir Tree 01, Pine Tree 01 and Fir Sapling
-models with their authored clean LOD meshes and foliage cards. Birch, cherry and
+models with their authored clean LOD meshes and foliage cards. Shrubs and understorey use
+Poly Haven's CC0 Shrub 01, Searsia Lucida, Wild Rooibos Bush, Fern 02,
+Nettle Plant and Periwinkle Plant meshes. Birch, cherry and
 fir photographs supply additional PBR textures. `tools/trees/catalogue.json` maps those
 forms to the logical species and `tools/trees/import_mantissa.py` creates game LODs without
 procedurally growing a trunk or crown. The first two levels retain source branches and
@@ -1768,6 +1772,18 @@ actual source leaves or foliage cards: `LOD1` is a reduced 3D version of the sam
 individual, with matching height, crown extents and centre. Whole-tree renders begin only
 at 400 m or farther and use that individual's exact LOD0 foliage selection. No LOD
 enlarges individual leaves. See `tools/trees/README.md` and `mods/trees/LICENSES.md`.
+
+The same mod also ships 15 **repeatable hedge sections**: `feldhecke`,
+`weissdornhecke`, `ligusterhecke`, `hainbuchenhecke` and
+`immergruene_hecke`, each as `_a`, `_b` and `_c`. Formal sections are 6 m long,
+the mixed field hedge 8 m; their stated `footprint` is the exact placement
+length and width. Put them in the line's `trees:` list, rotate their long model
+axis with `yaw_deg`, and place consecutive centres one section length apart.
+They deliberately use the vegetation path rather than `objects:`: that keeps
+terrain snapping, instancing, seasons and exactly one of their four LODs active.
+Near levels combine reduced CC0 source shrubs with thousands of small cards
+mapped to individual leaves in the source atlas, so the body stays closed
+without becoming a single blurry billboard.
 
 #### Stands
 

@@ -1,0 +1,11 @@
+// Himbeere (Rubus idaeus), 1.1 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Himbeere B",
+    model: "trees/assets/himbeere_b.gltf",
+    autumn_model: Some("trees/assets/himbeere_b_herbst.gltf"),
+    winter_model: Some("trees/assets/himbeere_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 600],
+    footprint: Some((length: 0.9, width: 0.9)),
+    tags: ["strauch", "stand-laubwald", "stand-pionier", "stand-boeschung"],
+)

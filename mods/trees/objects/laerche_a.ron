@@ -6,6 +6,6 @@
     autumn_model: Some("trees/assets/laerche_a_herbst.gltf"),
     winter_model: Some("trees/assets/laerche_a_winter.gltf"),
     lod_distances: [84, 400, 800, 2500],
-    footprint: Some((length: 9.9, width: 9.2)),
+    footprint: Some((length: 10, width: 9.5)),
     tags: ["nadelbaum", "stand-nadelwald", "stand-bergwald", "stand-mischwald"],
 )

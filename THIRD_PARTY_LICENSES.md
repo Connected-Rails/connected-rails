@@ -273,53 +273,24 @@ same carriageway. Recompressed from the ambientCG 1K JPEGs (resize, quality
 
 ## Trees in `mods/trees/`
 
-The vegetation is generated out of
-[EZ-Tree](https://github.com/dgreenheck/ez-tree) by `tools/trees/` (see its
-README). EZ-Tree is © 2024 Daniel Greenheck and licensed under the MIT
-licence:
+The shipped vegetation is optimized from hand-modelled and scanned artist
+assets by Midge “Mantissa” Sinnaeve and [Poly Haven](https://polyhaven.com).
+Every source is released under **CC0 1.0 Universal**
+(<https://creativecommons.org/publicdomain/zero/1.0/>), which permits copying,
+modification and commercial redistribution. The checked-in glTFs, textures and
+impostors are modified derivatives; the multi-gigabyte untouched source files
+remain in the local build cache.
 
-> Permission is hereby granted, free of charge, to any person obtaining a copy
-> of this software and associated documentation files (the "Software"), to deal
-> in the Software without restriction, including without limitation the rights
-> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-> copies of the Software […] THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY
-> OF ANY KIND.
-
-Nothing of its code is included and nothing of it is redistributed: the
-pipeline clones the pinned commit into `~/.cache/connected-rails/ez-tree`,
-runs it, and keeps only what it grew. The **branch and leaf placement** of the
-models therefore comes out of EZ-Tree's generator, and
-`tools/trees/lib/mesh.mjs` meshes that skeleton with the same ring-and-quad
-construction the library uses — the credit in the `copyright` field of every
-generated glTF says so.
-
-The **leaves and needles are photographs**, from two public-domain libraries:
-
-- **[ambientCG](https://ambientcg.com)** — the `LeafSet###` atlases, sheets of
-  single leaves scanned on black with an opacity map. Twenty-six of the thirty
-  are used, one or two per species: an oak takes `LeafSet016` in summer and
-  `LeafSet012` in autumn, a beech `LeafSet024` and `LeafSet015`, an ash the
-  whole compound sprays of `LeafSet002`.
-- **[Poly Haven](https://polyhaven.com)** — the twig atlases of `fir_tree_01`
-  and `pine_tree_01`, which is what the spruce, the silver fir, the Douglas fir
-  and the pine carry. Their tree *models* are not used, only those two texture
-  sets, and only the colour and opacity maps of them.
-
-Both libraries release everything under **CC0 1.0 Universal**
-(<https://creativecommons.org/publicdomain/zero/1.0/>) — public domain, no
-attribution required. The credit here is given because it is deserved.
-
-Nothing of either is redistributed: `tools/trees/fetch_foliage.mjs` downloads
-them into `~/.cache/connected-rails/foliage/`, `lib/leaves.mjs` cuts the single
-leaves out of the sheets, and what is checked in is the atlas the build composes
-from them — cropped, rotated, tinted and arranged into a foliage card. CC0
-allows the derivation without condition.
-
-The **bark is still painted**, from the species entry by
-`tools/trees/lib/bark.mjs` — a birch has to be white with black lenticels and a
-Scots pine orange-red in plates, and no generic scan gives that. The impostors
-are rasterised from the models themselves by `lib/impostor.mjs`. Both are
-content of this repository under its own licence.
+The six Mantissa tree archives, nine Poly Haven assets, their authors, direct
+source pages, transformations and the deliberate generic botanical mappings
+are recorded precisely in [`mods/trees/LICENSES.md`](mods/trees/LICENSES.md).
+`tools/trees/fetch_polyhaven.py` obtains Poly Haven's 1K packages through its
+public API and verifies the published MD5 sums. `tools/trees/import_mantissa.py`
+performs metric scaling, mesh reduction, alpha-atlas packing, PBR conversion,
+seasonal grading and the near/far LOD export. It does not procedurally grow a
+tree or bush. `tools/trees/build_hedges.py` introduces no further source: it
+arranges those audited CC0 plants into repeatable hedge sections while keeping
+their materials, seasons and LOD geometry.
 
 ## Sounds in `mods/example/assets/sounds/`
 

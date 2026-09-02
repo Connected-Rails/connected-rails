@@ -1,0 +1,51 @@
+// Three rows beside a short presentation track, all at natural scale.
+(
+    name: "Vegetationsschau",
+    fictional: true,
+    geoid_offset: 46.0,
+    nodes: [Buffer, Buffer],
+    edges: [
+        (
+            from: 0,
+            to: 1,
+            start: Geo(point: (lat: 52.0, lon: 10.0, height: 100.0), heading_deg: 90.0),
+            segments: [(len: 250.0, k0: 0.0, dk: 0.0)],
+            speed: [(0.0, 40.0)],
+        ),
+    ],
+    sections: [(edges: [0])],
+    // Use the streamed vegetation path so exactly one distance LOD is visible.
+    // The coordinates mirror s=32..57 m and offsets=6/12/18 m on the track.
+    trees: [
+        // Back row: tall shrubs.
+        (object: "trees:stechpalme_b",       lat: 51.9999461, lon: 10.0004669, yaw_deg: 95.0,  scale: 1.0),
+        (object: "trees:faulbaum_b",         lat: 51.9999461, lon: 10.0005398, yaw_deg: 130.0, scale: 1.0),
+        (object: "trees:roter_hartriegel_b", lat: 51.9999461, lon: 10.0006128, yaw_deg: 235.0, scale: 1.0),
+        (object: "trees:sanddorn_b",         lat: 51.9999461, lon: 10.0006857, yaw_deg: 350.0, scale: 1.0),
+        (object: "trees:pfaffenhuetchen_b",  lat: 51.9999461, lon: 10.0007587, yaw_deg: 25.0,  scale: 1.0),
+        (object: "trees:schneeball_b",       lat: 51.9999461, lon: 10.0008316, yaw_deg: 280.0, scale: 1.0),
+
+        // Middle row: hedge and berry shrubs.
+        (object: "trees:liguster_b",         lat: 51.9998922, lon: 10.0004669, yaw_deg: 185.0, scale: 1.0),
+        (object: "trees:heckenkirsche_b",    lat: 51.9998922, lon: 10.0005398, yaw_deg: 70.0,  scale: 1.0),
+        (object: "trees:berberitze_b",       lat: 51.9998922, lon: 10.0006128, yaw_deg: 115.0, scale: 1.0),
+        (object: "trees:hundsrose_b",        lat: 51.9998922, lon: 10.0006857, yaw_deg: 20.0,  scale: 1.0),
+        (object: "trees:brombeere_b",        lat: 51.9998922, lon: 10.0007587, yaw_deg: 250.0, scale: 1.0),
+        (object: "trees:himbeere_b",         lat: 51.9998922, lon: 10.0008316, yaw_deg: 140.0, scale: 1.0),
+
+        // Front row: heath and understorey.
+        (object: "trees:besenginster_b",     lat: 51.9998383, lon: 10.0004669, yaw_deg: 330.0, scale: 1.0),
+        (object: "trees:besenheide_b",       lat: 51.9998383, lon: 10.0005398, yaw_deg: 80.0,  scale: 1.0),
+        (object: "trees:heidelbeere_b",      lat: 51.9998383, lon: 10.0006128, yaw_deg: 205.0, scale: 1.0),
+        (object: "trees:adlerfarn_b",        lat: 51.9998383, lon: 10.0006857, yaw_deg: 300.0, scale: 1.0),
+        (object: "trees:brennnessel_b",      lat: 51.9998383, lon: 10.0007587, yaw_deg: 35.0,  scale: 1.0),
+        (object: "trees:immergruen_b",       lat: 51.9998383, lon: 10.0008316, yaw_deg: 15.0,  scale: 1.0),
+
+        // Repeatable hedge sections, aligned along the track.
+        (object: "trees:feldhecke_b",          lat: 51.9998922, lon: 10.0011673, yaw_deg: 0.0, scale: 1.0),
+        (object: "trees:weissdornhecke_b",     lat: 51.9998922, lon: 10.0013424, yaw_deg: 0.0, scale: 1.0),
+        (object: "trees:ligusterhecke_b",      lat: 51.9998922, lon: 10.0015175, yaw_deg: 0.0, scale: 1.0),
+        (object: "trees:hainbuchenhecke_b",    lat: 51.9998922, lon: 10.0016927, yaw_deg: 0.0, scale: 1.0),
+        (object: "trees:immergruene_hecke_b",  lat: 51.9998922, lon: 10.0018678, yaw_deg: 0.0, scale: 1.0),
+    ],
+)

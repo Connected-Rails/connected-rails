@@ -6,6 +6,6 @@
     autumn_model: None,
     winter_model: Some("trees/assets/fichte_a_winter.gltf"),
     lod_distances: [91, 400, 800, 2500],
-    footprint: Some((length: 10.9, width: 10.7)),
+    footprint: Some((length: 10.8, width: 10.6)),
     tags: ["nadelbaum", "stand-nadelwald", "stand-mischwald", "stand-bergwald"],
 )

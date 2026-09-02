@@ -1,0 +1,11 @@
+// Gewöhnlicher Liguster (Ligustrum vulgare), 1.5 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Gewöhnlicher Liguster A",
+    model: "trees/assets/liguster_a.gltf",
+    autumn_model: Some("trees/assets/liguster_a_herbst.gltf"),
+    winter_model: Some("trees/assets/liguster_a_winter.gltf"),
+    lod_distances: [45, 400, 800, 800],
+    footprint: Some((length: 1.7, width: 1.4)),
+    tags: ["strauch", "stand-hecke", "stand-feld", "stand-stadt"],
+)

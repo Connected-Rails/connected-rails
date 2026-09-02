@@ -1,0 +1,11 @@
+// Immergrüne Formhecke, 6 m section, 1.4 m high.
+// Composed from the CC0 artist vegetation documented in mods/trees/LICENSES.md.
+(
+    name: "Immergrüne Formhecke A",
+    model: "trees/assets/immergruene_hecke_a.gltf",
+    autumn_model: None,
+    winter_model: Some("trees/assets/immergruene_hecke_a_winter.gltf"),
+    lod_distances: [60, 120, 180, 250, 325, 400, 500, 600, 700, 800, 900, 1000],
+    footprint: Some((length: 6, width: 1.4)),
+    tags: ["hecke", "formhecke", "immergruen", "stand-stadt", "stand-park"],
+)

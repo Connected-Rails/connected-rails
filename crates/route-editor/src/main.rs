@@ -648,6 +648,7 @@ fn setup(
     mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
     mut star_materials: ResMut<Assets<sky::StarMaterial>>,
     mut moon_materials: ResMut<Assets<sky::MoonMaterial>>,
+    mut state: ResMut<EditorState>,
 ) {
     // Load the line.
     let (source, path) = match &line_path.0 {
@@ -746,9 +747,13 @@ fn setup(
     });
     commands.insert_resource(Origin(origin));
     let mods_dir = std::path::Path::new("mods");
-    commands.insert_resource(TrackTypes {
-        map: load_mod_ron(mods_dir, "track_types", track_model::TrackType::from_ron),
-    });
+    let track_types = load_mod_ron(mods_dir, "track_types", track_model::TrackType::from_ron);
+    // Arm the lay tool with a type before the first piece is drawn: track is
+    // laid with one or not at all, and nothing stands in for it afterwards.
+    if state.lay.track_type.is_none() {
+        state.lay.track_type = track_types.keys().next().cloned();
+    }
+    commands.insert_resource(TrackTypes { map: track_types });
     commands.insert_resource(TrackObjects {
         map: load_mod_ron(mods_dir, "objects", track_model::TrackObject::from_ron),
     });

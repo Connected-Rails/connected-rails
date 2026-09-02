@@ -27,7 +27,7 @@ fn line() -> LineSource {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: vec![],
             formation: true,
         }],
@@ -139,7 +139,7 @@ fn an_area_can_switch_the_wire_and_the_superstructure() {
     let inside = net.edges()[0].track_type.at(1500.0);
     let outside = net.edges()[0].track_type.at(500.0);
     assert_ne!(inside, outside);
-    assert_eq!(outside, 0, "outside the area, the default type");
+    assert_eq!(outside, 0, "outside the area, the track's own type");
     assert_eq!(net.types()[inside as usize].name, "example:nebenbahn");
 }
 
@@ -200,7 +200,7 @@ fn removing_a_track_takes_its_spans_with_it() {
         grade: vec![],
         cant: vec![],
         speed: vec![],
-        track_type: vec![],
+        track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
         electrification: vec![],
         formation: true,
     });
@@ -234,7 +234,12 @@ fn a_span_is_stored_the_way_round_it_was_marked() {
 #[test]
 fn the_rule_check_finds_a_marking_that_does_not_reach_the_line() {
     use std::collections::BTreeMap;
-    let types = BTreeMap::new();
+    // The line is laid with the starter type; the registry answers it, so the
+    // check reports the markings and not a missing mod.
+    let types = BTreeMap::from([(
+        STARTER_TRACK_TYPE.to_string(),
+        track_model::TrackType::placeholder(STARTER_TRACK_TYPE),
+    )]);
     let objects = BTreeMap::new();
 
     // A marking with no properties yet: useful while working, worth saying out loud.

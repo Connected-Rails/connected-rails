@@ -12,7 +12,7 @@ use crate::tools::{self, EditorState, Selection, Tool};
 use crate::ui::{power_label, row};
 use crate::{Focus, Line, TrackTypes};
 use bevy_egui::egui;
-use content::route::{DEFAULT_TRACK_TYPE, TrackAreaSource};
+use content::route::TrackAreaSource;
 use editor_ui::{colors, space};
 use i18n::t;
 use world_coords::EcefPos;
@@ -223,15 +223,14 @@ fn track_type_row(
     known: &[String],
 ) {
     let mut on = value.is_some();
-    ui.checkbox(&mut on, "").on_hover_text(t!("area-set-hint"));
+    // Nothing to switch the superstructure to while no installed mod defines a
+    // track type — there is no built-in one to offer.
+    ui.add_enabled(!known.is_empty(), egui::Checkbox::without_text(&mut on))
+        .on_hover_text(t!("area-set-hint"))
+        .on_disabled_hover_text(t!("track-type-none-installed"));
     ui.label(t!("area-track-type"));
     if on && value.is_none() {
-        *value = Some(
-            known
-                .first()
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_TRACK_TYPE.into()),
-        );
+        *value = known.first().cloned();
     } else if !on {
         *value = None;
     }
@@ -240,14 +239,8 @@ fn track_type_row(
             ui.small(t!("area-unset"));
         }
         Some(name) => {
-            let unknown = name != DEFAULT_TRACK_TYPE && !types.map.contains_key(name.as_str());
-            let label = if name == DEFAULT_TRACK_TYPE {
-                t!("track-type-default")
-            } else {
-                name.clone()
-            };
-            let mut text = egui::RichText::new(label);
-            if unknown {
+            let mut text = egui::RichText::new(name.clone());
+            if !types.map.contains_key(name.as_str()) {
                 // A name no installed mod answers — visible before the run.
                 text = text.color(colors::ERROR);
             }
@@ -255,12 +248,6 @@ fn track_type_row(
                 .width(space::FIELD)
                 .selected_text(text)
                 .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(name == DEFAULT_TRACK_TYPE, t!("track-type-default"))
-                        .clicked()
-                    {
-                        *name = DEFAULT_TRACK_TYPE.into();
-                    }
                     for entry in known {
                         if ui.selectable_label(name == entry, entry).clicked() {
                             *name = entry.clone();

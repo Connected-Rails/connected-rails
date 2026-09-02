@@ -6,6 +6,8 @@
     version: "0.1.0",
     author: "Connected Rails",
     description: "All 33 pylon variants in a row beside 2 km of straight track, for comparison against the prototype.",
-    depends: ["pylons"],
+    // `example` for the track type its two lines are laid with — there is
+    // no built-in one, so a module names the mod its superstructure comes from.
+    depends: ["pylons", "example"],
     enabled: true,
 )

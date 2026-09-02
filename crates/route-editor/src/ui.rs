@@ -2203,20 +2203,20 @@ fn lay_rows(ui: &mut egui::Ui, state: &mut EditorState, types: &TrackTypes) {
     let lay = &mut state.lay;
     editor_ui::form_grid("lay-options").show(ui, |ui| {
         row(ui, "lay-type", |ui| {
-            let current = lay
-                .track_type
-                .clone()
-                .unwrap_or_else(|| t!("track-type-default"));
+            // Track is laid with a type or not at all: nothing stands in for
+            // one, so the tool arms itself with the first installed type and
+            // only says so out loud when no mod defines any.
+            if lay.track_type.is_none() {
+                lay.track_type = types.map.keys().next().cloned();
+            }
+            let Some(current) = lay.track_type.clone() else {
+                ui.colored_label(colors::ERROR, t!("track-type-none-installed"));
+                return;
+            };
             egui::ComboBox::from_id_salt("lay-type")
                 .width(space::FIELD)
                 .selected_text(current)
                 .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(lay.track_type.is_none(), t!("track-type-default"))
-                        .clicked()
-                    {
-                        lay.track_type = None;
-                    }
                     for name in types.map.keys() {
                         if ui
                             .selectable_label(lay.track_type.as_ref() == Some(name), name)
@@ -2786,17 +2786,16 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
         .track_type
         .iter()
         .map(|(_, name)| {
-            let index = match name.as_str() {
-                "default" => Some(0),
-                _ => line.net.types().iter().position(|t| &t.name == name),
-            };
+            let index = line.net.types().iter().position(|t| &t.name == name);
             crate::type_color32(index.unwrap_or(0) as u32)
         })
         .collect();
     let known: Vec<String> = types.map.keys().cloned().collect();
     let edge = &mut line.source.edges[i];
     if edge.track_type.is_empty() {
-        ui.small(t!("sel-track-type-none"));
+        // Not a default that quietly applies — a line that says nothing here
+        // does not compile at all.
+        ui.colored_label(colors::ERROR, t!("sel-track-type-none"));
     }
     let mut remove = None;
     editor_ui::form_grid(&format!("edge-types-{i}"))
@@ -2806,14 +2805,8 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
                 ui.label(egui::RichText::new("■").color(swatches[k]));
                 editor_ui::field(ui, &mut step.0, 10.0, 0.0..=length, "m")
                     .on_hover_text(t!("sel-track-type-from"));
-                let unknown = step.1 != "default" && !types.map.contains_key(&step.1);
-                let label = if step.1 == "default" {
-                    t!("track-type-default")
-                } else {
-                    step.1.clone()
-                };
-                let mut text = egui::RichText::new(label);
-                if unknown {
+                let mut text = egui::RichText::new(step.1.clone());
+                if !types.map.contains_key(&step.1) {
                     // A name no installed mod answers — visible before the run.
                     text = text.color(colors::ERROR);
                 }
@@ -2821,12 +2814,6 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
                     .width(space::FIELD)
                     .selected_text(text)
                     .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(step.1 == "default", t!("track-type-default"))
-                            .clicked()
-                        {
-                            step.1 = "default".into();
-                        }
                         for name in &known {
                             if ui.selectable_label(&step.1 == name, name).clicked() {
                                 step.1 = name.clone();
@@ -2842,17 +2829,23 @@ fn track_type_rows(ui: &mut egui::Ui, line: &mut Line, i: usize, length: f64, ty
     if let Some(k) = remove {
         edge.track_type.remove(k);
     }
+    // Without an installed type there is nothing to add: the button says so
+    // instead of stamping a name nothing answers.
     if ui
-        .small_button(t!("action-add-type-section"))
+        .add_enabled(
+            !known.is_empty(),
+            egui::Button::new(t!("action-add-type-section")).small(),
+        )
         .on_hover_text(t!("sel-track-type-hint"))
+        .on_disabled_hover_text(t!("track-type-none-installed"))
         .clicked()
+        && let Some(name) = known.first().cloned()
     {
         let s = edge
             .track_type
             .last()
             .map(|(s, _)| (s + 100.0).min(length))
             .unwrap_or(0.0);
-        let name = known.first().cloned().unwrap_or_else(|| "default".into());
         edge.track_type.push((s, name));
     }
 }
@@ -4152,7 +4145,9 @@ fn issue_target(
                 .and_then(|b| tools::node_pos(&line.source, &line.net, b.node)),
             Selection::None,
         ),
-        RuleIssue::UnknownTrackType { edge } | RuleIssue::LzbTypeWithoutConductor { edge } => (
+        RuleIssue::MissingTrackType { edge }
+        | RuleIssue::UnknownTrackType { edge }
+        | RuleIssue::LzbTypeWithoutConductor { edge } => (
             line.net
                 .edges()
                 .get(*edge as usize)
@@ -4270,6 +4265,7 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::BoundaryInvalid { boundary } => {
             t!("check-boundary-invalid", boundary = boundary)
         }
+        RuleIssue::MissingTrackType { edge } => t!("check-missing-track-type", edge = edge),
         RuleIssue::UnknownTrackType { edge } => t!("check-unknown-track-type", edge = edge),
         RuleIssue::AreaOffTrack { area } => t!("check-area-off-track", area = area),
         RuleIssue::AreaWithoutEffect { area } => t!("check-area-no-effect", area = area),

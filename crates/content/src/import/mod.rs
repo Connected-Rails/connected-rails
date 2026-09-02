@@ -36,6 +36,11 @@ pub struct ImportOptions {
     /// What the imported line is electrified with (an id of
     /// [`track_model::PowerSystem`], or `"none"`).
     pub electrification: String,
+    /// What the imported track is built of (`"<mod>:<name>"` of a
+    /// `track_types/*.ron`). Every edge is written out with it: there is no
+    /// built-in type, so an import that named none would produce a module
+    /// that does not compile.
+    pub track_type: String,
     /// Permitted speed when OSM does not give one [km/h].
     pub default_speed: f64,
     /// Height used when no DGM is available [m].
@@ -52,6 +57,7 @@ impl Default for ImportOptions {
             max_edge_length: 2_000.0,
             geoid_offset: 46.0,
             electrification: track_model::PowerSystem::Ac15kv.id().to_string(),
+            track_type: crate::route::STARTER_TRACK_TYPE.to_string(),
             default_speed: 100.0,
             default_height: 100.0,
             start_way: None,
@@ -183,7 +189,10 @@ pub fn import_line(
             grade: shift_profile(&fitted.grade, offset, len),
             cant: shift_profile(&fitted.cant, offset, len),
             speed: shift_profile(&fitted.speed, offset, len),
-            track_type: vec![],
+            // The superstructure belongs to the track the same way the wire
+            // does, and it is not optional: every imported edge is written out
+            // with the type the import was given.
+            track_type: vec![(0.0, options.track_type.clone())],
             // The wire belongs to the track: every imported edge starts out
             // saying so itself, so it can be changed one edge at a time.
             electrification: vec![(0.0, options.electrification.clone())],

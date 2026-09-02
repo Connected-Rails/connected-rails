@@ -25,7 +25,7 @@ use content::TerrainOptions;
 use content::import::alignment::{CantRules, ramp_cant};
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
-    ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
+    ObjectSource, STARTER_TRACK_TYPE, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
 use glam::{DQuat, DVec2, DVec3};
 use i18n::t;
@@ -369,8 +369,10 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 7] = [
 /// one already lying there. The lay, join and offset tools all read it.
 #[derive(Clone, Debug)]
 pub struct LayOptions {
-    /// Track type (`"<mod>:<name>"`); `None` = the default type. The content
-    /// drawer arms it, like a track picked from the browser.
+    /// Track type (`"<mod>:<name>"`). Nothing stands in for one, so the panel
+    /// arms this with the first installed type as soon as there is one, and a
+    /// piece laid while it is `None` is a piece the line refuses to compile.
+    /// The content drawer arms it too, like a track picked from the browser.
     pub track_type: Option<String>,
     /// Permitted speed [km/h]; `None` = the line's default.
     pub speed: Option<f64>,
@@ -4635,6 +4637,16 @@ pub fn placement_preview(
 mod tests {
     use super::*;
 
+    /// Lay options as the tool panel hands them over: armed with a track type.
+    /// Track is laid with one or not at all — a piece that names none is a
+    /// piece the line refuses to compile.
+    fn lay() -> LayOptions {
+        LayOptions {
+            track_type: Some(STARTER_TRACK_TYPE.into()),
+            ..LayOptions::default()
+        }
+    }
+
     #[test]
     fn arc_to_point_hits_the_target() {
         // Quarter circle: east heading, target at (r, r) → radius r, turn 90° left.
@@ -4697,6 +4709,7 @@ mod tests {
             ..Default::default()
         };
         let mut state = EditorState {
+            lay: lay(),
             drawing: Some(drawing),
             ..Default::default()
         };
@@ -4731,6 +4744,7 @@ mod tests {
         drawing.click(Target::free(frame.to_ecef(DVec3::new(400.0, 0.0, 0.0))));
         drawing.click(Target::free(frame.to_ecef(DVec3::new(800.0, 0.0, 0.0))));
         let mut state = EditorState {
+            lay: lay(),
             drawing: Some(drawing),
             ..Default::default()
         };
@@ -4932,6 +4946,7 @@ mod tests {
         drawing.click(Target::free(frame.to_ecef(tangent * 400.0 + left * 60.0)));
         assert_eq!(drawing.segments.len(), 1);
         let mut state = EditorState {
+            lay: lay(),
             drawing: Some(drawing),
             ..Default::default()
         };
@@ -4994,6 +5009,7 @@ mod tests {
         // the fork behind them.
         drawing.click(Target::free(frame.to_ecef(-tangent * 400.0 + left * 60.0)));
         let mut state = EditorState {
+            lay: lay(),
             drawing: Some(drawing),
             ..Default::default()
         };
@@ -5117,7 +5133,7 @@ mod tests {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![],
-                track_type: vec![],
+                track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                 electrification: vec![],
                 formation: true,
             }],
@@ -5165,7 +5181,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: vec![],
             formation: true,
         });
@@ -5176,7 +5192,7 @@ mod tests {
         let b = *ends.iter().find(|e| e.edge == 1 && !e.at_end).unwrap();
         join_ends(
             &mut doc,
-            &LayOptions::default(),
+            &lay(),
             &crate::stake::StakeOptions::default(),
             a,
             b,
@@ -5221,7 +5237,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: vec![],
             formation: true,
         });
@@ -5233,7 +5249,7 @@ mod tests {
             speed: 60.0,
             ..Default::default()
         };
-        join_ends(&mut doc, &LayOptions::default(), &stake, a, b).expect("stakes out");
+        join_ends(&mut doc, &lay(), &stake, a, b).expect("stakes out");
         let compiled = doc.source.compile().expect("still compiles");
         let connector = compiled.net.edges().last().unwrap();
         // It lands on B's start, tangentially. The chain is planned in A's
@@ -5276,7 +5292,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: vec![],
             formation: true,
         });
@@ -5286,7 +5302,7 @@ mod tests {
         let b = *ends.iter().find(|e| e.edge == 1 && !e.at_end).unwrap();
         join_ends(
             &mut doc,
-            &LayOptions::default(),
+            &lay(),
             &crate::stake::StakeOptions::default(),
             a,
             b,
@@ -5327,7 +5343,7 @@ mod tests {
         let mut doc = line_of(straight_east(600.0));
         offset_edge(&mut doc, 0, -4.0).expect("parallel");
         doc.net = doc.source.compile().unwrap().net;
-        crossover(&mut doc, &LayOptions::default(), 0, 200.0, 1, 190.0).expect("builds");
+        crossover(&mut doc, &lay(), 0, 200.0, 1, 190.0).expect("builds");
         let compiled = doc.source.compile().expect("still compiles");
         let switches = doc
             .source
@@ -5477,6 +5493,7 @@ mod tests {
             ..Default::default()
         });
         let mut state = EditorState {
+            lay: lay(),
             drawing: Some(drawing),
             ..Default::default()
         };
@@ -5535,7 +5552,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: vec![],
             formation: true,
         });
@@ -5550,6 +5567,7 @@ mod tests {
         });
         assert!(drawing.to_end.is_some(), "the click lands on the end");
         let mut state = EditorState {
+            lay: lay(),
             drawing: Some(drawing),
             ..Default::default()
         };

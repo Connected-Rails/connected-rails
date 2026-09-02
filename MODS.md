@@ -1289,7 +1289,7 @@ what it says and invents nothing:
     depth_map: Some("example/assets/track/ballast_disp.jpg"), // height map -> parallax relief
     occlusion_map: Some("example/assets/track/ballast_ao.jpg"),// ambient occlusion between the stones
     texture_scale: 2.2,          // metres one repeat of those four covers, along and across
-    color: (0.32, 0.30, 0.28),   // untextured fallback; the route editor tints sections its own way
+    color: (0.32, 0.30, 0.28),   // colour of a type that names no texture; the editor tints sections its own way
     roughness: 1.0,              // scales the rolling noise; jointed track > 1, slab track < 1
     reverb: 0.0,                 // how much the surroundings ring: 0 = open line, 1 = tunnel
     max_speed: 250.0,            // superstructure limit [km/h], caps the line's speed profile
@@ -1366,12 +1366,19 @@ linear; the loader is told so and does not gamma-decode them. A type that names 
 textures is skinned in its `color`.
 
 A line assigns types per edge as steps over the arc length, so one edge changes its
-superstructure section by section; the reserved name `"default"` returns to the built-in
-default type:
+superstructure section by section:
 
 ```ron
 track_type: [(0.0, "example:hauptbahn"), (3000.0, "example:altbau")],
 ```
+
+**Every track has to name one.** There is no built-in type and no reserved
+`"default"` name: what a track is built of is part of the module, not of the
+engine, and a module that leaves it out does not compile — the compiler reports
+`MissingTrackType(<edge>)` and the route editor's rule check says the same thing
+before the run. A type from another mod is a dependency like any other; name that
+mod in `depends:`. This is deliberate: a silent fallback is how a line ends up on
+untextured grey ballast without anybody being told.
 
 `max_speed` merges into the speed profile every consumer already reads (AI, LZB, HUD,
 scoring); `roughness` reaches the sound table as the `Roughness` quantity (the default
@@ -1381,8 +1388,9 @@ or a deep cutting sits around 0.3 … 0.6. Modelling the room on the track type 
 on the terrain is the same trade `roughness` makes: a line says where its tunnels are by
 assigning the type, and nothing has to trace geometry at run time. The route editor edits the
 sections in the selection panel (a color chip per section, the map tints the track ribbon
-to match) and its rule check flags names no installed mod has, and LZB types on a line
-that places no line conductor.
+to match) and its rule check flags tracks that name no type at all, names no installed
+mod has, and LZB types on a line that places no line conductor. The lay tool arms itself
+with the first installed type, so track drawn in the editor carries one from the start.
 
 ### Electrification
 

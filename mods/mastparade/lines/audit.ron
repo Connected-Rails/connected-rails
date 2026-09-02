@@ -14,7 +14,7 @@
             grade: [(0.0, 0.0)],
             cant: [],
             speed: [(0.0, 120.0)],
-            track_type: [],
+            track_type: [(0.0, "example:hauptbahn")],
             electrification: [(0.0, "ac-15kv")],
             formation: true,
         ),

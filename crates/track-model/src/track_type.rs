@@ -3,9 +3,10 @@
 //!
 //! A mod ships them as `track_types/*.ron`, addressed `"<mod>:<name>"` like
 //! signal types. A line assigns them per edge as a step profile over the arc
-//! length, so one edge can change its type section by section. The network
-//! stores resolved specs in [`TrackNetwork::types`]; index 0 is always the
-//! default type.
+//! length, so one edge can change its type section by section, and it has to
+//! name one — there is no built-in type a track falls back on. The network
+//! stores resolved specs in [`TrackNetwork::types`], in the order the line
+//! first names them.
 //!
 //! The physical build the type describes — rail section, sleepers, ballast —
 //! lives in [`crate::oberbau`], in the dimensions the DB drawings give.
@@ -80,8 +81,7 @@ pub struct TrackType {
 }
 
 fn default_color() -> (f32, f32, f32) {
-    // The ballast grey the app has always used — the default type must not
-    // change the look of a line without types.
+    // Ballast grey: what a type is skinned in that names no texture of its own.
     (0.32, 0.30, 0.28)
 }
 
@@ -100,6 +100,9 @@ fn default_max_speed() -> f64 {
     1000.0
 }
 
+/// The field defaults a `track_types/*.ron` may leave out — **not** a type
+/// anything falls back on: a track names its type or does not compile
+/// (`content::route::CompileError::MissingTrackType`).
 impl Default for TrackType {
     fn default() -> Self {
         Self {

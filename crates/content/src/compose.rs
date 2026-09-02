@@ -468,7 +468,8 @@ fn shift_payload(kind: &DeviceKind, payload: &str, off: ModuleOffsets) -> String
 mod tests {
     use super::*;
     use crate::route::{
-        BoundarySource, DeviceSource, EdgeSource, GeoPoint, SectionSource, SignalSource,
+        BoundarySource, DeviceSource, EdgeSource, GeoPoint, STARTER_TRACK_TYPE, SectionSource,
+        SignalSource,
     };
     use sim_core::interlock::{SignalKind, SignalSystem};
     use track_model::{Segment, TrackPosition};
@@ -493,7 +494,7 @@ mod tests {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![(0.0, 120.0)],
-                track_type: vec![],
+                track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                 electrification: Vec::new(),
                 formation: true,
             }],

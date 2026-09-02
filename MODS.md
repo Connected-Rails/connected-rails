@@ -1546,7 +1546,7 @@ objects: [
 
 The simulator spawns the glTF at the track pose plus offset, rotation and height,
 floating-origin safe like the signal models; an unknown object name gets a placeholder
-block and a warning. In the route editor the **object tool** (key 5) picks an object kind
+block and a warning. In the route editor the **object tool** (key 3 in the equipment box) picks an object kind
 and drops it on the nearest track; the selection panel edits position, lateral offset,
 rotation and height, and the rule check flags placements outside their track or naming an
 object no installed mod has. **Repeat in a row** stamps copies of the selected instance
@@ -1562,6 +1562,58 @@ blended toward rail height, so a snapped object next to the ballast still meets 
 editor's selection panel has the checkbox, and both programs resolve the height the same
 way: an object is placed by the terrain tile it stands on, so it streams in and out with
 that tile and its feet meet the ground the tile actually has.
+
+### Parametric buildings
+
+The route editor's **building tool** places an editable building recipe, not a reference
+to a glTF. Static houses under `objects:` remain supported and are the right choice for a
+specific landmark. A generated building is stored under `buildings:`:
+
+```ron
+buildings: [
+    (
+        edge: 0,
+        s: 540.0,
+        lateral_offset: -18.0,
+        yaw_deg: 90.0,
+        snap_to_terrain: true,
+        spec: (
+            use_kind: Residential,
+            width: 12.0,
+            length: 10.0,
+            floors: 3,
+            floor_height: 2.9,
+            roof_style: Gable,
+            roof_height: 3.2,
+            facade: Plaster,
+            facade_color: (0.82, 0.72, 0.58),
+            roof: ClayTile,
+            window_spacing: 2.6,
+            window_width: 1.25,
+            window_height: 1.45,
+            lit_window_share: 0.38,
+            balconies: true,
+            balcony_every: 2,
+            balcony_depth: 1.4,
+            seed: 1384,
+        ),
+    ),
+],
+```
+
+`use_kind` is `Residential`, `Commercial` or `Industrial`; roofs are `Gable`, `Hip`,
+`Flat`, `Shed` and `Mansard`. Facades use `Plaster`, `RedBrick`, `YellowBrick`,
+`Concrete` or `MetalPanel`, and roofs use `ClayTile`, `Slate`, `StandingSeam` or
+`Bitumen`. The editor constrains dimensions to valid ranges and exposes the same values
+after placement. Copy/paste clones the complete recipe, including `seed`, so the copy has
+the same design and lit-window pattern.
+
+The simulator receives only the normalised, tile-local recipe. It reuses one generated
+three-level mesh set for every identical recipe and global PBR materials for every
+building; it does not carry the editor's selection or authoring state. LOD0 includes
+window surrounds and balconies, LOD1 retains the facade rhythm, and LOD2 is the silhouette.
+The emissive share is selected deterministically from `seed` and switched by the normal
+day/night system, so loading the route never rearranges illuminated apartments.
 
 **Levels of detail** work as for vehicles and signals: nodes named `<name>_LOD0`,
 `_LOD1`, … are shown by camera distance. A model without the suffix is one level, drawn
@@ -1811,14 +1863,14 @@ can be moved, rescaled or deleted on its own afterwards. Trees stream in and out
 their terrain tile and share meshes per species, so even a big wood renders as instanced
 draws.
 
-In the route editor the **tree tool** (key 6) plants one tree per click. The **forest
-brush** (key 7) outlines an area — Enter or right-click **bakes** it into single trees
+In the route editor the **tree tool** (key 2 in the vegetation box) plants one tree per click. The **forest
+brush** (key 3) outlines an area — Enter or right-click **bakes** it into single trees
 (one per `area per tree` m², species from the tool options, clear of the track strip).
 **File ▸ Import forest…** reads an Overpass JSON extract (`landuse=forest` /
 `natural=wood` ways, same download path as the track import) and bakes each polygon the
 same way — an optional aid: whoever wants every tree hand-set simply never uses it, and
 an imported wood is thinned out or cleared exactly like a painted one. For bulk edits the
-**marking brush** (key 8) sweeps over the map and marks every tree and object under the
+**marking brush** (key 6) sweeps over the map and marks every tree, object or parametric building under the
 circle; Delete (or the panel button) removes them together in one undo step.
 
 ### Fields
@@ -2340,7 +2392,7 @@ deletes the whole layer. Retyping the layer in the selection panel moves a singl
 into another one. Hiding is session state; the markers themselves travel with the line,
 so the next session still has them.
 
-The **marker tool** (key 9) sets one per click into the layer named in the tool options.
+The **marker tool** (key 5 in the equipment box) sets one per click into the layer named in the tool options.
 **File ▸ Import reference markers…** reads an Overpass JSON extract and turns the tags it
 knows into markers, each in the layer of its tag: `level-crossing`, `platform`,
 `station`, `signal`, `switch`, `buffer-stop`, `kilometre-mark`, `bridge`, `tunnel`,

@@ -359,6 +359,12 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
         o.edge += off.edges;
         merged.objects.push(o);
     }
+    // Parametric buildings use the same track-relative placement as scenery.
+    for building in &module.buildings {
+        let mut building = building.clone();
+        building.edge += off.edges;
+        merged.buildings.push(building);
+    }
     // Trees are geo-positioned — the georeference is the connection, so a
     // plain append composes them.
     // Stabling roads and portals sit on an edge like a device; their names stay as they
@@ -622,9 +628,10 @@ mod tests {
         assert!(gap < 0.01, "gap {gap} m");
     }
 
-    /// Everything that names an edge follows its module's offset — the scenery objects
-    /// and the stabling roads as much as the devices. A list forgotten in `merge_module`
-    /// is lost silently, which is the one failure a composed line cannot show by itself.
+    /// Everything that names an edge follows its module's offset — scenery objects,
+    /// generated buildings and stabling roads as much as devices. A list forgotten in
+    /// `merge_module` is lost silently, which is the one failure a composed line cannot
+    /// show by itself.
     #[test]
     fn objects_and_yards_survive_the_composition() {
         use crate::route::{ObjectSource, YardSource};
@@ -641,6 +648,15 @@ mod tests {
                 height: 0.0,
                 snap_to_terrain: false,
             });
+            line.buildings.push(crate::buildings::BuildingSource {
+                edge: 0,
+                s: 600.0,
+                lateral_offset: 18.0,
+                yaw_deg: 0.0,
+                height: 0.0,
+                snap_to_terrain: true,
+                spec: Default::default(),
+            });
             line.yards.push(YardSource {
                 name: format!("Portal {name}"),
                 kind: YardKind::Portal,
@@ -653,6 +669,8 @@ mod tests {
         let Composed { line: merged, .. } = composition.compose(&lines).expect("composes");
         assert_eq!(merged.objects.len(), 2);
         assert_eq!(merged.objects[1].edge, 1);
+        assert_eq!(merged.buildings.len(), 2);
+        assert_eq!(merged.buildings[1].edge, 1);
         assert_eq!(merged.yards.len(), 2);
         assert_eq!(
             merged.yards[1].edge, 1,

@@ -18,6 +18,7 @@
 //! length the app uses [`TerrainBuilder`] instead and builds single tiles by key while
 //! driving (plan 4.3).
 
+use crate::buildings::{BakedBuilding, BuildingSource, BuildingSpec};
 use crate::import::dgm::{HeightTile, TerrainSource};
 use crate::people::{Crowd, PersonInstance, Walkway, scatter_people, scatter_walkways};
 use crate::route::{LineSource, ObjectSource, TerrainEdit, TerrainEditSource, TreeSource};
@@ -148,6 +149,8 @@ pub struct TerrainTile {
     /// Scenery objects standing on this tile, their feet on its ground where
     /// they snap to it — streamed with the tile like the trees.
     pub objects: Vec<SceneryInstance>,
+    /// Parametric buildings, with authoring settings normalised and placement baked.
+    pub buildings: Vec<BakedBuilding>,
     /// The people waiting on this tile's platforms (plan ch. 12) — streamed
     /// with the tile like the objects, and derived like the trees of a forest:
     /// nothing about them is stored in the line.
@@ -500,6 +503,66 @@ pub struct Scenery {
     by_tile: CellMap<Vec<u32>>,
 }
 
+/// Parametric buildings prepared for tile builds.
+#[derive(Debug, Clone, Default)]
+pub struct Buildings {
+    placed: Vec<PlacedBuilding>,
+    by_tile: CellMap<Vec<u32>>,
+}
+
+#[derive(Debug, Clone)]
+struct PlacedBuilding {
+    pos: DVec2,
+    base: EcefPos,
+    up: DVec3,
+    dir: DVec3,
+    height: f64,
+    snap: bool,
+    source_index: u32,
+    spec: BuildingSpec,
+}
+
+impl Buildings {
+    pub fn from_line(line: &LineSource, net: &TrackNetwork, zone: u8) -> Self {
+        Self::from_parts(&line.buildings, net, zone)
+    }
+
+    pub fn from_parts(sources: &[BuildingSource], net: &TrackNetwork, zone: u8) -> Self {
+        let placed = sources
+            .iter()
+            .enumerate()
+            .filter_map(|(source_index, source)| {
+                let edge = net.edges().get(source.edge as usize)?;
+                let pose = edge.eval(source.s.clamp(0.0, edge.length()));
+                let right = pose.tangent.cross(pose.up).normalize();
+                let base = EcefPos(pose.pos.0 + right * source.lateral_offset);
+                let dir =
+                    DQuat::from_axis_angle(pose.up, -source.yaw_deg.to_radians()) * pose.tangent;
+                let (lat, lon, _) = geo::from_ecef(base);
+                let (e, n) = geo::to_utm(lat, lon, zone);
+                Some(PlacedBuilding {
+                    pos: DVec2::new(e, n),
+                    base,
+                    up: pose.up,
+                    dir,
+                    height: source.height,
+                    snap: source.snap_to_terrain,
+                    source_index: source_index as u32,
+                    spec: source.spec.normalised(),
+                })
+            })
+            .collect();
+        Self {
+            placed,
+            by_tile: CellMap::default(),
+        }
+    }
+
+    fn bucket(&mut self, tile_size: f64) {
+        self.by_tile = bucket(self.placed.iter().map(|building| building.pos), tile_size);
+    }
+}
+
 /// One placement, resolved against the track: UTM position for the tile
 /// lookup, the rail-plane base and the two directions that orient the model.
 #[derive(Debug, Clone, Copy)]
@@ -840,6 +903,7 @@ pub struct TerrainBuilder {
     options: TerrainOptions,
     vegetation: Vegetation,
     scenery: Scenery,
+    buildings: Buildings,
     crowd: Crowd,
     fields: crate::farmland::Fields,
     waters: crate::water::Waters,
@@ -856,6 +920,7 @@ impl TerrainBuilder {
             options,
             vegetation: Vegetation::default(),
             scenery: Scenery::default(),
+            buildings: Buildings::default(),
             crowd: Crowd::default(),
             fields: crate::farmland::Fields::default(),
             waters: crate::water::Waters::default(),
@@ -877,6 +942,13 @@ impl TerrainBuilder {
     pub fn with_scenery(mut self, mut scenery: Scenery) -> Self {
         scenery.bucket(self.options.tile_size);
         self.scenery = scenery;
+        self
+    }
+
+    /// Parametric buildings of the line, baked into the tile they stand on.
+    pub fn with_buildings(mut self, mut buildings: Buildings) -> Self {
+        buildings.bucket(self.options.tile_size);
+        self.buildings = buildings;
         self
     }
 
@@ -952,6 +1024,7 @@ impl TerrainBuilder {
         net: &TrackNetwork,
         vegetation: Vegetation,
         scenery: Scenery,
+        buildings: Buildings,
         fields: crate::farmland::Fields,
         waters: crate::water::Waters,
         roads: crate::roads::Roads,
@@ -964,6 +1037,7 @@ impl TerrainBuilder {
             options: self.options,
             vegetation: Vegetation::default(),
             scenery: Scenery::default(),
+            buildings: Buildings::default(),
             crowd: Crowd::default(),
             fields,
             waters: crate::water::Waters::default(),
@@ -973,6 +1047,7 @@ impl TerrainBuilder {
         }
         .with_vegetation(vegetation)
         .with_scenery(scenery)
+        .with_buildings(buildings)
         .with_waters(waters)
         .with_roads(roads)
         .with_power_lines(power)
@@ -1057,6 +1132,7 @@ impl TerrainBuilder {
             &self.options,
             &self.vegetation,
             &self.scenery,
+            &self.buildings,
             &self.crowd,
             &self.fields,
             &self.waters,
@@ -1076,7 +1152,12 @@ impl TerrainBuilder {
     pub fn rescatter(
         &self,
         tile: &TerrainTile,
-    ) -> (Vec<Tree>, Vec<SceneryInstance>, Vec<PersonInstance>) {
+    ) -> (
+        Vec<Tree>,
+        Vec<SceneryInstance>,
+        Vec<BakedBuilding>,
+        Vec<PersonInstance>,
+    ) {
         let frame = EnuFrame::at(tile.anchor);
         let n = tile.n(self.options.tile_size);
         let k = key(
@@ -1089,6 +1170,7 @@ impl TerrainBuilder {
         (
             scatter_trees(k, &grid, &frame, &self.options, &self.vegetation),
             scatter_objects(k, &grid, &frame, &self.scenery),
+            scatter_buildings(k, &grid, &frame, &self.buildings),
             people,
         )
     }
@@ -1181,6 +1263,7 @@ fn build_key(
     options: &TerrainOptions,
     vegetation: &Vegetation,
     scenery: &Scenery,
+    buildings: &Buildings,
     crowd: &Crowd,
     farmland: &crate::farmland::Fields,
     waters: &crate::water::Waters,
@@ -1198,8 +1281,8 @@ fn build_key(
     // Only the strokes that reach this tile — the rest never see a grid point.
     let edits = edits.in_rect(min, options.tile_size);
     let tile = build_tile(
-        k, step, lod, centerline, sampler, options, vegetation, scenery, crowd, farmland, waters,
-        roads, power, &edits, stats,
+        k, step, lod, centerline, sampler, options, vegetation, scenery, buildings, crowd,
+        farmland, waters, roads, power, &edits, stats,
     );
     stats.tiles += 1;
     stats.vertices += tile.positions.len();
@@ -1236,6 +1319,7 @@ pub fn build(
             options,
             &Vegetation::default(),
             &Scenery::default(),
+            &Buildings::default(),
             &Crowd::default(),
             &crate::farmland::Fields::default(),
             &crate::water::Waters::default(),
@@ -1385,6 +1469,7 @@ fn build_tile(
     options: &TerrainOptions,
     vegetation: &Vegetation,
     scenery: &Scenery,
+    buildings: &Buildings,
     crowd: &Crowd,
     farmland: &crate::farmland::Fields,
     waters: &crate::water::Waters,
@@ -1442,6 +1527,7 @@ fn build_tile(
     let grid = HeightGrid::new(min, &heights, step, n);
     let trees = scatter_trees(k, &grid, &frame, options, vegetation);
     let objects = scatter_objects(k, &grid, &frame, scenery);
+    let buildings = scatter_buildings(k, &grid, &frame, buildings);
     let mut people = scatter_people(k, &grid, &frame, crowd);
     // The ways of the tile, and the people who stand about on its areas
     // rather than walk them — ordinary people of the tile from here on.
@@ -1519,6 +1605,7 @@ fn build_tile(
         splat,
         trees,
         objects,
+        buildings,
         people,
         walkways,
         fields,
@@ -1634,6 +1721,36 @@ fn scatter_objects(
                 rotation: model_rotation(frame, object.dir, object.up).to_array(),
                 object: object.object,
                 index: object.index,
+            }
+        })
+        .collect()
+}
+
+fn scatter_buildings(
+    k: TileKey,
+    grid: &HeightGrid,
+    frame: &EnuFrame,
+    buildings: &Buildings,
+) -> Vec<BakedBuilding> {
+    let Some(indices) = buildings.by_tile.get(&k) else {
+        return Vec::new();
+    };
+    indices
+        .iter()
+        .map(|&i| {
+            let building = &buildings.placed[i as usize];
+            let anchor = if building.snap {
+                let ground = grid.at(building.pos);
+                let (lat, lon, _) = geo::from_ecef(building.base);
+                geo::to_ecef(lat, lon, ground + building.height)
+            } else {
+                EcefPos(building.base.0 + building.up * building.height)
+            };
+            BakedBuilding {
+                pos: to_render(frame.to_local(anchor)),
+                rotation: model_rotation(frame, building.dir, building.up).to_array(),
+                source_index: building.source_index,
+                spec: building.spec.clone(),
             }
         })
         .collect()
@@ -2000,6 +2117,7 @@ mod tests {
             &net,
             Vegetation::default(),
             Scenery::default(),
+            Buildings::default(),
             crate::farmland::Fields::default(),
             crate::water::Waters::default(),
             crate::roads::Roads::default(),
@@ -2166,7 +2284,7 @@ mod tests {
         );
 
         // Rescattering onto the built tile gives the same placement.
-        let (_, again, _) = builder.rescatter(tile);
+        let (_, again, _, _) = builder.rescatter(tile);
         assert_eq!(again, tile.objects);
     }
 
@@ -2429,7 +2547,7 @@ mod tests {
         // Rescattering onto the built tiles gives the same trees — the
         // editor does that for a tile whose ground has not changed.
         for tile in &tiles {
-            let (again, _, _) = builder.rescatter(tile);
+            let (again, _, _, _) = builder.rescatter(tile);
             assert_eq!(again, tile.trees);
         }
 
@@ -2544,5 +2662,39 @@ mod tests {
             .map(|p| p[1])
             .fold(f32::INFINITY, f32::min);
         assert!(min_y < grid_min - 1.0, "{min_y} vs {grid_min}");
+    }
+
+    #[test]
+    fn parametric_buildings_are_baked_and_rescattered_stably() {
+        let net = test_net();
+        let source = BuildingSource {
+            edge: 0,
+            s: 35.0,
+            lateral_offset: 18.0,
+            yaw_deg: 25.0,
+            height: 0.0,
+            snap_to_terrain: true,
+            spec: BuildingSpec {
+                width: 16.0,
+                floors: 4,
+                seed: 77,
+                ..Default::default()
+            },
+        };
+        let builder = TerrainBuilder::new(&net, vec![test_source()], options())
+            .with_buildings(Buildings::from_parts(&[source], &net, options().zone));
+        let tiles: Vec<TerrainTile> = builder
+            .corridor_keys()
+            .into_iter()
+            .filter_map(|key| builder.build_key(key, &mut TerrainStats::default()))
+            .collect();
+        let tile = tiles
+            .iter()
+            .find(|tile| !tile.buildings.is_empty())
+            .expect("the building's tile");
+        assert_eq!(tile.buildings[0].spec.seed, 77);
+        assert_eq!(tile.buildings[0].spec.floors, 4);
+        let (_, _, again, _) = builder.rescatter(tile);
+        assert_eq!(again, tile.buildings);
     }
 }

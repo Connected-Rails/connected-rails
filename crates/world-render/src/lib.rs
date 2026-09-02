@@ -26,6 +26,7 @@ use sim_core::train::lod_level;
 use track_model::{Facing, TrackNetwork, TrackObject};
 use world_coords::{EcefPos, EnuFrame, RenderOrigin};
 
+pub mod buildings;
 pub mod clouds;
 pub mod conductors;
 pub mod farmland;
@@ -41,6 +42,7 @@ pub mod water;
 pub mod weather;
 pub mod windscreen;
 
+pub use buildings::{BuildingAssets, BuildingIndex, spawn_buildings};
 pub use conductors::{ConductorMark, ConductorMaterial, ConductorMaterials, spawn_conductors};
 pub use farmland::{
     CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
@@ -87,6 +89,7 @@ impl Plugin for WorldRenderPlugin {
             .add_plugins(conductors::plugin)
             .add_plugins(roads::plugin)
             .init_resource::<farmland::FieldMaterials>()
+            .init_resource::<buildings::BuildingAssets>()
             .init_resource::<plants::PlantMaterials>()
             .init_resource::<plants::PlantModels>()
             .init_resource::<Daylight>()
@@ -559,6 +562,7 @@ fn colored(mut mesh: Mesh, color: [f32; 4]) -> Mesh {
 pub fn spawn_terrain_tile(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
+    building_assets: &mut BuildingAssets,
     material: &Handle<TerrainMaterial>,
     catalog: &WorldCatalog,
     tile: &TerrainTile,
@@ -581,7 +585,10 @@ pub fn spawn_terrain_tile(
         &tile.walkways,
         catalog,
     );
-    entity.id()
+    let id = entity.id();
+    drop(entity);
+    buildings::spawn_buildings(commands, meshes, building_assets, id, &tile.buildings);
+    id
 }
 
 /// Places the trees, objects and people of a standing tile anew — the editor
@@ -591,10 +598,13 @@ pub fn spawn_terrain_tile(
 /// who does this, shows no crowd and builds no ways.
 pub fn respawn_scatter(
     commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    building_assets: &mut BuildingAssets,
     tile: Entity,
     old: impl IntoIterator<Item = Entity>,
     trees: Vec<Tree>,
     objects: &[SceneryInstance],
+    buildings: &[content::BakedBuilding],
     people: &[PersonInstance],
     catalog: &WorldCatalog,
 ) {
@@ -610,6 +620,8 @@ pub fn respawn_scatter(
         return;
     };
     scatter::spawn_scatter(&mut entity, trees, objects, people, &[], catalog);
+    drop(entity);
+    buildings::spawn_buildings(commands, meshes, building_assets, tile, buildings);
 }
 
 /// 3D models of the line's signals, resolved at setup — index = signal index.

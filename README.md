@@ -530,6 +530,16 @@ builder is shared read-only, the DGM sheets keep their own short lock. Terrain, 
 vegetation and track objects live in `world-render` and therefore look the same in the
 simulator and in the route editor.
 
+Parametric buildings use the same streamed terrain path without replacing static scenery.
+Their route entry keeps an editable recipe (residential, commercial or industrial use,
+width, length, floor count and height, five roof shapes, facade/roof material, colour,
+window rhythm, balconies and a stable variation seed). The terrain compiler normalises and
+bakes that recipe into a compact placement; `world-render` caches one three-level LOD mesh
+set per distinct recipe and shares a global PBR library of plaster, red/yellow brick,
+concrete, metal panels, clay tile, slate, standing seam and bitumen. Window illumination is
+chosen deterministically from the seed and appears only at night. Copy/paste preserves the
+whole recipe and seed, while all fields remain editable in the module editor.
+
 **Fields** lie on that ground: the outline and the crop are line content, and what a field
 looks like on the day is a function of the crop, the date and the field's own seed — winter
 wheat is blue-green in April, gold in the last week of July and stubble in August, and no
@@ -781,7 +791,7 @@ be laid, which never touches one already lying there.
 | Tool | What a click does |
 |---|---|
 | **Every category** | |
-| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it. `Ctrl`+click gathers devices, objects, trees and markers into a multi-selection (a second `Ctrl`+click takes one out again); a press on empty ground dragged open selects everything inside the circle — `Ctrl` adds it to what is gathered, `Delete` removes the lot in one step |
+| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it. `Ctrl`+click gathers devices, objects, parametric buildings, trees and markers into a multi-selection (a second `Ctrl`+click takes one out again); a press on empty ground dragged open selects everything inside the circle — `Ctrl` adds it to what is gathered, `Delete` removes the lot in one step |
 | **Track** | |
 | `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series, lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions — and snaps the piece to the terrain: sampled ground heights become its gradient profile, a free start drops onto the surface, an end joined onto other track keeps that track's height |
 | `3` Split track | Cuts the track at the click — two tracks on one joint |
@@ -793,11 +803,12 @@ be laid, which never touches one already lying there.
 | **Lineside equipment** | |
 | `2` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
 | `3` Place object | Drops a mod's 3D object at its predefined offset and rotation; the toolbox's terrain-snap toggle bases it on the ground instead of the rail plane |
-| `4` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
+| `4` Parametric building | Places an editable residential, commercial or industrial building. Its properties panel controls dimensions, floors and total height, facade colour/material, five roof shapes, windows, stable night lighting and balconies; `Ctrl+C` / `Ctrl+V` preserves the complete recipe |
+| `5` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
 | **Vegetation** | |
 | `2` / `3` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
 | `4` Field | Clicks outline a piece of farmland, Enter or right-click closes it, the crop comes from the tool options. The usual way to get fields is **File ▸ Import fields…**, which fetches them from the state agricultural registers |
-| `5` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
+| `6` Marking brush | Sweep to mark trees, objects and parametric buildings in bulk and delete them together |
 | **Terrain** | |
 | `2` Raise ground | One lifting stroke per click, by the set amount and radius. The track keeps its height, cutting and embankment are laid over the strokes afterwards |
 | `3` Lower ground | The same stroke downward — a hollow, a pond bed, a pit |

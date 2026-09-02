@@ -36,7 +36,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use content::import::dgm::TerrainSource;
 use content::terrain::{
-    Scenery, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation,
+    Buildings, Scenery, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation,
 };
 use content::vehicles::passenger_coach;
 use mod_runtime::ModRuntime;
@@ -1026,6 +1026,11 @@ fn setup(
     let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
         .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone))
         .with_scenery(Scenery::from_line(
+            &line_source,
+            &sim.net,
+            terrain_options.zone,
+        ))
+        .with_buildings(Buildings::from_line(
             &line_source,
             &sim.net,
             terrain_options.zone,

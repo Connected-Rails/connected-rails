@@ -142,6 +142,7 @@ impl TerrainStreamer {
 pub fn stream_terrain(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut building_assets: ResMut<world_render::BuildingAssets>,
     mut streamer: ResMut<TerrainStreamer>,
     mut info: ResMut<TerrainInfo>,
     sim: Res<SimResource>,
@@ -255,6 +256,7 @@ pub fn stream_terrain(
         let entity = render::spawn_terrain_tile(
             &mut commands,
             &mut meshes,
+            &mut building_assets,
             &streamer.material,
             &streamer.catalog,
             &tile,

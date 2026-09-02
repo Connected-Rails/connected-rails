@@ -23,10 +23,13 @@ use bevy::world_serialization::WorldAsset;
 use content::LineSource;
 use content::TerrainOptions;
 use content::import::alignment::{CantRules, ramp_cant};
+#[cfg(test)]
+use content::route::STARTER_TRACK_TYPE;
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
-    ObjectSource, STARTER_TRACK_TYPE, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
+    ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
+use content::{BuildingSource, BuildingSpec};
 use glam::{DQuat, DVec2, DVec3};
 use i18n::t;
 use sim_core::interlock::{SignalKind, SignalSystem};
@@ -36,6 +39,9 @@ use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 /// Throw time a freshly placed turnout gets [s] — the file format's own
 /// default; the selection panel edits it per switch afterwards.
 const DEFAULT_THROW_TIME: f64 = 6.0;
+/// Track-relative buildings may be placed into the first rows of development
+/// beside the railway while still retaining an unambiguous carrier edge.
+const BUILDING_TRACK_REACH: f64 = 250.0;
 
 /// Active tool of the viewport.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -61,6 +67,8 @@ pub enum Tool {
     Gradient,
     PlaceDevice,
     PlaceObject,
+    /// Places an editable parametric building, baked only for rendering.
+    PlaceBuilding,
     /// One tree per click, free of the track.
     PlaceTree,
     /// Forest brush: clicks collect a polygon; Enter/right-click bakes it into
@@ -118,6 +126,7 @@ pub enum Selection {
     Edge(usize),
     Device(usize),
     Object(usize),
+    Building(usize),
     Tree(usize),
     Marker(usize),
     TerrainEdit(usize),
@@ -166,6 +175,7 @@ impl AreaStroke {
 pub enum Mark {
     Tree(usize),
     Object(usize),
+    Building(usize),
     Device(usize),
     Marker(usize),
 }
@@ -176,6 +186,7 @@ fn as_mark(selection: Selection) -> Option<Mark> {
     match selection {
         Selection::Tree(i) => Some(Mark::Tree(i)),
         Selection::Object(i) => Some(Mark::Object(i)),
+        Selection::Building(i) => Some(Mark::Building(i)),
         Selection::Device(i) => Some(Mark::Device(i)),
         Selection::Marker(i) => Some(Mark::Marker(i)),
         _ => None,
@@ -291,6 +302,11 @@ pub const TOOL_GROUPS: [(&str, editor_ui::Icon, &[ToolEntry]); 7] = [
         &[
             (Tool::PlaceDevice, "tool-device", editor_ui::Icon::Device),
             (Tool::PlaceObject, "tool-object", editor_ui::Icon::Object),
+            (
+                Tool::PlaceBuilding,
+                "tool-building",
+                editor_ui::Icon::Object,
+            ),
             (Tool::PlaceMarker, "tool-marker", editor_ui::Icon::Marker),
         ],
     ),
@@ -592,6 +608,10 @@ pub struct EditorState {
     pub jump_to: Option<&'static str>,
     /// Object (`"<mod>:<name>"`) the Place-object tool stamps.
     pub object: Option<String>,
+    /// Recipe stamped by the parametric-building tool.
+    pub building_spec: BuildingSpec,
+    /// Full source clipboard; copying deliberately preserves every generation setting.
+    pub building_clipboard: Option<BuildingSource>,
     /// The next placed object stands on the terrain instead of at the track's
     /// height — the toolbox toggle, stamped into the object at placement.
     pub place_snap_to_terrain: bool,
@@ -782,6 +802,7 @@ fn envelope_margin(tool: Tool) -> Option<f64> {
         Tool::PlaceTree
         | Tool::PlaceForest
         | Tool::PlaceObject
+        | Tool::PlaceBuilding
         | Tool::PlaceMarker
         | Tool::TerrainRaise
         | Tool::TerrainLower
@@ -1559,6 +1580,16 @@ pub fn object_pos(net: &TrackNetwork, object: &ObjectSource) -> Option<EcefPos> 
     ))
 }
 
+/// World position of a parametric building, in the scenery placement frame.
+pub fn building_pos(net: &TrackNetwork, building: &BuildingSource) -> Option<EcefPos> {
+    let edge = net.edges().get(building.edge as usize)?;
+    let pose = edge.eval(building.s.clamp(0.0, edge.length()));
+    let right = pose.tangent.cross(pose.up).normalize_or_zero();
+    Some(EcefPos(
+        pose.pos.0 + right * building.lateral_offset + pose.up * building.height,
+    ))
+}
+
 /// How close a click has to come, scaled with the view height. Still the
 /// measure for what a click *places* (ghost snapping, tile picking) — what a
 /// click *selects* is measured on screen, see [`ScreenPick`].
@@ -1655,6 +1686,7 @@ pub fn selection_pos(
         }
         Selection::Device(i) => device_pos(&line.net, line.source.devices.get(i)?),
         Selection::Object(i) => object_pos(&line.net, line.source.objects.get(i)?),
+        Selection::Building(i) => building_pos(&line.net, line.source.buildings.get(i)?),
         Selection::Tree(i) => Some(marks.tree(i, line.source.trees.get(i)?)),
         Selection::Marker(i) => Some(marks.marker(i, line.source.markers.get(i)?)),
         Selection::TerrainEdit(i) => Some(marks.stroke(i, line.source.terrain.get(i)?)),
@@ -1954,6 +1986,11 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
                 line.source.objects.remove(i);
             }
         }
+        Selection::Building(i) => {
+            if i < line.source.buildings.len() {
+                line.source.buildings.remove(i);
+            }
+        }
         Selection::Tree(i) => {
             if i < line.source.trees.len() {
                 line.source.trees.remove(i);
@@ -2020,6 +2057,29 @@ pub fn delete_selection(line: &mut Line, state: &mut EditorState) {
     }
 }
 
+/// Copies the complete dynamic-building source, including its stable night seed.
+pub fn copy_building(line: &Line, state: &mut EditorState) -> bool {
+    let Selection::Building(index) = state.selection else {
+        return false;
+    };
+    let Some(building) = line.source.buildings.get(index) else {
+        return false;
+    };
+    state.building_clipboard = Some(building.clone());
+    true
+}
+
+/// Pastes a building beside the original. All generation settings stay identical.
+pub fn paste_building(line: &mut Line, state: &mut EditorState) -> bool {
+    let Some(mut building) = state.building_clipboard.clone() else {
+        return false;
+    };
+    building.lateral_offset += building.spec.width as f64 + 2.0;
+    line.source.buildings.push(building);
+    state.selection = Selection::Building(line.source.buildings.len() - 1);
+    true
+}
+
 /// Deletes a whole marker layer — one undo step, like the marking brush.
 pub fn delete_layer(line: &mut Line, state: &mut EditorState, layer: &str) {
     line.source.markers.retain(|m| m.layer != layer);
@@ -2034,18 +2094,26 @@ pub fn delete_layer(line: &mut Line, state: &mut EditorState, layer: &str) {
 pub fn delete_marked(line: &mut Line, state: &mut EditorState) {
     let mut trees: Vec<usize> = Vec::new();
     let mut objects: Vec<usize> = Vec::new();
+    let mut buildings: Vec<usize> = Vec::new();
     let mut devices: Vec<usize> = Vec::new();
     let mut markers: Vec<usize> = Vec::new();
     for mark in state.marked.drain(..) {
         match mark {
             Mark::Tree(i) => trees.push(i),
             Mark::Object(i) => objects.push(i),
+            Mark::Building(i) => buildings.push(i),
             Mark::Device(i) => devices.push(i),
             Mark::Marker(i) => markers.push(i),
         }
     }
     // Descending order, so earlier removals do not shift later indices.
-    for list in [&mut trees, &mut objects, &mut devices, &mut markers] {
+    for list in [
+        &mut trees,
+        &mut objects,
+        &mut buildings,
+        &mut devices,
+        &mut markers,
+    ] {
         list.sort_unstable();
         list.dedup();
     }
@@ -2057,6 +2125,11 @@ pub fn delete_marked(line: &mut Line, state: &mut EditorState) {
     for i in objects.into_iter().rev() {
         if i < line.source.objects.len() {
             line.source.objects.remove(i);
+        }
+    }
+    for i in buildings.into_iter().rev() {
+        if i < line.source.buildings.len() {
+            line.source.buildings.remove(i);
         }
     }
     // A device takes its signal and the signal's route references along.
@@ -2083,6 +2156,12 @@ fn mark_within(state: &mut EditorState, line: &Line, marks: &Marks, p: EcefPos, 
         let near = object_pos(&line.net, object).is_some_and(|q| q.distance(p) <= radius);
         if near && !state.marked.contains(&Mark::Object(i)) {
             state.marked.push(Mark::Object(i));
+        }
+    }
+    for (i, building) in line.source.buildings.iter().enumerate() {
+        let near = building_pos(&line.net, building).is_some_and(|q| q.distance(p) <= radius);
+        if near && !state.marked.contains(&Mark::Building(i)) {
+            state.marked.push(Mark::Building(i));
         }
     }
 }
@@ -2783,6 +2862,9 @@ pub fn tool_input(
         Selection::Object(i) if i >= line.source.objects.len() => {
             state.selection = Selection::None;
         }
+        Selection::Building(i) if i >= line.source.buildings.len() => {
+            state.selection = Selection::None;
+        }
         Selection::Tree(i) if i >= line.source.trees.len() => {
             state.selection = Selection::None;
         }
@@ -2809,6 +2891,7 @@ pub fn tool_input(
     let stale = state.marked.iter().any(|m| match m {
         Mark::Tree(i) => *i >= line.source.trees.len(),
         Mark::Object(i) => *i >= line.source.objects.len(),
+        Mark::Building(i) => *i >= line.source.buildings.len(),
         Mark::Device(i) => *i >= line.source.devices.len(),
         Mark::Marker(i) => *i >= line.source.markers.len(),
     });
@@ -3312,6 +3395,28 @@ pub fn tool_input(
                 _ => overlay.status = t!("status-no-track-hit"),
             }
         }
+        Tool::PlaceBuilding => match nearest_on_network(&line.net, p) {
+            Some((edge, s, distance)) if distance <= BUILDING_TRACK_REACH => {
+                let pose = line.net.edges()[edge].eval(s);
+                let right = pose.tangent.cross(pose.up).normalize_or_zero();
+                let mut spec = state.building_spec.normalised();
+                spec.seed =
+                    (line.source.buildings.len() as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                line.source.buildings.push(BuildingSource {
+                    edge: edge as u32,
+                    s,
+                    lateral_offset: (p.0 - pose.pos.0)
+                        .dot(right)
+                        .clamp(-BUILDING_TRACK_REACH, BUILDING_TRACK_REACH),
+                    yaw_deg: 0.0,
+                    height: 0.0,
+                    snap_to_terrain: true,
+                    spec,
+                });
+                state.selection = Selection::Building(line.source.buildings.len() - 1);
+            }
+            _ => overlay.status = t!("status-no-track-hit"),
+        },
         Tool::PlaceTree => {
             let (lat, lon, _) = geo::from_ecef(p);
             // A stand plants one of its species, taken in turn — painting
@@ -3561,6 +3666,15 @@ pub fn tool_input(
                 .enumerate()
                 .filter_map(|(i, o)| Some((Selection::Object(i), object_pos(&line.net, o)?)))
                 .collect::<Vec<_>>();
+            let buildings = line
+                .source
+                .buildings
+                .iter()
+                .enumerate()
+                .filter_map(|(i, building)| {
+                    Some((Selection::Building(i), building_pos(&line.net, building)?))
+                })
+                .collect::<Vec<_>>();
             let trees = line
                 .source
                 .trees
@@ -3597,6 +3711,7 @@ pub fn tool_input(
             let nearest = device
                 .into_iter()
                 .chain(objects_)
+                .chain(buildings)
                 .chain(trees)
                 .chain(markers)
                 .chain(terrain)
@@ -4086,6 +4201,15 @@ pub fn draw_gizmos(
                 ground_circle(&mut gizmos, &origin.0, p, radius, accent);
             }
         }
+        Selection::Building(i) => {
+            if let Some(building) = line.source.buildings.get(i)
+                && let Some(p) = building_pos(&line.net, building)
+            {
+                let radius = (building.spec.width.max(building.spec.length) * 0.55)
+                    .max((focus.height * 0.012) as f32);
+                ground_circle(&mut gizmos, &origin.0, p, radius, accent);
+            }
+        }
         Selection::Object(i) => {
             if let Some(object) = line.source.objects.get(i)
                 && let Some(p) = object_pos(&line.net, object)
@@ -4226,6 +4350,11 @@ pub fn draw_gizmos(
                 .objects
                 .get(i)
                 .and_then(|o| object_pos(&line.net, o)),
+            Mark::Building(i) => line
+                .source
+                .buildings
+                .get(i)
+                .and_then(|building| building_pos(&line.net, building)),
             Mark::Device(i) => line
                 .source
                 .devices
@@ -4361,6 +4490,38 @@ pub fn draw_gizmos(
         let base = origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * MARK_LIFT;
         let dir = origin.0.dir_to_render(pose.tangent) * (radius * 2.0);
         gizmos.line(base - dir, base + dir, accent);
+    }
+    // A building is placed where the cursor stands beside its nearest track.
+    // Show its full footprint, because unlike a mast its size materially
+    // affects whether the chosen spot fits.
+    if state.tool == Tool::PlaceBuilding
+        && let Some(p) = cursor
+        && let Some((edge, s, distance)) = nearest_on_network(&line.net, p)
+        && distance <= BUILDING_TRACK_REACH
+        && let Some(edge) = line.net.edges().get(edge)
+    {
+        let pose = edge.eval(s);
+        let across = pose.tangent.cross(pose.up).normalize_or_zero();
+        let lateral = (p.0 - pose.pos.0)
+            .dot(across)
+            .clamp(-BUILDING_TRACK_REACH, BUILDING_TRACK_REACH);
+        let center = EcefPos(pose.pos.0 + across * lateral);
+        let half_w = state.building_spec.width.clamp(3.0, 150.0) as f64 / 2.0;
+        let half_l = state.building_spec.length.clamp(3.0, 250.0) as f64 / 2.0;
+        let corners = [
+            EcefPos(center.0 - across * half_w - pose.tangent * half_l),
+            EcefPos(center.0 + across * half_w - pose.tangent * half_l),
+            EcefPos(center.0 + across * half_w + pose.tangent * half_l),
+            EcefPos(center.0 - across * half_w + pose.tangent * half_l),
+            EcefPos(center.0 - across * half_w - pose.tangent * half_l),
+        ];
+        let lift = origin.0.dir_to_render(pose.up) * MARK_LIFT;
+        gizmos.linestrip(
+            corners
+                .into_iter()
+                .map(|corner| origin.0.to_render(corner) + lift),
+            accent,
+        );
     }
     if let Some(drawing) = &state.drawing {
         // While Ctrl holds the piece straight the preview turns yellow, as the
@@ -5852,5 +6013,45 @@ mod palette_tests {
         state.walk_points.push(geo::to_ecef_deg(52.0, 10.0, 0.0));
         select_tool(&mut state, Tool::Select);
         assert!(state.walk_points.is_empty());
+    }
+
+    #[test]
+    fn building_copy_paste_preserves_the_generation_recipe() {
+        let original = BuildingSource {
+            edge: 2,
+            s: 40.0,
+            lateral_offset: 8.0,
+            yaw_deg: 15.0,
+            height: 0.5,
+            snap_to_terrain: true,
+            spec: BuildingSpec {
+                width: 18.0,
+                floors: 5,
+                seed: 123_456,
+                ..Default::default()
+            },
+        };
+        let mut line = Line {
+            source: LineSource {
+                buildings: vec![original.clone()],
+                ..Default::default()
+            },
+            net: TrackNetwork::new(),
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        };
+        let mut state = EditorState {
+            selection: Selection::Building(0),
+            ..Default::default()
+        };
+        assert!(copy_building(&line, &mut state));
+        assert!(paste_building(&mut line, &mut state));
+        assert_eq!(line.source.buildings[1].spec, original.spec);
+        assert_eq!(line.source.buildings[1].yaw_deg, original.yaw_deg);
+        assert_eq!(state.selection, Selection::Building(1));
     }
 }

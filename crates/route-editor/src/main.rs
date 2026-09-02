@@ -885,6 +885,15 @@ fn diff(
                     .add_disc(utm(lat.to_degrees(), lon.to_degrees()), 1.0);
             }
         }
+        for building in changed(&last.buildings, &now.buildings) {
+            if let Some(pos) = tools::building_pos(net, building) {
+                let (lat, lon, _) = geo::from_ecef(pos);
+                change.scatter.add_disc(
+                    utm(lat.to_degrees(), lon.to_degrees()),
+                    building.spec.width.max(building.spec.length) as f64,
+                );
+            }
+        }
         // A field is not something standing on the ground — it *is* the ground,
         // part of the tile's own mesh, so a changed one rebuilds the tiles
         // under it. An import changes hundreds at once, and marking each of
@@ -1405,7 +1414,11 @@ fn overlay_control(
         changed = true;
     }
 
-    if keys.just_pressed(KeyCode::KeyC) {
+    let command = keys.pressed(KeyCode::ControlLeft)
+        || keys.pressed(KeyCode::ControlRight)
+        || keys.pressed(KeyCode::SuperLeft)
+        || keys.pressed(KeyCode::SuperRight);
+    if keys.just_pressed(KeyCode::KeyC) && !command {
         overlay.source.clear_cache();
         overlay.clear(&mut commands);
         overlay.status = t!("status-cache-cleared");

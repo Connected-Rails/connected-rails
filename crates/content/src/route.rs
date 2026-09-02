@@ -1225,6 +1225,10 @@ pub struct LineSource {
     /// them — they are the line's furniture.
     #[serde(default)]
     pub objects: Vec<ObjectSource>,
+    /// Parametric buildings. Their editable recipe stays in the module; terrain
+    /// compilation bakes it into streamed LOD mesh instances for the simulator.
+    #[serde(default)]
+    pub buildings: Vec<crate::buildings::BuildingSource>,
     /// Stabling roads and portals — where stock may be put, and where trains appear and
     /// disappear (see [`YardSource`]). A line without them can be driven but not
     /// shunted, because there is nowhere to shunt to.
@@ -1324,6 +1328,7 @@ impl Default for LineSource {
             edges: Vec::new(),
             devices: Vec::new(),
             objects: Vec::new(),
+            buildings: Vec::new(),
             yards: Vec::new(),
             trees: Vec::new(),
             walk_paths: Vec::new(),
@@ -1606,6 +1611,8 @@ pub enum RuleIssue {
     ObjectOffEdge { object: u32 },
     /// Scenery object names an `objects/*.ron` no installed mod has.
     UnknownObject { object: u32 },
+    /// Parametric building outside its track (bad edge index or `s` beyond the length).
+    BuildingOffEdge { building: u32 },
     /// Flank protection of a route names a node that is no switch, or a
     /// signal that does not exist.
     FlankGuardInvalid { route: u32 },
@@ -1908,6 +1915,10 @@ impl LineSource {
         self.objects.retain(|o| edge_map(o.edge).is_some());
         for o in &mut self.objects {
             o.edge = edge_map(o.edge).expect("kept objects sit on kept edges");
+        }
+        self.buildings.retain(|b| edge_map(b.edge).is_some());
+        for building in &mut self.buildings {
+            building.edge = edge_map(building.edge).expect("kept buildings sit on kept edges");
         }
         // A road whose track is gone is gone with it; the rest follow their edge.
         self.yards.retain(|y| edge_map(y.edge).is_some());
@@ -2643,6 +2654,12 @@ impl LineSource {
                 o.s -= s;
             }
         }
+        for building in &mut self.buildings {
+            if building.edge as usize == index && building.s >= s {
+                building.edge = new_index;
+                building.s -= s;
+            }
+        }
         for y in &mut self.yards {
             if y.edge as usize == index && y.s >= s {
                 y.edge = new_index;
@@ -2857,6 +2874,12 @@ impl LineSource {
             }
             if !objects.contains_key(&o.object) {
                 issues.push(RuleIssue::UnknownObject { object });
+            }
+        }
+        for (i, building) in self.buildings.iter().enumerate() {
+            match lengths_of(building.edge) {
+                Some(len) if (0.0..=len).contains(&building.s) => {}
+                _ => issues.push(RuleIssue::BuildingOffEdge { building: i as u32 }),
             }
         }
 
@@ -3219,6 +3242,11 @@ impl LineSource {
         for o in &self.objects {
             if o.edge as usize >= edge_ids.len() {
                 return Err(CompileError::UnknownEdge(o.edge));
+            }
+        }
+        for building in &self.buildings {
+            if building.edge as usize >= edge_ids.len() {
+                return Err(CompileError::UnknownEdge(building.edge));
             }
         }
 
@@ -4355,6 +4383,38 @@ mod tests {
         let issues = line.check(&types, &objects);
         assert!(issues.contains(&RuleIssue::ObjectOffEdge { object: 0 }));
         assert!(issues.contains(&RuleIssue::UnknownObject { object: 1 }));
+    }
+
+    #[test]
+    fn buildings_round_trip_and_follow_split_and_removal() {
+        let house = |edge: u32, s: f64| crate::buildings::BuildingSource {
+            edge,
+            s,
+            lateral_offset: 14.0,
+            yaw_deg: 90.0,
+            height: 0.0,
+            snap_to_terrain: true,
+            spec: crate::buildings::BuildingSpec::default(),
+        };
+        let mut line = musterbahn();
+        line.buildings = vec![house(0, 500.0), house(0, 2500.0), house(1, 100.0)];
+
+        let round_trip = LineSource::from_ron(&line.to_ron()).expect("building RON round-trip");
+        assert_eq!(round_trip.buildings, line.buildings);
+
+        line.split_edge(0, 1500.0).expect("splits");
+        assert_eq!(line.buildings[0].edge, 0, "before the cut");
+        assert_eq!(line.buildings[1].edge, 3, "beyond the cut");
+        assert!((line.buildings[1].s - 1000.0).abs() < 1e-9);
+
+        line.remove_edge(1);
+        assert_eq!(line.buildings.len(), 2);
+        assert_eq!(line.buildings[1].edge, 2);
+        line.compile().expect("still compiles");
+
+        line.buildings[0].s = 99_999.0;
+        let issues = line.check(&type_registry(), &Default::default());
+        assert!(issues.contains(&RuleIssue::BuildingOffEdge { building: 0 }));
     }
 
     /// The registry-aware rules: unknown names and an LZB superstructure

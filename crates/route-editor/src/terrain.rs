@@ -28,7 +28,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, poll_once};
 use content::import::dgm::TerrainSource;
 use content::route::{MarkerSource, TerrainEditSource, TreeSource};
 use content::terrain::{
-    self, Scenery, TerrainBuilder, TerrainEdits, TerrainStats, TerrainTile, Vegetation,
+    self, Buildings, Scenery, TerrainBuilder, TerrainEdits, TerrainStats, TerrainTile, Vegetation,
 };
 use content::{TerrainOptions, TileKey};
 use glam::DVec2;
@@ -336,6 +336,7 @@ impl TerrainView {
 /// a tuple is a type nobody wants to read.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct SurfaceMaterials<'w> {
+    buildings: ResMut<'w, world_render::BuildingAssets>,
     road: ResMut<'w, world_render::RoadMaterials>,
     road_assets: ResMut<'w, Assets<world_render::RoadMaterial>>,
     conductor: ResMut<'w, world_render::ConductorMaterials>,
@@ -452,17 +453,20 @@ pub fn update(
         let Some(loaded) = view.loaded.get_mut(&k) else {
             continue;
         };
-        let (trees, objects, people) = builder.rescatter(&loaded.tile);
+        let (trees, objects, buildings, people) = builder.rescatter(&loaded.tile);
         let old: Vec<Entity> = children
             .get(loaded.entity)
             .map(|c| c.iter().filter(|e| scattered.contains(*e)).collect())
             .unwrap_or_default();
         world_render::respawn_scatter(
             &mut commands,
+            &mut meshes,
+            &mut surfaces.buildings,
             loaded.entity,
             old,
             trees,
             &objects,
+            &buildings,
             &people,
             &view.catalog,
         );
@@ -523,6 +527,7 @@ pub fn update(
         let entity = world_render::spawn_terrain_tile(
             &mut commands,
             &mut meshes,
+            &mut surfaces.buildings,
             &view.material,
             &view.catalog,
             &tile,
@@ -578,6 +583,7 @@ pub fn update(
         tile.splat = Vec::new();
         tile.trees = Vec::new();
         tile.objects = Vec::new();
+        tile.buildings = Vec::new();
         tile.fields = Vec::new();
         tile.waters = Vec::new();
         tile.roads = Vec::new();
@@ -803,6 +809,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
         .collect();
     let vegetation = Vegetation::from_line(&line.source, options.zone);
     let scenery = Scenery::from_line(&line.source, &line.net, options.zone);
+    let buildings = Buildings::from_line(&line.source, &line.net, options.zone);
     let edits = TerrainEdits::from_line(&line.source, options.zone);
     let farmland =
         content::farmland::Fields::from_line(&line.source, options.zone, options.tile_size);
@@ -831,7 +838,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
         };
         view.waters_fingerprint = Some(waters_fingerprint);
         view.builder = Some(Arc::new(builder.with_line(
-            &line.net, vegetation, scenery, farmland, waters, roads, power, edits,
+            &line.net, vegetation, scenery, buildings, farmland, waters, roads, power, edits,
         )));
         return;
     }
@@ -862,6 +869,7 @@ fn refresh_builder(view: &mut TerrainView, line: &Line, options: TerrainOptions)
         TerrainBuilder::new(&line.net, sources, options)
             .with_vegetation(vegetation)
             .with_scenery(scenery)
+            .with_buildings(buildings)
             .with_fields(farmland)
             .with_waters(waters)
             .with_roads(roads)

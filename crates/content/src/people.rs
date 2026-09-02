@@ -1711,7 +1711,7 @@ mod tests {
         }
         // Rescattering onto the built tile gives the same placement.
         let tile = placed[0].0;
-        let (_, _, again) = builder.rescatter(tile);
+        let (_, _, _, again) = builder.rescatter(tile);
         assert_eq!(again, tile.people);
     }
 
@@ -2214,7 +2214,7 @@ mod tests {
         assert_eq!(forecourt.len(), 4);
         // Rescattering gives the same people, and the same ways.
         for tile in &tiles {
-            let (_, _, again) = builder.rescatter(tile);
+            let (_, _, _, again) = builder.rescatter(tile);
             assert_eq!(again, tile.people);
         }
     }

@@ -54,7 +54,7 @@ Bild (KI-Züge sind gefahren, Luftbildkacheln sind geladen). 300 Frames für gel
 |---|---|
 | `--hud <stufe>` | `full`, `reduced` oder `off` — die drei Stufen der Anzeige (F7). Schreibt die Einstellungsdatei nicht. |
 | `--overlays` | Öffnet Tastenhilfe (F5) und Diagnose (F6) von Anfang an — sonst nur per Tastendruck erreichbar. |
-| `--menu [seite]` | Fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe), `line`, `loco`, `scenario`, `mods`, `settings`, `controls`. |
+| `--menu [seite]` | Fotografiert das Hauptmenü statt der Welt dahinter. Seite optional: `root` (Vorgabe), `run` (die Fahrtauswahl, früher `scenario`), `line`, `loco`, `setup`, `mods`, `settings`, `controls`. |
 | `--camera <modus>` | `outside` für die Außenkamera (Fahrzeugmodelle), `walk` für zu Fuß, `fly` für die Freikamera des Konsolenbefehls `fly` — alles sonst nur per Taste oder Konsole erreichbar. |
 | `--fly R,H,V` | Nur mit `--camera fly`: wo die Freikamera steht, in Metern **rechts**, **über** und **vor** dem Zug. Vorgabe `25,6,0`. |
 | `--look R,H,V` | Wohin sie schaut, im selben Bezug. Vorgabe `0,2,0` — der Zug. Ohne die beiden kann eine Aufnahme nur den Zug zeigen, und alles über etwa zehn Metern läuft oben aus dem Bild. |

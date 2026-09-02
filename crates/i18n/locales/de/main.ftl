@@ -1369,7 +1369,7 @@ hud-network-connecting = verbinde …
 
 menu-tagline = Deutsche Eisenbahnsimulation
 menu-drive = Fahren
-menu-drive-hint = Modul, Fahrzeug und Fahrt
+menu-drive-hint = Fahrt, Strecke und Fahrzeug
 menu-mods = Mods
 menu-mods-hint = Inhalte ein- und ausschalten
 menu-settings = Einstellungen
@@ -1383,12 +1383,17 @@ menu-resume-hint = Weiter, wo der Zug steht
 menu-title = Zurück zum Hauptmenü
 menu-title-hint = Beendet die Fahrt und baut die Welt ab — nicht gewerteter Fortschritt im Szenario geht verloren.
 menu-step = Schritt { $step } von { $total }
-menu-select-line = Modul auswählen
-menu-select-line-hint = Wo die Fahrt stattfindet.
+menu-select-line = Strecke auswählen
+menu-select-line-hint = Die Fahrt nennt keine Strecke — hier wird sie gewählt.
 menu-select-loco = Fahrzeug auswählen
 menu-select-loco-hint = Was an der Spitze des Zuges läuft.
 menu-select-run = Fahrt auswählen
-menu-select-run-hint = Ein Szenario, eine Leistung aus dem Fahrplan des Tages — oder freie Hand.
+menu-select-run-hint = Ein Szenario, eine Leistung aus dem Fahrplan des Tages — oder freie Hand. Die Strecke ergibt sich daraus.
+# Die Überschriften, unter denen die Fahrten stehen: jede nennt die Strecke, auf der sie
+# liegt — wer darunter eine Fahrt wählt, wählt damit auch die Strecke.
+menu-scenario-heading = Szenarien · { $route }
+# Worunter eine Fahrt steht, die keine Strecke nennt — dann wird der Spieler gefragt.
+menu-route-open = Beliebige Strecke
 # Die eingebauten Inhalte, auf die der Simulator zurückfällt, wenn nichts gewählt wird.
 # Das Fähnchen an der Zeile sagt das, der Name selbst muss es nicht mehr.
 menu-chip-builtin = Integriert
@@ -1396,7 +1401,7 @@ menu-chip-composition = Komposition
 menu-line-builtin = Beispielmodul
 menu-loco-builtin = BR 101
 menu-scenario-none = Kein Szenario — freie Fahrt
-menu-free-run = Kein Fahrplan und keine Wertung: das Modul, das Fahrzeug, und wohin Sie damit fahren.
+menu-free-run = Kein Fahrplan und keine Wertung: die Strecke, das Fahrzeug, und wohin Sie damit fahren.
 # Die Tastenhinweise in der Fußleiste: ein Fähnchen je Taste.
 menu-hint-select = auswählen
 menu-hint-confirm = bestätigen
@@ -1421,7 +1426,7 @@ menu-fact-drive = Antrieb
 menu-fact-brake = Bremse
 menu-fact-start = Beginn
 menu-fact-timetable = Fahrplan
-menu-fact-line = Modul
+menu-fact-line = Strecke
 menu-fact-events = Ereignisse
 menu-fact-km = { $value } km
 menu-fact-m = { $value } m
@@ -1437,8 +1442,8 @@ menu-fact-kmh = { $value } km/h
 # derselben Strecke — deshalb werden Datum und Wetter hier eingestellt, auf dem
 # Schritt zwischen Auswahl und Start.
 
-# Die Überschrift über den Leistungen eines Betriebstags in der Fahrtauswahl.
-menu-day-heading = Fahrplan · { $name }
+# Die Überschrift über den Leistungen eines Betriebstags, unter seiner Strecke.
+menu-day-heading = Fahrplan { $name } · { $route }
 # Eine Leistung darin: wo sie beginnt und wo sie endet.
 menu-service = { $from } – { $to }
 menu-run-setup = Fahrt einrichten

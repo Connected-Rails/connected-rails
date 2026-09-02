@@ -682,6 +682,31 @@ mod tests {
         }
     }
 
+    /// Every line every installed mod ships compiles, and every track on it is
+    /// laid with a superstructure an installed mod actually defines. This is
+    /// the guard against the failure the built-in default type used to hide: a
+    /// module that said nothing about its track loaded and ran anyway, on
+    /// untextured grey ballast, and nothing anywhere said so.
+    #[test]
+    fn every_shipped_line_is_laid_with_a_track_type_that_resolves() {
+        let mods = example_mods();
+        assert!(!mods.lines.is_empty());
+        for (key, line) in &mods.lines {
+            for (i, edge) in line.edges.iter().enumerate() {
+                assert!(
+                    !edge.track_type.is_empty(),
+                    "{key} edge {i} names no track type"
+                );
+            }
+            let mut net = line
+                .compile()
+                .unwrap_or_else(|e| panic!("{key}: {e:?}"))
+                .net;
+            let warnings = mods.apply_track_types(&mut net);
+            assert!(warnings.is_empty(), "{key}: {warnings:?}");
+        }
+    }
+
     /// The `people` mod is the generated roster (tools/characters/): every entry names a
     /// model that ships, both genders are there, and everyone has a role — the app
     /// picks the walker's body and the crowds out of exactly this.
@@ -772,8 +797,14 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let edge = track_model::EdgeId(0);
-        assert_eq!(net.track_type_at(edge, 1000.0).roughness, 1.0);
-        assert_eq!(net.track_type_at(edge, 3500.0).roughness, 1.4);
+        assert_eq!(
+            net.track_type_at(edge, 1000.0).map(|t| t.roughness),
+            Some(1.0)
+        );
+        assert_eq!(
+            net.track_type_at(edge, 3500.0).map(|t| t.roughness),
+            Some(1.4)
+        );
         // Altbau allows the 120 km/h the line runs — the profile is unchanged.
         assert_eq!(net.edges()[0].speed.at(3500.0), 120.0);
 

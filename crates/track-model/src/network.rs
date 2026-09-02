@@ -191,7 +191,10 @@ pub struct TrackEdge {
     pub cant: StepProfile<f64>,
     /// Permitted speed [km/h] over `s`.
     pub speed: StepProfile<f64>,
-    /// Track type over `s` — indices into [`TrackNetwork::types`], 0 = default.
+    /// Track type over `s` — indices into [`TrackNetwork::types`]. There is no
+    /// built-in type to fall back on: a line states what its track is built of
+    /// (`content::route::CompileError::MissingTrackType` is what omitting it
+    /// costs), and an index the table does not answer draws nothing.
     #[serde(default = "default_track_type")]
     pub track_type: StepProfile<u32>,
     /// What hangs over this edge, section by section. `None` = the edge says nothing and
@@ -383,9 +386,10 @@ pub struct TrackNetwork {
     edges: Vec<TrackEdge>,
     nodes: Vec<TrackNode>,
     devices: Vec<TracksideDevice>,
-    /// Track types the edges' [`TrackEdge::track_type`] profiles index into;
-    /// index 0 is always the default type. Saves from before track types
-    /// deserialize into the default table.
+    /// Track types the edges' [`TrackEdge::track_type`] profiles index into,
+    /// in the order the line first names them. The table is exactly what the
+    /// line asked for — nothing is reserved, and an empty table means a
+    /// network nobody has laid any track type on.
     #[serde(default = "default_types")]
     types: Vec<TrackType>,
     /// What the line is electrified with where an edge says nothing. A line states this
@@ -400,7 +404,7 @@ pub struct TrackNetwork {
 }
 
 fn default_types() -> Vec<TrackType> {
-    vec![TrackType::default()]
+    Vec::new()
 }
 
 fn default_electrification() -> Electrification {
@@ -425,7 +429,8 @@ impl TrackNetwork {
         Self::default()
     }
 
-    /// The track-type table; [`TrackEdge::track_type`] indexes into it.
+    /// The track-type table; [`TrackEdge::track_type`] indexes into it. Empty
+    /// where no track type has been laid on this network at all.
     pub fn types(&self) -> &[TrackType] {
         &self.types
     }
@@ -464,33 +469,32 @@ impl TrackNetwork {
         }
     }
 
-    /// Replaces the track-type table. Index 0 should stay a default type;
-    /// the compiler and [`Self::apply_track_types`] keep that invariant.
+    /// Replaces the track-type table with exactly what is given.
     pub fn set_types(&mut self, types: Vec<TrackType>) {
-        self.types = if types.is_empty() {
-            default_types()
-        } else {
-            types
-        };
+        self.types = types;
     }
 
-    /// Track type in force at `(edge, s)`.
-    pub fn track_type_at(&self, edge: EdgeId, s: f64) -> &TrackType {
-        let index = self.edges[edge.index()].track_type.at(s) as usize;
-        &self.types[index.min(self.types.len() - 1)]
+    /// Track type in force at `(edge, s)` — `None` where the edge's index
+    /// answers to nothing, which on a compiled line cannot happen and on a
+    /// network assembled by hand means no track type was ever laid.
+    pub fn track_type_at(&self, edge: EdgeId, s: f64) -> Option<&TrackType> {
+        let index = self.edges.get(edge.index())?.track_type.at(s) as usize;
+        self.types.get(index)
     }
 
     /// Resolves the type table against a registry (`"<mod>:<name>"` → spec)
     /// and caps every edge's speed profile with its types' `max_speed` — the
     /// superstructure limit becomes part of the one profile every consumer
-    /// (AI, LZB, HUD, scoring) already reads. Index 0, the default type, is
-    /// never looked up. Returns a warning per unresolved name.
+    /// (AI, LZB, HUD, scoring) already reads. Every entry is looked up — there
+    /// is no built-in type that would be exempt. A name no installed mod
+    /// answers keeps [`TrackType::placeholder`] properties and returns a
+    /// warning; that is a missing mod, not a line that said nothing.
     pub fn apply_track_types(
         &mut self,
         resolve: impl Fn(&str) -> Option<TrackType>,
     ) -> Vec<String> {
         let mut warnings = Vec::new();
-        for ty in self.types.iter_mut().skip(1) {
+        for ty in self.types.iter_mut() {
             match resolve(&ty.name) {
                 Some(mut spec) => {
                     // The registry key is the addressable name; keep it.
@@ -509,11 +513,16 @@ impl TrackNetwork {
                 .steps()
                 .iter()
                 .map(|(s, index)| {
-                    let index = (*index as usize).min(self.types.len() - 1);
-                    (*s, self.types[index].max_speed)
+                    // An index the table does not answer caps nothing — the
+                    // renderer draws no track there either.
+                    let cap = self
+                        .types
+                        .get(*index as usize)
+                        .map_or(f64::MAX, |t| t.max_speed);
+                    (*s, cap)
                 })
                 .collect();
-            // Nothing to cap: every type on this edge is at the never-caps default.
+            // Nothing to cap: no type on this edge sets a superstructure limit.
             if caps.iter().all(|(_, v)| *v >= 999.0) {
                 continue;
             }
@@ -764,38 +773,54 @@ mod tests {
                 vec![Segment::straight(3000.0)],
             )
             .with_speed(StepProfile::new(vec![(0.0, 160.0), (2500.0, 60.0)]))
-            // Default up to km 1, then a branch-line type.
+            // Main line up to km 1, then a branch-line type.
             .with_track_type(StepProfile::new(vec![(0.0, 0), (1000.0, 1)])),
         );
         net.set_types(vec![
-            TrackType::default(),
+            TrackType::placeholder("test:hauptbahn"),
             TrackType::placeholder("test:nebenbahn"),
         ]);
 
-        let warnings = net.apply_track_types(|name| {
-            (name == "test:nebenbahn").then(|| TrackType {
+        let warnings = net.apply_track_types(|name| match name {
+            // A type that never caps — what a main line is laid with.
+            "test:hauptbahn" => Some(TrackType::placeholder(name)),
+            "test:nebenbahn" => Some(TrackType {
                 max_speed: 80.0,
                 roughness: 1.4,
                 ..TrackType::default()
-            })
+            }),
+            _ => None,
         });
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let edge = net.edge(EdgeId(0));
-        assert_eq!(edge.speed.at(500.0), 160.0, "default type never caps");
+        assert_eq!(edge.speed.at(500.0), 160.0, "a type that never caps");
         assert_eq!(edge.speed.at(1500.0), 80.0, "superstructure caps the line");
         assert_eq!(edge.speed.at(2600.0), 60.0, "the lower line speed survives");
-        assert_eq!(net.track_type_at(EdgeId(0), 1500.0).roughness, 1.4);
-        assert_eq!(net.track_type_at(EdgeId(0), 500.0).roughness, 1.0);
+        assert_eq!(
+            net.track_type_at(EdgeId(0), 1500.0).map(|t| t.roughness),
+            Some(1.4)
+        );
+        assert_eq!(
+            net.track_type_at(EdgeId(0), 500.0).map(|t| t.roughness),
+            Some(1.0)
+        );
 
         // An unknown name keeps its placeholder and warns.
         net.set_types(vec![
-            TrackType::default(),
+            TrackType::placeholder("test:hauptbahn"),
             TrackType::placeholder("test:fehlt"),
         ]);
-        let warnings = net.apply_track_types(|_| None);
+        let warnings = net.apply_track_types(|name| {
+            (name == "test:hauptbahn").then(|| TrackType::placeholder(name))
+        });
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("test:fehlt"));
+
+        // A network nobody laid a type on answers with nothing at all —
+        // there is no built-in type standing by.
+        net.set_types(Vec::new());
+        assert!(net.track_type_at(EdgeId(0), 500.0).is_none());
     }
 
     #[test]

@@ -476,10 +476,13 @@ pub fn update_audio(
                 SoundState::sample(vehicle, &cab, protection, audio.previous.get(&(t, v)), dt);
             // The sampler deliberately sees no track and no weather — both are filled in
             // here, where net and world state live.
+            // Track without a type is track nobody has laid a superstructure
+            // on — it cannot happen on a compiled line, and what rolls over it
+            // rolls as smoothly as welded main line.
             state.roughness = sim
                 .net
                 .track_type_at(vehicle.pos.edge, vehicle.pos.s)
-                .roughness;
+                .map_or(1.0, |ty| ty.roughness);
             // The rain quantity is how hard it falls, not whether it does: a
             // drizzle is not a downpour with the volume turned down.
             let weather = sim.weather.now;
@@ -530,10 +533,10 @@ pub fn update_audio(
         .trains
         .get(player.0)
         .and_then(|train| train.vehicles.first())
-        .map(|vehicle| {
+        .and_then(|vehicle| {
             sim.net
                 .track_type_at(vehicle.pos.edge, vehicle.pos.s)
-                .reverb
+                .map(|ty| ty.reverb)
         })
         .unwrap_or(0.0);
     audio

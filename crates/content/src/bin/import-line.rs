@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! import-line line.json [--dgm dgm.xyz --epsg 25832] [--name "Musterbahn"]
-//!                       [--sample 20] [--smoothing 3] [--out line.ron]
+//!                       [--sample 20] [--smoothing 3] [--track-type example:hauptbahn]
+//!                       [--out line.ron]
 //! ```
 
 use content::import::dgm::TerrainSource;
@@ -14,7 +15,8 @@ fn main() -> ExitCode {
     if args.is_empty() || args[0] == "--help" {
         eprintln!(
             "Usage: import-line <overpass.json> [--dgm <file.xyz> --epsg <25832>] \
-             [--name <name>] [--sample <m>] [--smoothing <n>] [--no-snap]              [--max-cant <mm>] [--out <file.ron>]"
+             [--name <name>] [--sample <m>] [--smoothing <n>] [--no-snap] \
+             [--max-cant <mm>] [--track-type <mod:name>] [--out <file.ron>]"
         );
         return ExitCode::from(2);
     }
@@ -85,6 +87,11 @@ fn main() -> ExitCode {
     }
     if let Some(v) = flag("--start-way").and_then(|v| v.parse().ok()) {
         options.start_way = Some(v);
+    }
+    // What the imported track is built of. Every edge is written out with it —
+    // a line that names no type does not compile.
+    if let Some(v) = flag("--track-type") {
+        options.track_type = v;
     }
 
     let (line, report) = match import_line(&osm_json, grid.as_ref(), &options) {

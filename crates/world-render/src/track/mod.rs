@@ -148,10 +148,18 @@ pub fn spawn_track(
         // rails stand; the bed there is the builder's to model.
         if edge.formation {
             for (s0, s1, index) in edge.track_type_runs() {
-                let ty = types.get(index as usize);
-                let mats = per_type.get(index as usize).unwrap_or(&per_type[0]);
-                let oberbau = ty.map_or_else(Oberbau::default, |ty| ty.oberbau.clone());
-                let scale = ty.map_or(1.5, texture_scale);
+                // What the track is built of comes from its type and from
+                // nowhere else: a section whose index the table does not
+                // answer is drawn as nothing at all, rather than as a grey
+                // stand-in nobody asked for.
+                let (Some(ty), Some(mats)) =
+                    (types.get(index as usize), per_type.get(index as usize))
+                else {
+                    warn!("track type {index} is not in the line's table — section not drawn");
+                    continue;
+                };
+                let oberbau = ty.oberbau.clone();
+                let scale = texture_scale(ty);
 
                 for (a, b) in spans(s0, s1, BED_CHUNK) {
                     let bed = if oberbau.sleeper == SleeperKind::Slab {
@@ -192,7 +200,12 @@ pub fn spawn_track(
             }
         }
 
-        let (near, far) = rail::build(edge, &frame, rail_profile_of(net, edge));
+        // The rail section is a property of the type too; without one there
+        // is no rail to roll.
+        let Some(profile) = rail_profile_of(net, edge) else {
+            continue;
+        };
+        let (near, far) = rail::build(edge, &frame, profile);
         for (chunks, range) in [
             (near, VisibilityRange::abrupt(0.0, rail::DETAIL_RANGE)),
             (far, VisibilityRange::abrupt(rail::DETAIL_RANGE, f32::MAX)),
@@ -244,12 +257,11 @@ fn recentre(mut mesh: Mesh, offset: Vec3) -> Mesh {
 
 /// The edge's rail section — the type at `s = 0` decides, one edge keeps one
 /// section (a rail does not change profile mid-edge; type changes are bed
-/// work anyway).
-fn rail_profile_of(net: &TrackNetwork, edge: &TrackEdge) -> track_model::RailProfile {
-    edge.track_type_runs()
-        .first()
-        .and_then(|&(_, _, index)| net.types().get(index as usize))
-        .map_or_else(Default::default, |ty| ty.oberbau.rail)
+/// work anyway). `None` where the edge's type is not in the table, which on a
+/// compiled line cannot happen.
+fn rail_profile_of(net: &TrackNetwork, edge: &TrackEdge) -> Option<track_model::RailProfile> {
+    let &(_, _, index) = edge.track_type_runs().first()?;
+    Some(net.types().get(index as usize)?.oberbau.rail)
 }
 
 /// The three materials one track type is drawn with.

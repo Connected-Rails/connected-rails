@@ -164,6 +164,10 @@ fn demo_trees() -> Vec<TreeSource> {
 ///
 /// Signalling: distant signal at km 1.0 and main signal at km 2.0 (end of block),
 /// plus the three PZB magnets. From the third section on there is a line cable (LZB).
+///
+/// It names its superstructure like any other line does
+/// ([`crate::route::STARTER_TRACK_TYPE`]) — there is no built-in type, so a
+/// demo line that said nothing would stand on no ballast at all.
 pub fn musterbahn() -> LineSource {
     let magnet = |p: &MagnetPayload| ron::to_string(p).unwrap();
 
@@ -189,7 +193,7 @@ pub fn musterbahn() -> LineSource {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![(0.0, 160.0)],
-                track_type: vec![],
+                track_type: vec![(0.0, crate::route::STARTER_TRACK_TYPE.to_string())],
                 electrification: Vec::new(),
                 formation: true,
             },
@@ -205,7 +209,7 @@ pub fn musterbahn() -> LineSource {
                 grade: vec![],
                 cant: vec![(0.0, 0.0), (200.0, 80.0), (800.0, 0.0)],
                 speed: vec![(0.0, 130.0)],
-                track_type: vec![],
+                track_type: vec![(0.0, crate::route::STARTER_TRACK_TYPE.to_string())],
                 electrification: Vec::new(),
                 formation: true,
             },
@@ -217,7 +221,7 @@ pub fn musterbahn() -> LineSource {
                 grade: vec![(0.0, 0.0), (500.0, 8.0), (2500.0, 0.0)],
                 cant: vec![],
                 speed: vec![(0.0, 160.0)],
-                track_type: vec![],
+                track_type: vec![(0.0, crate::route::STARTER_TRACK_TYPE.to_string())],
                 electrification: Vec::new(),
                 formation: true,
             },

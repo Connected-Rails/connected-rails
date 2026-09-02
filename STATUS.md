@@ -33,8 +33,10 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   **Track types** (superstructure classes, `track_types/*.ron` in a mod): texture, color,
   roughness, how much its surroundings ring (`reverb`, 0 = open line, 1 = tunnel),
   superstructure speed limit and an LZB flag — assigned per edge as a step
-  profile over `s`, so one edge changes its type section by section, with the reserved
-  name `"default"` returning to the built-in type. The mod runtime resolves the names
+  profile over `s`, so one edge changes its type section by section. **Every track has
+  to name one**: there is no built-in type and no reserved `"default"` name, and a
+  module that leaves it out does not compile (`CompileError::MissingTrackType`) —
+  a silent fallback is how a line ends up on untextured grey ballast unnoticed. The mod runtime resolves the names
   after compile (like signal types) and merges `max_speed` into the one speed profile AI,
   LZB, HUD and scoring already read; the app **builds the track the type describes**
   (`world_render::track`, rebuilt 2026-08-31 against the DB InfraGO dimensions and split

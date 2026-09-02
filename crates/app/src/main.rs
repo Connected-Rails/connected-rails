@@ -2049,7 +2049,7 @@ fn update_precipitation(
         .0
         .net
         .track_type_at(vehicle.pos.edge, vehicle.pos.s)
-        .reverb
+        .map_or(0.0, |ty| ty.reverb)
         .clamp(0.0, 1.0) as f32;
     // The wind the drops actually meet: the weather's own — swaying in strength
     // and direction with the gusts, because a curtain of rain never stands at one

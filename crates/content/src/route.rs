@@ -718,7 +718,8 @@ pub struct EdgeSource {
     pub speed: Vec<(f64, f64)>,
     /// Track type (`"<mod>:<name>"`, see `track_types/*.ron`) as steps
     /// `(s, name)` — one edge changes its superstructure section by section.
-    /// Empty = the default type.
+    /// **Required**: there is no built-in type a track falls back on, and an
+    /// empty list is [`CompileError::MissingTrackType`].
     #[serde(default)]
     pub track_type: Vec<(f64, String)>,
     /// What hangs over this track as steps `(s, system)` — `"ac-15kv"`,
@@ -989,8 +990,8 @@ pub struct TrackAreaSource {
     /// Longitudinal gradient [‰].
     #[serde(default)]
     pub grade: Option<f64>,
-    /// Track type (`"<mod>:<name>"`, or `"default"`) — model and texture of the
-    /// superstructure.
+    /// Track type (`"<mod>:<name>"`) laid over the stretch; `None` leaves the
+    /// track's own type alone.
     #[serde(default)]
     pub track_type: Option<String>,
     /// Electrification (an id of [`track_model::PowerSystem`], or `"none"`).
@@ -1003,8 +1004,12 @@ pub struct TrackAreaSource {
 /// to know what it is laying over.
 pub const DEFAULT_SPEED: f64 = 160.0;
 
-/// The reserved name of the built-in track type.
-pub const DEFAULT_TRACK_TYPE: &str = "default";
+/// The track type the built-in content and the importers write into a module
+/// they create. This is an authoring default, not a fallback: it lands **in
+/// the file**, where the module's author sees it and can change it — nothing
+/// stands in for a type a file leaves out (see
+/// [`CompileError::MissingTrackType`]).
+pub const STARTER_TRACK_TYPE: &str = "example:hauptbahn";
 
 /// Half-width a marked area is painted with by default [m] — comfortably wider than the
 /// 1.5 m of the track ribbon, so a painted stretch reads as laid over the track.
@@ -1463,6 +1468,9 @@ pub enum CompileError {
     UnknownDevice(u32),
     /// An edge refers to an edge that has not been compiled yet.
     ForwardReference(u32),
+    /// An edge names no track type. There is no built-in one: what the track
+    /// is built of is part of the module, not of the engine.
+    MissingTrackType(u32),
 }
 
 /// Which parcels stand on one another, and by how much.
@@ -1564,6 +1572,9 @@ pub enum RuleIssue {
     SignalDeviceMismatch { signal: u32 },
     /// Boundary whose node is missing or not a `Buffer`.
     BoundaryInvalid { boundary: u32 },
+    /// Edge names no track type at all — the line will not compile until it
+    /// does, because nothing stands in for one.
+    MissingTrackType { edge: u32 },
     /// Edge names a track type the registry does not know.
     UnknownTrackType { edge: u32 },
     /// A marked area covers a track that does not exist, or a stretch beyond its end.
@@ -2870,9 +2881,12 @@ impl LineSource {
             .any(|d| d.kind == DeviceKind::LineConductor);
         for (i, e) in self.edges.iter().enumerate() {
             let edge = i as u32;
+            if e.track_type.is_empty() {
+                issues.push(RuleIssue::MissingTrackType { edge });
+            }
             if e.track_type
                 .iter()
-                .any(|(_, name)| name != "default" && !types.contains_key(name))
+                .any(|(_, name)| !types.contains_key(name))
             {
                 issues.push(RuleIssue::UnknownTrackType { edge });
             }
@@ -2910,7 +2924,7 @@ impl LineSource {
             if area
                 .track_type
                 .as_ref()
-                .is_some_and(|name| name != DEFAULT_TRACK_TYPE && !types.contains_key(name))
+                .is_some_and(|name| !types.contains_key(name))
             {
                 issues.push(RuleIssue::AreaUnknownTrackType { area: index });
             }
@@ -3009,21 +3023,17 @@ impl LineSource {
             .collect();
 
         // Edges in source order; `Continue` may only refer backwards.
-        // Track-type names are interned per line: index 0 stays the default
-        // type — the reserved name `"default"` addresses it, so a section can
-        // return to it mid-edge — and the specs behind the other names come
-        // from the mod runtime later (`TrackNetwork::apply_track_types`),
-        // like signal types.
+        // Track-type names are interned per line in the order they are first
+        // named — no index is reserved, because there is no built-in type to
+        // reserve one for. The specs behind the names come from the mod
+        // runtime later (`TrackNetwork::apply_track_types`), like signal types.
         let mut type_names: Vec<String> = Vec::new();
         let intern = |names: &mut Vec<String>, name: &str| -> u32 {
-            if name == "default" {
-                return 0;
-            }
             match names.iter().position(|n| n == name) {
-                Some(i) => i as u32 + 1,
+                Some(i) => i as u32,
                 None => {
                     names.push(name.to_string());
-                    names.len() as u32
+                    names.len() as u32 - 1
                 }
             }
         };
@@ -3099,6 +3109,12 @@ impl LineSource {
                 edge = edge.with_speed(StepProfile::new(speed));
             }
 
+            // What the track is built of is the module's to say. Without it
+            // there is nothing to draw a bed, sleepers or a rail section from,
+            // and silently laying a grey stand-in is what this refuses to do.
+            let Some((_, own_type)) = e.track_type.first() else {
+                return Err(CompileError::MissingTrackType(i as u32));
+            };
             let type_spans: Vec<(f64, f64, String)> = self
                 .areas
                 .iter()
@@ -3110,19 +3126,20 @@ impl LineSource {
                         .filter_map(move |span| Some((span.from, span.to, name.clone()?)))
                 })
                 .collect();
-            let types = overlay_steps(
-                &e.track_type,
-                DEFAULT_TRACK_TYPE.to_string(),
-                &type_spans,
-                length,
-            );
-            if !types.is_empty() {
-                let steps = types
-                    .iter()
-                    .map(|(s, name)| (*s, intern(&mut type_names, name)))
-                    .collect();
-                edge = edge.with_track_type(StepProfile::new(steps));
-            }
+            // The edge's own profile is not empty (checked above), so the base
+            // default is never read — areas only ever lay over what is there.
+            let types = overlay_steps(&e.track_type, own_type.clone(), &type_spans, length);
+            let steps: Vec<(f64, u32)> = types
+                .iter()
+                .map(|(s, name)| (*s, intern(&mut type_names, name)))
+                .collect();
+            edge = edge.with_track_type(if steps.is_empty() {
+                // An edge without length leaves the overlay no breakpoint to
+                // put a step on; what the track says at its start still holds.
+                StepProfile::constant(intern(&mut type_names, own_type))
+            } else {
+                StepProfile::new(steps)
+            });
 
             let power_spans: Vec<(f64, f64, String)> = self
                 .areas
@@ -3150,11 +3167,12 @@ impl LineSource {
             }
             edge_ids.push(net.add_edge(edge));
         }
-        if !type_names.is_empty() {
-            let mut types = vec![TrackType::default()];
-            types.extend(type_names.iter().map(|n| TrackType::placeholder(n)));
-            net.set_types(types);
-        }
+        net.set_types(
+            type_names
+                .iter()
+                .map(|n| TrackType::placeholder(n))
+                .collect(),
+        );
         net.set_default_electrification(track_model::electrification_from_id(
             &self.electrification,
         ));
@@ -3340,6 +3358,16 @@ impl LineSource {
 mod tests {
     use super::*;
 
+    /// The type registry a rule check runs against: the one the Musterbahn is
+    /// laid with, so a check reports what the test is about rather than a
+    /// track type no installed mod answers.
+    fn type_registry() -> std::collections::BTreeMap<String, TrackType> {
+        std::collections::BTreeMap::from([(
+            STARTER_TRACK_TYPE.to_string(),
+            TrackType::placeholder(STARTER_TRACK_TYPE),
+        )])
+    }
+
     /// Two parcels standing on the same ground get a word from the rule
     /// check; two that merely share a boundary do not, because that is what a
     /// boundary is.
@@ -3362,7 +3390,7 @@ mod tests {
             ))
             .unwrap()
         };
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let objects = std::collections::BTreeMap::new();
 
         // Sharing the eastern boundary exactly: neighbours, not a fault.
@@ -3411,7 +3439,7 @@ mod tests {
         let back: LineSource = ron::from_str(&line.to_ron()).unwrap();
         assert_eq!(back.walk_paths, line.walk_paths);
         assert_eq!(back.walk_areas, line.walk_areas);
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let objects = std::collections::BTreeMap::new();
         assert!(line.check(&types, &objects).is_empty());
 
@@ -3637,7 +3665,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: Vec::new(),
             formation: true,
         });
@@ -3755,7 +3783,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: Vec::new(),
             formation: true,
         });
@@ -3799,7 +3827,7 @@ mod tests {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![],
-                track_type: vec![],
+                track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                 electrification: Vec::new(),
                 formation: true,
             });
@@ -3861,7 +3889,7 @@ mod tests {
             grade: vec![],
             cant: vec![],
             speed: vec![],
-            track_type: vec![],
+            track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
             electrification: Vec::new(),
             formation: true,
         });
@@ -3996,7 +4024,7 @@ mod tests {
                     grade: vec![],
                     cant: vec![],
                     speed: vec![],
-                    track_type: vec![],
+                    track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                     electrification: Vec::new(),
                     formation: true,
                 },
@@ -4008,7 +4036,7 @@ mod tests {
                     grade: vec![],
                     cant: vec![],
                     speed: vec![],
-                    track_type: vec![],
+                    track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                     electrification: Vec::new(),
                     formation: true,
                 },
@@ -4020,7 +4048,7 @@ mod tests {
                     grade: vec![],
                     cant: vec![],
                     speed: vec![],
-                    track_type: vec![],
+                    track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                     electrification: Vec::new(),
                     formation: true,
                 },
@@ -4095,7 +4123,7 @@ mod tests {
     /// line, and two roads of the same name.
     #[test]
     fn check_flags_a_portal_in_the_middle_of_the_line() {
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let objects = std::collections::BTreeMap::new();
         let mut line = musterbahn();
         assert!(line.check(&types, &objects).is_empty());
@@ -4154,7 +4182,7 @@ mod tests {
     /// textbook finding the check exists for.
     #[test]
     fn check_flags_the_missing_1000hz_magnet() {
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let objects = std::collections::BTreeMap::new();
         let mut line = musterbahn();
         assert!(
@@ -4189,6 +4217,51 @@ mod tests {
         assert!(issues.contains(&RuleIssue::DistantWithout1000Hz { signal: 0 }));
     }
 
+    /// What the track is built of is the module's to state: there is no
+    /// built-in type, so a track that names none does not compile, and the
+    /// rule check says so before the compile is ever run.
+    #[test]
+    fn a_track_without_a_type_does_not_compile() {
+        let mut line = musterbahn();
+        line.edges[1].track_type.clear();
+        assert_eq!(
+            line.compile().err(),
+            Some(CompileError::MissingTrackType(1))
+        );
+
+        let issues = line.check(&type_registry(), &std::collections::BTreeMap::new());
+        assert!(issues.contains(&RuleIssue::MissingTrackType { edge: 1 }));
+        // Only the track that says nothing is reported; its neighbours are laid.
+        assert!(!issues.contains(&RuleIssue::MissingTrackType { edge: 0 }));
+
+        // Naming one is all it takes.
+        line.edges[1].track_type = vec![(0.0, STARTER_TRACK_TYPE.into())];
+        line.compile().expect("compiles");
+        assert!(
+            !line
+                .check(&type_registry(), &std::collections::BTreeMap::new())
+                .iter()
+                .any(|i| matches!(i, RuleIssue::MissingTrackType { .. }))
+        );
+    }
+
+    /// An area lays its type over the track's own — it does not stand in for a
+    /// track that names none.
+    #[test]
+    fn an_area_does_not_make_up_for_a_track_without_a_type() {
+        let mut line = musterbahn();
+        line.edges[0].track_type.clear();
+        line.areas.push(TrackAreaSource {
+            track_type: Some("ex:hauptbahn".into()),
+            spans: vec![AreaSpan::new(0, 0.0, 3000.0)],
+            ..TrackAreaSource::default()
+        });
+        assert_eq!(
+            line.compile().err(),
+            Some(CompileError::MissingTrackType(0))
+        );
+    }
+
     /// Track types compile into an interned table plus per-edge index
     /// profiles; the specs come from the registry later.
     #[test]
@@ -4203,11 +4276,14 @@ mod tests {
             .iter()
             .map(|t| t.name.as_str())
             .collect();
-        assert_eq!(names, ["default", "ex:hauptbahn", "ex:alt"]);
-        assert_eq!(compiled.net.edges()[0].track_type.at(0.0), 1);
-        assert_eq!(compiled.net.edges()[0].track_type.at(2600.0), 2);
-        assert_eq!(compiled.net.edges()[1].track_type.at(0.0), 0);
-        assert_eq!(compiled.net.edges()[2].track_type.at(0.0), 1);
+        // Interned in the order they are first named — no index is reserved,
+        // because there is no built-in type. Edge 1 keeps what the Musterbahn
+        // lays it with, and that name is interned where it first appears.
+        assert_eq!(names, ["ex:hauptbahn", "ex:alt", STARTER_TRACK_TYPE]);
+        assert_eq!(compiled.net.edges()[0].track_type.at(0.0), 0);
+        assert_eq!(compiled.net.edges()[0].track_type.at(2600.0), 1);
+        assert_eq!(compiled.net.edges()[1].track_type.at(0.0), 2);
+        assert_eq!(compiled.net.edges()[2].track_type.at(0.0), 0);
 
         // Splitting carries the type sections across, shifted by the cut.
         line.split_edge(0, 1500.0).expect("splits");
@@ -4249,7 +4325,7 @@ mod tests {
         assert_eq!(line.objects[1].edge, 2);
         line.compile().expect("still compiles");
 
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let mut objects = std::collections::BTreeMap::new();
         objects.insert(
             "ex:mast".to_string(),
@@ -4278,7 +4354,7 @@ mod tests {
     /// whose conductor was never placed.
     #[test]
     fn check_flags_track_type_wiring() {
-        let mut types = std::collections::BTreeMap::new();
+        let mut types = type_registry();
         types.insert(
             "ex:lzb".to_string(),
             TrackType {
@@ -4398,7 +4474,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let objects = std::collections::BTreeMap::new();
         assert!(
             line.check(&types, &objects)
@@ -4462,7 +4538,7 @@ mod tests {
             envelope: bow_tie,
             ..Default::default()
         };
-        let types = std::collections::BTreeMap::new();
+        let types = type_registry();
         let objects = std::collections::BTreeMap::new();
         assert!(
             line.check(&types, &objects)

@@ -1570,7 +1570,7 @@ fn finished_panel(
 mod tests {
     use super::*;
     use content::LineSource;
-    use content::route::{EdgeSource, EdgeStart, GeoPoint, NodeSource};
+    use content::route::{EdgeSource, EdgeStart, GeoPoint, NodeSource, STARTER_TRACK_TYPE};
     use track_model::Segment;
 
     fn detection(lat: f64, lon: f64, heading: f64) -> GeoDetection {
@@ -2354,7 +2354,7 @@ mod tests {
                 grade: vec![],
                 cant: vec![],
                 speed: vec![],
-                track_type: vec![],
+                track_type: vec![(0.0, STARTER_TRACK_TYPE.into())],
                 electrification: vec![],
                 formation: true,
             }],

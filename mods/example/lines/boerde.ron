@@ -109,7 +109,9 @@
             speed: [
                 (0.0, 120.0),
             ],
-            track_type: [],
+            // The Regeloberbau this line is laid with. A track states what it
+            // is built of — nothing stands in for a type that is left out.
+            track_type: [(0.0, "example:b70")],
             electrification: [
                 (0.0, "ac-15kv"),
             ],

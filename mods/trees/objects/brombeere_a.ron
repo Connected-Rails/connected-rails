@@ -1,0 +1,11 @@
+// Brombeere (Rubus fruticosus agg.), 1 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Brombeere A",
+    model: "trees/assets/brombeere_a.gltf",
+    autumn_model: Some("trees/assets/brombeere_a_herbst.gltf"),
+    winter_model: Some("trees/assets/brombeere_a_winter.gltf"),
+    lod_distances: [45, 400, 800, 700],
+    footprint: Some((length: 1.6, width: 1.2)),
+    tags: ["strauch", "stand-hecke", "stand-laubwald", "stand-boeschung", "stand-bahndamm"],
+)

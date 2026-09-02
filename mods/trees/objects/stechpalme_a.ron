@@ -1,0 +1,11 @@
+// Europäische Stechpalme (Ilex aquifolium), 2 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Europäische Stechpalme A",
+    model: "trees/assets/stechpalme_a.gltf",
+    autumn_model: None,
+    winter_model: Some("trees/assets/stechpalme_a_winter.gltf"),
+    lod_distances: [45, 400, 800, 1000],
+    footprint: Some((length: 1.8, width: 1.5)),
+    tags: ["strauch", "stand-laubwald", "stand-hecke", "stand-stadt"],
+)

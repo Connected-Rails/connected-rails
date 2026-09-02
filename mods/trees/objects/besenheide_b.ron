@@ -1,0 +1,11 @@
+// Besenheide (Calluna vulgaris), 0.55 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Besenheide B",
+    model: "trees/assets/besenheide_b.gltf",
+    autumn_model: None,
+    winter_model: Some("trees/assets/besenheide_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 500],
+    footprint: Some((length: 0.7, width: 0.6)),
+    tags: ["bodendecker", "strauch", "stand-heide", "stand-pionier"],
+)

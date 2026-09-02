@@ -1,0 +1,11 @@
+// Hainbuchenhecke, 6 m section, 2.5 m high.
+// Composed from the CC0 artist vegetation documented in mods/trees/LICENSES.md.
+(
+    name: "Hainbuchenhecke C",
+    model: "trees/assets/hainbuchenhecke_c.gltf",
+    autumn_model: Some("trees/assets/hainbuchenhecke_c_herbst.gltf"),
+    winter_model: Some("trees/assets/hainbuchenhecke_c_winter.gltf"),
+    lod_distances: [60, 120, 180, 250, 325, 400, 500, 600, 700, 800, 900, 1000],
+    footprint: Some((length: 6, width: 1.5)),
+    tags: ["hecke", "formhecke", "stand-stadt", "stand-park", "stand-feld"],
+)

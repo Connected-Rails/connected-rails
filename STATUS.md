@@ -1277,15 +1277,40 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   because a crossarm changed on one side only puts the conductors beside the
   insulator strings instead of on them.
 
-- **Artist trees of Central Europe (2026-09-02, `mods/trees`, `tools/trees/`):** the
+- **Artist vegetation of Central Europe (2026-09-02, `mods/trees`, `tools/trees/`):** the
   old ez-tree procedural catalogue and its texture/geometry generators were removed.
-  The 28 logical species and all 84 stable object ids now use modified models from
+  The original 28 logical tree and large-shrub species and all 84 stable object ids use modified models from
   Midge “Mantissa” Sinnaeve’s CC0 broadleaf artist packs and Poly Haven's CC0
   Fir Tree 01, Pine Tree 01 and Fir Sapling models; the birch, cherry and fir
   packs supply additional optimised bark/foliage photographs. Exact-family forms
   are used where available; the remaining catalogue species select one of ten
   artist-authored growth forms and apply species height and crown proportions. The
   provenance and the deliberate generic mappings are recorded in `mods/trees/LICENSES.md`.
+
+  Eighteen further entries fill the shrub and understorey layer: dog rose, blackberry,
+  raspberry, dogwood, spindle, guelder rose, alder buckthorn, privet, broom, bilberry,
+  heather, holly, barberry, fly honeysuckle and sea buckthorn, plus bracken, nettle and
+  periwinkle. They keep complete hand-modelled Poly Haven Shrub 01, Searsia Lucida,
+  Wild Rooibos Bush, Fern 02, Nettle Plant and Periwinkle Plant meshes and their authored
+  reduced LOD where supplied. The
+  public-API downloader verifies Poly Haven's MD5 records; the six source assets and
+  authors are recorded next to the original sources in `mods/trees/LICENSES.md`.
+
+  Fifteen repeatable hedge sections add mixed field, hawthorn, privet, hornbeam and
+  evergreen formal hedges in three forms each. They introduce no new source material:
+  `tools/trees/build_hedges.py` composes overlapping reduced instances of the audited CC0
+  plants under twelve hedge-wide LOD roots and closes their silhouette with small cards,
+  each mapped to one leaf of the Poly Haven CC0 atlas — never a near whole-hedge
+  billboard. No hedge-wide or whole-plant impostor is used: the far levels keep thinning
+  subsets of the reduced 3D source meshes and enlarge only individual leaf cards.
+  The 6 m formal and 8 m field sections can be placed end to end without gaps
+  and retain the source plants' summer, autumn and winter forms. Their audited LOD
+  triangle maxima are 84,351 / 81,151 / 54,303 / 54,103 / 40,579 / 40,379 /
+  33,517 / 33,317 / 26,455 / 26,255 / 22,624 / 18,993. Eleven handoffs from
+  60 through 900 m replace the former coarse jumps; the distant levels retain
+  4,500–5,100 spatially distributed cards. Projected leaf coverage progresses as
+  100 / 311 / 557 / 972 / 1,696 / 2,866 / 4,763 / 7,656 / 11,150 / 16,017 /
+  22,104 / 30,250 percent.
 
   `tools/trees/import_mantissa.py` is an import/optimisation tool, not a generator: it
   retains source trunks, branches and spatially selected actual source leaves or
@@ -1299,8 +1324,9 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   only at 15× tree height (at least 400 m), and the crossed version at 30× height (at least
   800 m); the `LOD0` hand-over remains 3.5× height with a 45 m floor.
 
-  The checked-in audit covers **84 objects and 237 seasonal models**. Triangle maxima
-  are 161,169 (`LOD0`), 50,630 (`LOD1`), 8 (`LOD2`) and 4 (`LOD3`). LOD1 retains
+  The checked-in audit covers **153 objects and 429 seasonal models**: 138 individual
+  vegetation objects plus 15 hedge sections. Triangle maxima for individual plants
+  are 175,626 (`LOD0`), 53,424 (`LOD1`), 8 (`LOD2`) and 4 (`LOD3`). LOD1 retains
   at least 65% measured leaf surface and targets 80% projected crown coverage, with
   source leaves capped at 1.55× size. All materials are dielectric PBR with
   explicit roughness, every external buffer/texture reference resolves, and the four

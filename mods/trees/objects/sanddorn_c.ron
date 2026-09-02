@@ -1,0 +1,11 @@
+// Sanddorn (Hippophae rhamnoides), 5 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Sanddorn C",
+    model: "trees/assets/sanddorn_c.gltf",
+    autumn_model: Some("trees/assets/sanddorn_c_herbst.gltf"),
+    winter_model: Some("trees/assets/sanddorn_c_winter.gltf"),
+    lod_distances: [45, 400, 800, 900],
+    footprint: Some((length: 5.2, width: 4.8)),
+    tags: ["strauch", "stand-heide", "stand-pionier", "stand-boeschung"],
+)

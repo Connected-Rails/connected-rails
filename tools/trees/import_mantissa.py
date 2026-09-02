@@ -2,8 +2,10 @@
 """Turn CC0 artist trees into the checked-in, game-ready tree mod.
 
 This is deliberately an *importer*, not a tree generator.  Every trunk, branch,
-needle and near leaf comes from a Mantissa or Poly Haven source. The only new geometry is the
-standard crossed quad used for the two distance LODs.  Run through Blender:
+needle and near leaf comes from a Mantissa or Poly Haven source. Low Poly Haven
+plants retain their complete artist mesh because stem and leaf share one scanned
+atlas. The only new geometry is the standard crossed quad used for the two
+distance LODs. Run through Blender:
 
     blender -b --python tools/trees/import_mantissa.py -- [--only fichte,...]
 
@@ -33,6 +35,10 @@ from mathutils import Vector
 
 
 HERE = Path(__file__).resolve().parent
+# Blender runs `--python` files without adding their directory to `sys.path`.
+# Keep the adjacent hedge composer importable in both Blender and plain Python.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 ROOT = HERE.parent.parent
 MOD = ROOT / "mods" / "trees"
 ASSETS = MOD / "assets"
@@ -120,6 +126,12 @@ def source_file(source_root: Path, family: str, index: int) -> Path:
         "polyhaven_fir": "fir_tree_01",
         "polyhaven_pine": "pine_tree_01",
         "polyhaven_sapling": "fir_sapling",
+        "polyhaven_shrub_01": "shrub_01",
+        "polyhaven_searsia": "searsia_lucida",
+        "polyhaven_rooibos": "wild_rooibos_bush",
+        "polyhaven_fern_02": "fern_02",
+        "polyhaven_nettle": "nettle_plant",
+        "polyhaven_periwinkle": "periwinkle_plant",
     }
     if family in polyhaven_assets:
         asset = polyhaven_assets[family]
@@ -147,6 +159,28 @@ def source_index(entry: dict, variant_index: int) -> int:
     if entry["source"] == "spruce":
         return (entry.get("offset", 0) + variant_index) % 3 + 1
     return variant_index + 1
+
+
+def source_variant(entry: dict, variant_index: int) -> str:
+    if "source_variants" in entry:
+        return str(entry["source_variants"][variant_index])
+    if entry["source"].startswith("polyhaven_"):
+        return VARIANTS[source_index(entry, variant_index) - 1]
+    return VARIANTS[variant_index]
+
+
+def polyhaven_asset(source: str) -> str:
+    return {
+        "polyhaven_fir": "fir_tree_01",
+        "polyhaven_pine": "pine_tree_01",
+        "polyhaven_sapling": "fir_sapling",
+        "polyhaven_shrub_01": "shrub_01",
+        "polyhaven_searsia": "searsia_lucida",
+        "polyhaven_rooibos": "wild_rooibos_bush",
+        "polyhaven_fern_02": "fern_02",
+        "polyhaven_nettle": "nettle_plant",
+        "polyhaven_periwinkle": "periwinkle_plant",
+    }[source]
 
 
 def wanted_tasks(catalogue: dict, only: set[str] | None) -> dict[Path, list[tuple[dict, int]]]:
@@ -238,6 +272,15 @@ def prepare_textures(source_root: Path) -> None:
         if not diffuse.exists() or not alpha.exists():
             raise FileNotFoundError(f"missing Poly Haven foliage maps: {diffuse}, {alpha}")
         combine_alpha(diffuse, alpha, TEXTURES / name)
+    for asset in ("shrub_01", "searsia_lucida",
+                  "wild_rooibos_bush", "fern_02", "nettle_plant", "periwinkle_plant"):
+        directory = polyhaven / asset / "textures"
+        diffuse = directory / f"{asset}_diff_1k.jpg"
+        alpha_name = "opacity" if asset == "periwinkle_plant" else "alpha"
+        alpha = directory / f"{asset}_{alpha_name}_1k.png"
+        if not diffuse.exists() or not alpha.exists():
+            raise FileNotFoundError(f"missing Poly Haven plant maps: {diffuse}, {alpha}")
+        combine_alpha(diffuse, alpha, TEXTURES / f"poly_{asset}.png", "512x512")
 
 
 def material_name(obj: bpy.types.Object, polygon) -> str:
@@ -277,9 +320,11 @@ def import_source(path: Path) -> list[bpy.types.Object]:
     clear_scene()
     if path.suffix.lower() == ".blend":
         asset = path.stem.removesuffix("_1k")
-        main_lod = re.compile(rf"^{re.escape(asset)}_[abc](?:_LOD1)?$")
+        main_lod = re.compile(rf"^{re.escape(asset)}_.+?(?:_LOD[012])?$")
         with bpy.data.libraries.load(str(path), link=False) as (available, loaded):
-            loaded.objects = [name for name in available.objects if main_lod.match(name)]
+            loaded.objects = [name for name in available.objects
+                              if main_lod.match(name)
+                              and not re.search(r"_LOD[3-9]$", name)]
         for obj in loaded.objects:
             if obj is not None:
                 bpy.context.collection.objects.link(obj)
@@ -459,6 +504,22 @@ def extract_mesh(obj: bpy.types.Object, accepted: set[int] | None = None) -> dic
             uvs.append(polygon_uv(obj, loop_index))
             indices.append(len(indices))
     return {"positions": positions, "normals": normals, "uvs": uvs, "indices": indices}
+
+
+def extract_objects_mesh(objects: list[bpy.types.Object]) -> dict:
+    """Flatten complete artist meshes while retaining their world transforms."""
+    result = {"positions": [], "normals": [], "uvs": [], "indices": []}
+    for obj in objects:
+        mesh = extract_mesh(obj)
+        matrix = obj.matrix_world
+        normal_matrix = matrix.to_3x3().inverted().transposed()
+        base = len(result["positions"])
+        result["positions"].extend(tuple(matrix @ Vector(point)) for point in mesh["positions"])
+        result["normals"].extend(
+            tuple((normal_matrix @ Vector(normal)).normalized()) for normal in mesh["normals"])
+        result["uvs"].extend(mesh["uvs"])
+        result["indices"].extend(base + index for index in mesh["indices"])
+    return result
 
 
 def foliage_groups(objects: list[bpy.types.Object]) -> list[dict]:
@@ -828,14 +889,19 @@ def seasonal_colours(entry: dict) -> dict[str, tuple[float, float, float, float]
         summer = (0.66 + variation, 0.88 + variation * 0.5, 0.60 + variation, 1.0)
     result = {"summer": summer}
     if entry["deciduous"]:
-        result["autumn"] = AUTUMN[entry["id"]]
-        result["winter"] = (0.0, 0.0, 0.0, 0.0)
+        result["autumn"] = tuple(entry.get("autumn", AUTUMN.get(
+            entry["id"], (0.72, 0.42, 0.09, 1.0))))
+        result["winter"] = ((0.48, 0.31, 0.17, 1.0)
+                            if not entry.get("bare_winter", True)
+                            else (0.0, 0.0, 0.0, 0.0))
     else:
         result["winter"] = tuple(min(1.0, c * 1.10) for c in summer[:3]) + (1.0,)
     return result
 
 
 def bark_texture(entry: dict) -> str:
+    if entry.get("mesh_mode") == "whole":
+        return f"textures/poly_{polyhaven_asset(entry['source'])}.png"
     if entry["source"] == "polyhaven_fir":
         return "textures/poly_fir_bark.jpg"
     if entry["source"] == "polyhaven_pine":
@@ -857,6 +923,8 @@ def foliage_texture(entry: dict) -> str:
         "polyhaven_pine": "textures/poly_pine_foliage.png",
         "polyhaven_sapling": "textures/poly_sapling_foliage.png",
     }
+    if entry.get("mesh_mode") == "whole":
+        return f"textures/poly_{polyhaven_asset(entry['source'])}.png"
     return textures.get(
         entry["source"],
         "textures/foliage_conifer.jpg" if entry["kind"] == "conifer"
@@ -865,7 +933,7 @@ def foliage_texture(entry: dict) -> str:
 
 
 def write_gltf(entry: dict, variant: str, season: str,
-               near: tuple[dict, dict], medium: tuple[dict, dict],
+               near: tuple[dict | None, dict], medium: tuple[dict | None, dict],
                buffer: GltfBuffer, rich_billboard: dict, far_billboard: dict,
                bin_name: str) -> None:
     suffix = "" if season == "summer" else "_herbst" if season == "autumn" else "_winter"
@@ -892,10 +960,11 @@ def write_gltf(entry: dict, variant: str, season: str,
                      "MASK" if entry["source"].startswith("polyhaven_") else None),
         pbr_material("whole_tree_impostor", impostor_tex, (1, 1, 1, 1), 0.92, True, "MASK"),
     ]
-    bare = season == "winter" and entry["deciduous"]
+    bare = season == "winter" and entry["deciduous"] and entry.get("bare_winter", True)
     for level, geometry in enumerate((near, medium)):
         branch_primitive, leaf_primitive = geometry
-        primitives = [dict(branch_primitive, material=0)]
+        primitives = ([dict(branch_primitive, material=0)]
+                      if branch_primitive is not None else [])
         if not bare:
             primitives.append(dict(leaf_primitive, material=1))
         gltf["meshes"].append({"name": f"crown_LOD{level}", "primitives": primitives})
@@ -913,6 +982,16 @@ def blender_mesh(name: str, data: dict) -> bpy.types.Object:
     # glTF Y-up -> Blender Z-up.
     positions = [(x, -z, y) for x, y, z in data["positions"]]
     mesh.from_pydata(positions, [], faces)
+    # The audit render must sample the same atlas coordinates as the exported
+    # glTF. Without a UV layer Blender samples a single transparent texel for
+    # some plants (notably fern_02), producing an empty distant impostor even
+    # though LOD0/1 geometry and the atlas themselves are valid.
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for loop in mesh.loops:
+        u, v = data["uvs"][loop.vertex_index]
+        # `polygon_uv` converted Blender's bottom-left V convention to glTF's
+        # texture convention. Convert it back for this temporary Blender render.
+        uv_layer.data[loop.index].uv = (u, 1.0 - v)
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(obj)
     return obj
@@ -956,16 +1035,17 @@ def render_impostor(entry: dict, variant: str, season: str, branch: dict,
                     foliage: dict, height: float, width: float) -> None:
     for obj in list(bpy.context.scene.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    branch_obj = blender_mesh("bark", branch)
+    branch_obj = blender_mesh("bark", branch) if branch["indices"] else None
     bark_colour = ((1.0, 1.0, 1.0, 1.0) if entry["source"].startswith("polyhaven_") else
                    (0.52, 0.50, 0.45, 1.0) if entry.get("bark") == "birch" else
                    (0.30, 0.13, 0.08, 1.0) if entry.get("bark") == "cherry" else
                    (0.22, 0.15, 0.09, 1.0))
     branch_texture = ASSETS / bark_texture(entry) if entry["source"].startswith("polyhaven_") else None
-    branch_obj.data.materials.append(render_material("bark", bark_colour, branch_texture))
-    if entry["source"] == "fir" and season != "winter":
+    if branch_obj is not None:
+        branch_obj.data.materials.append(render_material("bark", bark_colour, branch_texture))
+    if branch_obj is not None and entry["source"] == "fir" and season != "winter":
         branch_obj.hide_render = True
-    if not (season == "winter" and entry["deciduous"]):
+    if not (season == "winter" and entry["deciduous"] and entry.get("bare_winter", True)):
         leaf_obj = blender_mesh("foliage", foliage)
         colour = seasonal_colours(entry)[season]
         render_colour = (colour if entry["source"].startswith("polyhaven_") else
@@ -1146,14 +1226,54 @@ def build_tree(entry: dict, variant_index: int, axis: AxisMap, branches: list[di
             "height": height}
 
 
+def empty_mesh() -> dict:
+    return {"positions": [], "normals": [], "uvs": [], "indices": []}
+
+
+def build_whole_plant(entry: dict, variant_index: int, axis: AxisMap,
+                      detailed_source: dict, medium_source: dict) -> dict:
+    """Build a low plant whose scanned atlas contains both stems and leaves."""
+    variant = VARIANTS[variant_index]
+    height = entry["height"][0] + (entry["height"][1] - entry["height"][0]) * variant_index / 2
+    foliage = transform_mesh(detailed_source, axis, height, entry["crown"])
+    medium_foliage = transform_mesh(medium_source, axis, height, entry["crown"])
+    branch = empty_mesh()
+
+    buffer = GltfBuffer()
+    near = (None, buffer.primitive(foliage, 1))
+    medium = (None, buffer.primitive(medium_foliage, 1))
+    rich_billboard_mesh = billboard_mesh(height * entry["crown"], height, 4)
+    far_billboard_mesh = billboard_mesh(height * entry["crown"], height, 2)
+    rich_billboard = buffer.primitive(rich_billboard_mesh, 2)
+    far_billboard = buffer.primitive(far_billboard_mesh, 2)
+    bin_name = f"{entry['id']}_{variant}.bin"
+    (ASSETS / bin_name).write_bytes(buffer.data)
+
+    seasons = ["summer", "winter"]
+    if entry["deciduous"]:
+        seasons.insert(1, "autumn")
+    for season in seasons:
+        render_impostor(entry, variant, season, branch, foliage,
+                        height, height * entry["crown"])
+        write_gltf(entry, variant, season, near, medium, buffer,
+                   rich_billboard, far_billboard, bin_name)
+    write_object(entry, variant_index, height, crown_extent(foliage))
+    triangles = [len(foliage["indices"]) // 3,
+                 len(medium_foliage["indices"]) // 3,
+                 len(rich_billboard_mesh["indices"]) // 3,
+                 len(far_billboard_mesh["indices"]) // 3]
+    return {"id": f"{entry['id']}_{variant}", "triangles": triangles,
+            "height": height}
+
+
 def write_manifest() -> None:
-    (MOD / "mod.ron").write_text('''// Artist-authored CC0 trees; see LICENSES.md and tools/trees/README.md.
+    (MOD / "mod.ron").write_text('''// Artist-authored CC0 vegetation; see LICENSES.md and tools/trees/README.md.
 (
     id: "trees",
     name: "Bäume Mitteleuropas",
-    version: "2.0.0",
+    version: "2.2.0",
     author: "Mantissa / Poly Haven / Connected Rails",
-    description: "28 mitteleuropäische Baumarten und Sträucher auf Basis CC0-lizenzierter Künstlerbäume: drei Individuen je Art, vier LOD-Stufen sowie Sommer-, Herbst- und Winterausführungen.",
+    description: "46 mitteleuropäische Bäume, Sträucher und Pflanzen sowie 15 anreihbare Heckenabschnitte auf Basis CC0-lizenzierter Künstlermodelle, mit vier LOD-Stufen und saisonalen Ausführungen.",
     depends: [],
     enabled: true,
 )
@@ -1240,8 +1360,10 @@ def read_accessor(model: dict, binary: bytes, accessor_index: int) -> list:
 def audit_branch_mesh_quality(model: dict, binary: bytes, context: str) -> None:
     branches = []
     for level in (0, 1):
-        primitive = next(part for part in model["meshes"][level]["primitives"]
-                         if part.get("material") == 0)
+        primitive = next((part for part in model["meshes"][level]["primitives"]
+                          if part.get("material") == 0), None)
+        if primitive is None:
+            return
         mesh = {
             "positions": read_accessor(model, binary, primitive["attributes"]["POSITION"]),
             "indices": read_accessor(model, binary, primitive["indices"]),
@@ -1305,7 +1427,7 @@ def audit_existing(catalogue: dict) -> None:
           f"objects: {len(list(OBJECTS.glob('*.ron')))}; PBR audit: OK")
 
 
-def contact_sheet() -> None:
+def contact_sheet(catalogue: dict) -> None:
     command = shutil.which("montage")
     if not command:
         return
@@ -1316,6 +1438,16 @@ def contact_sheet() -> None:
         subprocess.run([command, *map(str, sources), "-thumbnail", "160x80", "-tile", "6x",
                         "-geometry", "+4+4", str(target)], check=True)
         print(f"visual audit sheet: {target}")
+    low_ids = {entry["id"] for entry in catalogue["species"]
+               if entry["kind"] in {"shrub", "groundcover"}}
+    low_sources = [path for path in sources
+                   if any(path.name.startswith(identifier + "_") for identifier in low_ids)]
+    if low_sources:
+        target = ROOT / "screenshots" / "shrubs-contact-sheet.png"
+        subprocess.run([command, "-label", "%t", *map(str, low_sources),
+                        "-thumbnail", "180x90", "-tile", "6x", "-geometry", "+4+20",
+                        str(target)], check=True)
+        print(f"shrub visual audit sheet: {target}")
 
 
 def build_imported_tasks(objects: list[bpy.types.Object], source_tasks: list[tuple[dict, int]],
@@ -1384,12 +1516,39 @@ def build_imported_tasks(objects: list[bpy.types.Object], source_tasks: list[tup
     gc.collect()
 
 
+def build_whole_tasks(objects: list[bpy.types.Object], source_tasks: list[tuple[dict, int]],
+                      report: list[dict]) -> None:
+    """Keep complete low-plant meshes and their artist-authored reduced LOD."""
+    detailed_objects = [obj for obj in objects
+                        if not re.search(r"_LOD[12]$", obj.name, re.IGNORECASE)]
+    medium_objects = [obj for obj in objects
+                      if re.search(r"_LOD2$", obj.name, re.IGNORECASE)]
+    if not medium_objects:
+        medium_objects = [obj for obj in objects
+                          if re.search(r"_LOD1$", obj.name, re.IGNORECASE)]
+    if not detailed_objects:
+        raise RuntimeError("whole-plant source has no detailed mesh")
+    if not medium_objects:
+        medium_objects = detailed_objects
+    axis = AxisMap(detailed_objects, 2)
+    detailed = extract_objects_mesh(detailed_objects)
+    medium = extract_objects_mesh(medium_objects)
+    clear_scene()
+    for entry, variant_index in source_tasks:
+        report.append(build_whole_plant(entry, variant_index, axis, detailed, medium))
+        print(f"  {report[-1]['id']}: {report[-1]['triangles']}", flush=True)
+    del objects, detailed_objects, medium_objects, detailed, medium
+    gc.collect()
+
+
 def main() -> None:
     args = parse_args()
     catalogue = json.loads((HERE / "catalogue.json").read_text(encoding="utf-8"))
     if args.audit:
         audit_existing(catalogue)
-        contact_sheet()
+        import build_hedges
+        build_hedges.audit()
+        contact_sheet(catalogue)
         return
     if args.source_root:
         catalogue["source_root"] = str(args.source_root)
@@ -1417,19 +1576,31 @@ def main() -> None:
     for number, (path, source_tasks) in enumerate(sorted(tasks.items()), 1):
         print(f"[{number}/{len(tasks)}] {path.name}: {len(source_tasks)} catalogue trees", flush=True)
         if "/polyhaven/" in path.as_posix():
-            # Poly Haven stores its three genuinely different individuals in
-            # one Blend file. Import one at a time so a catalogue variant can never
-            # accidentally combine all three and change identity at its LOD.
-            for source_variant, letter in enumerate(VARIANTS, 1):
+            # Poly Haven stores several genuinely different individuals in one
+            # Blend file. Import one at a time so a catalogue variant can never
+            # accidentally combine its siblings or change identity at its LOD.
+            asset = path.stem.removesuffix("_1k")
+            selectors = sorted({source_variant(entry, variant_index)
+                                for entry, variant_index in source_tasks})
+            for selector in selectors:
                 selected_tasks = [task for task in source_tasks
-                                  if source_index(task[0], task[1]) == source_variant]
+                                  if source_variant(task[0], task[1]) == selector]
                 if not selected_tasks:
                     continue
                 imported = import_source(path)
-                objects = [obj for obj in imported if f"_{letter}" in obj.name.lower()]
+                stem = f"{asset}_{selector}".lower()
+                objects = [obj for obj in imported
+                           if obj.name.lower() == stem
+                           or obj.name.lower().startswith(stem + "_lod")]
                 if not objects:
-                    raise RuntimeError(f"{path.name} has no variant {letter}")
-                build_imported_tasks(objects, selected_tasks, report)
+                    raise RuntimeError(f"{path.name} has no variant {selector}")
+                if selected_tasks[0][0].get("mesh_mode") == "whole":
+                    build_whole_tasks(objects, selected_tasks, report)
+                else:
+                    build_imported_tasks(
+                        [obj for obj in objects
+                         if not re.search(r"_LOD2$", obj.name, re.IGNORECASE)],
+                        selected_tasks, report)
             continue
         objects = import_source(path)
         # The fir pack is authored Y-up; all other Mantissa packs are Z-up.
@@ -1440,7 +1611,9 @@ def main() -> None:
 
     if full_build:
         audit(catalogue, report)
-        contact_sheet()
+        import build_hedges
+        build_hedges.build()
+        contact_sheet(catalogue)
 
 
 if __name__ == "__main__":

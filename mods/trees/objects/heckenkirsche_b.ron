@@ -1,0 +1,11 @@
+// Rote Heckenkirsche (Lonicera xylosteum), 2 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Rote Heckenkirsche B",
+    model: "trees/assets/heckenkirsche_b.gltf",
+    autumn_model: Some("trees/assets/heckenkirsche_b_herbst.gltf"),
+    winter_model: Some("trees/assets/heckenkirsche_b_winter.gltf"),
+    lod_distances: [45, 400, 800, 700],
+    footprint: Some((length: 2.2, width: 1.5)),
+    tags: ["strauch", "stand-hecke", "stand-laubwald", "stand-bergwald"],
+)

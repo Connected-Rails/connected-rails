@@ -32,7 +32,10 @@ const MIXED = [
   'sandbirke', 'vogelkirsche', 'esche', 'bergulme',
 ];
 const CONIFER = ['fichte', 'fichte', 'fichte', 'kiefer', 'weisstanne', 'douglasie', 'laerche'];
-const SCRUB = ['robinie', 'salweide', 'holunder', 'schlehe', 'weissdorn', 'hasel'];
+const SCRUB = [
+  'robinie', 'salweide', 'holunder', 'schlehe', 'weissdorn', 'hasel', 'hundsrose',
+  'brombeere', 'roter_hartriegel', 'liguster', 'besenginster', 'berberitze', 'sanddorn',
+];
 
 const DEG_LAT = 1 / 111_320;
 const DEG_LON = 1 / (111_320 * Math.cos((52 * Math.PI) / 180));

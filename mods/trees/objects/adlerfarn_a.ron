@@ -1,0 +1,11 @@
+// Adlerfarn (Pteridium aquilinum), 0.5 m. CC0 artist source;
+// imported and LOD-optimised by tools/trees/import_mantissa.py.
+(
+    name: "Adlerfarn A",
+    model: "trees/assets/adlerfarn_a.gltf",
+    autumn_model: Some("trees/assets/adlerfarn_a_herbst.gltf"),
+    winter_model: Some("trees/assets/adlerfarn_a_winter.gltf"),
+    lod_distances: [45, 400, 800, 500],
+    footprint: Some((length: 0.7, width: 0.6)),
+    tags: ["farn", "bodendecker", "stand-laubwald", "stand-nadelwald", "stand-heide", "stand-boeschung"],
+)

@@ -6,6 +6,6 @@
     autumn_model: None,
     winter_model: Some("trees/assets/kiefer_b_winter.gltf"),
     lod_distances: [91, 400, 800, 2500],
-    footprint: Some((length: 14.9, width: 13.8)),
+    footprint: Some((length: 14.9, width: 14.2)),
     tags: ["nadelbaum", "stand-nadelwald", "stand-mischwald", "stand-heide"],
 )

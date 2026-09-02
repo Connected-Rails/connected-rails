@@ -1,10 +1,10 @@
-// Artist-authored CC0 trees; see LICENSES.md and tools/trees/README.md.
+// Artist-authored CC0 vegetation; see LICENSES.md and tools/trees/README.md.
 (
     id: "trees",
     name: "Bäume Mitteleuropas",
-    version: "2.0.0",
+    version: "2.2.0",
     author: "Mantissa / Poly Haven / Connected Rails",
-    description: "28 mitteleuropäische Baumarten und Sträucher auf Basis CC0-lizenzierter Künstlerbäume: drei Individuen je Art, vier LOD-Stufen sowie Sommer-, Herbst- und Winterausführungen.",
+    description: "46 mitteleuropäische Bäume, Sträucher und Pflanzen sowie 15 anreihbare Heckenabschnitte auf Basis CC0-lizenzierter Künstlermodelle, mit vier LOD-Stufen und saisonalen Ausführungen.",
     depends: [],
     enabled: true,
 )

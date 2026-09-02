@@ -29,7 +29,7 @@ bevy = { workspace = true, features = ["jpeg", "bevy_settings"] }
 # FSR 3 upscaling (`fsr.rs`): AMD's FidelityFX upscaler, pure Rust on top of the
 # same wgpu the renderer already uses — no SDK, no download, every GPU.
 # `wgpu` is only named for its types; it unifies with the version Bevy pins.
-wgpu = { version = "29", default-features = false }
+wgpu = { version = "30", default-features = false }
 wgpu-ffx = "0.1"
 # DLSS (`settings.rs`): NVIDIA's upscaler, off by default in more ways than one —
 # the `dlss` feature also has to be compiled in, and that needs the NVIDIA DLSS

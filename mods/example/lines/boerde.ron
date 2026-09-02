@@ -8,22 +8,26 @@
 //
 // The fields came from the Landwirtschaftskammer Nordrhein-Westfalen's InVeKoS
 // service for the 2026 application year (dl-de/by-2-0, see `field_sources:` and
-// THIRD_PARTY_LICENSES.md). The roads came from OpenStreetMap (ODbL): 307
-// carriageways, motorway to Gemeindestrasse, the centre lines the mappers
-// surveyed. The ground came from NRW's open-data DGM1 (GeoTIFF, (C) Geobasis
-// NRW, dl-de/by-2-0): the corridor's terrain tiles are cut at 10 m spacing into
-// `heights/boerde/` and the line records them, so the module runs without
-// `--dgm`. The track stands where the ground is — 92.4 m NHN at the start,
-// over the dip at km 2, up to 103.5 m at the east end, the grades fitted to
-// the DGM in half-kilometre nodes.
+// THIRD_PARTY_LICENSES.md). The roads came from OpenStreetMap (ODbL): 531
+// carriageways, motorway to Feldweg, the centre lines the mappers surveyed —
+// the field tracks among them unpaved unless a mapper wrote otherwise, which
+// is what the Boerde is stitched with. The ground came from NRW's open-data
+// DGM1 (GeoTIFF, (C) Geobasis NRW, dl-de/by-2-0): the corridor's terrain tiles
+// are cut at 10 m spacing into `heights/boerde/` and the line records them, so
+// the module runs without `--dgm`. The track stands where the ground is —
+// 92.4 m NHN at the start, over the dip at km 2, up to 103.5 m at the east
+// end, the grades fitted to the DGM in half-kilometre nodes.
 //
 // Everything here is re-fetchable in one go, headless — the fields out of the
 // register, the roads out of Overpass, the DGM sheets out of NRW's open data
 // and the track onto them:
 //
 //   cargo run -p content --bin import-module -- \
-//       --line mods/example/lines/boerde.ron \
+//       --line mods/example/lines/boerde.ron --tracks \
 //       --dgm cache/dgm/nrw --fetch-dgm nrw
+//
+// `--tracks` is what brings the Wirtschaftswege in (and, with them, the service
+// roads of the yards — the flag opts both of the many-and-thin classes in).
 //
 // The route editor does the same three imports by dialog: File > Import fields,
 // File > Import roads, and the Height data (DGM) panel for the cut-out.
@@ -41,10 +45,15 @@
 //         orchard  1
 //          fallow  1
 //
-// 307 roads, 50.5 km of centre line, as of the import:
-//    residential 133   secondary 58   tertiary 57   unclassified 37
-//    primary 11        trunk 7        secondary_link 2
-//    tertiary_link 2
+// 531 roads, 72.9 km of centre line, as of the import:
+//    service 191       residential 133   secondary 58   tertiary 57
+//    unclassified 37   track 33          primary 11     trunk 7
+//    secondary_link 2  tertiary_link 2
+//
+// By surface: 478 asphalt, 30 concrete, 23 gravel. Of the 33 field tracks,
+// 21 are gravel — the 11 asphalt and the one concrete slab among them say so
+// themselves (`surface=*`, `tracktype=grade1`). Nothing unpaved carries a
+// marking.
 (
     name: "Soester Börde",
     year: Some(2026),
@@ -109,9 +118,9 @@
             speed: [
                 (0.0, 120.0),
             ],
-            // The Regeloberbau this line is laid with. A track states what it
-            // is built of — nothing stands in for a type that is left out.
-            track_type: [(0.0, "example:b70")],
+            track_type: [
+                (0.0, "example:b70"),
+            ],
             electrification: [
                 (0.0, "ac-15kv"),
             ],
@@ -10130,6 +10139,31 @@
             ],
         ),
         (
+            name: "Wasserstraße",
+            points: [
+                (
+                    lat: 51.5859567,
+                    lon: 8.1679876,
+                ),
+                (
+                    lat: 51.5859044,
+                    lon: 8.167591,
+                ),
+                (
+                    lat: 51.585773,
+                    lon: 8.1676286,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Oestinghauser Landstraße",
             points: [
                 (
@@ -10180,6 +10214,90 @@
             bridge: false,
             tags: [
                 "highway-tertiary",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.585448,
+                    lon: 8.1336073,
+                ),
+                (
+                    lat: 51.5853644,
+                    lon: 8.1334157,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5853644,
+                    lon: 8.1334157,
+                ),
+                (
+                    lat: 51.5849722,
+                    lon: 8.1335813,
+                ),
+                (
+                    lat: 51.5843292,
+                    lon: 8.1341744,
+                ),
+                (
+                    lat: 51.5840724,
+                    lon: 8.134197,
+                ),
+                (
+                    lat: 51.5840143,
+                    lon: 8.1342425,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5874887,
+                    lon: 8.1284545,
+                ),
+                (
+                    lat: 51.5883489,
+                    lon: 8.1302403,
+                ),
+                (
+                    lat: 51.588321,
+                    lon: 8.1303804,
+                ),
+                (
+                    lat: 51.5854105,
+                    lon: 8.1332385,
+                ),
+                (
+                    lat: 51.5853644,
+                    lon: 8.1334157,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -10246,6 +10364,91 @@
             bridge: false,
             tags: [
                 "highway-unclassified",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5941902,
+                    lon: 8.1448334,
+                ),
+                (
+                    lat: 51.5942359,
+                    lon: 8.1447844,
+                ),
+                (
+                    lat: 51.5943774,
+                    lon: 8.1446949,
+                ),
+                (
+                    lat: 51.5944656,
+                    lon: 8.1446134,
+                ),
+                (
+                    lat: 51.5945537,
+                    lon: 8.1445394,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Gemkerweg",
+            points: [
+                (
+                    lat: 51.5937745,
+                    lon: 8.1541466,
+                ),
+                (
+                    lat: 51.5937484,
+                    lon: 8.1540076,
+                ),
+                (
+                    lat: 51.593742,
+                    lon: 8.1538458,
+                ),
+                (
+                    lat: 51.5939062,
+                    lon: 8.1506507,
+                ),
+                (
+                    lat: 51.5939933,
+                    lon: 8.1490351,
+                ),
+                (
+                    lat: 51.5941002,
+                    lon: 8.1482023,
+                ),
+                (
+                    lat: 51.5943641,
+                    lon: 8.1462424,
+                ),
+                (
+                    lat: 51.5944299,
+                    lon: 8.1459255,
+                ),
+                (
+                    lat: 51.594592,
+                    lon: 8.1452165,
+                ),
+                (
+                    lat: 51.5946132,
+                    lon: 8.1451159,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -10355,6 +10558,47 @@
             ],
         ),
         (
+            name: "Lindenweg",
+            points: [
+                (
+                    lat: 51.5945537,
+                    lon: 8.1445394,
+                ),
+                (
+                    lat: 51.5949251,
+                    lon: 8.1441067,
+                ),
+                (
+                    lat: 51.5955867,
+                    lon: 8.1432649,
+                ),
+                (
+                    lat: 51.59563,
+                    lon: 8.1432142,
+                ),
+                (
+                    lat: 51.5958584,
+                    lon: 8.1429468,
+                ),
+                (
+                    lat: 51.5960263,
+                    lon: 8.1427847,
+                ),
+                (
+                    lat: 51.5962046,
+                    lon: 8.142651,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Alter Soestweg",
             points: [
                 (
@@ -10429,6 +10673,63 @@
             bridge: false,
             tags: [
                 "highway-unclassified",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5945568,
+                    lon: 8.1450169,
+                ),
+                (
+                    lat: 51.5945645,
+                    lon: 8.1449043,
+                ),
+                (
+                    lat: 51.5945471,
+                    lon: 8.1446907,
+                ),
+                (
+                    lat: 51.5945537,
+                    lon: 8.1445394,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Am Sportzentrum",
+            points: [
+                (
+                    lat: 51.5983869,
+                    lon: 8.1604398,
+                ),
+                (
+                    lat: 51.5983104,
+                    lon: 8.1604481,
+                ),
+                (
+                    lat: 51.5982773,
+                    lon: 8.1604399,
+                ),
+                (
+                    lat: 51.5960877,
+                    lon: 8.159899,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -11046,6 +11347,27 @@
             ],
         ),
         (
+            name: "An der Rosenau",
+            points: [
+                (
+                    lat: 51.5842301,
+                    lon: 8.166526,
+                ),
+                (
+                    lat: 51.5841422,
+                    lon: 8.1665957,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Am Haullenbach",
             points: [
                 (
@@ -11180,6 +11502,30 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5908922,
+                    lon: 8.1418106,
+                ),
+                (
+                    lat: 51.5909314,
+                    lon: 8.1416927,
+                ),
+                (
+                    lat: 51.5916521,
+                    lon: 8.1390483,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -11342,6 +11688,120 @@
             ],
         ),
         (
+            name: "Kampsweg",
+            points: [
+                (
+                    lat: 51.5986565,
+                    lon: 8.1409309,
+                ),
+                (
+                    lat: 51.5985523,
+                    lon: 8.1406439,
+                ),
+                (
+                    lat: 51.5983519,
+                    lon: 8.1401467,
+                ),
+                (
+                    lat: 51.5982093,
+                    lon: 8.1398055,
+                ),
+                (
+                    lat: 51.5981886,
+                    lon: 8.139756,
+                ),
+                (
+                    lat: 51.5980182,
+                    lon: 8.1393826,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Lindenweg",
+            points: [
+                (
+                    lat: 51.5962046,
+                    lon: 8.142651,
+                ),
+                (
+                    lat: 51.5963243,
+                    lon: 8.1425692,
+                ),
+                (
+                    lat: 51.5971497,
+                    lon: 8.1421444,
+                ),
+                (
+                    lat: 51.597342,
+                    lon: 8.1420117,
+                ),
+                (
+                    lat: 51.5973722,
+                    lon: 8.141981,
+                ),
+                (
+                    lat: 51.5982102,
+                    lon: 8.14113,
+                ),
+                (
+                    lat: 51.5985283,
+                    lon: 8.1408803,
+                ),
+                (
+                    lat: 51.5985931,
+                    lon: 8.1408933,
+                ),
+                (
+                    lat: 51.5986565,
+                    lon: 8.1409309,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6032979,
+                    lon: 8.1432834,
+                ),
+                (
+                    lat: 51.6033807,
+                    lon: 8.1431955,
+                ),
+                (
+                    lat: 51.6044542,
+                    lon: 8.1421856,
+                ),
+                (
+                    lat: 51.6045631,
+                    lon: 8.1420844,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
             name: "Schneiderstraße",
             points: [
                 (
@@ -11444,6 +11904,175 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            name: "Stemkesweg",
+            points: [
+                (
+                    lat: 51.5914014,
+                    lon: 8.1570593,
+                ),
+                (
+                    lat: 51.591385,
+                    lon: 8.1569099,
+                ),
+                (
+                    lat: 51.5914045,
+                    lon: 8.1566493,
+                ),
+                (
+                    lat: 51.5915688,
+                    lon: 8.154453,
+                ),
+                (
+                    lat: 51.5915719,
+                    lon: 8.1544053,
+                ),
+                (
+                    lat: 51.5916359,
+                    lon: 8.1534606,
+                ),
+                (
+                    lat: 51.591563,
+                    lon: 8.1530201,
+                ),
+                (
+                    lat: 51.5915519,
+                    lon: 8.1528056,
+                ),
+                (
+                    lat: 51.591569,
+                    lon: 8.1526139,
+                ),
+                (
+                    lat: 51.5918826,
+                    lon: 8.1509774,
+                ),
+                (
+                    lat: 51.5919038,
+                    lon: 8.1508022,
+                ),
+                (
+                    lat: 51.5919013,
+                    lon: 8.1505483,
+                ),
+                (
+                    lat: 51.5918403,
+                    lon: 8.1498714,
+                ),
+                (
+                    lat: 51.591856,
+                    lon: 8.1496563,
+                ),
+                (
+                    lat: 51.5920248,
+                    lon: 8.1489105,
+                ),
+                (
+                    lat: 51.5920994,
+                    lon: 8.1486645,
+                ),
+                (
+                    lat: 51.5923476,
+                    lon: 8.1479757,
+                ),
+                (
+                    lat: 51.5924422,
+                    lon: 8.1476281,
+                ),
+                (
+                    lat: 51.5924823,
+                    lon: 8.147428,
+                ),
+                (
+                    lat: 51.5926804,
+                    lon: 8.1465164,
+                ),
+                (
+                    lat: 51.5927983,
+                    lon: 8.1459017,
+                ),
+                (
+                    lat: 51.5928683,
+                    lon: 8.1453916,
+                ),
+                (
+                    lat: 51.5928815,
+                    lon: 8.1451628,
+                ),
+                (
+                    lat: 51.5928739,
+                    lon: 8.1444932,
+                ),
+                (
+                    lat: 51.5928889,
+                    lon: 8.144409,
+                ),
+                (
+                    lat: 51.5929282,
+                    lon: 8.1443562,
+                ),
+                (
+                    lat: 51.5930305,
+                    lon: 8.1443087,
+                ),
+                (
+                    lat: 51.5930763,
+                    lon: 8.1442448,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5967895,
+                    lon: 8.1302916,
+                ),
+                (
+                    lat: 51.5968399,
+                    lon: 8.1301741,
+                ),
+                (
+                    lat: 51.5975994,
+                    lon: 8.1286128,
+                ),
+                (
+                    lat: 51.5976292,
+                    lon: 8.1285279,
+                ),
+                (
+                    lat: 51.5976792,
+                    lon: 8.128082,
+                ),
+                (
+                    lat: 51.5978823,
+                    lon: 8.1260809,
+                ),
+                (
+                    lat: 51.5980682,
+                    lon: 8.1241123,
+                ),
+                (
+                    lat: 51.5989286,
+                    lon: 8.1199311,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -11814,6 +12443,62 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5856076,
+                    lon: 8.1394171,
+                ),
+                (
+                    lat: 51.5855732,
+                    lon: 8.1394182,
+                ),
+                (
+                    lat: 51.5853694,
+                    lon: 8.1395766,
+                ),
+                (
+                    lat: 51.5853663,
+                    lon: 8.1396456,
+                ),
+            ],
+            width: 3.0,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5838499,
+                    lon: 8.1507378,
+                ),
+                (
+                    lat: 51.5842206,
+                    lon: 8.154735,
+                ),
+                (
+                    lat: 51.5842978,
+                    lon: 8.1555166,
+                ),
+                (
+                    lat: 51.5843041,
+                    lon: 8.1555828,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
             name: "Alte Ladestraße",
             points: [
                 (
@@ -11965,7 +12650,7 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
@@ -12093,6 +12778,66 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5863182,
+                    lon: 8.168436,
+                ),
+                (
+                    lat: 51.5862966,
+                    lon: 8.1683638,
+                ),
+                (
+                    lat: 51.5861549,
+                    lon: 8.1683426,
+                ),
+                (
+                    lat: 51.5858329,
+                    lon: 8.1685191,
+                ),
+                (
+                    lat: 51.5858232,
+                    lon: 8.1685856,
+                ),
+                (
+                    lat: 51.5858298,
+                    lon: 8.1686843,
+                ),
+                (
+                    lat: 51.5858701,
+                    lon: 8.168691,
+                ),
+                (
+                    lat: 51.5860613,
+                    lon: 8.1685861,
+                ),
+                (
+                    lat: 51.5862544,
+                    lon: 8.1684801,
+                ),
+                (
+                    lat: 51.5863182,
+                    lon: 8.168436,
+                ),
+                (
+                    lat: 51.5864044,
+                    lon: 8.1683618,
+                ),
+                (
+                    lat: 51.5863952,
+                    lon: 8.1678818,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Mittelweg",
             points: [
                 (
@@ -12130,6 +12875,130 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.587358,
+                    lon: 8.1647688,
+                ),
+                (
+                    lat: 51.5873825,
+                    lon: 8.1643196,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5884377,
+                    lon: 8.163849,
+                ),
+                (
+                    lat: 51.5884362,
+                    lon: 8.1640611,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5884362,
+                    lon: 8.1640611,
+                ),
+                (
+                    lat: 51.588528,
+                    lon: 8.1640694,
+                ),
+                (
+                    lat: 51.588566,
+                    lon: 8.1640865,
+                ),
+                (
+                    lat: 51.588569,
+                    lon: 8.1642355,
+                ),
+                (
+                    lat: 51.5885997,
+                    lon: 8.1643983,
+                ),
+                (
+                    lat: 51.5886426,
+                    lon: 8.1645917,
+                ),
+                (
+                    lat: 51.5886537,
+                    lon: 8.1646445,
+                ),
+                (
+                    lat: 51.5887025,
+                    lon: 8.1648048,
+                ),
+                (
+                    lat: 51.5887121,
+                    lon: 8.164849,
+                ),
+                (
+                    lat: 51.5887516,
+                    lon: 8.1649987,
+                ),
+                (
+                    lat: 51.5887785,
+                    lon: 8.1651151,
+                ),
+                (
+                    lat: 51.588796,
+                    lon: 8.1652123,
+                ),
+                (
+                    lat: 51.5887718,
+                    lon: 8.1653766,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5869951,
+                    lon: 8.167205,
+                ),
+                (
+                    lat: 51.5871739,
+                    lon: 8.1674824,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Im Malerwinkel",
             points: [
                 (
@@ -12148,6 +13017,126 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5848265,
+                    lon: 8.166422,
+                ),
+                (
+                    lat: 51.5848366,
+                    lon: 8.1663508,
+                ),
+                (
+                    lat: 51.5848382,
+                    lon: 8.1663086,
+                ),
+                (
+                    lat: 51.5848392,
+                    lon: 8.166267,
+                ),
+                (
+                    lat: 51.5848391,
+                    lon: 8.166264,
+                ),
+                (
+                    lat: 51.5848357,
+                    lon: 8.1661416,
+                ),
+                (
+                    lat: 51.5848309,
+                    lon: 8.1660072,
+                ),
+                (
+                    lat: 51.5848271,
+                    lon: 8.1659263,
+                ),
+                (
+                    lat: 51.584807,
+                    lon: 8.1656206,
+                ),
+                (
+                    lat: 51.5847986,
+                    lon: 8.1655786,
+                ),
+                (
+                    lat: 51.5847882,
+                    lon: 8.1655549,
+                ),
+                (
+                    lat: 51.5847728,
+                    lon: 8.1655354,
+                ),
+                (
+                    lat: 51.5847541,
+                    lon: 8.1655284,
+                ),
+                (
+                    lat: 51.584512,
+                    lon: 8.1655354,
+                ),
+                (
+                    lat: 51.5844896,
+                    lon: 8.1655331,
+                ),
+                (
+                    lat: 51.5844699,
+                    lon: 8.165528,
+                ),
+                (
+                    lat: 51.5844445,
+                    lon: 8.1655126,
+                ),
+                (
+                    lat: 51.5844166,
+                    lon: 8.1654912,
+                ),
+                (
+                    lat: 51.5843983,
+                    lon: 8.1654569,
+                ),
+                (
+                    lat: 51.5843835,
+                    lon: 8.1654147,
+                ),
+                (
+                    lat: 51.5843752,
+                    lon: 8.165371,
+                ),
+                (
+                    lat: 51.5843749,
+                    lon: 8.1653416,
+                ),
+                (
+                    lat: 51.584376,
+                    lon: 8.1653008,
+                ),
+                (
+                    lat: 51.5843812,
+                    lon: 8.1652202,
+                ),
+                (
+                    lat: 51.5843834,
+                    lon: 8.165163,
+                ),
+                (
+                    lat: 51.5843799,
+                    lon: 8.1651237,
+                ),
+                (
+                    lat: 51.5843598,
+                    lon: 8.1650372,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -12173,6 +13162,54 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5842824,
+                    lon: 8.1625201,
+                ),
+                (
+                    lat: 51.5843015,
+                    lon: 8.1624146,
+                ),
+                (
+                    lat: 51.584338,
+                    lon: 8.1622128,
+                ),
+                (
+                    lat: 51.5842348,
+                    lon: 8.1620284,
+                ),
+                (
+                    lat: 51.5841006,
+                    lon: 8.1615723,
+                ),
+                (
+                    lat: 51.5840254,
+                    lon: 8.161549,
+                ),
+                (
+                    lat: 51.5839774,
+                    lon: 8.1618305,
+                ),
+                (
+                    lat: 51.583961,
+                    lon: 8.1620172,
+                ),
+                (
+                    lat: 51.5839382,
+                    lon: 8.1622769,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -12234,7 +13271,7 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
@@ -12334,6 +13371,30 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5853865,
+                    lon: 8.1367207,
+                ),
+                (
+                    lat: 51.5852902,
+                    lon: 8.1364056,
+                ),
+                (
+                    lat: 51.5851744,
+                    lon: 8.1360979,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: true,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Im Grünen Winkel",
             points: [
                 (
@@ -12399,7 +13460,7 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
@@ -12440,12 +13501,41 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            name: "Anna-Scholle-Weg",
+            points: [
+                (
+                    lat: 51.5847019,
+                    lon: 8.1143137,
+                ),
+                (
+                    lat: 51.5847426,
+                    lon: 8.1134545,
+                ),
+                (
+                    lat: 51.5848046,
+                    lon: 8.113388,
+                ),
+                (
+                    lat: 51.5849434,
+                    lon: 8.1134061,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -12487,6 +13577,46 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5842451,
+                    lon: 8.113243,
+                ),
+                (
+                    lat: 51.5842471,
+                    lon: 8.1131401,
+                ),
+                (
+                    lat: 51.5842215,
+                    lon: 8.1130546,
+                ),
+                (
+                    lat: 51.5840929,
+                    lon: 8.1130105,
+                ),
+                (
+                    lat: 51.5840842,
+                    lon: 8.1129526,
+                ),
+                (
+                    lat: 51.5840896,
+                    lon: 8.1125046,
+                ),
+                (
+                    lat: 51.5841014,
+                    lon: 8.1123659,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -12544,6 +13674,31 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            name: "Erlenstraße",
+            points: [
+                (
+                    lat: 51.5865194,
+                    lon: 8.1602602,
+                ),
+                (
+                    lat: 51.5866085,
+                    lon: 8.1596429,
+                ),
+                (
+                    lat: 51.5866092,
+                    lon: 8.1595429,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -12710,6 +13865,56 @@
             ],
         ),
         (
+            name: "Lindenstraße",
+            points: [
+                (
+                    lat: 51.5883641,
+                    lon: 8.1587005,
+                ),
+                (
+                    lat: 51.5883696,
+                    lon: 8.1591027,
+                ),
+                (
+                    lat: 51.5884016,
+                    lon: 8.1592328,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Ahornstraße",
+            points: [
+                (
+                    lat: 51.5874199,
+                    lon: 8.1615158,
+                ),
+                (
+                    lat: 51.5874283,
+                    lon: 8.1610995,
+                ),
+                (
+                    lat: 51.5874374,
+                    lon: 8.1610121,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Erlenweg",
             points: [
                 (
@@ -12807,6 +14012,64 @@
             ],
         ),
         (
+            name: "Erlenweg",
+            points: [
+                (
+                    lat: 51.5870967,
+                    lon: 8.1598826,
+                ),
+                (
+                    lat: 51.5870902,
+                    lon: 8.1595507,
+                ),
+                (
+                    lat: 51.5870862,
+                    lon: 8.1594943,
+                ),
+                (
+                    lat: 51.587075,
+                    lon: 8.1593826,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Reiterweg",
+            points: [
+                (
+                    lat: 51.5888229,
+                    lon: 8.1611109,
+                ),
+                (
+                    lat: 51.588795,
+                    lon: 8.1614815,
+                ),
+                (
+                    lat: 51.5887798,
+                    lon: 8.1616759,
+                ),
+                (
+                    lat: 51.5887689,
+                    lon: 8.1618166,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Ulmenstraße",
             points: [
                 (
@@ -12849,6 +14112,83 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            name: "Spreitweg",
+            points: [
+                (
+                    lat: 51.5873418,
+                    lon: 8.1569233,
+                ),
+                (
+                    lat: 51.5873466,
+                    lon: 8.1567162,
+                ),
+                (
+                    lat: 51.5878012,
+                    lon: 8.1567203,
+                ),
+                (
+                    lat: 51.5878197,
+                    lon: 8.1567247,
+                ),
+                (
+                    lat: 51.5878378,
+                    lon: 8.1567431,
+                ),
+                (
+                    lat: 51.5878514,
+                    lon: 8.1567807,
+                ),
+                (
+                    lat: 51.5878537,
+                    lon: 8.1568239,
+                ),
+                (
+                    lat: 51.587848,
+                    lon: 8.1568796,
+                ),
+                (
+                    lat: 51.5878276,
+                    lon: 8.1569215,
+                ),
+                (
+                    lat: 51.5877956,
+                    lon: 8.1569326,
+                ),
+                (
+                    lat: 51.5873418,
+                    lon: 8.1569233,
+                ),
+                (
+                    lat: 51.5873413,
+                    lon: 8.1570053,
+                ),
+                (
+                    lat: 51.5872276,
+                    lon: 8.1570879,
+                ),
+                (
+                    lat: 51.5871175,
+                    lon: 8.1571371,
+                ),
+                (
+                    lat: 51.5864855,
+                    lon: 8.1572323,
+                ),
+                (
+                    lat: 51.5863633,
+                    lon: 8.1572763,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -12942,6 +14282,30 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5963519,
+                    lon: 8.1414977,
+                ),
+                (
+                    lat: 51.5961889,
+                    lon: 8.1424968,
+                ),
+                (
+                    lat: 51.5962046,
+                    lon: 8.142651,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Langer Patt",
             points: [
                 (
@@ -13031,6 +14395,135 @@
             ],
         ),
         (
+            name: "Tippengasse",
+            points: [
+                (
+                    lat: 51.5987132,
+                    lon: 8.1422943,
+                ),
+                (
+                    lat: 51.5986467,
+                    lon: 8.1423027,
+                ),
+                (
+                    lat: 51.5983487,
+                    lon: 8.1423674,
+                ),
+                (
+                    lat: 51.5982699,
+                    lon: 8.1424309,
+                ),
+                (
+                    lat: 51.5978831,
+                    lon: 8.1429452,
+                ),
+                (
+                    lat: 51.5976196,
+                    lon: 8.143715,
+                ),
+                (
+                    lat: 51.5974896,
+                    lon: 8.1441409,
+                ),
+                (
+                    lat: 51.5974469,
+                    lon: 8.1442705,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6020341,
+                    lon: 8.1626745,
+                ),
+                (
+                    lat: 51.6020534,
+                    lon: 8.1625578,
+                ),
+                (
+                    lat: 51.6016752,
+                    lon: 8.1558085,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5980182,
+                    lon: 8.1393826,
+                ),
+                (
+                    lat: 51.5984942,
+                    lon: 8.137959,
+                ),
+                (
+                    lat: 51.5994039,
+                    lon: 8.1351827,
+                ),
+                (
+                    lat: 51.5994443,
+                    lon: 8.135121,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.599525,
+                    lon: 8.149134,
+                ),
+                (
+                    lat: 51.5994684,
+                    lon: 8.149649,
+                ),
+                (
+                    lat: 51.5993928,
+                    lon: 8.1499371,
+                ),
+                (
+                    lat: 51.5993245,
+                    lon: 8.1500203,
+                ),
+                (
+                    lat: 51.5986759,
+                    lon: 8.1502824,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Steinmickerweg",
             points: [
                 (
@@ -13091,6 +14584,50 @@
         (
             points: [
                 (
+                    lat: 51.5897587,
+                    lon: 8.1659183,
+                ),
+                (
+                    lat: 51.5899622,
+                    lon: 8.1652654,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.592713,
+                    lon: 8.1577333,
+                ),
+                (
+                    lat: 51.5935101,
+                    lon: 8.157509,
+                ),
+                (
+                    lat: 51.5935763,
+                    lon: 8.1575133,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
                     lat: 51.5948679,
                     lon: 8.1577943,
                 ),
@@ -13129,6 +14666,66 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5896722,
+                    lon: 8.1650206,
+                ),
+                (
+                    lat: 51.5894644,
+                    lon: 8.1656814,
+                ),
+                (
+                    lat: 51.5895973,
+                    lon: 8.1657864,
+                ),
+                (
+                    lat: 51.5897587,
+                    lon: 8.1659183,
+                ),
+                (
+                    lat: 51.5898917,
+                    lon: 8.1660234,
+                ),
+                (
+                    lat: 51.5900259,
+                    lon: 8.1661374,
+                ),
+                (
+                    lat: 51.5901794,
+                    lon: 8.1662635,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5900259,
+                    lon: 8.1661374,
+                ),
+                (
+                    lat: 51.5902094,
+                    lon: 8.1655588,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Am Sassendorfer Wege",
             points: [
                 (
@@ -13151,6 +14748,26 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5898917,
+                    lon: 8.1660234,
+                ),
+                (
+                    lat: 51.5901002,
+                    lon: 8.1653857,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -13273,6 +14890,78 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5895973,
+                    lon: 8.1657864,
+                ),
+                (
+                    lat: 51.5898114,
+                    lon: 8.1651363,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5896722,
+                    lon: 8.1650206,
+                ),
+                (
+                    lat: 51.5898114,
+                    lon: 8.1651363,
+                ),
+                (
+                    lat: 51.5899622,
+                    lon: 8.1652654,
+                ),
+                (
+                    lat: 51.5901002,
+                    lon: 8.1653857,
+                ),
+                (
+                    lat: 51.5901911,
+                    lon: 8.1654731,
+                ),
+                (
+                    lat: 51.5902094,
+                    lon: 8.1655588,
+                ),
+                (
+                    lat: 51.5902456,
+                    lon: 8.1656351,
+                ),
+                (
+                    lat: 51.5903537,
+                    lon: 8.1657285,
+                ),
+                (
+                    lat: 51.5901794,
+                    lon: 8.1662635,
+                ),
+                (
+                    lat: 51.5901873,
+                    lon: 8.1663372,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -13422,6 +15111,154 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.6039216,
+                    lon: 8.1663145,
+                ),
+                (
+                    lat: 51.6037864,
+                    lon: 8.1663226,
+                ),
+                (
+                    lat: 51.6036864,
+                    lon: 8.1661959,
+                ),
+                (
+                    lat: 51.6034455,
+                    lon: 8.1657503,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5952963,
+                    lon: 8.1597004,
+                ),
+                (
+                    lat: 51.5952884,
+                    lon: 8.1597767,
+                ),
+                (
+                    lat: 51.5952331,
+                    lon: 8.1604463,
+                ),
+                (
+                    lat: 51.5951274,
+                    lon: 8.1615411,
+                ),
+                (
+                    lat: 51.5951124,
+                    lon: 8.1617027,
+                ),
+                (
+                    lat: 51.5949082,
+                    lon: 8.1616597,
+                ),
+                (
+                    lat: 51.5948389,
+                    lon: 8.1623787,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5923279,
+                    lon: 8.1434717,
+                ),
+                (
+                    lat: 51.5922948,
+                    lon: 8.1435351,
+                ),
+                (
+                    lat: 51.5921552,
+                    lon: 8.1437132,
+                ),
+                (
+                    lat: 51.592008,
+                    lon: 8.1439622,
+                ),
+                (
+                    lat: 51.5918966,
+                    lon: 8.1441952,
+                ),
+                (
+                    lat: 51.5917771,
+                    lon: 8.1445211,
+                ),
+                (
+                    lat: 51.5916618,
+                    lon: 8.1447555,
+                ),
+                (
+                    lat: 51.5914215,
+                    lon: 8.1450533,
+                ),
+                (
+                    lat: 51.5911947,
+                    lon: 8.1453063,
+                ),
+                (
+                    lat: 51.590945,
+                    lon: 8.1455195,
+                ),
+            ],
+            width: 2.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5983854,
+                    lon: 8.1160307,
+                ),
+                (
+                    lat: 51.5982492,
+                    lon: 8.1137711,
+                ),
+                (
+                    lat: 51.5982504,
+                    lon: 8.1135697,
+                ),
+                (
+                    lat: 51.5982397,
+                    lon: 8.1134707,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
             name: "Weringser Weg",
             points: [
                 (
@@ -13460,6 +15297,146 @@
             bridge: false,
             tags: [
                 "highway-unclassified",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5910522,
+                    lon: 8.1210637,
+                ),
+                (
+                    lat: 51.5911161,
+                    lon: 8.1211624,
+                ),
+                (
+                    lat: 51.5915839,
+                    lon: 8.1218421,
+                ),
+                (
+                    lat: 51.5916732,
+                    lon: 8.1219631,
+                ),
+                (
+                    lat: 51.5917883,
+                    lon: 8.122112,
+                ),
+                (
+                    lat: 51.5918992,
+                    lon: 8.1222263,
+                ),
+                (
+                    lat: 51.5936773,
+                    lon: 8.1241246,
+                ),
+                (
+                    lat: 51.5935954,
+                    lon: 8.1243199,
+                ),
+                (
+                    lat: 51.5935354,
+                    lon: 8.1244138,
+                ),
+                (
+                    lat: 51.5934871,
+                    lon: 8.1244084,
+                ),
+                (
+                    lat: 51.5934163,
+                    lon: 8.1243306,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5917944,
+                    lon: 8.1175028,
+                ),
+                (
+                    lat: 51.5932624,
+                    lon: 8.1190473,
+                ),
+                (
+                    lat: 51.5955363,
+                    lon: 8.1214668,
+                ),
+                (
+                    lat: 51.5957295,
+                    lon: 8.1216723,
+                ),
+                (
+                    lat: 51.5957705,
+                    lon: 8.1217913,
+                ),
+                (
+                    lat: 51.5957308,
+                    lon: 8.1219607,
+                ),
+                (
+                    lat: 51.5956593,
+                    lon: 8.1219787,
+                ),
+                (
+                    lat: 51.5955763,
+                    lon: 8.1219557,
+                ),
+                (
+                    lat: 51.5955304,
+                    lon: 8.1218694,
+                ),
+                (
+                    lat: 51.5955266,
+                    lon: 8.1217462,
+                ),
+                (
+                    lat: 51.5955495,
+                    lon: 8.1216291,
+                ),
+                (
+                    lat: 51.5955363,
+                    lon: 8.1214668,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5980682,
+                    lon: 8.1241123,
+                ),
+                (
+                    lat: 51.5966269,
+                    lon: 8.1225779,
+                ),
+                (
+                    lat: 51.5960554,
+                    lon: 8.1219874,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -13523,7 +15500,7 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
@@ -14222,6 +16199,54 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5861882,
+                    lon: 8.154592,
+                ),
+                (
+                    lat: 51.5842206,
+                    lon: 8.154735,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.594464,
+                    lon: 8.1576493,
+                ),
+                (
+                    lat: 51.5944542,
+                    lon: 8.1577573,
+                ),
+                (
+                    lat: 51.5944588,
+                    lon: 8.157829,
+                ),
+                (
+                    lat: 51.5945131,
+                    lon: 8.15796,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Zur Sälzerschule",
             points: [
                 (
@@ -14363,6 +16388,222 @@
             bridge: false,
             tags: [
                 "highway-primary",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5919465,
+                    lon: 8.1563357,
+                ),
+                (
+                    lat: 51.591917,
+                    lon: 8.1562747,
+                ),
+                (
+                    lat: 51.5919079,
+                    lon: 8.1562105,
+                ),
+                (
+                    lat: 51.5919287,
+                    lon: 8.1561406,
+                ),
+                (
+                    lat: 51.5919724,
+                    lon: 8.1560685,
+                ),
+                (
+                    lat: 51.5920012,
+                    lon: 8.1560211,
+                ),
+                (
+                    lat: 51.5921505,
+                    lon: 8.1558463,
+                ),
+                (
+                    lat: 51.5922229,
+                    lon: 8.1557457,
+                ),
+                (
+                    lat: 51.592289,
+                    lon: 8.1556218,
+                ),
+                (
+                    lat: 51.592328,
+                    lon: 8.1554295,
+                ),
+                (
+                    lat: 51.592366,
+                    lon: 8.1551279,
+                ),
+                (
+                    lat: 51.5923877,
+                    lon: 8.1548758,
+                ),
+                (
+                    lat: 51.5924601,
+                    lon: 8.1539738,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5923877,
+                    lon: 8.1548758,
+                ),
+                (
+                    lat: 51.5921931,
+                    lon: 8.1548394,
+                ),
+                (
+                    lat: 51.591785,
+                    lon: 8.1547569,
+                ),
+                (
+                    lat: 51.5917558,
+                    lon: 8.1547854,
+                ),
+                (
+                    lat: 51.591735,
+                    lon: 8.1550011,
+                ),
+                (
+                    lat: 51.5917232,
+                    lon: 8.1552109,
+                ),
+                (
+                    lat: 51.5917368,
+                    lon: 8.1552517,
+                ),
+                (
+                    lat: 51.5918473,
+                    lon: 8.155275,
+                ),
+                (
+                    lat: 51.5918789,
+                    lon: 8.1552984,
+                ),
+                (
+                    lat: 51.5920672,
+                    lon: 8.1555359,
+                ),
+                (
+                    lat: 51.5921913,
+                    lon: 8.1556918,
+                ),
+                (
+                    lat: 51.5922229,
+                    lon: 8.1557457,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.592328,
+                    lon: 8.1554295,
+                ),
+                (
+                    lat: 51.5921469,
+                    lon: 8.155345,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.592366,
+                    lon: 8.1551279,
+                ),
+                (
+                    lat: 51.5921722,
+                    lon: 8.1550856,
+                ),
+                (
+                    lat: 51.591735,
+                    lon: 8.1550011,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5920012,
+                    lon: 8.1560211,
+                ),
+                (
+                    lat: 51.5919948,
+                    lon: 8.1559045,
+                ),
+                (
+                    lat: 51.5920012,
+                    lon: 8.1557661,
+                ),
+                (
+                    lat: 51.5920138,
+                    lon: 8.1556743,
+                ),
+                (
+                    lat: 51.5920672,
+                    lon: 8.1555359,
+                ),
+                (
+                    lat: 51.5921469,
+                    lon: 8.155345,
+                ),
+                (
+                    lat: 51.5921722,
+                    lon: 8.1550856,
+                ),
+                (
+                    lat: 51.5921931,
+                    lon: 8.1548394,
+                ),
+                (
+                    lat: 51.5922211,
+                    lon: 8.1544634,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -14612,6 +16853,491 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5976226,
+                    lon: 8.1656306,
+                ),
+                (
+                    lat: 51.5975741,
+                    lon: 8.1660994,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5970873,
+                    lon: 8.1669056,
+                ),
+                (
+                    lat: 51.5968898,
+                    lon: 8.1668403,
+                ),
+                (
+                    lat: 51.5968414,
+                    lon: 8.1668267,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5975741,
+                    lon: 8.1660994,
+                ),
+                (
+                    lat: 51.5975648,
+                    lon: 8.1662083,
+                ),
+                (
+                    lat: 51.5974598,
+                    lon: 8.1670526,
+                ),
+                (
+                    lat: 51.5974668,
+                    lon: 8.1670758,
+                ),
+                (
+                    lat: 51.5976264,
+                    lon: 8.1671223,
+                ),
+                (
+                    lat: 51.597663,
+                    lon: 8.1671656,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5970272,
+                    lon: 8.1672802,
+                ),
+                (
+                    lat: 51.5968486,
+                    lon: 8.1672294,
+                ),
+                (
+                    lat: 51.5967962,
+                    lon: 8.1672158,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.597275,
+                    lon: 8.1671908,
+                ),
+                (
+                    lat: 51.5975843,
+                    lon: 8.1672766,
+                ),
+                (
+                    lat: 51.5976137,
+                    lon: 8.1673079,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5971091,
+                    lon: 8.1665055,
+                ),
+                (
+                    lat: 51.5969341,
+                    lon: 8.1664596,
+                ),
+                (
+                    lat: 51.5968858,
+                    lon: 8.1664449,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5959664,
+                    lon: 8.1656461,
+                ),
+                (
+                    lat: 51.5959801,
+                    lon: 8.165545,
+                ),
+                (
+                    lat: 51.5960173,
+                    lon: 8.1651895,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5958679,
+                    lon: 8.1679903,
+                ),
+                (
+                    lat: 51.5960107,
+                    lon: 8.1680288,
+                ),
+                (
+                    lat: 51.59619,
+                    lon: 8.1680854,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5952737,
+                    lon: 8.1654476,
+                ),
+                (
+                    lat: 51.5952567,
+                    lon: 8.1655886,
+                ),
+                (
+                    lat: 51.5951453,
+                    lon: 8.1665011,
+                ),
+                (
+                    lat: 51.5951354,
+                    lon: 8.1665861,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5961059,
+                    lon: 8.1677104,
+                ),
+                (
+                    lat: 51.5960318,
+                    lon: 8.1678262,
+                ),
+                (
+                    lat: 51.5960267,
+                    lon: 8.1678753,
+                ),
+                (
+                    lat: 51.5960107,
+                    lon: 8.1680288,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5942414,
+                    lon: 8.1664394,
+                ),
+                (
+                    lat: 51.594266,
+                    lon: 8.1665358,
+                ),
+                (
+                    lat: 51.5943052,
+                    lon: 8.1666083,
+                ),
+                (
+                    lat: 51.594404,
+                    lon: 8.1666382,
+                ),
+                (
+                    lat: 51.5946549,
+                    lon: 8.166714,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Beethovenweg",
+            points: [
+                (
+                    lat: 51.5941644,
+                    lon: 8.164071,
+                ),
+                (
+                    lat: 51.5942103,
+                    lon: 8.1641315,
+                ),
+                (
+                    lat: 51.5944838,
+                    lon: 8.1641919,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.593632,
+                    lon: 8.1620493,
+                ),
+                (
+                    lat: 51.5936496,
+                    lon: 8.1618465,
+                ),
+                (
+                    lat: 51.5936556,
+                    lon: 8.1617674,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5934725,
+                    lon: 8.1620063,
+                ),
+                (
+                    lat: 51.5934904,
+                    lon: 8.1618081,
+                ),
+                (
+                    lat: 51.5934964,
+                    lon: 8.1617321,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5933096,
+                    lon: 8.1619745,
+                ),
+                (
+                    lat: 51.5933279,
+                    lon: 8.1617671,
+                ),
+                (
+                    lat: 51.5933347,
+                    lon: 8.1616964,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5937972,
+                    lon: 8.162092,
+                ),
+                (
+                    lat: 51.5938092,
+                    lon: 8.1618946,
+                ),
+                (
+                    lat: 51.5938148,
+                    lon: 8.1618026,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5939587,
+                    lon: 8.1620801,
+                ),
+                (
+                    lat: 51.5940019,
+                    lon: 8.1620878,
+                ),
+                (
+                    lat: 51.594312,
+                    lon: 8.162165,
+                ),
+                (
+                    lat: 51.5943633,
+                    lon: 8.1621994,
+                ),
+                (
+                    lat: 51.5943928,
+                    lon: 8.162238,
+                ),
+                (
+                    lat: 51.594389,
+                    lon: 8.162286,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5955329,
+                    lon: 8.1597701,
+                ),
+                (
+                    lat: 51.595526,
+                    lon: 8.1598217,
+                ),
+                (
+                    lat: 51.5955317,
+                    lon: 8.1599065,
+                ),
+                (
+                    lat: 51.5955553,
+                    lon: 8.1599557,
+                ),
+                (
+                    lat: 51.5959551,
+                    lon: 8.1600542,
+                ),
+                (
+                    lat: 51.5959955,
+                    lon: 8.1599957,
+                ),
+                (
+                    lat: 51.5960087,
+                    lon: 8.1598903,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Ostpreußenweg",
             points: [
                 (
@@ -14628,7 +17354,7 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
@@ -14676,6 +17402,58 @@
         (
             points: [
                 (
+                    lat: 51.5914603,
+                    lon: 8.1629387,
+                ),
+                (
+                    lat: 51.591536,
+                    lon: 8.1629452,
+                ),
+                (
+                    lat: 51.591575,
+                    lon: 8.1629213,
+                ),
+                (
+                    lat: 51.5916223,
+                    lon: 8.1629145,
+                ),
+                (
+                    lat: 51.5917107,
+                    lon: 8.162976,
+                ),
+                (
+                    lat: 51.5917991,
+                    lon: 8.1629808,
+                ),
+                (
+                    lat: 51.5918444,
+                    lon: 8.16298,
+                ),
+                (
+                    lat: 51.5919644,
+                    lon: 8.1629663,
+                ),
+                (
+                    lat: 51.5919899,
+                    lon: 8.1629919,
+                ),
+                (
+                    lat: 51.5919907,
+                    lon: 8.1630532,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
                     lat: 51.5930296,
                     lon: 8.1621917,
                 ),
@@ -14691,6 +17469,38 @@
             bridge: false,
             tags: [
                 "highway-unclassified",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.591536,
+                    lon: 8.1629452,
+                ),
+                (
+                    lat: 51.5915635,
+                    lon: 8.1629764,
+                ),
+                (
+                    lat: 51.5916361,
+                    lon: 8.1630205,
+                ),
+                (
+                    lat: 51.5916613,
+                    lon: 8.1630589,
+                ),
+                (
+                    lat: 51.5916613,
+                    lon: 8.1631123,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -14755,6 +17565,46 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5902521,
+                    lon: 8.16332,
+                ),
+                (
+                    lat: 51.5902449,
+                    lon: 8.1634116,
+                ),
+                (
+                    lat: 51.5902141,
+                    lon: 8.1637416,
+                ),
+                (
+                    lat: 51.5902088,
+                    lon: 8.1638634,
+                ),
+                (
+                    lat: 51.590222,
+                    lon: 8.1639201,
+                ),
+                (
+                    lat: 51.5902405,
+                    lon: 8.1639441,
+                ),
+                (
+                    lat: 51.590376,
+                    lon: 8.1639951,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Akazienstraße",
             points: [
                 (
@@ -14796,6 +17646,298 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.588796,
+                    lon: 8.1652123,
+                ),
+                (
+                    lat: 51.5888405,
+                    lon: 8.1652144,
+                ),
+                (
+                    lat: 51.5892794,
+                    lon: 8.1652989,
+                ),
+                (
+                    lat: 51.5893017,
+                    lon: 8.1652835,
+                ),
+                (
+                    lat: 51.5893198,
+                    lon: 8.1651074,
+                ),
+                (
+                    lat: 51.589339,
+                    lon: 8.16492,
+                ),
+                (
+                    lat: 51.5893549,
+                    lon: 8.1647217,
+                ),
+                (
+                    lat: 51.5893677,
+                    lon: 8.164563,
+                ),
+                (
+                    lat: 51.5893393,
+                    lon: 8.1645156,
+                ),
+                (
+                    lat: 51.5886527,
+                    lon: 8.1643862,
+                ),
+                (
+                    lat: 51.5885997,
+                    lon: 8.1643983,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5903537,
+                    lon: 8.1657285,
+                ),
+                (
+                    lat: 51.5904869,
+                    lon: 8.1658462,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5895591,
+                    lon: 8.164912,
+                ),
+                (
+                    lat: 51.5895263,
+                    lon: 8.1649569,
+                ),
+                (
+                    lat: 51.5894518,
+                    lon: 8.1652074,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5887025,
+                    lon: 8.1648048,
+                ),
+                (
+                    lat: 51.5887549,
+                    lon: 8.1648001,
+                ),
+                (
+                    lat: 51.589339,
+                    lon: 8.16492,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5886426,
+                    lon: 8.1645917,
+                ),
+                (
+                    lat: 51.5886882,
+                    lon: 8.1645926,
+                ),
+                (
+                    lat: 51.5893196,
+                    lon: 8.1647138,
+                ),
+                (
+                    lat: 51.5893549,
+                    lon: 8.1647217,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5887516,
+                    lon: 8.1649987,
+                ),
+                (
+                    lat: 51.5888068,
+                    lon: 8.1650034,
+                ),
+                (
+                    lat: 51.5892819,
+                    lon: 8.1650985,
+                ),
+                (
+                    lat: 51.5893198,
+                    lon: 8.1651074,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5886582,
+                    lon: 8.1641938,
+                ),
+                (
+                    lat: 51.5886222,
+                    lon: 8.1642264,
+                ),
+                (
+                    lat: 51.588569,
+                    lon: 8.1642355,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5893677,
+                    lon: 8.164563,
+                ),
+                (
+                    lat: 51.5894141,
+                    lon: 8.1646442,
+                ),
+                (
+                    lat: 51.5895428,
+                    lon: 8.1648215,
+                ),
+                (
+                    lat: 51.5895591,
+                    lon: 8.164912,
+                ),
+                (
+                    lat: 51.5896722,
+                    lon: 8.1650206,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5886537,
+                    lon: 8.1646445,
+                ),
+                (
+                    lat: 51.5885884,
+                    lon: 8.1646409,
+                ),
+                (
+                    lat: 51.5884752,
+                    lon: 8.164629,
+                ),
+                (
+                    lat: 51.5884725,
+                    lon: 8.16482,
+                ),
+                (
+                    lat: 51.5887121,
+                    lon: 8.164849,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5914684,
+                    lon: 8.1626461,
+                ),
+                (
+                    lat: 51.5914016,
+                    lon: 8.1626429,
+                ),
+                (
+                    lat: 51.5912419,
+                    lon: 8.1626354,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Ulmenstraße",
             points: [
                 (
@@ -14818,6 +17960,30 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5914788,
+                    lon: 8.1621593,
+                ),
+                (
+                    lat: 51.5915471,
+                    lon: 8.1621579,
+                ),
+                (
+                    lat: 51.5918451,
+                    lon: 8.1621507,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -14896,6 +18062,42 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5907391,
+                    lon: 8.1591145,
+                ),
+                (
+                    lat: 51.5907244,
+                    lon: 8.1591842,
+                ),
+                (
+                    lat: 51.5905577,
+                    lon: 8.1592294,
+                ),
+                (
+                    lat: 51.5905565,
+                    lon: 8.1593923,
+                ),
+                (
+                    lat: 51.5905562,
+                    lon: 8.1594549,
+                ),
+                (
+                    lat: 51.5905556,
+                    lon: 8.1595864,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Lindenstraße",
             points: [
                 (
@@ -14918,6 +18120,81 @@
             bridge: false,
             tags: [
                 "highway-unclassified",
+            ],
+        ),
+        (
+            name: "Lindenstraße",
+            points: [
+                (
+                    lat: 51.5887122,
+                    lon: 8.1590718,
+                ),
+                (
+                    lat: 51.5887074,
+                    lon: 8.1589719,
+                ),
+                (
+                    lat: 51.5886954,
+                    lon: 8.1585813,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Lindenstraße",
+            points: [
+                (
+                    lat: 51.5893248,
+                    lon: 8.1589346,
+                ),
+                (
+                    lat: 51.5893223,
+                    lon: 8.1588405,
+                ),
+                (
+                    lat: 51.5893118,
+                    lon: 8.1584668,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Lindenstraße",
+            points: [
+                (
+                    lat: 51.5890409,
+                    lon: 8.1589809,
+                ),
+                (
+                    lat: 51.5890362,
+                    lon: 8.1588996,
+                ),
+                (
+                    lat: 51.5890257,
+                    lon: 8.1584981,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -15034,6 +18311,282 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5907177,
+                    lon: 8.1633853,
+                ),
+                (
+                    lat: 51.5906778,
+                    lon: 8.1639971,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5870125,
+                    lon: 8.1609852,
+                ),
+                (
+                    lat: 51.5870125,
+                    lon: 8.161307,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5868473,
+                    lon: 8.1609851,
+                ),
+                (
+                    lat: 51.5868473,
+                    lon: 8.161307,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5867346,
+                    lon: 8.161326,
+                ),
+                (
+                    lat: 51.5867406,
+                    lon: 8.1610635,
+                ),
+                (
+                    lat: 51.5867439,
+                    lon: 8.161043,
+                ),
+                (
+                    lat: 51.5867506,
+                    lon: 8.1610219,
+                ),
+                (
+                    lat: 51.5867932,
+                    lon: 8.1609494,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5856211,
+                    lon: 8.1608033,
+                ),
+                (
+                    lat: 51.585708,
+                    lon: 8.1609002,
+                ),
+                (
+                    lat: 51.5858312,
+                    lon: 8.1610016,
+                ),
+                (
+                    lat: 51.5859324,
+                    lon: 8.1610501,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5873953,
+                    lon: 8.1593623,
+                ),
+                (
+                    lat: 51.5874063,
+                    lon: 8.1594421,
+                ),
+                (
+                    lat: 51.5874089,
+                    lon: 8.1594776,
+                ),
+                (
+                    lat: 51.5874106,
+                    lon: 8.1595172,
+                ),
+                (
+                    lat: 51.587411,
+                    lon: 8.1597985,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5867316,
+                    lon: 8.1595031,
+                ),
+                (
+                    lat: 51.58673,
+                    lon: 8.1594216,
+                ),
+                (
+                    lat: 51.586725,
+                    lon: 8.1590875,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5849068,
+                    lon: 8.1591524,
+                ),
+                (
+                    lat: 51.584919,
+                    lon: 8.1592719,
+                ),
+                (
+                    lat: 51.5849981,
+                    lon: 8.1598195,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5863564,
+                    lon: 8.1596175,
+                ),
+                (
+                    lat: 51.5863566,
+                    lon: 8.1595302,
+                ),
+                (
+                    lat: 51.5863589,
+                    lon: 8.1588863,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5850232,
+                    lon: 8.1591165,
+                ),
+                (
+                    lat: 51.5850403,
+                    lon: 8.1592435,
+                ),
+                (
+                    lat: 51.5850548,
+                    lon: 8.1592795,
+                ),
+                (
+                    lat: 51.5851359,
+                    lon: 8.1592519,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5841969,
+                    lon: 8.159225,
+                ),
+                (
+                    lat: 51.5841948,
+                    lon: 8.1591167,
+                ),
+                (
+                    lat: 51.5841671,
+                    lon: 8.1588186,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Soester Straße",
             points: [
                 (
@@ -15091,6 +18644,198 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5916521,
+                    lon: 8.1390483,
+                ),
+                (
+                    lat: 51.5916989,
+                    lon: 8.1388762,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: true,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5916989,
+                    lon: 8.1388762,
+                ),
+                (
+                    lat: 51.5923136,
+                    lon: 8.1366788,
+                ),
+                (
+                    lat: 51.5926677,
+                    lon: 8.135381,
+                ),
+                (
+                    lat: 51.5937977,
+                    lon: 8.1312399,
+                ),
+                (
+                    lat: 51.5940513,
+                    lon: 8.1303665,
+                ),
+                (
+                    lat: 51.594191,
+                    lon: 8.1299181,
+                ),
+                (
+                    lat: 51.5946921,
+                    lon: 8.1287071,
+                ),
+                (
+                    lat: 51.5947255,
+                    lon: 8.1285807,
+                ),
+            ],
+            width: 3.0,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5964719,
+                    lon: 8.1459797,
+                ),
+                (
+                    lat: 51.5964553,
+                    lon: 8.1460767,
+                ),
+                (
+                    lat: 51.596454,
+                    lon: 8.146206,
+                ),
+                (
+                    lat: 51.5964804,
+                    lon: 8.1465978,
+                ),
+                (
+                    lat: 51.5965284,
+                    lon: 8.1475141,
+                ),
+                (
+                    lat: 51.5966119,
+                    lon: 8.1479869,
+                ),
+                (
+                    lat: 51.596698,
+                    lon: 8.1483046,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5853663,
+                    lon: 8.1396456,
+                ),
+                (
+                    lat: 51.585408,
+                    lon: 8.1402952,
+                ),
+                (
+                    lat: 51.5855447,
+                    lon: 8.1404127,
+                ),
+                (
+                    lat: 51.585567,
+                    lon: 8.1404971,
+                ),
+                (
+                    lat: 51.5855929,
+                    lon: 8.1410496,
+                ),
+                (
+                    lat: 51.5856141,
+                    lon: 8.1411327,
+                ),
+                (
+                    lat: 51.5856802,
+                    lon: 8.1411881,
+                ),
+            ],
+            width: 3.5,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5856802,
+                    lon: 8.1411881,
+                ),
+                (
+                    lat: 51.5855556,
+                    lon: 8.1412459,
+                ),
+                (
+                    lat: 51.5834801,
+                    lon: 8.1422781,
+                ),
+                (
+                    lat: 51.5834085,
+                    lon: 8.1422899,
+                ),
+                (
+                    lat: 51.5833793,
+                    lon: 8.1424067,
+                ),
+                (
+                    lat: 51.5835574,
+                    lon: 8.1457524,
+                ),
+                (
+                    lat: 51.5836262,
+                    lon: 8.1482355,
+                ),
+                (
+                    lat: 51.583642,
+                    lon: 8.1485436,
+                ),
+                (
+                    lat: 51.5838499,
+                    lon: 8.1507378,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
             name: "An der Rosenau",
             points: [
                 (
@@ -15130,6 +18875,60 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            name: "Siepenpfad",
+            points: [
+                (
+                    lat: 51.5841422,
+                    lon: 8.1665957,
+                ),
+                (
+                    lat: 51.5841277,
+                    lon: 8.1665786,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Siepenpfad",
+            points: [
+                (
+                    lat: 51.5840949,
+                    lon: 8.166538,
+                ),
+                (
+                    lat: 51.5840437,
+                    lon: 8.166453,
+                ),
+                (
+                    lat: 51.5839895,
+                    lon: 8.1663171,
+                ),
+                (
+                    lat: 51.5839098,
+                    lon: 8.1660838,
+                ),
+                (
+                    lat: 51.5838989,
+                    lon: 8.1660516,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -15375,6 +19174,62 @@
             bridge: false,
             tags: [
                 "highway-unclassified",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5842348,
+                    lon: 8.1620284,
+                ),
+                (
+                    lat: 51.583961,
+                    lon: 8.1620172,
+                ),
+                (
+                    lat: 51.5838096,
+                    lon: 8.1619893,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5840254,
+                    lon: 8.161549,
+                ),
+                (
+                    lat: 51.5840397,
+                    lon: 8.1613545,
+                ),
+                (
+                    lat: 51.5840465,
+                    lon: 8.1611219,
+                ),
+                (
+                    lat: 51.5839757,
+                    lon: 8.1609865,
+                ),
+                (
+                    lat: 51.5838151,
+                    lon: 8.1609685,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -15738,6 +19593,158 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5874887,
+                    lon: 8.1284545,
+                ),
+                (
+                    lat: 51.5874337,
+                    lon: 8.1284,
+                ),
+                (
+                    lat: 51.5854766,
+                    lon: 8.127414,
+                ),
+                (
+                    lat: 51.584273,
+                    lon: 8.1267936,
+                ),
+                (
+                    lat: 51.5828292,
+                    lon: 8.1260641,
+                ),
+                (
+                    lat: 51.5814861,
+                    lon: 8.1253819,
+                ),
+                (
+                    lat: 51.5811558,
+                    lon: 8.1251807,
+                ),
+                (
+                    lat: 51.5810724,
+                    lon: 8.1251299,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5939744,
+                    lon: 8.136959,
+                ),
+                (
+                    lat: 51.5926677,
+                    lon: 8.135381,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5964574,
+                    lon: 8.1455952,
+                ),
+                (
+                    lat: 51.59563,
+                    lon: 8.1432142,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5883489,
+                    lon: 8.1302403,
+                ),
+                (
+                    lat: 51.5884967,
+                    lon: 8.130252,
+                ),
+                (
+                    lat: 51.5913775,
+                    lon: 8.1307639,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5923136,
+                    lon: 8.1366788,
+                ),
+                (
+                    lat: 51.5898138,
+                    lon: 8.1358596,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5975994,
+                    lon: 8.1286128,
+                ),
+                (
+                    lat: 51.5960864,
+                    lon: 8.1268492,
+                ),
+                (
+                    lat: 51.5946367,
+                    lon: 8.1251619,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
             name: "Schleddestraße",
             points: [
                 (
@@ -15812,6 +19819,90 @@
             bridge: false,
             tags: [
                 "highway-tertiary",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.599225,
+                    lon: 8.1543921,
+                ),
+                (
+                    lat: 51.6015176,
+                    lon: 8.1539229,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6006885,
+                    lon: 8.1484202,
+                ),
+                (
+                    lat: 51.600363,
+                    lon: 8.1484818,
+                ),
+                (
+                    lat: 51.6000539,
+                    lon: 8.1484194,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6018985,
+                    lon: 8.1451041,
+                ),
+                (
+                    lat: 51.6024393,
+                    lon: 8.1462307,
+                ),
+                (
+                    lat: 51.6032864,
+                    lon: 8.1480595,
+                ),
+                (
+                    lat: 51.6033429,
+                    lon: 8.1482287,
+                ),
+                (
+                    lat: 51.6038621,
+                    lon: 8.150359,
+                ),
+                (
+                    lat: 51.6038234,
+                    lon: 8.1504303,
+                ),
+                (
+                    lat: 51.6011368,
+                    lon: 8.1510262,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -16851,6 +20942,38 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5859861,
+                    lon: 8.1667024,
+                ),
+                (
+                    lat: 51.5861474,
+                    lon: 8.1658821,
+                ),
+                (
+                    lat: 51.5865248,
+                    lon: 8.1660591,
+                ),
+                (
+                    lat: 51.586584,
+                    lon: 8.1657051,
+                ),
+                (
+                    lat: 51.5863332,
+                    lon: 8.1655897,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Gartenstraße",
             points: [
                 (
@@ -17104,6 +21227,86 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.600603,
+                    lon: 8.1126856,
+                ),
+                (
+                    lat: 51.6006182,
+                    lon: 8.1127703,
+                ),
+                (
+                    lat: 51.6006999,
+                    lon: 8.1131351,
+                ),
+                (
+                    lat: 51.6007499,
+                    lon: 8.1133202,
+                ),
+                (
+                    lat: 51.6007265,
+                    lon: 8.113355,
+                ),
+                (
+                    lat: 51.6006649,
+                    lon: 8.1133953,
+                ),
+                (
+                    lat: 51.6006316,
+                    lon: 8.1134945,
+                ),
+                (
+                    lat: 51.6006449,
+                    lon: 8.1136072,
+                ),
+                (
+                    lat: 51.6006232,
+                    lon: 8.1136876,
+                ),
+                (
+                    lat: 51.6005166,
+                    lon: 8.113693,
+                ),
+                (
+                    lat: 51.6002101,
+                    lon: 8.1136769,
+                ),
+                (
+                    lat: 51.6001218,
+                    lon: 8.1137225,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6008224,
+                    lon: 8.1376707,
+                ),
+                (
+                    lat: 51.6009201,
+                    lon: 8.1376206,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -17410,6 +21613,99 @@
             ],
         ),
         (
+            name: "Siepenpfad",
+            points: [
+                (
+                    lat: 51.5841277,
+                    lon: 8.1665786,
+                ),
+                (
+                    lat: 51.5840949,
+                    lon: 8.166538,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: true,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5843598,
+                    lon: 8.1650372,
+                ),
+                (
+                    lat: 51.5843641,
+                    lon: 8.1650281,
+                ),
+                (
+                    lat: 51.5843685,
+                    lon: 8.165012,
+                ),
+                (
+                    lat: 51.5843854,
+                    lon: 8.164905,
+                ),
+                (
+                    lat: 51.5845653,
+                    lon: 8.1638168,
+                ),
+                (
+                    lat: 51.5845728,
+                    lon: 8.1637591,
+                ),
+                (
+                    lat: 51.5845729,
+                    lon: 8.1637266,
+                ),
+                (
+                    lat: 51.5845678,
+                    lon: 8.1636652,
+                ),
+                (
+                    lat: 51.5845443,
+                    lon: 8.1634706,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5845443,
+                    lon: 8.1634706,
+                ),
+                (
+                    lat: 51.5845214,
+                    lon: 8.1633802,
+                ),
+                (
+                    lat: 51.5845015,
+                    lon: 8.1632206,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Danziger Ring",
             points: [
                 (
@@ -17606,6 +21902,294 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5923566,
+                    lon: 8.1266824,
+                ),
+                (
+                    lat: 51.5922176,
+                    lon: 8.1269629,
+                ),
+                (
+                    lat: 51.5921062,
+                    lon: 8.1271312,
+                ),
+                (
+                    lat: 51.5919943,
+                    lon: 8.1273447,
+                ),
+                (
+                    lat: 51.5919302,
+                    lon: 8.127427,
+                ),
+                (
+                    lat: 51.5918473,
+                    lon: 8.1274328,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5922176,
+                    lon: 8.1269629,
+                ),
+                (
+                    lat: 51.5924792,
+                    lon: 8.1272268,
+                ),
+                (
+                    lat: 51.5925175,
+                    lon: 8.1272229,
+                ),
+                (
+                    lat: 51.5925596,
+                    lon: 8.127166,
+                ),
+                (
+                    lat: 51.5926314,
+                    lon: 8.1270273,
+                ),
+                (
+                    lat: 51.5926554,
+                    lon: 8.1269714,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5882225,
+                    lon: 8.1131742,
+                ),
+                (
+                    lat: 51.5882115,
+                    lon: 8.1132846,
+                ),
+                (
+                    lat: 51.588194,
+                    lon: 8.1134971,
+                ),
+                (
+                    lat: 51.5881675,
+                    lon: 8.1136117,
+                ),
+                (
+                    lat: 51.5880321,
+                    lon: 8.1139938,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5917488,
+                    lon: 8.1177207,
+                ),
+                (
+                    lat: 51.5914464,
+                    lon: 8.1175368,
+                ),
+                (
+                    lat: 51.591406,
+                    lon: 8.1174688,
+                ),
+                (
+                    lat: 51.5913398,
+                    lon: 8.1174035,
+                ),
+                (
+                    lat: 51.5912644,
+                    lon: 8.1173531,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5859795,
+                    lon: 8.1639292,
+                ),
+                (
+                    lat: 51.5861082,
+                    lon: 8.1634681,
+                ),
+                (
+                    lat: 51.5863148,
+                    lon: 8.1634922,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5860421,
+                    lon: 8.1622374,
+                ),
+                (
+                    lat: 51.5861065,
+                    lon: 8.1624891,
+                ),
+                (
+                    lat: 51.5863148,
+                    lon: 8.16265,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5861048,
+                    lon: 8.1620666,
+                ),
+                (
+                    lat: 51.5861657,
+                    lon: 8.1620626,
+                ),
+                (
+                    lat: 51.5862357,
+                    lon: 8.1620076,
+                ),
+                (
+                    lat: 51.5863332,
+                    lon: 8.1620772,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5861066,
+                    lon: 8.1622055,
+                ),
+                (
+                    lat: 51.5861048,
+                    lon: 8.1620666,
+                ),
+                (
+                    lat: 51.5860665,
+                    lon: 8.162013,
+                ),
+                (
+                    lat: 51.5860415,
+                    lon: 8.1619433,
+                ),
+                (
+                    lat: 51.5860349,
+                    lon: 8.1618775,
+                ),
+                (
+                    lat: 51.586039,
+                    lon: 8.161777,
+                ),
+                (
+                    lat: 51.5860498,
+                    lon: 8.1617247,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5860008,
+                    lon: 8.1622767,
+                ),
+                (
+                    lat: 51.5859765,
+                    lon: 8.1622249,
+                ),
+                (
+                    lat: 51.5859607,
+                    lon: 8.1621605,
+                ),
+                (
+                    lat: 51.5859315,
+                    lon: 8.1619996,
+                ),
+                (
+                    lat: 51.5859315,
+                    lon: 8.1616375,
+                ),
+                (
+                    lat: 51.5858382,
+                    lon: 8.1615597,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Gartenstraße",
             points: [
                 (
@@ -17652,6 +22236,146 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5989482,
+                    lon: 8.1432544,
+                ),
+                (
+                    lat: 51.5988185,
+                    lon: 8.1433591,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5988537,
+                    lon: 8.1457688,
+                ),
+                (
+                    lat: 51.5989637,
+                    lon: 8.1459033,
+                ),
+                (
+                    lat: 51.599058,
+                    lon: 8.1459701,
+                ),
+                (
+                    lat: 51.5991127,
+                    lon: 8.1458881,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5986812,
+                    lon: 8.1418353,
+                ),
+                (
+                    lat: 51.5986527,
+                    lon: 8.1418582,
+                ),
+                (
+                    lat: 51.5984977,
+                    lon: 8.1419763,
+                ),
+                (
+                    lat: 51.5982638,
+                    lon: 8.1415876,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5982093,
+                    lon: 8.1398055,
+                ),
+                (
+                    lat: 51.5980412,
+                    lon: 8.1401146,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5977592,
+                    lon: 8.1385695,
+                ),
+                (
+                    lat: 51.5980588,
+                    lon: 8.1388695,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5885531,
+                    lon: 8.1597962,
+                ),
+                (
+                    lat: 51.5884646,
+                    lon: 8.159772,
+                ),
+                (
+                    lat: 51.5883839,
+                    lon: 8.1597909,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -17778,6 +22502,158 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.603578,
+                    lon: 8.16461,
+                ),
+                (
+                    lat: 51.6036003,
+                    lon: 8.1645691,
+                ),
+                (
+                    lat: 51.6037103,
+                    lon: 8.1645074,
+                ),
+                (
+                    lat: 51.6038804,
+                    lon: 8.1638708,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6038452,
+                    lon: 8.1637833,
+                ),
+                (
+                    lat: 51.6038493,
+                    lon: 8.1638193,
+                ),
+                (
+                    lat: 51.6038617,
+                    lon: 8.16385,
+                ),
+                (
+                    lat: 51.6038804,
+                    lon: 8.1638708,
+                ),
+                (
+                    lat: 51.6039027,
+                    lon: 8.1638785,
+                ),
+                (
+                    lat: 51.6039251,
+                    lon: 8.1638718,
+                ),
+                (
+                    lat: 51.6039442,
+                    lon: 8.1638519,
+                ),
+                (
+                    lat: 51.6039571,
+                    lon: 8.1638218,
+                ),
+                (
+                    lat: 51.6039618,
+                    lon: 8.1637859,
+                ),
+                (
+                    lat: 51.6039577,
+                    lon: 8.1637499,
+                ),
+                (
+                    lat: 51.6039453,
+                    lon: 8.1637192,
+                ),
+                (
+                    lat: 51.6039266,
+                    lon: 8.1636984,
+                ),
+                (
+                    lat: 51.6039044,
+                    lon: 8.1636907,
+                ),
+                (
+                    lat: 51.603882,
+                    lon: 8.1636973,
+                ),
+                (
+                    lat: 51.6038629,
+                    lon: 8.1637173,
+                ),
+                (
+                    lat: 51.60385,
+                    lon: 8.1637474,
+                ),
+                (
+                    lat: 51.6038452,
+                    lon: 8.1637833,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5864307,
+                    lon: 8.163287,
+                ),
+                (
+                    lat: 51.5865048,
+                    lon: 8.1626098,
+                ),
+                (
+                    lat: 51.586519,
+                    lon: 8.1625307,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5855563,
+                    lon: 8.1647551,
+                ),
+                (
+                    lat: 51.5853399,
+                    lon: 8.1646228,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Wilhelmstraße",
             points: [
                 (
@@ -17815,6 +22691,734 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.593258,
+                    lon: 8.1609564,
+                ),
+                (
+                    lat: 51.5935154,
+                    lon: 8.1610407,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5935664,
+                    lon: 8.1617476,
+                ),
+                (
+                    lat: 51.5936017,
+                    lon: 8.1614289,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5854271,
+                    lon: 8.1637904,
+                ),
+                (
+                    lat: 51.5854012,
+                    lon: 8.1639079,
+                ),
+                (
+                    lat: 51.5852799,
+                    lon: 8.1644095,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5858287,
+                    lon: 8.1631322,
+                ),
+                (
+                    lat: 51.5856832,
+                    lon: 8.1630979,
+                ),
+                (
+                    lat: 51.5855099,
+                    lon: 8.1630792,
+                ),
+                (
+                    lat: 51.5854199,
+                    lon: 8.1631087,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5853167,
+                    lon: 8.1658102,
+                ),
+                (
+                    lat: 51.5855174,
+                    lon: 8.1658915,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5884526,
+                    lon: 8.1120805,
+                ),
+                (
+                    lat: 51.5880402,
+                    lon: 8.1121988,
+                ),
+                (
+                    lat: 51.5878419,
+                    lon: 8.112256,
+                ),
+                (
+                    lat: 51.5878144,
+                    lon: 8.1120141,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5859276,
+                    lon: 8.1604557,
+                ),
+                (
+                    lat: 51.5859842,
+                    lon: 8.1603709,
+                ),
+                (
+                    lat: 51.5859899,
+                    lon: 8.1602602,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5874199,
+                    lon: 8.1615158,
+                ),
+                (
+                    lat: 51.5874093,
+                    lon: 8.1615329,
+                ),
+                (
+                    lat: 51.5873864,
+                    lon: 8.1618695,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5874199,
+                    lon: 8.1615158,
+                ),
+                (
+                    lat: 51.5874356,
+                    lon: 8.1615262,
+                ),
+                (
+                    lat: 51.5874297,
+                    lon: 8.1616563,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5871092,
+                    lon: 8.1619369,
+                ),
+                (
+                    lat: 51.5871389,
+                    lon: 8.1618507,
+                ),
+                (
+                    lat: 51.5871527,
+                    lon: 8.1615584,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5873332,
+                    lon: 8.1623231,
+                ),
+                (
+                    lat: 51.5873073,
+                    lon: 8.1622457,
+                ),
+                (
+                    lat: 51.5871895,
+                    lon: 8.1621397,
+                ),
+                (
+                    lat: 51.5871092,
+                    lon: 8.1619369,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5854012,
+                    lon: 8.1639079,
+                ),
+                (
+                    lat: 51.5854236,
+                    lon: 8.1639526,
+                ),
+                (
+                    lat: 51.5854236,
+                    lon: 8.1639844,
+                ),
+                (
+                    lat: 51.5854149,
+                    lon: 8.1640515,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5851466,
+                    lon: 8.163338,
+                ),
+                (
+                    lat: 51.5851199,
+                    lon: 8.1632495,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5850623,
+                    lon: 8.1634969,
+                ),
+                (
+                    lat: 51.5851466,
+                    lon: 8.163338,
+                ),
+                (
+                    lat: 51.5852699,
+                    lon: 8.1633648,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5845443,
+                    lon: 8.1634706,
+                ),
+                (
+                    lat: 51.5844674,
+                    lon: 8.1635271,
+                ),
+                (
+                    lat: 51.5844562,
+                    lon: 8.1635465,
+                ),
+                (
+                    lat: 51.5844469,
+                    lon: 8.1635709,
+                ),
+                (
+                    lat: 51.5842977,
+                    lon: 8.1645026,
+                ),
+                (
+                    lat: 51.5842262,
+                    lon: 8.164954,
+                ),
+                (
+                    lat: 51.5842258,
+                    lon: 8.1649664,
+                ),
+                (
+                    lat: 51.5842297,
+                    lon: 8.1649821,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5842297,
+                    lon: 8.1649821,
+                ),
+                (
+                    lat: 51.5842339,
+                    lon: 8.1649909,
+                ),
+                (
+                    lat: 51.5842424,
+                    lon: 8.1649983,
+                ),
+                (
+                    lat: 51.5843387,
+                    lon: 8.1650412,
+                ),
+                (
+                    lat: 51.584352,
+                    lon: 8.1650429,
+                ),
+                (
+                    lat: 51.5843598,
+                    lon: 8.1650372,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.584974,
+                    lon: 8.1617968,
+                ),
+                (
+                    lat: 51.5851807,
+                    lon: 8.1618346,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5844941,
+                    lon: 8.1618118,
+                ),
+                (
+                    lat: 51.5845458,
+                    lon: 8.1618574,
+                ),
+                (
+                    lat: 51.5847557,
+                    lon: 8.1619017,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5844019,
+                    lon: 8.1618645,
+                ),
+                (
+                    lat: 51.5844941,
+                    lon: 8.1618118,
+                ),
+                (
+                    lat: 51.5845174,
+                    lon: 8.1615543,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.585899,
+                    lon: 8.1666223,
+                ),
+                (
+                    lat: 51.585924,
+                    lon: 8.1665191,
+                ),
+                (
+                    lat: 51.5860365,
+                    lon: 8.1659733,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.585611,
+                    lon: 8.1663784,
+                ),
+                (
+                    lat: 51.5856249,
+                    lon: 8.1663394,
+                ),
+                (
+                    lat: 51.5859182,
+                    lon: 8.1648132,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5870371,
+                    lon: 8.1656563,
+                ),
+                (
+                    lat: 51.5870539,
+                    lon: 8.1657788,
+                ),
+                (
+                    lat: 51.5870639,
+                    lon: 8.1658606,
+                ),
+                (
+                    lat: 51.5870606,
+                    lon: 8.1660189,
+                ),
+                (
+                    lat: 51.5871756,
+                    lon: 8.1660698,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5870371,
+                    lon: 8.1656563,
+                ),
+                (
+                    lat: 51.5869172,
+                    lon: 8.165492,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.587207,
+                    lon: 8.1652862,
+                ),
+                (
+                    lat: 51.5869923,
+                    lon: 8.1651874,
+                ),
+                (
+                    lat: 51.5870027,
+                    lon: 8.1650949,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5839098,
+                    lon: 8.1660838,
+                ),
+                (
+                    lat: 51.5839258,
+                    lon: 8.1660666,
+                ),
+                (
+                    lat: 51.5839999,
+                    lon: 8.1659867,
+                ),
+                (
+                    lat: 51.5840224,
+                    lon: 8.1659397,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5842648,
+                    lon: 8.1664516,
+                ),
+                (
+                    lat: 51.5842498,
+                    lon: 8.166408,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: true,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.584275,
+                    lon: 8.1664814,
+                ),
+                (
+                    lat: 51.5842648,
+                    lon: 8.1664516,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5842498,
+                    lon: 8.166408,
+                ),
+                (
+                    lat: 51.5842216,
+                    lon: 8.166326,
+                ),
+                (
+                    lat: 51.5841866,
+                    lon: 8.166326,
+                ),
+                (
+                    lat: 51.5841416,
+                    lon: 8.1662039,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5851974,
+                    lon: 8.166902,
+                ),
+                (
+                    lat: 51.5850166,
+                    lon: 8.1669778,
+                ),
+                (
+                    lat: 51.5850107,
+                    lon: 8.1671199,
+                ),
+            ],
+            width: 3.5,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Wasserstraße",
             points: [
                 (
@@ -17849,6 +23453,30 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5864832,
+                    lon: 8.1676946,
+                ),
+                (
+                    lat: 51.5865232,
+                    lon: 8.167773,
+                ),
+                (
+                    lat: 51.5865956,
+                    lon: 8.1681579,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -18035,6 +23663,258 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5917972,
+                    lon: 8.1666089,
+                ),
+                (
+                    lat: 51.591797,
+                    lon: 8.166789,
+                ),
+                (
+                    lat: 51.5917402,
+                    lon: 8.167109,
+                ),
+                (
+                    lat: 51.5916543,
+                    lon: 8.1674921,
+                ),
+                (
+                    lat: 51.5916362,
+                    lon: 8.1675727,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5977465,
+                    lon: 8.1420016,
+                ),
+                (
+                    lat: 51.5976627,
+                    lon: 8.1420805,
+                ),
+                (
+                    lat: 51.5975902,
+                    lon: 8.1420987,
+                ),
+                (
+                    lat: 51.5973722,
+                    lon: 8.141981,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5879677,
+                    lon: 8.1672479,
+                ),
+                (
+                    lat: 51.5878775,
+                    lon: 8.1674129,
+                ),
+                (
+                    lat: 51.5878408,
+                    lon: 8.1677798,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6025759,
+                    lon: 8.141312,
+                ),
+                (
+                    lat: 51.6026359,
+                    lon: 8.1411933,
+                ),
+                (
+                    lat: 51.603017,
+                    lon: 8.1408436,
+                ),
+                (
+                    lat: 51.6031034,
+                    lon: 8.1412499,
+                ),
+                (
+                    lat: 51.6030887,
+                    lon: 8.1414105,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5929424,
+                    lon: 8.1630443,
+                ),
+                (
+                    lat: 51.5928162,
+                    lon: 8.1629882,
+                ),
+                (
+                    lat: 51.5926082,
+                    lon: 8.162985,
+                ),
+                (
+                    lat: 51.5926075,
+                    lon: 8.1636666,
+                ),
+                (
+                    lat: 51.5929424,
+                    lon: 8.1636823,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5900858,
+                    lon: 8.1606393,
+                ),
+                (
+                    lat: 51.5900239,
+                    lon: 8.1611314,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5905562,
+                    lon: 8.1594549,
+                ),
+                (
+                    lat: 51.5907389,
+                    lon: 8.1594509,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5844635,
+                    lon: 8.1678938,
+                ),
+                (
+                    lat: 51.5847024,
+                    lon: 8.1685076,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5887387,
+                    lon: 8.167586,
+                ),
+                (
+                    lat: 51.588849,
+                    lon: 8.1676155,
+                ),
+                (
+                    lat: 51.5890216,
+                    lon: 8.1677463,
+                ),
+                (
+                    lat: 51.5891791,
+                    lon: 8.167828,
+                ),
+                (
+                    lat: 51.5892294,
+                    lon: 8.167855,
+                ),
+                (
+                    lat: 51.5893314,
+                    lon: 8.1679097,
+                ),
+                (
+                    lat: 51.5894279,
+                    lon: 8.1678852,
+                ),
+                (
+                    lat: 51.5895701,
+                    lon: 8.1677871,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -18606,6 +24486,110 @@
             bridge: false,
             tags: [
                 "highway-secondary",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5961841,
+                    lon: 8.1665948,
+                ),
+                (
+                    lat: 51.5964625,
+                    lon: 8.1666733,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5962339,
+                    lon: 8.1661856,
+                ),
+                (
+                    lat: 51.5965151,
+                    lon: 8.1662712,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5961377,
+                    lon: 8.1669998,
+                ),
+                (
+                    lat: 51.5964288,
+                    lon: 8.1670869,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5960967,
+                    lon: 8.1674173,
+                ),
+                (
+                    lat: 51.5963852,
+                    lon: 8.1674914,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.585723,
+                    lon: 8.1419686,
+                ),
+                (
+                    lat: 51.5853784,
+                    lon: 8.1421706,
+                ),
+                (
+                    lat: 51.5840958,
+                    lon: 8.1428166,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -19312,6 +25296,198 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5925028,
+                    lon: 8.156516,
+                ),
+                (
+                    lat: 51.5925477,
+                    lon: 8.1568345,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5926674,
+                    lon: 8.1564724,
+                ),
+                (
+                    lat: 51.5926332,
+                    lon: 8.1561404,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5929664,
+                    lon: 8.1564302,
+                ),
+                (
+                    lat: 51.5929982,
+                    lon: 8.1567246,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5930705,
+                    lon: 8.1563754,
+                ),
+                (
+                    lat: 51.5930284,
+                    lon: 8.1559708,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5933453,
+                    lon: 8.1561359,
+                ),
+                (
+                    lat: 51.5934144,
+                    lon: 8.1564831,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5934196,
+                    lon: 8.1560972,
+                ),
+                (
+                    lat: 51.5933757,
+                    lon: 8.1557458,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.587677,
+                    lon: 8.1130872,
+                ),
+                (
+                    lat: 51.587683,
+                    lon: 8.1129701,
+                ),
+                (
+                    lat: 51.5875997,
+                    lon: 8.1120676,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5873405,
+                    lon: 8.1577429,
+                ),
+                (
+                    lat: 51.5875556,
+                    lon: 8.1577322,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.58502,
+                    lon: 8.1149931,
+                ),
+                (
+                    lat: 51.5850864,
+                    lon: 8.1150044,
+                ),
+                (
+                    lat: 51.5851007,
+                    lon: 8.11501,
+                ),
+                (
+                    lat: 51.5854149,
+                    lon: 8.1151092,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Oestinghauser Landstraße",
             points: [
                 (
@@ -19334,6 +25510,26 @@
             bridge: false,
             tags: [
                 "highway-tertiary",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5916941,
+                    lon: 8.1308538,
+                ),
+                (
+                    lat: 51.5937977,
+                    lon: 8.1312399,
+                ),
+            ],
+            width: 3.0,
+            surface: Gravel,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-track",
             ],
         ),
         (
@@ -19679,6 +25875,27 @@
             ],
         ),
         (
+            name: "Gemkerweg",
+            points: [
+                (
+                    lat: 51.5937884,
+                    lon: 8.1542356,
+                ),
+                (
+                    lat: 51.5937745,
+                    lon: 8.1541466,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Steinmickerweg",
             points: [
                 (
@@ -19697,6 +25914,119 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5850616,
+                    lon: 8.1117431,
+                ),
+                (
+                    lat: 51.5850895,
+                    lon: 8.1118195,
+                ),
+                (
+                    lat: 51.5851341,
+                    lon: 8.1120361,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            name: "Hellwitz-Weg",
+            points: [
+                (
+                    lat: 51.5848319,
+                    lon: 8.1125089,
+                ),
+                (
+                    lat: 51.5848871,
+                    lon: 8.1117849,
+                ),
+            ],
+            width: 4.8,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5980182,
+                    lon: 8.1393826,
+                ),
+                (
+                    lat: 51.5979258,
+                    lon: 8.1392538,
+                ),
+                (
+                    lat: 51.5980588,
+                    lon: 8.1388695,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5977592,
+                    lon: 8.1385695,
+                ),
+                (
+                    lat: 51.5975178,
+                    lon: 8.139216,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.6011772,
+                    lon: 8.1124616,
+                ),
+                (
+                    lat: 51.6011335,
+                    lon: 8.1125316,
+                ),
+                (
+                    lat: 51.6010878,
+                    lon: 8.1127063,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -19920,6 +26250,114 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5999818,
+                    lon: 8.1613572,
+                ),
+                (
+                    lat: 51.599971,
+                    lon: 8.1614792,
+                ),
+                (
+                    lat: 51.5999743,
+                    lon: 8.1615771,
+                ),
+                (
+                    lat: 51.5999951,
+                    lon: 8.1616764,
+                ),
+                (
+                    lat: 51.6000693,
+                    lon: 8.1618601,
+                ),
+                (
+                    lat: 51.6001759,
+                    lon: 8.1620184,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.599452,
+                    lon: 8.1632663,
+                ),
+                (
+                    lat: 51.5995362,
+                    lon: 8.1631918,
+                ),
+                (
+                    lat: 51.5998777,
+                    lon: 8.1628807,
+                ),
+                (
+                    lat: 51.6001143,
+                    lon: 8.1626071,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5928705,
+                    lon: 8.1656297,
+                ),
+                (
+                    lat: 51.5927173,
+                    lon: 8.1657211,
+                ),
+                (
+                    lat: 51.5924573,
+                    lon: 8.1656393,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.587749,
+                    lon: 8.1655906,
+                ),
+                (
+                    lat: 51.5876072,
+                    lon: 8.1655406,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Schützenstraße",
             points: [
                 (
@@ -20131,6 +26569,26 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5863952,
+                    lon: 8.1678818,
+                ),
+                (
+                    lat: 51.5863772,
+                    lon: 8.1677728,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Kaiserstraße",
             points: [
                 (
@@ -20152,6 +26610,26 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5887718,
+                    lon: 8.1653766,
+                ),
+                (
+                    lat: 51.588742,
+                    lon: 8.1654823,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Lütgenweg",
             points: [
                 (
@@ -20170,6 +26648,30 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5901873,
+                    lon: 8.1663372,
+                ),
+                (
+                    lat: 51.5902002,
+                    lon: 8.1664541,
+                ),
+                (
+                    lat: 51.5902129,
+                    lon: 8.1666006,
+                ),
+            ],
+            width: 3.5,
+            surface: Concrete,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -20419,6 +26921,74 @@
             ],
         ),
         (
+            points: [
+                (
+                    lat: 51.5847053,
+                    lon: 8.1676425,
+                ),
+                (
+                    lat: 51.5848274,
+                    lon: 8.1679715,
+                ),
+                (
+                    lat: 51.5849807,
+                    lon: 8.1679407,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.58829,
+                    lon: 8.1640553,
+                ),
+                (
+                    lat: 51.5882947,
+                    lon: 8.1638315,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5884362,
+                    lon: 8.1640611,
+                ),
+                (
+                    lat: 51.58829,
+                    lon: 8.1640553,
+                ),
+                (
+                    lat: 51.5882084,
+                    lon: 8.1640595,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
             name: "Seifensiederweg",
             points: [
                 (
@@ -20439,12 +27009,32 @@
                 ),
             ],
             width: 5.5,
-            surface: Asphalt,
+            surface: Concrete,
             center_line: DashedUrban,
             edge_lines: true,
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5883751,
+                    lon: 8.1145659,
+                ),
+                (
+                    lat: 51.588166,
+                    lon: 8.1144952,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -20544,6 +27134,70 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5911531,
+                    lon: 8.1652139,
+                ),
+                (
+                    lat: 51.5912339,
+                    lon: 8.1652782,
+                ),
+                (
+                    lat: 51.5912471,
+                    lon: 8.1652833,
+                ),
+                (
+                    lat: 51.5912578,
+                    lon: 8.165286,
+                ),
+                (
+                    lat: 51.5912711,
+                    lon: 8.1652863,
+                ),
+                (
+                    lat: 51.5912892,
+                    lon: 8.1652799,
+                ),
+                (
+                    lat: 51.5913009,
+                    lon: 8.1652652,
+                ),
+                (
+                    lat: 51.5913521,
+                    lon: 8.1651096,
+                ),
+                (
+                    lat: 51.5914363,
+                    lon: 8.1648172,
+                ),
+                (
+                    lat: 51.5914517,
+                    lon: 8.1647763,
+                ),
+                (
+                    lat: 51.5914608,
+                    lon: 8.1647602,
+                ),
+                (
+                    lat: 51.5914717,
+                    lon: 8.1647488,
+                ),
+                (
+                    lat: 51.5916662,
+                    lon: 8.1646664,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (
@@ -20675,6 +27329,46 @@
             bridge: false,
             tags: [
                 "highway-residential",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5874316,
+                    lon: 8.1156458,
+                ),
+                (
+                    lat: 51.5873648,
+                    lon: 8.1160347,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
+            ],
+        ),
+        (
+            points: [
+                (
+                    lat: 51.5916543,
+                    lon: 8.1674921,
+                ),
+                (
+                    lat: 51.5915754,
+                    lon: 8.1675706,
+                ),
+            ],
+            width: 3.5,
+            surface: Asphalt,
+            center_line: r#None,
+            edge_lines: false,
+            bridge: false,
+            tags: [
+                "highway-service",
             ],
         ),
         (

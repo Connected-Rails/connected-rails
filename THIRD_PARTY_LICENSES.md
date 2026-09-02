@@ -270,6 +270,11 @@ same carriageway. Recompressed from the ambientCG 1K JPEGs (resize, quality
   [ambientCG](https://ambientcg.com) (photogrammetry, CC0 1.0).
 - `roads/concrete.jpg` and `roads/concrete_nor.jpg` —
   [Concrete030](https://ambientcg.com/a/Concrete030) (ambientCG, CC0).
+- `roads/gravel.jpg` and `roads/gravel_nor.jpg` —
+  [Gravel031](https://ambientcg.com/a/Gravel031) (ambientCG, CC0), desaturated and
+  slightly darkened to the tone of a German Feldweg. The scan covers 2.8 m and is read
+  at the same 4 m repeat as the other two, so its stones sit a shade large — a
+  difference nobody makes out from a cab.
 
 ## Trees in `mods/trees/`
 

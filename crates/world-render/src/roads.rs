@@ -4,7 +4,8 @@
 //! One material per surface kind, not per road. What differs between two
 //! asphalt roads is their width and their markings — and both of those ride
 //! in the mesh's vertex colours and UVs, the way the fields' crops do. So a
-//! tile costs one draw per surface kind on it, and the whole line costs two.
+//! tile costs one draw per surface kind on it, and the whole line costs three
+//! — asphalt, concrete and the gravel of the field tracks.
 //!
 //! **Multiplayer.** Nothing here is state: the uniform is a function of the
 //! weather, the mesh is a function of the line and the elevation data.
@@ -28,7 +29,7 @@ pub type RoadMaterial = ExtendedMaterial<StandardMaterial, RoadExt>;
 pub struct RoadExt {
     #[uniform(100)]
     pub weather: weather::WeatherParams,
-    /// The carriageway's own look — asphalt or concrete — and its normal
+    /// The carriageway's own look — asphalt, concrete or gravel — and its normal
     /// map. Program assets, not the module's: nothing about a road varies
     /// from module to module but its geometry and its markings.
     #[texture(101)]
@@ -54,6 +55,8 @@ pub(crate) fn plugin(app: &mut App) {
     embedded_asset!(app, "roads/asphalt_nor.jpg");
     embedded_asset!(app, "roads/concrete.jpg");
     embedded_asset!(app, "roads/concrete_nor.jpg");
+    embedded_asset!(app, "roads/gravel.jpg");
+    embedded_asset!(app, "roads/gravel_nor.jpg");
     app.add_plugins(MaterialPlugin::<RoadMaterial>::default())
         .init_resource::<RoadMaterials>()
         .add_systems(Update, mip_surfaces);
@@ -130,7 +133,7 @@ fn mip_surfaces(
     }
 }
 
-/// The two road materials, made on first use and shared by every tile.
+/// The three road materials, made on first use and shared by every tile.
 #[derive(Resource, Default)]
 pub struct RoadMaterials {
     by_surface: std::collections::HashMap<content::route::RoadSurface, Handle<RoadMaterial>>,
@@ -160,6 +163,10 @@ impl RoadMaterials {
                 "embedded://world_render/roads/concrete.jpg",
                 "embedded://world_render/roads/concrete_nor.jpg",
             ),
+            content::route::RoadSurface::Gravel => (
+                "embedded://world_render/roads/gravel.jpg",
+                "embedded://world_render/roads/gravel_nor.jpg",
+            ),
         };
         let texture = server
             .load_builder()
@@ -171,10 +178,17 @@ impl RoadMaterials {
             .load(normal);
         self.pending.push(texture.clone());
         self.pending.push(normal_map.clone());
+        // A loose surface scatters what a bound one reflects: gravel keeps
+        // no sheen of its own, and the weather's wet look has nothing to
+        // gather on it.
+        let roughness = match surface {
+            content::route::RoadSurface::Gravel => 0.98,
+            _ => 0.88,
+        };
         let made = materials.add(RoadMaterial {
             base: StandardMaterial {
                 base_color: Color::WHITE,
-                perceptual_roughness: 0.88,
+                perceptual_roughness: roughness,
                 metallic: 0.0,
                 ..default()
             },

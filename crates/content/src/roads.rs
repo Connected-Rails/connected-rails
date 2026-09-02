@@ -101,8 +101,8 @@ const LAYERS: usize = 12;
 const LAYER_LIFT: f64 = 0.006;
 
 /// The road presets the editor offers — the widths of the German road system,
-/// from the Autobahn carriageway down to the footpath, asphalt and concrete,
-/// with and without the centre line. The widths are the planning values of
+/// from the Autobahn carriageway down to the footpath, asphalt, concrete and
+/// the gravel of the field tracks, with and without the centre line. The widths are the planning values of
 /// the German road system (RASt-06, rounded to what a builder will actually
 /// pick); each carriageway of a divided road is its own preset, because OSM
 /// maps the two directions of an Autobahn as their own ways.
@@ -191,6 +191,13 @@ pub const PRESETS: &[RoadPreset] = &[
         id: "service",
         width: 3.5,
         surface: RoadSurface::Asphalt,
+        center_line: CenterLine::None,
+        edge_lines: false,
+    },
+    RoadPreset {
+        id: "farm-gravel",
+        width: 3.0,
+        surface: RoadSurface::Gravel,
         center_line: CenterLine::None,
         edge_lines: false,
     },

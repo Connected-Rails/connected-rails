@@ -326,10 +326,11 @@ impl WaterSource {
 }
 
 /// What a road's surface is made of. It decides the material the surface is
-/// drawn with — asphalt everywhere, and the concrete of the motorway
-/// carriageways and the farm roads' slabs. The markings are not part of it:
-/// they travel on their own (see [`CenterLine`]), so every combination of
-/// surface and markings is one road, not four kinds of road.
+/// drawn with — asphalt everywhere, the concrete of the motorway carriageways
+/// and the farm roads' slabs, and the gravel of everything nobody paved. The
+/// markings are not part of it: they travel on their own (see [`CenterLine`]),
+/// so every combination of surface and markings is one road, not four kinds of
+/// road.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
 )]
@@ -339,14 +340,19 @@ pub enum RoadSurface {
     Asphalt,
     /// `surface=concrete` and friends — motorway sections, farm slabs.
     Concrete,
+    /// The unpaved family — `surface=gravel`, `compacted`, `ground`, and a
+    /// field track that says `tracktype=grade2` and no more. A German Feldweg
+    /// is this, not a paved road three metres wide.
+    Gravel,
 }
 
 impl RoadSurface {
-    /// The id a line file stores (`"asphalt"` / `"concrete"`).
+    /// The id a line file stores (`"asphalt"` / `"concrete"` / `"gravel"`).
     pub fn id(self) -> &'static str {
         match self {
             RoadSurface::Asphalt => "asphalt",
             RoadSurface::Concrete => "concrete",
+            RoadSurface::Gravel => "gravel",
         }
     }
 
@@ -355,6 +361,7 @@ impl RoadSurface {
     pub fn from_id(id: &str) -> Self {
         match id {
             "concrete" => RoadSurface::Concrete,
+            "gravel" => RoadSurface::Gravel,
             _ => RoadSurface::Asphalt,
         }
     }

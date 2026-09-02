@@ -6,7 +6,8 @@
 //! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N] [--height M]
 //!                        [--window WxH] [--drawer [objects|signal-types|signal-models|track-types]]
 //!                        [--ai <ai.ron>] [--detect] [--at KM]
-//!                        [--detect-run [--corridor M] [--keep-clear M] [--model <id>]]
+//!                        [--detect-run [--corridor M] [--keep-clear M] [--model <id>]
+//!                                      [--stand <name>]]
 //! ```
 //!
 //! Without a line file the example line is loaded. The overlay configuration is created
@@ -406,6 +407,12 @@ fn main() {
         }
         if let Some(id) = flag("--model") {
             options.model = id;
+        }
+        // `--stand nadelwald`: plant every crown from that stand instead of
+        // from what the crown looked like. A script rebuilding a module over
+        // known ground knows which wood it is; the detector does not.
+        if let Some(stand) = flag("--stand") {
+            options.species = Some(stand);
         }
         options
     });

@@ -1022,7 +1022,24 @@ def render_impostor(entry: dict, variant: str, season: str, branch: dict,
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def write_object(entry: dict, variant_index: int, height: float) -> None:
+def crown_extent(*meshes: dict) -> tuple[float, float]:
+    """How wide the built crown actually is [m], broadest span first.
+
+    The catalogue states the crown as a share of the height; what goes into the
+    object file is what the finished mesh spans, because that is the number the
+    imagery detection compares a crown measured off a photograph against
+    (`crates/vision`). Measured on LOD0, wood and foliage together.
+    """
+    points = [point for mesh in meshes for point in mesh["positions"]]
+    if not points:
+        return (0.0, 0.0)
+    x = max(point[0] for point in points) - min(point[0] for point in points)
+    z = max(point[2] for point in points) - min(point[2] for point in points)
+    return (round(max(x, z), 1), round(min(x, z), 1))
+
+
+def write_object(entry: dict, variant_index: int, height: float,
+                 crown: tuple[float, float]) -> None:
     variant = VARIANTS[variant_index]
     name = f"{entry['name']} {variant.upper()}"
     model = f"trees/assets/{entry['id']}_{variant}.gltf"
@@ -1045,6 +1062,7 @@ def write_object(entry: dict, variant_index: int, height: float) -> None:
     autumn_model: {autumn},
     winter_model: {winter},
     lod_distances: [{lod0}, {lod1}, {lod2}, {cull}],
+    footprint: Some((length: {crown[0]:g}, width: {crown[1]:g})),
     tags: [{tags}],
 )
 '''
@@ -1119,7 +1137,7 @@ def build_tree(entry: dict, variant_index: int, axis: AxisMap, branches: list[di
         write_gltf(entry, variant, season, near_primitives, medium_primitives,
                    buffer, rich_billboard,
                    far_billboard, bin_name)
-    write_object(entry, variant_index, height)
+    write_object(entry, variant_index, height, crown_extent(branch, foliage))
     triangles = [len(branch["indices"]) // 3 + len(foliage["indices"]) // 3,
                  len(medium_branch["indices"]) // 3 + len(medium_foliage["indices"]) // 3,
                  len(rich_billboard_mesh["indices"]) // 3,

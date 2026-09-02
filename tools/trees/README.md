@@ -50,6 +50,16 @@ the actual Mantissa leaves. It removes underground root meshes, scales each
 form to the catalogue height/crown and decimates connected wood for the near
 LOD. It does not synthesize trunks, branches, needles or crowns.
 
+## What the object file says
+
+Beside the model, the seasons and the LOD distances, every `objects/*.ron` carries the
+**crown as a `footprint`**, broadest span first, measured off the finished `crown_LOD0`
+mesh rather than taken from the catalogue's height ratio — what the file states is what
+the tree actually spans. It is what the route editor's imagery detection compares a crown
+measured off an aerial photograph against, to decide which species to plant there and how
+far to grow it (README, *Detecting from the aerial imagery*). A re-import rewrites it with
+the geometry, so the two can never drift apart.
+
 ## LOD and materials
 
 Every glTF has exactly these nodes:

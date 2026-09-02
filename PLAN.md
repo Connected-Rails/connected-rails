@@ -671,12 +671,22 @@ is what foggy weather draws.
   CRS reprojection happens here (ch. 4.2). No MaSzyna .scn importer (effort > benefit, different country).
 - **Reading the imagery (`vision`):** what OSM and the registers do not carry is in the
   photograph the editor already drapes over the ground — the cars in the station car park,
-  the lorries at the goods shed. A **local** model reads it: an ONNX runtime compiled into
-  the editor, a registry of models as data (`ai.ron`), and placement by *tag*, so the next
-  detector is an entry in a file and a mod rather than a change to the editor. It is always
+  the lorries at the goods shed, the wood behind them. A **local** model reads it: an ONNX
+  runtime compiled into the editor, a registry of models as data (`ai.ron`), and placement
+  by *tag*, so the next detector is an entry in a file and a mod rather than a change to
+  the editor. The two detectors the feature is built around — vehicles and tree crowns —
+  **ship with the game** in `models/`, because a feature that does nothing until the user
+  goes and finds weights for it is a feature most users never see; they are converted from
+  published pre-trained models by `tools/vision/`, and what each costs in licence terms is
+  written down beside them. It is always
   bounded — a corridor along the track or an area drawn in the viewport, and a clearance
   from the rails that holds in both — because an unbounded run is neither affordable nor
   reviewable. Whatever it finds is a proposal until it is committed, as one undo step.
+  A class says whether its finds are *placed* against the track or *planted* on the ground
+  (ch. 14): a tree becomes an ordinary row in the module's tree list, in a species drawn by
+  the tag and grown to the crown that was measured, and is edited afterwards — picked,
+  marked, deleted — exactly like a tree a person planted. Nothing the model does is harder
+  to undo than the same thing done by hand.
 ### 15.1 Two editors, not one
 
 Building a line and building a vehicle share nothing: one is geodata, the other a model

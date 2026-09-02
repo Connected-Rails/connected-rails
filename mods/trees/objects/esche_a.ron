@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/esche_a_herbst.gltf"),
     winter_model: Some("trees/assets/esche_a_winter.gltf"),
     lod_distances: [77, 400, 800, 2500],
+    footprint: Some((length: 14.2, width: 14.1)),
     tags: ["laubbaum", "stand-laubwald", "stand-auwald", "stand-mischwald"],
 )

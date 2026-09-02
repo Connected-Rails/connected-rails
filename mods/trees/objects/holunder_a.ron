@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/holunder_a_herbst.gltf"),
     winter_model: Some("trees/assets/holunder_a_winter.gltf"),
     lod_distances: [45, 400, 800, 900],
+    footprint: Some((length: 3.5, width: 3.3)),
     tags: ["strauch", "stand-hecke", "stand-bahndamm", "stand-boeschung", "stand-stadt"],
 )

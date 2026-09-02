@@ -92,9 +92,16 @@ places by carrying the tag its `ai.ron` entry names, and nothing else has to be 
 either side. Tag what should be placed automatically, and leave the tag off the entry that
 should not — a wreck, a museum piece, the one that is already standing somewhere by hand.
 
+**Trees are tagged the same way and planted rather than placed.** A model class marked
+`kind: Tree` names a tag like any other — `laubbaum`, `nadelbaum`, `strauch` on the shipped
+`mods/trees` — and every entry carrying it is a species the detection may plant where it
+read a crown. What it plants there is a row in the module's own tree list, so a tree mod
+needs nothing beyond the tags it already carries for the forest brush.
+
 **Give those entries a `footprint`.** One tag holds more than one size of thing —
-`lorry` in `mods/cars` is a 4.82 m Transporter and a 6.30 m Sprinter — and the detection
-measures every find it makes. With the sizes stated it will not put the Sprinter in a
+`lorry` in `mods/cars` is a 4.82 m Transporter and a 6.30 m Sprinter, `laubbaum` in
+`mods/trees` is everything from a nine-metre crown to an eighteen-metre one — and the
+detection measures every find it makes. With the sizes stated it will not put the Sprinter in a
 space that has room for the Transporter; without them it picks between the two by
 coin, and half the vans in a car park stand a metre and a half out of their bays. The
 choice among what does fit stays the random-but-stable one, so a row of spaces is still a
@@ -1585,6 +1592,12 @@ footprint: Some((length: 6.30, width: 2.35)),
 
 Width is over whatever sticks out: a van's mirrors are what touches the car in the next
 bay. A mast, a board or a hut states neither and is never measured.
+
+**For a plant the footprint is the crown**, broadest span first, because the crown is the
+whole of what a photograph shows of a tree: the detection compares the disc it measured
+against this number to choose the species, and then grows the one it chose the rest of the
+way. `tools/trees/import_mantissa.py` writes it out of the built mesh, so what the file
+says is what the tree actually spans.
 
 A **crossed-quad impostor as the coarsest level wants a late hand-over**, not an early
 one. Two quads at a right angle are the least that works — a single fixed billboard

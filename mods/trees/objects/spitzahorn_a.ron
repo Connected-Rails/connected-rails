@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/spitzahorn_a_herbst.gltf"),
     winter_model: Some("trees/assets/spitzahorn_a_winter.gltf"),
     lod_distances: [56, 400, 800, 2200],
+    footprint: Some((length: 12.5, width: 12.1)),
     tags: ["laubbaum", "stand-laubwald", "stand-allee", "stand-stadt"],
 )

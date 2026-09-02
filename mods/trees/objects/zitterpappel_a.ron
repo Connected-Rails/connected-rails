@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/zitterpappel_a_herbst.gltf"),
     winter_model: Some("trees/assets/zitterpappel_a_winter.gltf"),
     lod_distances: [56, 400, 800, 2200],
+    footprint: Some((length: 7.8, width: 7.4)),
     tags: ["laubbaum", "stand-pionier", "stand-mischwald", "stand-boeschung"],
 )

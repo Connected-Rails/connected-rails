@@ -6,5 +6,6 @@
     autumn_model: Some("trees/assets/weissdorn_c_herbst.gltf"),
     winter_model: Some("trees/assets/weissdorn_c_winter.gltf"),
     lod_distances: [45, 400, 800, 900],
+    footprint: Some((length: 6.7, width: 6.3)),
     tags: ["strauch", "stand-hecke", "stand-feld", "stand-boeschung"],
 )

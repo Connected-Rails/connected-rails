@@ -581,7 +581,11 @@ fn surface_combo(ui: &mut egui::Ui, id: &str, surface: &mut RoadSurface) {
         .width(space::FIELD * 2.0)
         .selected_text(t!(&format!("road-surface-{}", surface.id())))
         .show_ui(ui, |ui| {
-            for candidate in [RoadSurface::Asphalt, RoadSurface::Concrete] {
+            for candidate in [
+                RoadSurface::Asphalt,
+                RoadSurface::Concrete,
+                RoadSurface::Gravel,
+            ] {
                 if ui
                     .selectable_label(
                         *surface == candidate,

@@ -523,6 +523,11 @@ fn water_tag(tags: &HashMap<String, String>) -> Option<(&'static str, Option<Str
 /// purposes and land on the same preset; `footway`, `cycleway`, `path` and
 /// `steps` are deliberately absent — a line's footpaths are the people
 /// module's business, not the road surface's.
+///
+/// `track` lands on the **gravel** preset, not a paved one: `highway=track`
+/// says what a way is used for, not what it is built of, and the German ones
+/// are unpaved far more often than not. The ones that are paved say so —
+/// `surface=*` or `tracktype=grade1` — and [`surface_of`] reads them.
 const ROAD_CLASSES: &[(&str, &str)] = &[
     ("motorway", "motorway"),
     ("motorway_link", "motorway"),
@@ -540,7 +545,46 @@ const ROAD_CLASSES: &[(&str, &str)] = &[
     ("pedestrian", "living"),
     ("road", "residential"),
     ("service", "service"),
-    ("track", "farm-concrete"),
+    ("track", "farm-gravel"),
+];
+
+/// What OSM's `surface=*` says a carriageway is made of, for the values a
+/// German extract carries. The dark bound surfaces are asphalt; the pale hard
+/// ones — the slabs, the setts, the block paving — are concrete; and the
+/// unpaved family is gravel, which is what a Feldweg is. A value the table
+/// does not know leaves the class preset in charge rather than guessing.
+///
+/// The lookup is on the value's first word: `concrete:plates` is concrete,
+/// `gravel;dirt` is gravel.
+const SURFACES: &[(&str, RoadSurface)] = &[
+    ("asphalt", RoadSurface::Asphalt),
+    ("paved", RoadSurface::Asphalt),
+    ("bitumen", RoadSurface::Asphalt),
+    ("chipseal", RoadSurface::Asphalt),
+    ("tarmac", RoadSurface::Asphalt),
+    ("concrete", RoadSurface::Concrete),
+    ("cement", RoadSurface::Concrete),
+    ("paving_stones", RoadSurface::Concrete),
+    ("sett", RoadSurface::Concrete),
+    ("cobblestone", RoadSurface::Concrete),
+    ("bricks", RoadSurface::Concrete),
+    ("brick", RoadSurface::Concrete),
+    ("unpaved", RoadSurface::Gravel),
+    ("gravel", RoadSurface::Gravel),
+    ("fine_gravel", RoadSurface::Gravel),
+    ("compacted", RoadSurface::Gravel),
+    ("pebblestone", RoadSurface::Gravel),
+    ("ground", RoadSurface::Gravel),
+    ("dirt", RoadSurface::Gravel),
+    ("earth", RoadSurface::Gravel),
+    ("soil", RoadSurface::Gravel),
+    ("mud", RoadSurface::Gravel),
+    ("sand", RoadSurface::Gravel),
+    ("grass", RoadSurface::Gravel),
+    ("grass_paver", RoadSurface::Gravel),
+    ("woodchips", RoadSurface::Gravel),
+    ("rock", RoadSurface::Gravel),
+    ("stone", RoadSurface::Gravel),
 ];
 
 /// Roads from an Overpass extract, as [`RoadSource`]s — the route editor's
@@ -558,9 +602,10 @@ const ROAD_CLASSES: &[(&str, &str)] = &[
 ///
 /// OSM maps a street as its centre line, so that is what a road is here: the
 /// class decides the preset — width, surface and markings, all editable —
-/// and where the mapper said more, it wins: `surface=*` over the preset's
-/// surface, `width=*`/`lanes=*` over its width, `oneway=yes` takes the
-/// centre line out, and `bridge=*` flags the way as flying (see
+/// and where the mapper said more, it wins: `surface=*` and `tracktype=*` over
+/// the preset's surface ([`surface_of`]), `width=*`/`lanes=*` over its width,
+/// `oneway=yes` takes the centre line out, an unpaved surface takes every
+/// marking out, and `bridge=*` flags the way as flying (see
 /// [`crate::route::RoadSource::bridge`]). A carriageway of a divided road
 /// (`oneway=yes`) carries no centre line, which is what makes an Autobahn
 /// read as two carriageways rather than one striped one.
@@ -600,10 +645,7 @@ pub fn parse_roads(json: &str) -> Result<Vec<RoadSource>, OsmError> {
         if points.len() < 2 {
             continue;
         }
-        let surface = match e.tags.get("surface").map(String::as_str) {
-            Some(s) if s.starts_with("concrete") => RoadSurface::Concrete,
-            _ => RoadSurface::Asphalt,
-        };
+        let surface = surface_of(&e.tags, preset);
         let width = width_of(&e.tags)
             .or_else(|| lanes_width(&e.tags))
             .unwrap_or(preset.width);
@@ -613,6 +655,14 @@ pub fn parse_roads(json: &str) -> Result<Vec<RoadSource>, OsmError> {
             preset.center_line
         } else {
             CenterLine::None
+        };
+        // Nobody paints on a loose surface: an unpaved way carries neither
+        // centre line nor Randlinie, whatever its class would have had. A
+        // `residential` way through a village that says `surface=gravel` is a
+        // gravel lane, not a striped street.
+        let (center_line, edge_lines) = match surface {
+            RoadSurface::Gravel => (CenterLine::None, false),
+            _ => (center_line, preset.edge_lines),
         };
         // A bridge flies: over the hollow the way spans — a valley, a river,
         // a cutting — the carriageway holds the straight line between its own
@@ -625,7 +675,7 @@ pub fn parse_roads(json: &str) -> Result<Vec<RoadSource>, OsmError> {
             width,
             surface,
             center_line,
-            edge_lines: preset.edge_lines,
+            edge_lines,
             bridge,
             tags: vec![format!("highway-{}", e.tags["highway"])],
         });
@@ -657,6 +707,50 @@ fn road_preset_id(class: &str) -> Option<&'static str> {
         .iter()
         .find(|(key, _)| *key == class)
         .map(|(_, preset)| *preset)
+}
+
+/// What the carriageway is made of: the mapper's `surface=*` where the table
+/// knows the value, else what a field track's `tracktype=*` implies, else the
+/// class preset's own surface.
+///
+/// The tag order is what keeps a Feldweg a Feldweg. `highway=track` says
+/// nothing about the material — it is the *use* of the way, and the German
+/// ones run from a concrete Betonspurbahn to two ruts through a field — so the
+/// class alone may not pave it. `tracktype=*` is the tag that grades how solid
+/// it is, and it is on far more German tracks than `surface=*` is: `grade1`
+/// is the solid one, everything below it is loose, whatever it is made of.
+///
+/// A solid track reads as **asphalt**, not as concrete slabs. The tag does not
+/// say which, but the mappers who did write a surface do: over a Börde box of
+/// 327 field tracks, the paved ones say `asphalt` or `paved` 52 times and
+/// `concrete` twice. A Betonspurbahn is a real thing and it comes out of
+/// `surface=concrete*` — it is not what an ungraded majority should be turned
+/// into.
+fn surface_of(tags: &HashMap<String, String>, preset: &crate::roads::RoadPreset) -> RoadSurface {
+    if let Some(surface) = tags.get("surface").and_then(|value| named_surface(value)) {
+        return surface;
+    }
+    match tags.get("tracktype").map(String::as_str) {
+        Some("grade1") => RoadSurface::Asphalt,
+        Some("grade2" | "grade3" | "grade4" | "grade5") => RoadSurface::Gravel,
+        _ => preset.surface,
+    }
+}
+
+/// The surface a `surface=*` value names, by its first word — `concrete:plates`
+/// is concrete, `gravel;dirt` is gravel. A value [`SURFACES`] does not know is
+/// no answer: the preset gives one.
+fn named_surface(value: &str) -> Option<RoadSurface> {
+    let value = value.trim().to_ascii_lowercase();
+    let word = value
+        .split([';', ':', '/'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    SURFACES
+        .iter()
+        .find(|(name, _)| *name == word)
+        .map(|(_, surface)| *surface)
 }
 
 /// The carriageway width the mapper wrote [m], if it parses: a plain number
@@ -1391,6 +1485,64 @@ mod tests {
         assert_eq!(residential.center_line, CenterLine::DashedUrban);
 
         assert_eq!(parse_roads(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    /// A field track is unpaved until the mapper says otherwise. The class
+    /// alone paves nothing: `highway=track` is what the way is used for, and
+    /// the German ones are gravel far more often than concrete. What decides
+    /// is `surface=*` first, then `tracktype=*` — and a loose surface takes
+    /// the markings out, whatever the class would have painted.
+    #[test]
+    fn a_field_track_is_unpaved_unless_the_tags_say_so() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 52.0, "lon": 10.0},
+            {"type": "node", "id": 2, "lat": 52.0, "lon": 10.01},
+            {"type": "way", "id": 10, "nodes": [1, 2], "tags": {"highway": "track"}},
+            {"type": "way", "id": 11, "nodes": [1, 2],
+             "tags": {"highway": "track", "tracktype": "grade3"}},
+            {"type": "way", "id": 12, "nodes": [1, 2],
+             "tags": {"highway": "track", "tracktype": "grade1"}},
+            {"type": "way", "id": 13, "nodes": [1, 2],
+             "tags": {"highway": "track", "tracktype": "grade1", "surface": "gravel"}},
+            {"type": "way", "id": 14, "nodes": [1, 2],
+             "tags": {"highway": "track", "surface": "Compacted"}},
+            {"type": "way", "id": 15, "nodes": [1, 2],
+             "tags": {"highway": "residential", "surface": "gravel;dirt"}},
+            {"type": "way", "id": 16, "nodes": [1, 2],
+             "tags": {"highway": "residential", "surface": "sett"}},
+            {"type": "way", "id": 17, "nodes": [1, 2],
+             "tags": {"highway": "secondary", "surface": "something_new"}}
+        ]}"#;
+        let roads = parse_roads(json).expect("parses");
+        assert_eq!(roads.len(), 8);
+
+        // A bare track: gravel, three metres, nothing painted on it.
+        assert_eq!(roads[0].surface, RoadSurface::Gravel);
+        assert!((roads[0].width - 3.0).abs() < 1e-9);
+        assert_eq!(roads[0].center_line, CenterLine::None);
+        assert!(!roads[0].edge_lines);
+
+        assert_eq!(roads[1].surface, RoadSurface::Gravel, "grade3 is loose");
+        assert_eq!(roads[2].surface, RoadSurface::Asphalt, "grade1 is solid");
+        assert_eq!(
+            roads[3].surface,
+            RoadSurface::Gravel,
+            "the surface the mapper wrote beats the grade"
+        );
+        assert_eq!(roads[4].surface, RoadSurface::Gravel, "case is no matter");
+
+        // An unpaved village lane is a gravel lane, not a striped street.
+        assert_eq!(roads[5].surface, RoadSurface::Gravel, "the first value");
+        assert_eq!(roads[5].center_line, CenterLine::None);
+        assert!(!roads[5].edge_lines);
+
+        // Setts are hard and pale: concrete, and marked like the class says.
+        assert_eq!(roads[6].surface, RoadSurface::Concrete);
+        assert_eq!(roads[6].center_line, CenterLine::DashedUrban);
+        assert!(roads[6].edge_lines);
+
+        // A value the table does not know leaves the class preset in charge.
+        assert_eq!(roads[7].surface, RoadSurface::Asphalt, "the preset's own");
     }
 
     /// A road cut by the extract at the box stays whole — the two corners

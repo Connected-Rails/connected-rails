@@ -2108,13 +2108,22 @@ data is flat shows no dip and no bridge.
 module envelope — the same extract a hand-downloaded Overpass Turbo query returns, so a
 file picked with the dialog works too. The OSM class decides what the road is made of,
 and the mapper's own tags win where they say more: `surface=*` over the preset's
-surface, `width=*`/`lanes=*` over its width, `oneway=yes` and `junction=roundabout` take
-the centre line out (a divided road is two one-way carriageways, and an Autobahn reads as
+surface — and where there is none, a field track's `tracktype=*` (`grade1` is solid and
+reads as asphalt, everything below it is loose and reads as gravel) — `width=*`/`lanes=*`
+over its width, `oneway=yes` and
+`junction=roundabout` take the centre line out (a divided road is two one-way carriageways, and an Autobahn reads as
 two of these rather than as one striped one), and any `bridge=*` but `no` flags the way as
 flying. The
 dialog's two checkboxes opt the many-and-thin classes in:
 **field tracks** (`highway=track` — what an agricultural module is stitched with) and
-**access ways** (`service`, `living_street`, `pedestrian`). Nothing is written before
+**access ways** (`service`, `living_street`, `pedestrian`). `highway=track` comes in
+**unpaved**: the class says what a way is used for, not what it is built of, and the
+German ones are gravel far more often than concrete — the paved ones say so themselves
+(`surface=*`, `tracktype=grade1`), and only those come out paved — concrete slabs only
+where a mapper wrote `surface=concrete*`, because that is how rare they are next to the
+asphalt ones. An unpaved
+carriageway carries no markings at all, whatever its class would have painted: nobody
+draws a Randlinie on gravel. Nothing is written before
 the summary's Commit, and Commit is one undo step. `import-module --tracks --narrow`
 runs the same query and the same filters headless (without the flags it takes the
 dialog's defaults, and it replaces the road list — the module is being rebuilt).
@@ -2131,6 +2140,7 @@ dialog's defaults, and it replaces the road list — the module is being rebuilt
 | Anliegerstraße | 4.5 m | edge lines only |
 | Spielstraße | 3.0 m | none |
 | Wirtschaftsweg (asphalt) | 3.5 m | none |
+| Feldweg (gravel) | 3.0 m | none — what `highway=track` imports as |
 | Feldweg (concrete slabs) | 3.0 m | none |
 | Fußweg | 2.0 m | none |
 
@@ -2139,13 +2149,14 @@ not carry: clicks lay the centre line, Enter or a right click paves it, the pres
 and the width decide what it is made of, and a click on a drawn road takes it. The
 panel edits width, surface and markings of the selected road afterwards.
 
-The look is **the program's, not the module's**: two surface scans (asphalt, concrete —
-ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`), their normal maps for the grain, and the
+The look is **the program's, not the module's**: three surface scans (asphalt, concrete,
+gravel — ambientCG, CC0, see `THIRD_PARTY_LICENSES.md`), their normal maps for the grain, and the
 markings drawn by the shader in real metres, per the RMS (Richtlinien für die Markierung
 von Straßen): 12 cm strokes, edge lines 25 cm off the kerb, the centre dash running 6 m
 on and 12 m off outside built-up areas and 3 m on and 6 m off inside them (`Dashed` vs
 `DashedUrban`), and `Solid` a line that never lifts. The surface texture tiles 4 m × 4 m
-on every carriageway, so the grain keeps its shape whatever the road's width, and every
+on every carriageway, so the grain keeps its shape whatever the road's width; gravel is
+rougher than the bound surfaces, so a wet Feldweg does not shine the way wet asphalt does. Every
 marking is filtered over the pixel it falls in — a line that goes sub-pixel with distance
 fades out instead of breaking into sparks. A module carries no road bitmaps, and two
 clients of a multiplayer run agree on what a road looks like without a byte crossing the

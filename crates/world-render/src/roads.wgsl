@@ -217,8 +217,11 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var color = surface;
     color = mix(color, paint_color, paint * 0.92);
     pbr_input.material.base_color = vec4(color, 1.0);
-    // Asphalt is dull; the paint is a touch glossier where it is fresh.
-    pbr_input.material.perceptual_roughness = clamp(0.88 - 0.25 * paint, 0.5, 1.0);
+    // Asphalt is dull and gravel duller still — the material brings its own
+    // roughness; the paint is a touch glossier where it is fresh, and a loose
+    // surface carries no paint to begin with.
+    pbr_input.material.perceptual_roughness =
+        clamp(pbr_input.material.perceptual_roughness - 0.25 * paint, 0.5, 1.0);
     // Rain, snow and the shadow of a cloud, the same way the fields get them.
     pbr_input = weather_pbr(road.weather, globals.time, pbr_input);
 

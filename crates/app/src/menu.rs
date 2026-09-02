@@ -5,11 +5,16 @@
 //! down the left with a content pane beside it is the shape of a web dashboard, and it
 //! reads as one no matter how it is coloured.
 //!
-//! **The flow** takes the whole screen. Picking a run walks line → vehicle → scenario;
-//! which step that is stands in a numbered rail across the top, with what has been picked
-//! under each — that is the breadcrumb, the back button and the progress bar in one. The
-//! list sits left, and beside it a pane reads the highlighted entry out of the loaded
-//! content. Esc walks the steps back and leaves at the title screen.
+//! **The flow** takes the whole screen. It begins with the run — a scenario, a service
+//! out of an operating day, or free rein — and everything else follows from it: a
+//! scenario names the line it plays on, and a service names the line of its operating
+//! day, so the route is derived rather than asked for. Only what the run leaves open is
+//! still a step, so picking a prepared run can be the whole flow, while the free run
+//! walks route and vehicle as before. Which step that is stands in a numbered rail across
+//! the top, with what has been picked under each — that is the breadcrumb, the back
+//! button and the progress bar in one. The list sits left, and beside it a pane reads the
+//! highlighted entry out of the loaded content. Esc walks the steps back and leaves at
+//! the title screen.
 //!
 //! Keyboard (↑/↓, ←/→, Enter, Esc) and mouse (wheel scrolls, hover selects, click
 //! confirms) drive the
@@ -89,7 +94,7 @@ pub struct Selection {
     /// The service out of an operating day the player took instead of a scenario
     /// (plan ch. 11).
     pub service: Option<ServiceRef>,
-    /// The date and the weather they set for it on [`Page::Run`]. `None` = whatever the
+    /// The date and the weather they set for it on [`Page::Setup`]. `None` = whatever the
     /// plan itself says, which is what a run started from the command line gets.
     pub setup: Option<RunSetup>,
 }
@@ -97,7 +102,7 @@ pub struct Selection {
 /// The verbs on the title screen, in order: the key of the label, and the page it opens.
 /// Quit carries no page — it leaves.
 const VERBS: [(&str, Option<Page>); 4] = [
-    ("menu-drive", Some(Page::Line)),
+    ("menu-drive", Some(Page::Run)),
     ("menu-mods", Some(Page::Mods)),
     ("menu-settings", Some(Page::Settings)),
     ("menu-quit", None),
@@ -114,19 +119,23 @@ const PAUSE_VERBS: [&str; 4] = ["menu-resume", "menu-settings", "menu-title", "m
 const NOT_WHILE_DRIVING: [Setting; 1] = [Setting::Language];
 
 /// Which screen the menu is showing. `Root` is the title screen; everything else is the
-/// full-width flow behind it, and the first three are the steps of picking a run.
+/// full-width flow behind it, and [`Page::Run`] opens the steps of picking a run.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
     #[default]
     Root,
     /// The root of the overlay over a standing run.
     Pause,
-    Line,
-    Loco,
-    Scenario,
-    /// Date and weather for a timetable run — the one step that is only walked when the
-    /// run picked is a service rather than a scenario.
+    /// The first step: which run is being driven — a scenario, a service out of an
+    /// operating day, or free rein. Everything after it depends on what it left open.
     Run,
+    /// Which route the run takes. Only walked where the run names none.
+    Line,
+    /// What is at the head of the train. Only walked where the run does not say.
+    Loco,
+    /// Date and weather for a timetable run — a service lies at the same hour of the same
+    /// line every time it is taken, so those two are the player's.
+    Setup,
     Mods,
     Settings,
     /// The keyboard and the controllers, one row per action. A page of its own rather
@@ -146,29 +155,78 @@ impl Page {
         matches!(self, Page::Root | Page::Pause)
     }
 
-    /// Where Esc goes. Everything leads back to the page of verbs, one step at a time;
-    /// from there the front end has nowhere to go and the overlay resumes the run.
-    fn back(self, overlay: bool) -> Option<Page> {
+    /// Where Esc goes. Inside the drive flow that is the step before this one, which is
+    /// not a fixed page any more — a scenario brings its own route and its own train, and
+    /// the steps it answered are not walked. Everything else leads back to the page of
+    /// verbs, from where the front end has nowhere to go and the overlay resumes the run.
+    fn back(self, overlay: bool, flow: &[Page]) -> Option<Page> {
         match self {
             Page::Root | Page::Pause => None,
-            Page::Line | Page::Mods | Page::Settings => Some(Page::home(overlay)),
+            Page::Mods | Page::Settings => Some(Page::home(overlay)),
             Page::Controls => Some(Page::Settings),
-            Page::Loco => Some(Page::Line),
-            Page::Scenario => Some(Page::Loco),
-            Page::Run => Some(Page::Scenario),
+            _ => match flow.iter().position(|page| *page == self) {
+                Some(0) | None => Some(Page::home(overlay)),
+                Some(at) => Some(flow[at - 1]),
+            },
         }
     }
 
-    /// Position of this page in the three steps of picking a run. Setting up a timetable
-    /// run is the second half of the third step, not a fourth one — the rail would
-    /// otherwise promise a step that a scenario never walks.
-    fn step(self) -> Option<usize> {
+    /// The title the step rail shows over this step of the drive flow.
+    fn step_title(self) -> &'static str {
         match self {
+            Page::Run => "menu-select-run",
+            Page::Line => "menu-select-line",
+            Page::Loco => "menu-select-loco",
+            Page::Setup => "menu-run-setup",
+            _ => "",
+        }
+    }
+
+    /// Where the answer given on this step is remembered — [`MenuState::chosen`] is
+    /// indexed by it, so a step keeps its answer even while another run hides it.
+    fn slot(self) -> Option<usize> {
+        match self {
+            Page::Run => Some(0),
             Page::Line => Some(1),
             Page::Loco => Some(2),
-            Page::Scenario | Page::Run => Some(3),
+            Page::Setup => Some(3),
             _ => None,
         }
+    }
+}
+
+/// Which of the steps behind the run a run leaves for the player to answer.
+///
+/// A scenario that names its line and brings its own consists answers both by itself —
+/// picking it is the whole flow. One that says neither asks for both, which is what the
+/// free run is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Open {
+    /// The run names no route, so the player picks one ([`Page::Line`]).
+    line: bool,
+    /// The run does not say what is at the head, so the player picks ([`Page::Loco`]).
+    loco: bool,
+    /// It is a service, so date and weather are set before it starts ([`Page::Setup`]).
+    setup: bool,
+}
+
+impl Open {
+    /// The pages of the flow, in the order they are walked. The run picker itself is
+    /// always the first of them.
+    fn flow(self) -> Vec<Page> {
+        let mut pages = vec![Page::Run];
+        pages.extend(self.line.then_some(Page::Line));
+        pages.extend(self.loco.then_some(Page::Loco));
+        pages.extend(self.setup.then_some(Page::Setup));
+        pages
+    }
+
+    /// The page after `page`, or `None` where `page` is the last step and Enter starts
+    /// the run.
+    fn after(self, page: Page) -> Option<Page> {
+        let flow = self.flow();
+        let at = flow.iter().position(|p| *p == page)?;
+        flow.get(at + 1).copied()
     }
 }
 
@@ -193,9 +251,9 @@ pub struct MenuState {
     /// counter rather than an index — [`variant_of`] wraps it into what the vehicle has,
     /// so moving to a vehicle with fewer variants can never point past the end.
     variant: usize,
-    /// Labels of the line, the vehicle and the run already picked — the step rail shows
+    /// Labels of what has been picked, indexed by [`Page::slot`] — the step rail shows
     /// them under their step, and only the menu ever needs them as text.
-    chosen: [String; 3],
+    chosen: [String; 4],
     /// The two screens, shown one at a time.
     title_screen: Option<Entity>,
     flow_screen: Option<Entity>,
@@ -226,8 +284,10 @@ impl Page {
             "root" => Some(Page::Root),
             "line" => Some(Page::Line),
             "loco" => Some(Page::Loco),
-            "scenario" => Some(Page::Scenario),
-            "run" => Some(Page::Run),
+            // `scenario` is what this page was called while it came last; the screenshots
+            // and the README still name it, and it is the same list.
+            "run" | "scenario" => Some(Page::Run),
+            "setup" => Some(Page::Setup),
             "mods" => Some(Page::Mods),
             "settings" => Some(Page::Settings),
             "controls" => Some(Page::Controls),
@@ -343,7 +403,7 @@ enum RunOption {
     Preset,
 }
 
-/// The rows of [`Page::Run`], in order — the second of them decides whether the third is
+/// The rows of [`Page::Setup`], in order — the second of them decides whether the third is
 /// there at all.
 const RUN_OPTIONS: [RunOption; 3] = [RunOption::Date, RunOption::Weather, RunOption::Preset];
 
@@ -767,10 +827,11 @@ pub fn spawn_menu(
     mut selection: ResMut<Selection>,
     menu: ResMut<MenuState>,
 ) {
-    // `--menu run` is a screenshot of a page that only exists once a service has been
+    // `--menu setup` is a screenshot of a page that only exists once a service has been
     // picked. A screenshot cannot pick one, so it is given the first of the built-in day
     // — the same reason `StartPage` exists at all.
-    if start.as_deref().map(|start| start.0.as_str()) == Some("run") && selection.service.is_none()
+    if start.as_deref().map(|start| start.0.as_str()) == Some("setup")
+        && selection.service.is_none()
     {
         let day = content::musterbahn_day();
         if let Some((index, _)) = day.playable().next() {
@@ -1106,7 +1167,7 @@ fn list_node(width: f32) -> Node {
     }
 }
 
-/// The detail pane, shown on the three drive pages and collapsed on the other two —
+/// The detail pane, shown on the pages of the drive flow and collapsed on the rest —
 /// there is nothing to say about a settings row that the row does not already say.
 fn detail_node(shown: bool) -> Node {
     Node {
@@ -1237,11 +1298,10 @@ pub fn menu(
                     );
                 }
             }
-        } else if menu.page == Page::Run && selection.service.is_none() {
-            // Nothing to set up: the page is the second half of picking a run, and the
-            // first half has not happened.
-            go(&mut menu, Page::Scenario);
-        } else if menu.page == Page::Run {
+        } else if menu.page == Page::Setup && selection.service.is_none() {
+            // Nothing to set up: the page belongs to a service, and no service was taken.
+            go(&mut menu, Page::Run);
+        } else if menu.page == Page::Setup {
             // ← / → dial the value, Enter starts — this is a step of the drive flow, and
             // in that flow Enter has meant "on you go" since the first page.
             if dial != 0
@@ -1275,10 +1335,34 @@ pub fn menu(
                         exit.write(AppExit::Success);
                     }
                 },
+                // The first step, and the one the others follow from: the run says which
+                // route it takes and, where it brings consists or names a vehicle, what
+                // runs on it. Only what it leaves open is still walked — a scenario that
+                // answered both starts from here.
+                Page::Run => {
+                    let (route, open) = run_of(&mods.0, id.as_deref(), service.as_ref());
+                    // A service is set up before it is driven: the date and the weather
+                    // are the player's, and the plan's own are what they start from.
+                    selection.setup = service
+                        .as_ref()
+                        .and_then(|reference| resolve_day(&mods.0, &reference.day))
+                        .map(|day| day.setup());
+                    selection.scenario_id = id;
+                    selection.service = service;
+                    // The route the run named. An open one is cleared rather than kept:
+                    // what the last run stood on is not an answer to this one.
+                    selection.line_ref = route.line_ref();
+                    choose(&mut menu, Page::Run, label);
+                    if !open.line {
+                        choose(&mut menu, Page::Line, route_name(&mods.0.mods, &route));
+                    }
+                    advance(&mut menu, &mut next, open.after(Page::Run));
+                }
                 Page::Line => {
                     selection.line_ref = id;
-                    menu.chosen[0] = label;
-                    go(&mut menu, Page::Loco);
+                    choose(&mut menu, Page::Line, label);
+                    let to = next_step(&mods.0, &selection, Page::Line);
+                    advance(&mut menu, &mut next, to);
                 }
                 Page::Loco => {
                     // The dress belongs on the `Vehicle`, where it is deterministic state
@@ -1287,34 +1371,13 @@ pub fn menu(
                     let variants = variant_count(entry, &mods.0);
                     selection.variant = (variants > 0).then(|| menu.variant % variants);
                     selection.loco_id = id;
-                    menu.chosen[1] = label;
-                    go(&mut menu, Page::Scenario);
-                }
-                Page::Scenario => {
-                    menu.chosen[2] = label;
-                    match service {
-                        // A service is set up before it is driven: the date and the
-                        // weather are the player's, and the plan's own are what they
-                        // start from.
-                        Some(reference) => {
-                            selection.setup =
-                                resolve_day(&mods.0, &reference.day).map(|day| day.setup());
-                            selection.scenario_id = None;
-                            selection.service = Some(reference);
-                            go(&mut menu, Page::Run);
-                        }
-                        // A scenario brings its own hour and its own sky, and starts.
-                        None => {
-                            selection.scenario_id = id;
-                            selection.service = None;
-                            selection.setup = None;
-                            next.set(GameState::Driving);
-                        }
-                    }
+                    choose(&mut menu, Page::Loco, label);
+                    let to = next_step(&mods.0, &selection, Page::Loco);
+                    advance(&mut menu, &mut next, to);
                 }
                 // Handled above, before the confirm: the page has no rows that lead
                 // anywhere, only values that are dialled.
-                Page::Run => {}
+                Page::Setup => {}
                 Page::Mods => {
                     mods_ui::toggle(&mut mods.0, menu.selected, &mut manager);
                     // Reload right away, so the selection lists show what is enabled now.
@@ -1334,7 +1397,10 @@ pub fn menu(
             }
         }
         if keys.just_pressed(KeyCode::Escape) {
-            match menu.page.back(overlay) {
+            // Which steps lie behind this one is the run's to say, so Esc asks the run
+            // that was taken rather than a fixed chain of pages.
+            let walked = flow(&mods.0, menu.page, &selection, None);
+            match menu.page.back(overlay, &walked) {
                 Some(back) => go(&mut menu, back),
                 // Esc on the overlay's own root is the way out of the pause: the run goes on.
                 None if overlay => next.set(GameState::Driving),
@@ -1363,8 +1429,20 @@ pub fn menu(
             && items
                 .get(menu.selected)
                 .is_some_and(|entry| variant_count(entry, &mods.0) > 0);
+        // The rail is the flow of the run under the cursor, not a fixed three steps: a
+        // scenario that brings its route and its train asks one question, and the rail
+        // has to say so before the answer is given rather than after.
+        let walked = flow(&mods.0, page, &selection, items.get(menu.selected));
+        let last = walked.last() == Some(&page);
         show_screen(&mut commands, &menu, page);
-        build_steps(&mut commands, &fonts, menu.steps, page, &menu.chosen);
+        build_steps(
+            &mut commands,
+            &fonts,
+            menu.steps,
+            page,
+            &menu.chosen,
+            &walked,
+        );
         build_rows(&mut commands, &fonts, rows, &items, &menu);
         build_detail(
             &mut commands,
@@ -1377,8 +1455,9 @@ pub fn menu(
             &mods.0,
             &selection,
             menu.variant,
+            last,
         );
-        build_hints(&mut commands, &fonts, hints, page, variants);
+        build_hints(&mut commands, &fonts, hints, page, variants, last);
         menu.drawn = Some(print);
     }
 
@@ -1432,6 +1511,36 @@ fn go(menu: &mut MenuState, page: Page) {
     // Leaving the page while a row waits for its key: the wait goes with it, or the next
     // page would swallow the first thing pressed on it.
     menu.rebinding = None;
+}
+
+/// Walks to the next step of the drive flow, or starts the run where there is none left.
+fn advance(menu: &mut MenuState, next: &mut NextState<GameState>, page: Option<Page>) {
+    match page {
+        Some(page) => go(menu, page),
+        None => next.set(GameState::Driving),
+    }
+}
+
+/// Remembers what a step was answered with, and forgets the answers behind it — a second
+/// walk through the flow must not show what the first one left standing.
+fn choose(menu: &mut MenuState, page: Page, label: String) {
+    let Some(slot) = page.slot() else { return };
+    menu.chosen[slot] = label;
+    for later in &mut menu.chosen[slot + 1..] {
+        later.clear();
+    }
+}
+
+/// The step after `page` for the run the selection holds, or `None` where `page` is the
+/// last one and the run starts.
+fn next_step(runtime: &mod_runtime::ModRuntime, selection: &Selection, page: Page) -> Option<Page> {
+    run_of(
+        runtime,
+        selection.scenario_id.as_deref(),
+        selection.service.as_ref(),
+    )
+    .1
+    .after(page)
 }
 
 /// The first selectable row from `from` in direction `dir`, wrapping. The settings page
@@ -1584,29 +1693,31 @@ fn scroll_into_view(
 // Drawing
 // ---------------------------------------------------------------------------------
 
-/// The three steps of the drive section, in order: their titles, and which of them the
-/// player has already answered.
-const STEPS: [&str; 3] = ["menu-select-line", "menu-select-loco", "menu-select-run"];
-
-/// The numbered rail across the top of the flow: which of the three steps this is, and
-/// what has been answered for the ones behind it. Breadcrumb, progress bar and the reason
-/// there is no navigation rail down the side, in one row.
+/// The numbered rail across the top of the flow: which step this is, and what has been
+/// answered for the ones behind it. Breadcrumb, progress bar and the reason there is no
+/// navigation rail down the side, in one row.
+///
+/// `walked` is the flow of the run being picked, which is not the same length every time:
+/// a scenario that names its line and brings its own consists is one step, the free run
+/// is three. A step that is never walked is never promised.
 fn build_steps(
     commands: &mut Commands,
     fonts: &Fonts,
     steps: Option<Entity>,
     page: Page,
-    chosen: &[String; 3],
+    chosen: &[String; 4],
+    walked: &[Page],
 ) {
     let Some(steps) = steps else { return };
     commands.entity(steps).despawn_related::<Children>();
-    let Some(current) = page.step() else {
+    let Some(current) = walked.iter().position(|step| *step == page) else {
         return;
     };
-    for (index, title) in STEPS.iter().enumerate() {
+    for (index, step_page) in walked.iter().enumerate() {
         let number = index + 1;
-        let here = number == current;
-        let done = number < current;
+        let title = step_page.step_title();
+        let here = index == current;
+        let done = index < current;
         if index > 0 {
             commands.spawn((
                 Node {
@@ -1683,7 +1794,10 @@ fn build_steps(
         ));
         // Under the label: what was picked for that step, so the answers stay on screen
         // while the next question is asked.
-        let answer = chosen.get(index).filter(|c| !c.is_empty());
+        let answer = step_page
+            .slot()
+            .and_then(|slot| chosen.get(slot))
+            .filter(|c| !c.is_empty());
         commands.spawn((
             text(
                 fonts,
@@ -2108,7 +2222,14 @@ fn build_value(
 
 /// The key hints, as separate chips rather than one string padded with double spaces —
 /// those collapse the moment the face is proportional.
-fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page, variants: bool) {
+fn build_hints(
+    commands: &mut Commands,
+    fonts: &Fonts,
+    hints: Entity,
+    page: Page,
+    variants: bool,
+    last: bool,
+) {
     commands.entity(hints).despawn_related::<Children>();
     let mut keys: Vec<(&str, &str)> = vec![("↑/↓", "menu-hint-select")];
     if page == Page::Controls {
@@ -2121,7 +2242,7 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
     if page == Page::Settings {
         keys.push(("←/→", "menu-hint-change"));
         keys.push(("Enter", "menu-hint-next"));
-    } else if page == Page::Run {
+    } else if page == Page::Setup {
         keys.push(("←/→", "menu-hint-change"));
         keys.push(("Enter", "menu-hint-start"));
     } else {
@@ -2133,9 +2254,11 @@ fn build_hints(commands: &mut Commands, fonts: &Fonts, hints: Entity, page: Page
         keys.push((
             "Enter",
             match page {
-                Page::Scenario => "menu-hint-confirm",
                 Page::Mods => "menu-hint-toggle",
                 Page::Root | Page::Pause => "menu-hint-open",
+                // On the last step of the flow Enter is the start — which step that is
+                // depends on what the run left open.
+                _ if last => "menu-hint-start",
                 _ => "menu-hint-confirm",
             },
         ));
@@ -2199,6 +2322,8 @@ fn build_detail(
     runtime: &mod_runtime::ModRuntime,
     selection: &Selection,
     variant: usize,
+    // Whether this is the last step of the flow — what the button at the foot says.
+    last: bool,
 ) {
     commands.entity(detail).despawn_related::<Children>();
     let Some(facts) = entry.and_then(|entry| facts(page, entry, runtime, selection, variant))
@@ -2325,7 +2450,7 @@ fn build_detail(
     commands.spawn((
         text(
             fonts,
-            t!(if matches!(page, Page::Scenario | Page::Run) {
+            t!(if last {
                 "menu-action-start"
             } else {
                 "menu-action-next"
@@ -2347,8 +2472,8 @@ fn title(page: Page) -> String {
         Page::Root | Page::Pause => String::new(),
         Page::Line => t!("menu-select-line"),
         Page::Loco => t!("menu-select-loco"),
-        Page::Scenario => t!("menu-select-run"),
-        Page::Run => t!("menu-run-setup"),
+        Page::Run => t!("menu-select-run"),
+        Page::Setup => t!("menu-run-setup"),
         Page::Mods => t!("mods-title"),
         Page::Settings => t!("menu-settings"),
         Page::Controls => t!("ctl-title"),
@@ -2365,8 +2490,8 @@ fn caption(page: Page, runtime: &mod_runtime::ModRuntime, manager: &ModManager) 
         Page::Mods => mods_ui::details(runtime, manager, true),
         Page::Line => t!("menu-select-line-hint"),
         Page::Loco => t!("menu-select-loco-hint"),
-        Page::Scenario => t!("menu-select-run-hint"),
-        Page::Run => t!("menu-run-setup-hint"),
+        Page::Run => t!("menu-select-run-hint"),
+        Page::Setup => t!("menu-run-setup-hint"),
     }
 }
 
@@ -2395,12 +2520,8 @@ fn monogram(name: &str) -> String {
     }
 }
 
-/// Every operating day the run picker offers, the built-in one first.
-///
-/// A plan that belongs to another line is left out: its stops and origins are indices
-/// into that line's track graph, and offering them here would be offering a run that
-/// starts somewhere else entirely.
-fn days(runtime: &mod_runtime::ModRuntime, line: Option<&str>) -> Vec<(String, OperatingDay)> {
+/// Every operating day the run picker knows, the built-in one first.
+fn days(runtime: &mod_runtime::ModRuntime) -> Vec<(String, OperatingDay)> {
     std::iter::once((BUILTIN_DAY.to_string(), content::musterbahn_day()))
         .chain(
             runtime
@@ -2409,8 +2530,114 @@ fn days(runtime: &mod_runtime::ModRuntime, line: Option<&str>) -> Vec<(String, O
                 .iter()
                 .map(|(id, day)| (id.clone(), day.clone())),
         )
-        .filter(|(_, day)| day.line.is_none() || day.line.as_deref() == line)
         .collect()
+}
+
+/// The route a run takes — what the run picker derives from the run instead of asking
+/// for it. A scenario's stops, origins and event triggers are indices into one line's
+/// track graph; put on another they address whatever happens to lie at that number, so
+/// the route is the run's to name, not the player's to guess.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum Route {
+    /// The example line the simulator brings itself. The built-in operating day runs on
+    /// it and on nothing else — it names no line only because that line has no mod id.
+    Builtin,
+    /// A line or a composition out of a mod, by id.
+    Mod(String),
+    /// The run names none, so the player is asked and the run is put on the answer. What
+    /// the free run is, and what a mod's day or scenario without a `line:` stays.
+    Open,
+}
+
+impl Route {
+    /// The route a `line:` field names.
+    fn named(line: Option<&str>) -> Route {
+        line.map_or(Route::Open, |id| Route::Mod(id.to_string()))
+    }
+
+    /// What [`Selection::line_ref`] becomes for it — `None` is the built-in line, and an
+    /// open route starts there too until the player says otherwise.
+    fn line_ref(&self) -> Option<String> {
+        match self {
+            Route::Mod(id) => Some(id.clone()),
+            Route::Builtin | Route::Open => None,
+        }
+    }
+}
+
+/// The name a route is shown under. An id no installed mod brought stays the id, so a
+/// run pointing at content that is not there still says what it is missing.
+fn route_name(mods: &mod_runtime::Mods, route: &Route) -> String {
+    match route {
+        Route::Builtin => t!("menu-line-builtin"),
+        Route::Open => t!("menu-route-open"),
+        Route::Mod(id) => mods
+            .lines
+            .get(id)
+            .map(|line| line.name.clone())
+            .or_else(|| mods.compositions.get(id).map(|c| c.name.clone()))
+            .unwrap_or_else(|| id.clone()),
+    }
+}
+
+/// The route a run takes and what it leaves for the player to answer, read back out of
+/// the loaded content. The free run — neither a scenario nor a service — leaves all of it.
+fn run_of(
+    runtime: &mod_runtime::ModRuntime,
+    scenario_id: Option<&str>,
+    service: Option<&ServiceRef>,
+) -> (Route, Open) {
+    let (route, loco, setup) = if let Some(reference) = service {
+        let day = resolve_day(runtime, &reference.day);
+        let route = if reference.day == BUILTIN_DAY {
+            Route::Builtin
+        } else {
+            Route::named(day.as_ref().and_then(|day| day.line.as_deref()))
+        };
+        // A working that names its vehicle has answered the question — the timetable says
+        // what runs, and `world::build` takes it over the menu's pick.
+        let loco = day
+            .as_ref()
+            .and_then(|day| day.services.get(reference.index))
+            .is_none_or(|service| service.vehicle.is_none());
+        (route, loco, true)
+    } else if let Some(id) = scenario_id {
+        let scenario = runtime.mods.scenarios.get(id);
+        // A scenario with consists of its own puts the player's train on the line itself;
+        // the vehicle picked in the menu is never asked for then.
+        (
+            Route::named(scenario.and_then(|s| s.line.as_deref())),
+            scenario.is_none_or(|s| s.consists.is_empty()),
+            false,
+        )
+    } else {
+        (Route::Open, true, false)
+    };
+    let open = Open {
+        line: route == Route::Open,
+        loco,
+        setup,
+    };
+    (route, open)
+}
+
+/// The steps of the flow as they stand: derived from the run under the cursor while the
+/// run picker is open, and from the run already taken on every step behind it.
+fn flow(
+    runtime: &mod_runtime::ModRuntime,
+    page: Page,
+    selection: &Selection,
+    entry: Option<&Entry>,
+) -> Vec<Page> {
+    let (scenario, service) = if page == Page::Run {
+        match entry {
+            Some(entry) => (entry.id.as_deref(), entry.service.as_ref()),
+            None => (None, None),
+        }
+    } else {
+        (selection.scenario_id.as_deref(), selection.service.as_ref())
+    };
+    run_of(runtime, scenario, service).1.flow()
 }
 
 /// The mod an id belongs to (`example:modul_ost` → `example`).
@@ -2484,52 +2711,87 @@ fn entries(
                 .map(|(id, spec)| named(id, &spec.name, vehicle_meta(spec))),
         )
         .collect(),
-        // Two kinds of run under one question: a scenario, which brings its own hour and
-        // its own task, and a service out of an operating day, which is one working of a
-        // timetable that runs all day and starts over at midnight (plan ch. 11).
-        Page::Scenario => {
-            let mut rows: Vec<Entry> =
-                std::iter::once(builtin("menu-scenario-none", String::new()))
-                    .chain(mods.scenarios.iter().map(|(id, scenario)| {
+        // The first question, and the one the rest follow from. Two kinds of run under
+        // it: a scenario, which brings its own hour and its own task, and a service out
+        // of an operating day, which is one working of a timetable that runs all day and
+        // starts over at midnight (plan ch. 11). Both name the route they take, so they
+        // stand under it — picking one is picking the line as well.
+        Page::Run => {
+            // The free run first, as on every selection page: the built-in default, which
+            // names neither a route nor a train and therefore walks the whole flow.
+            let mut rows = vec![builtin("menu-scenario-none", String::new())];
+            let days = days(runtime);
+            // The routes in the order the content is loaded in: the mods' lines and
+            // compositions by id, then the example line the simulator brings itself, and
+            // last the runs that name no route at all. The built-in day is nineteen hours
+            // of services — put first it would bury every mod below it, and unlike the
+            // free run at the top it is not the default anything falls back to.
+            //
+            // A run whose route is not installed falls under no heading and is not
+            // offered: it could only be started on the wrong line.
+            let routes = mods
+                .lines
+                .keys()
+                .chain(mods.compositions.keys())
+                .map(|id| Route::Mod(id.clone()))
+                .chain([Route::Builtin, Route::Open]);
+            for route in routes {
+                let scenarios: Vec<(&String, &sim_core::scenario::Scenario)> = mods
+                    .scenarios
+                    .iter()
+                    .filter(|(_, scenario)| Route::named(scenario.line.as_deref()) == route)
+                    .collect();
+                if !scenarios.is_empty() {
+                    rows.push(heading(t!(
+                        "menu-scenario-heading",
+                        route = route_name(mods, &route)
+                    )));
+                    rows.extend(scenarios.into_iter().map(|(id, scenario)| {
                         named(
                             id,
                             &scenario.name,
                             format!("{:02}:{:02}", scenario.start.hour, scenario.start.minute),
                         )
-                    }))
-                    .collect();
-            for (id, day) in days(runtime, selection.line_ref.as_deref()) {
-                if day.playable().next().is_none() {
-                    continue;
+                    }));
                 }
-                rows.push(Entry {
-                    label: t!("menu-day-heading", name = day.name.clone()),
-                    heading: true,
-                    ..default()
-                });
-                for (index, service) in day.playable() {
-                    let (from, to) = service.route();
-                    rows.push(Entry {
-                        label: t!("menu-service", from = from, to = to),
-                        meta: format!(
-                            "{}  {} – {}",
-                            service.number,
-                            clock_label(service.departure()),
-                            clock_label(service.arrival())
-                        ),
-                        monogram: category_mark(service),
-                        chip: if id == BUILTIN_DAY {
-                            t!("menu-chip-builtin")
-                        } else {
-                            origin(&id)
-                        },
-                        hint: service.description.clone(),
-                        service: Some(ServiceRef {
-                            day: id.clone(),
-                            index,
-                        }),
-                        ..default()
-                    });
+                for (id, day) in &days {
+                    let day_route = if id == BUILTIN_DAY {
+                        Route::Builtin
+                    } else {
+                        Route::named(day.line.as_deref())
+                    };
+                    if day_route != route || day.playable().next().is_none() {
+                        continue;
+                    }
+                    rows.push(heading(t!(
+                        "menu-day-heading",
+                        name = day.name.clone(),
+                        route = route_name(mods, &route)
+                    )));
+                    for (index, service) in day.playable() {
+                        let (from, to) = service.route();
+                        rows.push(Entry {
+                            label: t!("menu-service", from = from, to = to),
+                            meta: format!(
+                                "{}  {} – {}",
+                                service.number,
+                                clock_label(service.departure()),
+                                clock_label(service.arrival())
+                            ),
+                            monogram: category_mark(service),
+                            chip: if id == BUILTIN_DAY {
+                                t!("menu-chip-builtin")
+                            } else {
+                                origin(id)
+                            },
+                            hint: service.description.clone(),
+                            service: Some(ServiceRef {
+                                day: id.clone(),
+                                index,
+                            }),
+                            ..default()
+                        });
+                    }
                 }
             }
             rows
@@ -2537,7 +2799,7 @@ fn entries(
         // The one step a scenario never walks: what day the service runs on and what the
         // weather does over it. The preset row is only there while a weather is named —
         // a row that says "none" and cannot be dialled is a dead control.
-        Page::Run => {
+        Page::Setup => {
             let setup = selection.setup.unwrap_or_default();
             RUN_OPTIONS
                 .into_iter()
@@ -2692,6 +2954,15 @@ fn lever_bound(input: Option<bevy::input::gamepad::GamepadInput>) -> String {
     let axis = input.map_or_else(|| t!("ctl-unbound"), bindings::input_label);
     let none = t!("ctl-unbound");
     format!("{none:>7}  {axis:<13}")
+}
+
+/// A section heading: drawn over the rows below it, never landed on by the cursor.
+fn heading(label: String) -> Entry {
+    Entry {
+        label,
+        heading: true,
+        ..default()
+    }
 }
 
 fn named(id: &str, name: &str, meta: String) -> Entry {
@@ -2910,7 +3181,29 @@ fn facts(
                 ..base(rows)
             })
         }
-        Page::Scenario => {
+        Page::Run => {
+            // A working out of an operating day: what the timetable says about it. Its
+            // date and its weather are not here — they are the next step's question.
+            if let Some(reference) = &entry.service {
+                let day = resolve_day(runtime, &reference.day)?;
+                let service = day.services.get(reference.index)?;
+                let route = if reference.day == BUILTIN_DAY {
+                    Route::Builtin
+                } else {
+                    Route::named(day.line.as_deref())
+                };
+                return Some(Facts {
+                    body: service.description.clone(),
+                    rows: vec![
+                        (t!("menu-fact-train"), service.number.clone()),
+                        (t!("menu-fact-departure"), clock_label(service.departure())),
+                        (t!("menu-fact-arrival"), clock_label(service.arrival())),
+                        (t!("menu-fact-stops"), service.stops.len().to_string()),
+                        (t!("menu-fact-line"), route_name(mods, &route)),
+                    ],
+                    ..base(Vec::new())
+                });
+            }
             // The free run is the absence of a scenario, not a missing one — it gets the
             // pane and the start button like every other row.
             let Some(scenario) = entry.id.as_ref().and_then(|id| mods.scenarios.get(id)) else {
@@ -2939,7 +3232,7 @@ fn facts(
                     ),
                     (
                         t!("menu-fact-line"),
-                        scenario.line.clone().unwrap_or_else(|| t!("common-none")),
+                        route_name(mods, &Route::named(scenario.line.as_deref())),
                     ),
                     (t!("menu-fact-events"), scenario.events.len().to_string()),
                 ],
@@ -2948,7 +3241,7 @@ fn facts(
         }
         // The pane on the setup page describes the service being set up, not the row —
         // the rows are its date and its weather, and they say what they are themselves.
-        Page::Run => {
+        Page::Setup => {
             let reference = selection.service.as_ref()?;
             let day = resolve_day(runtime, &reference.day)?;
             let service = day.services.get(reference.index)?;
@@ -3065,7 +3358,7 @@ mod tests {
     fn selection_pages_are_never_empty() {
         let runtime = mod_runtime::ModRuntime::load("does-not-exist");
         let (graphics, audio, gameplay) = default();
-        for page in [Page::Line, Page::Loco, Page::Scenario, Page::Settings] {
+        for page in [Page::Line, Page::Loco, Page::Run, Page::Settings] {
             let items = entries(
                 page,
                 false,
@@ -3080,7 +3373,7 @@ mod tests {
             assert!(!items.is_empty(), "{page:?} is empty");
         }
         // The defaults carry no id — `setup` reads that as "use the built-in".
-        for page in [Page::Line, Page::Loco, Page::Scenario] {
+        for page in [Page::Line, Page::Loco, Page::Run] {
             let items = entries(
                 page,
                 false,
@@ -3194,24 +3487,26 @@ mod tests {
         let mut app = app();
         assert_eq!(page(&app), Page::Root, "the menu opens on the title screen");
         key(&mut app, KeyCode::Enter);
-        assert_eq!(page(&app), Page::Line);
+        assert_eq!(page(&app), Page::Run, "the run comes first");
 
+        // The free run names neither a route nor a train, so it is the one run that still
+        // asks both questions.
         key(&mut app, KeyCode::Enter);
-        assert_eq!(page(&app), Page::Loco);
-        key(&mut app, KeyCode::Escape);
         assert_eq!(page(&app), Page::Line);
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(page(&app), Page::Run);
 
         // What the row observers set: a click confirms exactly like Enter, and once.
         app.world_mut().resource_mut::<MenuState>().clicked = true;
         app.update();
-        assert_eq!(page(&app), Page::Loco);
+        assert_eq!(page(&app), Page::Line);
         app.update();
-        assert_eq!(page(&app), Page::Loco, "the click was consumed");
+        assert_eq!(page(&app), Page::Line, "the click was consumed");
 
         key(&mut app, KeyCode::Enter);
-        assert_eq!(page(&app), Page::Scenario);
-        key(&mut app, KeyCode::Escape);
         assert_eq!(page(&app), Page::Loco);
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(page(&app), Page::Line);
         key(&mut app, KeyCode::Enter);
         key(&mut app, KeyCode::Enter);
         assert_eq!(
@@ -3223,40 +3518,164 @@ mod tests {
         assert!(selection.scenario_id.is_none(), "no scenario was picked");
     }
 
-    /// Picking a service out of an operating day does not start the run: it opens the
-    /// one step a scenario never walks, where the date and the weather are set.
+    /// The route is the run's to name, not the player's to guess: a scenario stands under
+    /// the line it plays on, taking it puts the selection on that line, and the step that
+    /// would have asked for one is not walked at all. Before, every scenario was offered
+    /// whatever line had been picked, and the run was then built on the wrong graph.
     #[test]
-    fn a_timetable_run_is_set_up_before_it_starts() {
+    fn picking_a_scenario_settles_the_route_it_plays_on() {
         let mut app = app();
-        for _ in 0..3 {
-            key(&mut app, KeyCode::Enter);
-        }
-        assert_eq!(page(&app), Page::Scenario);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Run);
 
-        // Walk down to the first service — past the free run, the mods' scenarios and
-        // the heading over the day's services, which the cursor never lands on.
+        // The Bördefahrt: its own line, no consists of its own — route settled, vehicle
+        // still open, so exactly one step is left.
         let runtime = mod_runtime::ModRuntime::load("../../mods");
-        let items = entries(
-            Page::Scenario,
+        let items = list_of(Page::Run, &runtime, &Selection::default());
+        let at = items
+            .iter()
+            .position(|entry| entry.id.as_deref() == Some("example:boerdefahrt"))
+            .expect("the example mod ships the Bördefahrt");
+        // It stands under a heading naming its line, not under any other.
+        let heading = items[..at]
+            .iter()
+            .rfind(|entry| entry.heading)
+            .expect("a heading over it");
+        assert!(
+            heading.label.contains(&route_name(
+                &runtime.mods,
+                &Route::Mod("example:boerde".into())
+            )),
+            "the Bördefahrt stands under {:?}",
+            heading.label
+        );
+
+        walk_to(&mut app, &items, at);
+        key(&mut app, KeyCode::Enter);
+        let selection = app.world().resource::<Selection>();
+        assert_eq!(
+            selection.line_ref.as_deref(),
+            Some("example:boerde"),
+            "the line came with the scenario"
+        );
+        assert_eq!(
+            selection.scenario_id.as_deref(),
+            Some("example:boerdefahrt")
+        );
+        assert_eq!(page(&app), Page::Loco, "and the route was never asked for");
+        // Esc goes back past the step that was skipped, not into it.
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(page(&app), Page::Run);
+    }
+
+    /// Every run in the list stands under the route it takes, and a run whose route no
+    /// installed mod brought is not offered at all — it could only start on another line.
+    #[test]
+    fn every_run_stands_under_its_route() {
+        let mut runtime = mod_runtime::ModRuntime::load("../../mods");
+        let items = list_of(Page::Run, &runtime, &Selection::default());
+        let mut heading = String::new();
+        let mut checked = 0;
+        for entry in &items {
+            if entry.heading {
+                heading.clone_from(&entry.label);
+                continue;
+            }
+            // The free run is the one row without a run behind it.
+            if entry.id.is_none() && entry.service.is_none() {
+                continue;
+            }
+            let (route, open) = run_of(&runtime, entry.id.as_deref(), entry.service.as_ref());
+            assert!(
+                heading.contains(&route_name(&runtime.mods, &route)),
+                "{} stands under {heading:?}",
+                entry.label
+            );
+            assert_eq!(
+                open.line,
+                route == Route::Open,
+                "{}: a named route is not asked for again",
+                entry.label
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "the example mod ships runs");
+        // A scenario whose line is not installed is left out rather than started on
+        // whatever else is there.
+        runtime.mods.scenarios.insert(
+            "test:orphan".into(),
+            sim_core::scenario::Scenario {
+                name: "Waise".into(),
+                line: Some("nowhere:at-all".into()),
+                ..default()
+            },
+        );
+        let items = list_of(Page::Run, &runtime, &Selection::default());
+        assert!(
+            !items
+                .iter()
+                .any(|entry| entry.id.as_deref() == Some("test:orphan")),
+            "a run without its route is not offered"
+        );
+    }
+
+    /// Puts the cursor on row `at` of a freshly opened page. ↓ moves by selectable rows,
+    /// so the headings in between are not presses of their own.
+    fn walk_to(app: &mut App, items: &[Entry], at: usize) {
+        for _ in 0..items[..at].iter().filter(|entry| !entry.heading).count() {
+            key(app, KeyCode::ArrowDown);
+        }
+    }
+
+    /// The rows of a page, with the defaults for everything the run picker does not read.
+    fn list_of(page: Page, runtime: &mod_runtime::ModRuntime, selection: &Selection) -> Vec<Entry> {
+        entries(
+            page,
             false,
-            &runtime,
-            &Selection::default(),
+            runtime,
+            selection,
             &default(),
             &default(),
             &default(),
             &Binds::default(),
             None,
-        );
+        )
+    }
+
+    /// Picking a service out of an operating day does not start it: the plan says where
+    /// it runs, so the route is settled, but what is at the head and which day it plays
+    /// on are still the player's.
+    #[test]
+    fn a_timetable_run_is_set_up_before_it_starts() {
+        let mut app = app();
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Run);
+
+        // Walk down to the first service — past the free run and the heading over the
+        // day's services, which the cursor never lands on.
+        let runtime = mod_runtime::ModRuntime::load("../../mods");
+        let items = list_of(Page::Run, &runtime, &Selection::default());
         let first = items
             .iter()
-            .position(|entry| entry.service.is_some())
+            .position(|entry| {
+                entry
+                    .service
+                    .as_ref()
+                    .is_some_and(|reference| reference.day == BUILTIN_DAY)
+            })
             .expect("the built-in operating day offers services");
         assert!(items[first - 1].heading, "under a heading of its own");
-        for _ in 0..first {
-            key(&mut app, KeyCode::ArrowDown);
-        }
+        walk_to(&mut app, &items, first);
         key(&mut app, KeyCode::Enter);
-        assert_eq!(page(&app), Page::Run, "a service is set up, not started");
+        // The built-in day is the built-in line's timetable, so the route step is skipped
+        // and the vehicle comes next.
+        assert_eq!(page(&app), Page::Loco);
+        assert!(
+            app.world().resource::<Selection>().line_ref.is_none(),
+            "on the line the plan belongs to"
+        );
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Setup, "a service is set up, not started");
         assert_eq!(
             *app.world().resource::<State<GameState>>().get(),
             GameState::Menu
@@ -3289,16 +3708,18 @@ mod tests {
             WeatherChoice::Fixed(Preset::Cloudy)
         ));
 
-        // Esc goes back to the run list, which opens at the top again …
+        // Esc walks the flow back, one step at a time, to the run list — which opens at
+        // the top again …
         key(&mut app, KeyCode::Escape);
-        assert_eq!(page(&app), Page::Scenario);
+        assert_eq!(page(&app), Page::Loco);
+        key(&mut app, KeyCode::Escape);
+        assert_eq!(page(&app), Page::Run);
         // … so the service has to be walked to a second time. Enter on the setup page
         // starts the run — that is what the button in the pane says as well.
-        for _ in 0..first {
-            key(&mut app, KeyCode::ArrowDown);
-        }
+        walk_to(&mut app, &items, first);
         key(&mut app, KeyCode::Enter);
-        assert_eq!(page(&app), Page::Run);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(page(&app), Page::Setup);
         key(&mut app, KeyCode::Enter);
         assert_eq!(
             *app.world().resource::<State<GameState>>().get(),
@@ -3313,7 +3734,7 @@ mod tests {
     /// The rows the run picker's setup page is showing right now.
     fn rows(app: &App) -> Vec<Entry> {
         entries(
-            Page::Run,
+            Page::Setup,
             false,
             &app.world().resource::<Mods>().0,
             app.world().resource::<Selection>(),

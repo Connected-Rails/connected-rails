@@ -1368,7 +1368,7 @@ hud-network-connecting = connecting …
 
 menu-tagline = German railway simulation
 menu-drive = Drive
-menu-drive-hint = Module, vehicle and run
+menu-drive-hint = Run, route and vehicle
 menu-mods = Mods
 menu-mods-hint = Switch installed content on and off
 menu-settings = Settings
@@ -1382,12 +1382,17 @@ menu-resume-hint = Carry on where the train stands
 menu-title = Back to the main menu
 menu-title-hint = Ends the run and takes down the world — unsaved progress in the scenario is lost.
 menu-step = Step { $step } of { $total }
-menu-select-line = Select module
-menu-select-line-hint = Where the run takes place.
+menu-select-line = Select route
+menu-select-line-hint = The run names no route, so this is where it takes place.
 menu-select-loco = Select vehicle
 menu-select-loco-hint = What is at the head of the train.
 menu-select-run = Select run
-menu-select-run-hint = A scenario, a service out of the day's timetable, or free rein.
+menu-select-run-hint = A scenario, a service out of the day's timetable, or free rein — the route follows from it.
+# The headings the runs stand under: every one of them names the route it is on, and
+# picking a run under it is picking that route as well.
+menu-scenario-heading = Scenarios · { $route }
+# What a run that names no route stands under — the player is asked for one instead.
+menu-route-open = Any route
 # The built-in content the simulator falls back on when nothing is picked. The chip on
 # the row says so, so the name itself no longer has to.
 menu-chip-builtin = Built in
@@ -1395,7 +1400,7 @@ menu-chip-composition = Composition
 menu-line-builtin = Example module
 menu-loco-builtin = BR 101
 menu-scenario-none = No scenario — free run
-menu-free-run = No timetable and no scoring: the module, the vehicle, and wherever you take it.
+menu-free-run = No timetable and no scoring: the route, the vehicle, and wherever you take it.
 # The key hints in the footer bar: one chip per key.
 menu-hint-select = select
 menu-hint-confirm = confirm
@@ -1420,7 +1425,7 @@ menu-fact-drive = Drive
 menu-fact-brake = Brake
 menu-fact-start = Start
 menu-fact-timetable = Timetable
-menu-fact-line = Module
+menu-fact-line = Route
 menu-fact-events = Events
 menu-fact-km = { $value } km
 menu-fact-m = { $value } m
@@ -1435,8 +1440,8 @@ menu-fact-kmh = { $value } km/h
 # same hour of the same line every time — so the date and the weather are set
 # here, on the step between picking the run and starting it.
 
-# The heading over an operating day's services in the run list.
-menu-day-heading = Timetable · { $name }
+# The heading over an operating day's services in the run list, under its route.
+menu-day-heading = Timetable { $name } · { $route }
 # One service in that list: where it starts and where it ends.
 menu-service = { $from } – { $to }
 menu-run-setup = Set up the run

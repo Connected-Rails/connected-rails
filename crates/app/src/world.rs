@@ -128,15 +128,19 @@ pub fn build(mods: &mut ModRuntime, selection: &crate::menu::Selection) -> World
             has
         })
     });
+    // The route the run itself names comes before the one the menu holds: a scenario's
+    // stops, origins and event triggers are indices into one line's track graph, and put
+    // on another they address whatever happens to lie at that number. Only `--line` on
+    // the command line still overrules it, so the documented CLI invocations stand.
     let line_ref = arg("--line")
-        .or_else(|| selection.line_ref.clone())
         .or_else(|| {
             scenario_id
                 .as_ref()
                 .and_then(|id| mods.mods.scenarios.get(id))
                 .and_then(|s| s.line.clone())
         })
-        .or_else(|| plan.as_ref().and_then(|plan| plan.line.clone()));
+        .or_else(|| plan.as_ref().and_then(|plan| plan.line.clone()))
+        .or_else(|| selection.line_ref.clone());
     let resolved = line_ref.and_then(|id| match mods.mods.resolve_line(&id) {
         Ok(composed) => {
             for note in &composed.notes {

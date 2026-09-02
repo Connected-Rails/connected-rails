@@ -44,20 +44,25 @@ cargo run -p app -- --connect 127.0.0.1:27015            # join one
 ```
 
 Without arguments the simulator opens on a title screen: wordmark over the backdrop, and four
-verbs — **Drive**, **Mods**, **Settings**, **Quit**. Drive walks line → vehicle → run in
-three steps, shown as a numbered rail across the top with what was picked under each. Beside
-the list a detail pane reads the highlighted entry out of the loaded content: length, permitted
-speed and signals of a line; mass, running-gear limit, drive and brake of a vehicle; start time,
-timetable and events of a scenario. The third step offers **two kinds of run**: a scenario, and
-under a heading of its own every playable **service of an operating day** — a whole 24-hour
-timetable that starts over at midnight (see *Timetable runs* below). Picking a service opens
-one more page, where the **date** and the **weather** are set before the run starts.
+verbs — **Drive**, **Mods**, **Settings**, **Quit**. Drive begins with **the run**, and
+everything else follows from it. The list offers **two kinds of run**: a scenario, and every
+playable **service of an operating day** — a whole 24-hour timetable that starts over at
+midnight (see *Timetable runs* below). Both stand under the **route** they take, and picking
+one picks that route with them: a scenario names the line it plays on, a service the line of
+its plan, so the route is derived rather than asked for. Only what the run leaves open is a
+step of its own — the line where the run names none (which is what the free run is), the
+vehicle where the run does not bring one, and for a service the **date** and the **weather**
+before it starts. The steps stand in a numbered rail across the top with what was picked under
+each, so a prepared scenario is one question and the free run is three. Beside the list a
+detail pane reads the highlighted entry out of the loaded content: length, permitted speed and
+signals of a line; mass, running-gear limit, drive and brake of a vehicle; start time,
+timetable and events of a scenario; train number, departure and arrival of a service.
 `↑`/`↓` or the mouse select, `Enter` or a left click
 confirms, `←`/`→` dial a setting, `Esc` goes one step back and leaves at the title screen; `F9`
 opens the mod manager in-game. Any run flag (`--line`, `--loco`, `--scenario`, `--day`,
 `--frames`, `--screenshot`, …) skips the menu entirely, so the invocations above stay
 non-interactive — `--menu` puts it back in front, optionally on a named page
-(`--menu settings`, also `root`, `line`, `loco`, `scenario`, `run`, `mods`), which is the only
+(`--menu settings`, also `root`, `run`, `line`, `loco`, `setup`, `mods`), which is the only
 way to photograph the menu itself.
 
 The picture behind the menu lives in `crates/app/images/` and is compiled into the binary. The

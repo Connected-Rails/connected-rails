@@ -92,6 +92,14 @@ jobs:
       - name: Build
         shell: bash
         run: |
+          # Release binaries target x86-64-v3 (AVX2/FMA/BMI — Intel Haswell/2013+,
+          # AMD Zen+; lets LLVM autovectorise wider than baseline SSE2). Dev/CI
+          # builds stay on the baseline for compatibility and fast compiles.
+          # aarch64 is excluded: the flag is invalid there, and ARM64 already
+          # has NEON in its baseline.
+          if [[ "${{ matrix.target }}" == x86_64-* ]]; then
+            export RUSTFLAGS="-C target-cpu=x86-64-v3"
+          fi
           args=(--release --locked --target ${{ matrix.target }} -p app -p route-editor -p vehicle-editor)
           if [ "${{ matrix.dlss }}" = "true" ]; then
             # Linux: libvulkan-dev puts the headers under /usr/include. Windows

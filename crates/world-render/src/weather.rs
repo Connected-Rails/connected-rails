@@ -156,6 +156,8 @@ fn dress(
     }
 }
 
+// A Bevy system takes its world access as parameters; the count says nothing here.
+#[allow(clippy::too_many_arguments)]
 fn update(
     sky: Res<Sky>,
     mut objects: ResMut<Assets<WeatherMaterial>>,

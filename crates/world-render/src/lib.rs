@@ -616,27 +616,28 @@ pub fn spawn_terrain_tile(
     let mesh = terrain_mesh(tile);
     let anchored = WorldAnchored::at(tile.anchor);
     let (translation, rotation) = anchored.transform(origin);
-    let mut entity = commands.spawn((
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(material.clone()),
-        Transform::from_translation(translation).with_rotation(rotation),
-        anchored,
-        // The adaptive card/model system grows the default terrain's grass
-        // only near the world camera. Overlay surfaces are indexed as holes,
-        // so blades do not poke through fields, roads or water.
-        plants::TerrainGrass::new(tile),
-        plants::FieldPlants::default(),
-    ));
-    scatter::spawn_scatter(
-        &mut entity,
-        tile.trees.clone(),
-        &tile.objects,
-        &tile.people,
-        &tile.walkways,
-        catalog,
-    );
-    let id = entity.id();
-    drop(entity);
+    let id = {
+        let mut entity = commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(material.clone()),
+            Transform::from_translation(translation).with_rotation(rotation),
+            anchored,
+            // The adaptive card/model system grows the default terrain's grass
+            // only near the world camera. Overlay surfaces are indexed as holes,
+            // so blades do not poke through fields, roads or water.
+            plants::TerrainGrass::new(tile),
+            plants::FieldPlants::default(),
+        ));
+        scatter::spawn_scatter(
+            &mut entity,
+            tile.trees.clone(),
+            &tile.objects,
+            &tile.people,
+            &tile.walkways,
+            catalog,
+        );
+        entity.id()
+    };
     buildings::spawn_buildings(commands, meshes, building_assets, id, &tile.buildings);
     id
 }
@@ -646,6 +647,7 @@ pub fn spawn_terrain_tile(
 /// carried so far (its [`Scattered`] children); the new set is spawned the
 /// way [`spawn_terrain_tile`] did it, less the walkers: the editor, which is
 /// who does this, shows no crowd and builds no ways.
+#[allow(clippy::too_many_arguments)]
 pub fn respawn_scatter(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -666,11 +668,12 @@ pub fn respawn_scatter(
     for child in old {
         commands.entity(child).try_despawn();
     }
-    let Ok(mut entity) = commands.get_entity(tile) else {
-        return;
-    };
-    scatter::spawn_scatter(&mut entity, trees, objects, people, &[], catalog);
-    drop(entity);
+    {
+        let Ok(mut entity) = commands.get_entity(tile) else {
+            return;
+        };
+        scatter::spawn_scatter(&mut entity, trees, objects, people, &[], catalog);
+    }
     buildings::spawn_buildings(commands, meshes, building_assets, tile, buildings);
 }
 

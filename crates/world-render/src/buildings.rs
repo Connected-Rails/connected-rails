@@ -1441,7 +1441,7 @@ fn add_entrance_canopy(mesh: &mut MeshData, spec: &BuildingSpec) {
 }
 
 fn has_balcony(spec: &BuildingSpec, floor: usize) -> bool {
-    floor > 0 && spec.balconies && floor % spec.balcony_every.max(1) as usize == 0
+    floor > 0 && spec.balconies && floor.is_multiple_of(spec.balcony_every.max(1) as usize)
 }
 
 /// A centred balcony must end on bay boundaries, not through the windows at
@@ -1700,6 +1700,7 @@ fn window_quad(
     (points, normal)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_window_trim(
     mesh: &mut MeshData,
     c: f32,
@@ -1792,7 +1793,7 @@ fn add_balconies(mesh: &mut MeshData, spec: &BuildingSpec) {
         // Use an odd number of intervals so no upright stands on the centre
         // line directly in front of the balcony door.
         let mut intervals = (width / 1.2).ceil().max(1.0) as usize;
-        if intervals % 2 == 0 {
+        if intervals.is_multiple_of(2) {
             intervals += 1;
         }
         for post in 0..=intervals {
@@ -2171,7 +2172,7 @@ mod tests {
     use super::*;
 
     fn assert_winding_matches_normals(mesh: &MeshData) {
-        for triangle in mesh.indices.chunks_exact(3) {
+        for triangle in mesh.indices.as_chunks::<3>().0 {
             let a = Vec3::from_array(mesh.positions[triangle[0] as usize]);
             let b = Vec3::from_array(mesh.positions[triangle[1] as usize]);
             let c = Vec3::from_array(mesh.positions[triangle[2] as usize]);
@@ -2383,7 +2384,7 @@ mod tests {
         let geometry = geometry(&spec, 0);
         let (door_centers, door_w, door_h) = entrance_layout(&spec);
         assert_eq!(geometry.door.positions.len(), 4 * door_centers.len());
-        for window in geometry.glass.positions.chunks_exact(4) {
+        for window in geometry.glass.positions.as_chunks::<4>().0 {
             if window.iter().all(|p| p[2] < -spec.length / 2.0) {
                 let left = window.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
                 let right = window
@@ -2464,7 +2465,7 @@ mod tests {
         add_balconies(&mut balcony, &spec);
         let width = balcony_width(&spec);
         let mut intervals = (width / 1.2).ceil().max(1.0) as usize;
-        if intervals % 2 == 0 {
+        if intervals.is_multiple_of(2) {
             intervals += 1;
         }
         // Slab, front rail, adaptive front posts, two side rails and four
@@ -2534,7 +2535,9 @@ mod tests {
         let balcony_doors = geometry
             .glass
             .positions
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pane| {
                 let is_front = pane.iter().all(|point| point[2] < -spec.length / 2.0);
                 let center_x = pane.iter().map(|point| point[0]).sum::<f32>() / 4.0;

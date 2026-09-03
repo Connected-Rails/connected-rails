@@ -1569,7 +1569,7 @@ pub struct TerrainGrass {
 impl TerrainGrass {
     pub(crate) fn new(tile: &TerrainTile) -> Self {
         let mut grass = Self::default();
-        for (triangle, indices) in tile.indices.chunks_exact(3).enumerate() {
+        for (triangle, indices) in tile.indices.as_chunks::<3>().0.iter().enumerate() {
             let [ia, ib, ic] = [
                 indices[0] as usize,
                 indices[1] as usize,
@@ -1610,7 +1610,7 @@ impl TerrainGrass {
     }
 
     fn add_exclusions(&mut self, positions: &[[f32; 3]], indices: &[u32]) {
-        for indices in indices.chunks_exact(3) {
+        for indices in indices.as_chunks::<3>().0 {
             let [ia, ib, ic] = [
                 indices[0] as usize,
                 indices[1] as usize,

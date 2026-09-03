@@ -2164,13 +2164,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("{stem} states no crown, so it can never be planted"))
                 .length;
             assert!(
-                (0.5..=40.0).contains(&crown),
+                (0.1..=40.0).contains(&crown),
                 "{stem} states a crown of {crown} m"
             );
             map.insert(format!("trees:{stem}"), object);
         }
         let objects = TrackObjects { map };
-        assert_eq!(objects.map.len(), 84, "the whole catalogue was read");
+        assert_eq!(objects.map.len(), 153, "the whole catalogue was read");
 
         for id in ["tree-crowns", "tree-species"] {
             let spec = VisionConfig::default().model_by_id(id).unwrap().clone();

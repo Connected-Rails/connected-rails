@@ -1162,10 +1162,6 @@ pub struct TextureMips {
 
 struct PendingMaterial {
     material: Handle<StandardMaterial>,
-    /// Foliage: switch it from a hard mask to alpha-to-coverage once it is
-    /// there. A leaf's edge is then anti-aliased against the sky instead of
-    /// stepping from texel to texel, which is what a canopy is mostly made of.
-    cutout: bool,
     frames: u32,
 }
 
@@ -1183,17 +1179,26 @@ struct PendingTexture {
 impl TextureMips {
     /// Queues every texture of a material, once the material itself is there.
     pub fn enqueue(&mut self, material: &Handle<StandardMaterial>) {
-        self.queue(material, false);
+        self.queue(material);
     }
 
     /// The same for a cut-out material — foliage, hair, a chain-link fence.
-    /// Its mip chain keeps the coverage of its alpha, and its edges are
-    /// resolved by the sample mask rather than by a hard test.
+    /// Its mip chain keeps the coverage of its alpha, which the material's own
+    /// mask cutoff decides.
+    ///
+    /// This used to switch the material from its hard mask to
+    /// alpha-to-coverage as well, for a leaf edge anti-aliased against the
+    /// sky. That is off: under MSAA, Bevy's depth prepass has no discard for
+    /// alpha-to-coverage (the pass has no colour target for the coverage to go
+    /// to), so every leaf card wrote its whole quad into the depth, and the
+    /// sky behind it came out black. The water reads that depth for its
+    /// reflections (`water.rs`), and a lake with the trees of its bank in it
+    /// is worth more than the edge of a leaf.
     pub fn enqueue_cutout(&mut self, material: &Handle<StandardMaterial>) {
-        self.queue(material, true);
+        self.queue(material);
     }
 
-    fn queue(&mut self, material: &Handle<StandardMaterial>, cutout: bool) {
+    fn queue(&mut self, material: &Handle<StandardMaterial>) {
         if self
             .materials
             .iter()
@@ -1203,7 +1208,6 @@ impl TextureMips {
         }
         self.materials.push(PendingMaterial {
             material: material.clone(),
-            cutout,
             frames: 0,
         });
     }
@@ -1249,12 +1253,6 @@ pub fn mip_textures(
                     let queued: Vec<Handle<Image>> = textures_of(material).cloned().collect();
                     for image in &queued {
                         textures.enqueue_image(image, &entry.material, cutoff);
-                    }
-                    if entry.cutout
-                        && matches!(material.alpha_mode, AlphaMode::Mask(_))
-                        && let Some(mut material) = materials.get_mut(&entry.material)
-                    {
-                        material.alpha_mode = AlphaMode::AlphaToCoverage;
                     }
                 }
                 None => {

@@ -27,6 +27,7 @@ mod walk;
 mod world;
 
 use ai_driver::AiDriver;
+use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::ecs::resource::IsResource;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
@@ -1179,6 +1180,10 @@ fn setup(
                 ..default()
             },
             sky::camera_settings(),
+            // The water reads its reflections out of the depth the world was
+            // drawn with (`world_render::water`); without the prepass it falls
+            // back to mirroring the sky alone. The upscalers want it too.
+            DepthPrepass,
             // Near-field extinction (`feed_sky`): the atmosphere's own haze term
             // carries the colour and the distance, but a planetary medium's LUTs
             // do not resolve 300 m of fog. This is what closes it.

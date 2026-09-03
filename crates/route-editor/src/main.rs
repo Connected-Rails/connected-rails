@@ -721,6 +721,8 @@ fn setup(
             ..default()
         },
         sky::camera_settings(),
+        // The water reflects the module out of this (`world_render::water`).
+        bevy::core_pipeline::prepass::DepthPrepass,
         PrimaryEguiContext,
     ));
     // The same sky the simulator draws, over the same module: the sun where the

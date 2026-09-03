@@ -12,6 +12,7 @@ mod displays;
 mod fsr;
 mod glyphs;
 mod hud;
+mod loading;
 mod menu;
 mod models;
 mod mods_ui;
@@ -27,25 +28,19 @@ mod walk;
 mod world;
 
 use ai_driver::AiDriver;
-use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::ecs::resource::IsResource;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{DistanceFog, FogFalloff};
-use bevy::picking::mesh_picking::{MeshPickingCamera, MeshPickingPlugin, MeshPickingSettings};
-use bevy::post_process::bloom::Bloom;
+use bevy::picking::mesh_picking::{MeshPickingPlugin, MeshPickingSettings};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use content::import::dgm::TerrainSource;
-use content::terrain::{
-    Buildings, Scenery, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats, Vegetation,
-};
+use content::terrain::TerrainStats;
 use content::vehicles::passenger_coach;
 use mod_runtime::ModRuntime;
 use render::{Origin, TerrainChunk, VehicleView, WorldAnchored};
 use sim_core::Sim;
 use sim_core::train::{Train, Vehicle, VehicleSpec};
 use track_model::TrackPosition;
-use world_coords::RenderOrigin;
 // Daylight factor of this frame, 0 (night) … 1 (full day) — written by
 // `update_daylight`, read by everything that switches with darkness: the
 // headlights here, the mods' `_NIGHT` nodes in `world-render`.
@@ -61,6 +56,9 @@ use world_render::{Daylight, PeopleClock, sky};
 pub enum GameState {
     #[default]
     Menu,
+    /// A run picked on the menu is being built, one stage per frame behind the
+    /// loading screen (`loading.rs`). The world only stands once this is left.
+    Loading,
     Driving,
     Paused,
 }
@@ -95,11 +93,11 @@ struct CabLamp;
 /// moved downwards and wrapped every [`PRECIP_PERIOD`] metres (`update_precipitation`).
 #[derive(Component)]
 pub(crate) struct Precipitation {
-    snow: bool,
+    pub(crate) snow: bool,
     /// Fall speed [m/s].
-    speed: f32,
+    pub(crate) speed: f32,
     /// The layer of a few big out-of-focus drops right in front of the lens.
-    near: bool,
+    pub(crate) near: bool,
 }
 
 /// Height of one repetition of the precipitation mesh [m]. The mesh repeats its
@@ -109,7 +107,7 @@ const PRECIP_PERIOD: f32 = 24.0;
 
 /// Beyond this the near-field fog is off: the atmosphere's aerial perspective is
 /// the haze of a clear day, and a second one on top of it would be a grey veil.
-const CLEAR_VISIBILITY: f32 = 8_000.0;
+pub(crate) const CLEAR_VISIBILITY: f32 = 8_000.0;
 
 /// Which train is driven by the player.
 #[derive(Resource)]
@@ -455,10 +453,10 @@ fn main() {
         .init_non_send::<displays::HtmlGauges>()
         // Mods before menu and world — both read the resource. Inserted while the app is
         // built: the initial state transition runs before every startup schedule, so a
-        // loading system would come too late for `setup`.
+        // loading system would come too late for the menu.
         .insert_resource(Mods(ModRuntime::load("mods")))
         .insert_state(if autostart {
-            GameState::Driving
+            GameState::Loading
         } else {
             GameState::Menu
         })
@@ -469,7 +467,7 @@ fn main() {
         // posted only where a socket exists (`net::client_send`).
         .add_message::<net::WeatherRequest>()
         .add_systems(Startup, log_mods)
-        // The world the last run built goes first — otherwise the next `setup` would put a
+        // The world the last run built goes first — otherwise the next load would put a
         // second one on top of it.
         .add_systems(
             OnEnter(GameState::Menu),
@@ -496,21 +494,38 @@ fn main() {
             Update,
             (ui::grab_cursor, hud::hud_visibility, hud::refresh_help_caps),
         )
-        // The sound table and the display cameras need the trains, which `setup` only
-        // creates when its commands are applied — the chain inserts that sync point. It runs
-        // when there is no run yet: coming back from the pause overlay enters `Driving` too,
-        // and building the world a second time is not what resuming means (`RunBuilt`).
+        // The run is built on the way in from the menu, one stage per frame behind
+        // the loading screen — that is what keeps the bar and the spinner moving
+        // while the world comes up. Coming back out of the pause overlay enters
+        // `Driving` again without touching this; `finalize_loading` counts the run
+        // as built, so resuming never builds it twice.
         .add_systems(
-            OnEnter(GameState::Driving),
-            (
-                remember_before_run,
-                setup,
-                audio::setup_audio,
-                displays::setup_displays,
-                mark_run_built,
-            )
+            OnEnter(GameState::Loading),
+            (remember_before_run, loading::begin_loading)
                 .chain()
                 .run_if(not(resource_exists::<RunBuilt>)),
+        )
+        .add_systems(
+            Update,
+            (
+                loading::load_sim,
+                loading::load_terrain,
+                loading::load_track,
+                loading::load_vehicles,
+                loading::load_sky,
+                loading::finish_loading,
+                (
+                    audio::setup_audio,
+                    displays::setup_displays,
+                    loading::finalize_loading,
+                )
+                    .chain()
+                    .run_if(loading::finalizing),
+                loading::update_loading_ui,
+                loading::animate_loading,
+                loading::enter_driving,
+            )
+                .run_if(in_state(GameState::Loading)),
         )
         .add_systems(
             Update,
@@ -627,6 +642,7 @@ fn main() {
 #[allow(clippy::too_many_arguments)]
 fn exit_after_frames(
     limit: Res<FrameLimit>,
+    game: Res<State<GameState>>,
     shot: Option<Res<ShotPath>>,
     offscreen: Option<Res<Offscreen>>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
@@ -637,6 +653,11 @@ fn exit_after_frames(
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    // The loading screen stands between the menu and the run: its frames build the
+    // world rather than drive it, so only a standing menu or a driving run count.
+    if !matches!(game.get(), GameState::Menu | GameState::Driving) {
+        return;
+    }
     *count += 1;
     if *count == limit.0 {
         let perf = hud::Perf::read(&diagnostics);
@@ -680,7 +701,7 @@ struct BeforeRun(std::collections::HashSet<Entity>);
 /// What a run may have built, and nothing a despawn has any business touching:
 ///
 /// * a **resource** is an entity of its own in Bevy 0.19, and despawning one would
-///   *remove* the resource — the run's are replaced by the next `setup`, and the rest
+///   *remove* the resource — the run's are replaced by the next load, and the rest
 ///   are not the run's to take;
 /// * an **observer** belongs to no world at all — Bevy drops the ones whose watched
 ///   entity has gone and keeps the rest, which is exactly right here;
@@ -698,30 +719,26 @@ type RunRoots<'w, 's> = Query<
     ),
 >;
 
-/// Takes that snapshot — chained in front of `setup`, so it sees the world without one.
+/// Takes that snapshot — chained in front of the loader, so it sees the world without one.
 fn remember_before_run(mut commands: Commands, entities: Query<Entity>) {
     commands.insert_resource(BeforeRun(entities.iter().collect()));
 }
 
-/// A run's world stands built. `OnEnter(GameState::Driving)` fires on the way back out of
-/// the pause overlay exactly as it does on the way in from the menu, and the chain behind
-/// it *builds* a run: without this guard, resuming would put a second world, a second
-/// camera and a second simulation on top of the first, and drive the one the player is
+/// A run's world stands built. Entering `Loading` builds it in stages behind the
+/// loading screen, and entering `Driving` happens on the way back out of the
+/// pause overlay exactly as it does on the way in from the loader: without this
+/// guard, resuming would put a second world, a second camera and a second
+/// simulation on top of the first, and drive the one the player is
 /// no longer looking through.
 ///
-/// Set last in the chain and dropped by [`tear_down_run`], so the state is "a run exists"
+/// Set last in the loading chain and dropped by [`tear_down_run`], so the state is "a run exists"
 /// rather than "the player was once driving": leaving for the title screen tears the
 /// world down and the next `Drive` builds one again.
 #[derive(Resource)]
-struct RunBuilt;
-
-/// Closes the chain that built the run.
-fn mark_run_built(mut commands: Commands) {
-    commands.insert_resource(RunBuilt);
-}
+pub(crate) struct RunBuilt;
 
 /// Drops the built world when the player leaves a run for the title screen, so the next
-/// `setup` builds into an empty world rather than beside the old one.
+/// load builds into an empty world rather than beside the old one.
 ///
 /// Roots only — `despawn` takes the children with it — and only the ones [`RunRoots`]
 /// lets through. An entity id carries a generation, so an id the run reused for something
@@ -800,582 +817,8 @@ fn log_mods(mods: Res<Mods>) {
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    world_materials: render::WorldMaterials,
-    mut images: ResMut<Assets<Image>>,
-    mut terrain_materials: ResMut<Assets<render::TerrainMaterial>>,
-    mut media: ResMut<Assets<bevy::light::atmosphere::ScatteringMedium>>,
-    mut star_materials: ResMut<Assets<sky::StarMaterial>>,
-    mut moon_materials: ResMut<Assets<sky::MoonMaterial>>,
-    mut precip_materials: ResMut<Assets<world_render::precipitation::PrecipitationMaterial>>,
-    assets: Res<AssetServer>,
-    mut mods: ResMut<Mods>,
-    mut manager: ResMut<mods_ui::ModManager>,
-    selection: Res<menu::Selection>,
-    settings: settings::GraphicsRead,
-    binds: Res<bindings::Binds>,
-    fonts: Res<theme::Fonts>,
-) {
-    // Back to the names the body has always used.
-    let render::WorldMaterials {
-        standard: mut materials,
-        rail: mut rail_materials,
-    } = world_materials;
-
-    // `--hud full|reduced|off` puts the display in one of its three steps for a
-    // screenshot, which cannot press a key. It goes into a resource of its own rather than
-    // into the setting: the settings file is written on exit whether anything changed or
-    // not, and a photograph must not leave its step behind in the player's preferences.
-    if let Some(step) = arg("--hud") {
-        match step.as_str() {
-            "off" => commands.insert_resource(hud::HudOverride(settings::HudMode::Off)),
-            "reduced" => commands.insert_resource(hud::HudOverride(settings::HudMode::Reduced)),
-            "full" => commands.insert_resource(hud::HudOverride(settings::HudMode::Full)),
-            other => warn!("unknown --hud step {other}"),
-        }
-    }
-    // A mod was toggled on the menu: reload, so the world is built from the set on disk.
-    if manager.restart_needed {
-        mods.0 = ModRuntime::load("mods");
-        for warning in mods.0.log() {
-            warn!("mod: {warning}");
-        }
-        manager.restart_needed = false;
-    }
-    let mods = &mut mods.0;
-
-    let world::World {
-        mut sim,
-        player,
-        drivers,
-        line: line_source,
-        day,
-        dispatch,
-    } = world::build(mods, &selection);
-    // `--time 21:40` and `--date 2026-10-03` move the run's wall clock, the way
-    // `--hud` moves the display: a screenshot cannot open the scenario file, and
-    // the night sky is exactly what a rendering smoke test wants to see.
-    if let Some(clock) = arg("--time")
-        && let Some((hour, minute)) = parse_pair(&clock, ':')
-    {
-        sim.start.hour = hour;
-        sim.start.minute = minute;
-    }
-    if let Some(date) = world::date_arg() {
-        sim.start.year = date.year;
-        sim.start.month = date.month;
-        sim.start.day = date.day;
-    }
-    // `--wipers 2` starts with the wipers running: they are a cab control, and a
-    // screenshot has no hands.
-    if let Some(mode) = arg("--wipers").and_then(|m| m.parse::<u8>().ok()) {
-        for cab in &mut sim.controls {
-            cab.wipers = mode.min(3);
-        }
-    }
-    // `--weather snow` starts one of `sim_core::weather`'s presets. In a normal
-    // run the front *moves in* over `weather::TRANSITION` — rain builds from a
-    // first drizzle, the pane wets slowly, the rail goes greasy before wet. Only
-    // a screenshot gets it placed at once, ground and all: it cannot wait five
-    // minutes, and it wants the end state, not the approach.
-    if let Some(name) = arg("--weather") {
-        let wanted = name.to_ascii_lowercase();
-        match sim_core::weather::Preset::ALL
-            .into_iter()
-            .find(|p| format!("{p:?}").to_ascii_lowercase() == wanted)
-        {
-            Some(preset) if arg("--screenshot").is_some() => {
-                sim.weather.place(preset.weather(), 0.0)
-            }
-            Some(preset) => sim.weather.set(preset.weather(), 0.0),
-            None => warn!("unknown weather: {name}"),
-        }
-    }
-    // Both sides of a multiplayer run have to have built the same world; the fingerprint
-    // is what says so on joining (`net.rs`).
-    let fingerprint = world::fingerprint(&line_source.name, &sim);
-
-    // Render origin at the head of the train. A consist with no vehicles stands nowhere,
-    // so the origin starts at the line's own anchor instead (`sim_core::shunt`).
-    let start = sim.trains[player]
-        .vehicles
-        .first()
-        .map(|v| v.pos.pose(&sim.net).pos)
-        .unwrap_or_else(|| {
-            sim.net
-                .edges()
-                .first()
-                .map_or_else(world_coords::EcefPos::default, |e| e.eval(0.0).pos)
-        });
-    let origin = RenderOrigin::new(start);
-
-    // Ground, scenery and foliage wear the season of the scenario's start date
-    // — the same date the sun and moon are computed from (plan ch. 14).
-    let season = render::Season::on(sim.start.month, sim.start.day);
-
-    // Terrain: from real elevation data with `--dgm <directory>`, otherwise flat.
-    // Tiles are not built here but while driving (plan 4.3) — a 100 km line has more
-    // terrain than fits in memory at once. The builder exists before the scenery,
-    // because objects that snap to the terrain ask it for the ground height.
-    // `--dgm` may be repeated for a line across a UTM zone boundary; the n-th
-    // `--epsg` belongs to the n-th `--dgm` (the last one carries on when there
-    // are fewer).
-    let zones = args_all("--epsg");
-    let mut sources = Vec::new();
-    for (i, dir) in args_all("--dgm").iter().enumerate() {
-        let zone = zones
-            .get(i)
-            .or_else(|| zones.last())
-            .and_then(|v| v.parse().ok())
-            .and_then(world_coords::geo::utm_zone_from_epsg)
-            .unwrap_or(32);
-        match TerrainSource::from_dir(dir, zone) {
-            Ok(s) => {
-                info!("DGM: {} tiles from {dir} (zone {zone})", s.tile_count());
-                sources.push(s);
-            }
-            Err(e) => warn!("DGM {dir} not readable: {e}"),
-        }
-    }
-    // Height data the module ships with itself — behind the `--dgm` sources, so
-    // whoever passes the original delivery keeps its finer grid.
-    for h in &line_source.heights {
-        let Some(dir) = mods.mods.resolve_path(&h.path) else {
-            warn!("height data {}: mod not installed", h.path);
-            continue;
-        };
-        match TerrainSource::from_dir(&dir, h.zone) {
-            Ok(s) => {
-                info!(
-                    "module heights: {} tiles from {} (zone {})",
-                    s.tile_count(),
-                    dir.display(),
-                    h.zone
-                );
-                sources.push(s);
-            }
-            Err(e) => warn!("height data {} not readable: {e}", dir.display()),
-        }
-    }
-    let terrain_options = TerrainOptions {
-        zone: dgm_zone(),
-        fallback_height: 100.0,
-        ..default()
-    };
-    // The people (plan ch. 12): the passengers the crowd and the seats are made
-    // of, in registry order, and the walker's own body. Nothing about them is
-    // replicated — the crowd is a function of the line's name and the seats of
-    // the train's indices, so every client shows the same faces.
-    let passenger_names: Vec<String> = mods
-        .mods
-        .characters
-        .iter()
-        .filter(|(_, c)| c.has_role(content::Role::Passenger))
-        .map(|(key, _)| key.clone())
-        .collect();
-    let crowd = content::Crowd::from_line(
-        &line_source,
-        &sim.net,
-        terrain_options.zone,
-        &passenger_names,
-        content::people::line_seed(&line_source.name),
-    );
-    info!(
-        "people: {} on the platforms and ways ({} of them walking), {} passenger characters installed",
-        crowd.len(),
-        crowd.walking(),
-        passenger_names.len()
-    );
-    let passengers =
-        world_render::Passengers::resolve(&passenger_names, &mods.mods.characters, &assets);
-    // The line's farmland, cut to the tiles it covers (see `content::farmland`).
-    let farmland = content::farmland::Fields::from_line(
-        &line_source,
-        terrain_options.zone,
-        terrain_options.tile_size,
-    );
-    match farmland.overlaps() {
-        (0, _) => info!("fields: {} on the line", farmland.len()),
-        // Parcels that stand on each other are a fault in the register, not
-        // in the renderer: the later one gives the ground up so nothing is
-        // drawn twice, and the count says how much of that had to happen.
-        (n, area) => info!(
-            "fields: {} on the line ({n} overlapped one another, {:.2} ha given up)",
-            farmland.len(),
-            area / 10_000.0,
-        ),
-    }
-    let waters = content::water::Waters::from_line(
-        &line_source,
-        terrain_options.zone,
-        terrain_options.tile_size,
-    );
-    info!("water: {} on the line", waters.len());
-    // The line's roads, their carriageways draped on the terrain at build
-    // time (see `content::roads`).
-    let roads = content::roads::Roads::from_line(
-        &line_source,
-        terrain_options.zone,
-        terrain_options.tile_size,
-    );
-    info!("roads: {} on the line", roads.len());
-    // Trees, scenery objects and people come with the tiles: each stands on
-    // the ground of the tile it lands on, and streams in and out with it.
-    let terrain_builder = TerrainBuilder::new(&sim.net, sources, terrain_options)
-        .with_vegetation(Vegetation::from_line(&line_source, terrain_options.zone))
-        .with_scenery(Scenery::from_line(
-            &line_source,
-            &sim.net,
-            terrain_options.zone,
-        ))
-        .with_buildings(Buildings::from_line(
-            &line_source,
-            &sim.net,
-            terrain_options.zone,
-        ))
-        .with_crowd(crowd)
-        .with_fields(farmland)
-        .with_waters(waters)
-        .with_roads(roads)
-        .with_power_lines(content::power::PowerLines::from_line(
-            &line_source,
-            terrain_options.zone,
-            terrain_options.tile_size,
-        ))
-        .with_edits(TerrainEdits::from_line(&line_source, terrain_options.zone));
-
-    render::spawn_track(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &mut rail_materials,
-        &assets,
-        &sim.net,
-        &origin,
-    );
-
-    // Signal models (plan ch. 15.3): the placement's override, otherwise the signal
-    // type's default; a signal without either gets the placeholder mast.
-    let signal_models: Vec<Option<sim_core::interlock::SignalModel>> = line_source
-        .signals
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let name = mods.mods.signal_model_name(&line_source, i)?;
-            let model = mods.mods.signal_models.get(name).cloned();
-            if model.is_none() {
-                warn!("signal {i}: unknown signal model {name:?}");
-            }
-            model
-        })
-        .collect();
-    let views: Vec<world_render::SignalView> = sim
-        .interlock
-        .signals
-        .iter()
-        .enumerate()
-        .map(|(i, s)| world_render::SignalView {
-            device: s.device,
-            kind: s.kind,
-            aspect: s.aspect,
-            model: signal_models.get(i).and_then(|m| m.as_ref()),
-        })
-        .collect();
-    let aspect_materials = world_render::spawn_signals(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &assets,
-        &sim.net,
-        &views,
-        &origin,
-    );
-    drop(views);
-    commands.insert_resource(aspect_materials);
-    commands.insert_resource(world_render::SignalModels(signal_models));
-
-    // Vegetation, scenery and the crowd: the line's object names resolved
-    // against the installed mods.
-    let catalog = world_render::WorldCatalog::new(
-        terrain_builder.tree_objects(),
-        terrain_builder.scenery_objects(),
-        &mods.mods.objects,
-        passengers.clone(),
-        &assets,
-        &mut meshes,
-        &mut materials,
-        season,
-    );
-    let streamer = streaming::TerrainStreamer::new(
-        terrain_builder,
-        render::terrain_material(
-            &mut images,
-            &mut terrain_materials,
-            season,
-            settings::ground_quality(&settings.graphics),
-        ),
-        catalog,
-        f64::from(settings.graphics.view_distance),
-    );
-
-    // Vehicles as simple bodies — the 3D cab comes in M6.
-    let kit = VehicleKit {
-        body: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.70, 0.12, 0.14),
-            perceptual_roughness: 0.6,
-            ..default()
-        }),
-        coach: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.80, 0.80, 0.84),
-            perceptual_roughness: 0.6,
-            ..default()
-        }),
-        // Zg 101: two red lamps on the current rear end (`update_headlights`).
-        // ponytail: emissive spheres at the placeholder body's face — modelled
-        // vehicles get real lenses once their glTF carries them as content.
-        tail_material: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.25, 0.02, 0.02),
-            emissive: LinearRgba::rgb(6.0, 0.08, 0.08),
-            ..default()
-        }),
-        tail_mesh: meshes.add(Sphere::new(0.09)),
-        passengers,
-    };
-    for train in std::iter::once(player).chain(drivers.iter().map(|(t, _)| *t)) {
-        spawn_vehicle_views(
-            &mut commands,
-            &assets,
-            &mut meshes,
-            &kit,
-            &sim,
-            train,
-            player,
-        );
-    }
-    commands.insert_resource(kit);
-    // Atmosphere, sun, moon and stars — all of them off the scenario clock and
-    // the georeferenced place (`feed_sky`).
-    sky::spawn(
-        &mut commands,
-        &mut meshes,
-        &mut media,
-        &mut star_materials,
-        &mut moon_materials,
-        settings.graphics.shadows,
-    );
-    let camera = commands
-        .spawn((
-            Camera3d::default(),
-            // HDR: emissive lamp lenses glow at night (M6 night lighting) — the glow
-            // itself is bloom, which the settings can switch off.
-            bevy::camera::Hdr,
-            // The sky lights the scene itself; what stays here is the floor a
-            // moonless night needs to keep the ground off pure black (`feed_sky`).
-            AmbientLight {
-                color: Color::srgb(0.7, 0.8, 1.0),
-                brightness: 20.0,
-                ..default()
-            },
-            sky::camera_settings(),
-            // The water reads its reflections out of the depth the world was
-            // drawn with (`world_render::water`); without the prepass it falls
-            // back to mirroring the sky alone. The upscalers want it too.
-            DepthPrepass,
-            // Near-field extinction (`feed_sky`): the atmosphere's own haze term
-            // carries the colour and the distance, but a planetary medium's LUTs
-            // do not resolve 300 m of fog. This is what closes it.
-            DistanceFog {
-                falloff: FogFalloff::from_visibility(CLEAR_VISIBILITY),
-                ..default()
-            },
-            Projection::Perspective(PerspectiveProjection {
-                far: 20_000.0,
-                ..default()
-            }),
-            Transform::default(),
-            MeshPickingCamera,
-            ui::CabCamera,
-        ))
-        .id();
-    if settings.graphics.bloom {
-        commands.entity(camera).insert(Bloom::NATURAL);
-    }
-    // `apply_scene` only fires on a changed setting, and starting a run does not change
-    // one — so the camera is dressed here as well as there. Upscaling before the
-    // anti-aliasing: the latter reads it, because an upscaler wants MSAA off.
-    settings::apply_upscaling(
-        &mut commands.entity(camera),
-        &settings.graphics,
-        *settings.upscaling,
-    );
-    settings::apply_anti_aliasing(&mut commands.entity(camera), &settings.graphics);
-
-    // Rain and snow: a particle column of crossed quads that follows the camera
-    // and scrolls downwards (`update_precipitation`). Both fields exist from the
-    // start; the scenario's weather decides which one is visible.
-    // Four fields: rain and snow, each with a far one that fills the view and a
-    // near one of a few big out-of-focus drops. The near layer is what makes rain
-    // read as rain rather than as a grey curtain.
-    for (count, w, h, spread, seed, snow, near, speed) in [
-        // A raindrop is millimetres wide; what the eye sees is its smear, thin
-        // and faint. Many of them, not fat ones — the fat ones are the near
-        // layer's job, and even those are centimetres, not fists.
-        (22000, 0.009, 0.42, 20.0, 11, false, false, 9.0),
-        (170, 0.045, 0.90, 3.5, 13, false, true, 9.0),
-        (8000, 0.03, 0.03, 18.0, 12, true, false, 1.4),
-        (110, 0.09, 0.09, 3.0, 14, true, true, 1.4),
-    ] {
-        commands.spawn((
-            Precipitation { snow, speed, near },
-            Mesh3d(meshes.add(precipitation_mesh(count, w, h, spread, seed))),
-            MeshMaterial3d(
-                precip_materials.add(world_render::precipitation::PrecipitationMaterial::default()),
-            ),
-            Transform::default(),
-            Visibility::Hidden,
-        ));
-    }
-
-    // `--overlays` opens the key sheet and the diagnostics from the start. A screenshot
-    // cannot press F5, in the same way it cannot press a key on the menu — `--menu <page>`
-    // is there for that reason and this is the same one.
-    if std::env::args().any(|a| a == "--overlays") {
-        commands.insert_resource(hud::Overlays {
-            help: true,
-            diagnostics: true,
-        });
-    }
-    ui::spawn_crosshair(&mut commands);
-    // The speedometer is drawn for one scale, so the face has to be made after the
-    // vehicle is known — a dial whose figures changed with the line would be a bar chart
-    // pretending to be an instrument.
-    let v_max = {
-        let train = &sim.trains[player];
-        train
-            .vehicles
-            .get(train.cab)
-            .map(|v| v.spec.v_max)
-            .filter(|v| *v > 0.0)
-            .unwrap_or(160.0)
-    };
-    let drawings = hud::Drawings::draw(&mut images, v_max);
-    hud::spawn_hud(&mut commands, &fonts, &drawings, &binds);
-    commands.insert_resource(drawings);
-    mods_ui::spawn_panel(&mut commands);
-
-    // A character model for the walker (plan ch. 12.4): `--character` names one of
-    // the mods' people (`people:f01_lena`) or takes a file on the same `mods://` paths
-    // as the vehicle models; without the flag the first character with the `Player`
-    // role, in registry order. Without any the walker stays a body without a picture,
-    // which in the first person is all he ever is. The model is a person like the
-    // passengers (`world_render::people`); `walk::animate_walker` moves it.
-    let character = match arg("--character") {
-        Some(key) => Some(
-            mods.mods
-                .characters
-                .get(&key)
-                .map_or(key, |c| c.model.clone()),
-        ),
-        None => mods
-            .mods
-            .characters
-            .values()
-            .find(|c| c.has_role(content::Role::Player))
-            .map(|c| c.model.clone()),
-    };
-    if let Some(file) = character {
-        info!("walker: character {file}");
-        let character = world_render::CharacterAssets::load(&assets, &file);
-        commands.spawn((
-            world_render::person_bundle(
-                &character,
-                content::Pose::Idle(0),
-                0.0,
-                world_render::PERSON_CULL,
-            ),
-            Transform::default(),
-            Visibility::Hidden,
-            walk::CharacterModel,
-        ));
-    }
-
-    // `--camera outside` starts on the external camera — handy for screenshots of a
-    // vehicle model — `--camera walk` on foot, which a screenshot cannot reach
-    // otherwise (F4 needs a key press), and `--camera fly` in the free camera of the
-    // console's `fly` command.
-    match arg("--camera").as_deref() {
-        Some("outside") => {
-            commands.insert_resource(ui::CameraState {
-                mode: ui::CameraMode::Outside,
-                distance: 40.0,
-                pitch: -0.15,
-                ..default()
-            });
-        }
-        Some("walk") => {
-            commands.insert_resource(ui::CameraState {
-                mode: ui::CameraMode::Walk,
-                ..default()
-            });
-        }
-        Some("fly") => {
-            // Seeded where the wayside camera would put itself — beside the track,
-            // looking at the train. Without it the free camera would wake at the raw
-            // origin: rail-head height, inside the lead vehicle.
-            //
-            // `--fly` and `--look` move both ends of that: a screenshot has no hands
-            // on the mouse, so without them the free camera can only ever photograph
-            // the train, and anything taller than about ten metres runs out of the
-            // top of the frame however far back the camera stands.
-            let mut state = ui::CameraState {
-                mode: ui::CameraMode::Fly,
-                ..default()
-            };
-            if let Some(front) = sim.trains[player].vehicles.first() {
-                let pose = front.pos.pose(&sim.net);
-                let pos = origin.to_render(pose.pos);
-                let up = origin.dir_to_render(pose.up);
-                let forward = origin.dir_to_render(pose.tangent);
-                let right = forward.cross(up).normalize_or_zero();
-                let at = |offset: Vec3| pos + right * offset.x + up * offset.y + forward * offset.z;
-                let eye = at(view_offset("--fly").unwrap_or(Vec3::new(25.0, 6.0, 0.0)));
-                let target = at(view_offset("--look").unwrap_or(Vec3::new(0.0, 2.0, 0.0)));
-                state.fly = Some(eye);
-                let dir = (target - eye).normalize_or_zero();
-                state.pitch = dir.y.asin();
-                // The angles of the walk's view convention: forward is
-                // (−sin yaw · cos pitch, sin pitch, −cos yaw · cos pitch).
-                state.yaw = (-dir.x).atan2(-dir.z);
-            }
-            commands.insert_resource(state);
-        }
-        _ => {}
-    }
-
-    commands.insert_resource(TerrainInfo::default());
-    commands.insert_resource(streamer);
-    commands.insert_resource(ViewDistance(settings.graphics.view_distance));
-    commands.insert_resource(Origin(origin));
-    commands.insert_resource(net::WorldId(fingerprint));
-    commands.insert_resource(PlayerTrain(player));
-    // The run begins with the player at the desk of the train it put them in.
-    commands.insert_resource(crew::Duty(Some(player)));
-    commands.insert_resource(AiDrivers(drivers));
-    commands.insert_resource(SimResource(sim));
-    // A timetable run keeps dispatching after the world is built (`dispatch_services`);
-    // a scenario and a free run have nothing left to put on the line.
-    commands.insert_resource(dispatch);
-    match day {
-        Some(run) => commands.insert_resource(run),
-        None => commands.remove_resource::<services::DayRun>(),
-    }
-}
-
 /// UTM zone of the DGM data from `--epsg`, default 32 (western Germany).
-fn dgm_zone() -> u8 {
+pub(crate) fn dgm_zone() -> u8 {
     std::env::args()
         .skip_while(|a| a != "--epsg")
         .nth(1)
@@ -1421,7 +864,7 @@ fn lod_range(lod: u8) -> f32 {
 /// Value of a command line option (`--name <value>`).
 /// Splits `"21:40"` into its two numbers — the one shape both `--time` and the
 /// date parsing need.
-fn parse_pair(text: &str, separator: char) -> Option<(u32, u32)> {
+pub(crate) fn parse_pair(text: &str, separator: char) -> Option<(u32, u32)> {
     let (left, right) = text.split_once(separator)?;
     Some((left.trim().parse().ok()?, right.trim().parse().ok()?))
 }
@@ -1437,7 +880,7 @@ pub(crate) fn arg(name: &str) -> Option<String> {
 /// a lat/lon would have to be converted through UTM and the render origin to say
 /// the same thing, and the content whose model is being photographed is placed
 /// relative to the track in the first place.
-fn view_offset(name: &str) -> Option<Vec3> {
+pub(crate) fn view_offset(name: &str) -> Option<Vec3> {
     let value = arg(name)?;
     let parts: Vec<f32> = value
         .split(',')
@@ -1453,7 +896,7 @@ fn view_offset(name: &str) -> Option<Vec3> {
 }
 
 /// Every value of a repeatable command line option, in order.
-fn args_all(name: &str) -> Vec<String> {
+pub(crate) fn args_all(name: &str) -> Vec<String> {
     let args: Vec<String> = std::env::args().collect();
     args.windows(2)
         .filter(|w| w[0] == name)
@@ -1510,7 +953,7 @@ pub(crate) fn spawn_consist(
 
 /// The materials and the mesh every placeholder vehicle is drawn with.
 ///
-/// A resource rather than four locals in `setup`, because a train is no longer only put
+/// A resource rather than four locals in the loader, because a train is no longer only put
 /// on the line before the first frame: an operating day dispatches its services as their
 /// hour comes (`dispatch_services`), and what they are drawn with has to outlive the
 /// frame the world was built in.
@@ -1948,7 +1391,7 @@ fn update_headlights(
 /// [`PRECIP_PERIOD`] so the fall offset can wrap seamlessly
 /// (`update_precipitation`). Each particle carries the random number the shader
 /// thins the field by.
-fn precipitation_mesh(count: usize, w: f32, h: f32, spread: f32, seed: u64) -> Mesh {
+pub(crate) fn precipitation_mesh(count: usize, w: f32, h: f32, spread: f32, seed: u64) -> Mesh {
     let mut rng = sim_core::rng::Rng::new(seed);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -2232,10 +1675,11 @@ mod tests {
         );
     }
 
-    /// Resuming out of the pause overlay enters `Driving` a second time. The chain that
-    /// builds the run must not come with it — a second `setup` would put a second world,
-    /// a second camera and a second simulation on top of the one being driven. Leaving
-    /// for the title screen tears the world down, so the next drive builds again.
+    /// The run is built behind the loading screen, and resuming out of the pause
+    /// overlay enters `Driving` a second time. The build must not come with it — a
+    /// second build would put a second world, a second camera and a second
+    /// simulation on top of the one being driven. Leaving for the title screen
+    /// tears the world down, so the next drive builds again.
     #[test]
     fn the_run_is_built_once_and_not_again_on_resuming() {
         #[derive(Resource, Default)]
@@ -2245,10 +1689,11 @@ mod tests {
         #[derive(Component)]
         struct OfTheRun;
 
-        // Stands in for `setup`, which needs a GPU.
+        // Stands in for the loader, which needs a GPU.
         fn build(mut commands: Commands, mut builds: ResMut<Builds>) {
             builds.0 += 1;
             commands.spawn(OfTheRun);
+            commands.insert_resource(RunBuilt);
         }
 
         // How much of a run stands in the world right now.
@@ -2265,8 +1710,8 @@ mod tests {
             .insert_state(GameState::Menu)
             .add_systems(OnEnter(GameState::Menu), tear_down_run)
             .add_systems(
-                OnEnter(GameState::Driving),
-                (remember_before_run, build, mark_run_built)
+                OnEnter(GameState::Loading),
+                (remember_before_run, build)
                     .chain()
                     .run_if(not(resource_exists::<RunBuilt>)),
             );
@@ -2276,11 +1721,12 @@ mod tests {
             app.world_mut().insert_resource(NextState::Pending(state));
             app.update();
         };
-        go(&mut app, GameState::Driving);
+        go(&mut app, GameState::Loading);
         assert_eq!(app.world().resource::<Builds>().0, 1);
         assert_eq!(standing(&mut app), 1);
 
-        // Esc and back again: the same run, not a new one.
+        // Into the run, Esc and back again: the same run, not a new one.
+        go(&mut app, GameState::Driving);
         go(&mut app, GameState::Paused);
         go(&mut app, GameState::Driving);
         assert_eq!(
@@ -2298,8 +1744,8 @@ mod tests {
             "the torn-down run still counts as built"
         );
 
-        // And the drive after it builds one again.
-        go(&mut app, GameState::Driving);
+        // And the drive after it builds one again — through the loading screen.
+        go(&mut app, GameState::Loading);
         assert_eq!(
             app.world().resource::<Builds>().0,
             2,

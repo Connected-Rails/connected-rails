@@ -1314,7 +1314,8 @@ pub fn menu(
             go(&mut menu, Page::Run);
         } else if menu.page == Page::Setup {
             // ← / → dial the value, Enter starts — this is a step of the drive flow, and
-            // in that flow Enter has meant "on you go" since the first page.
+            // in that flow Enter has meant "on you go" since the first page. Starting
+            // means the loading screen: it builds the run behind its progress bar.
             if dial != 0
                 && let Some(option) = entry.and_then(|e| e.run)
             {
@@ -1323,7 +1324,7 @@ pub fn menu(
                 selection.setup = Some(setup);
             }
             if confirmed {
-                next.set(GameState::Driving);
+                next.set(GameState::Loading);
             }
         } else if confirmed && let Some(entry) = entry {
             let id = entry.id.clone();
@@ -1524,11 +1525,12 @@ fn go(menu: &mut MenuState, page: Page) {
     menu.rebinding = None;
 }
 
-/// Walks to the next step of the drive flow, or starts the run where there is none left.
+/// Walks to the next step of the drive flow, or hands over to the loading screen
+/// where there is none left — it builds the run behind its progress bar.
 fn advance(menu: &mut MenuState, next: &mut NextState<GameState>, page: Option<Page>) {
     match page {
         Some(page) => go(menu, page),
-        None => next.set(GameState::Driving),
+        None => next.set(GameState::Loading),
     }
 }
 
@@ -3491,10 +3493,10 @@ mod tests {
     }
 
     /// The whole flow without a window: the title screen opens the first step, three
-    /// confirmations pick line, vehicle and scenario and hand over to `Driving`; Esc
-    /// walks back the same way and ends at the title screen.
+    /// confirmations pick line, vehicle and scenario and hand over to the loading
+    /// screen; Esc walks back the same way and ends at the title screen.
     #[test]
-    fn the_start_flow_reaches_driving_and_esc_walks_back() {
+    fn the_start_flow_reaches_loading_and_esc_walks_back() {
         let mut app = app();
         assert_eq!(page(&app), Page::Root, "the menu opens on the title screen");
         key(&mut app, KeyCode::Enter);
@@ -3522,7 +3524,7 @@ mod tests {
         key(&mut app, KeyCode::Enter);
         assert_eq!(
             *app.world().resource::<State<GameState>>().get(),
-            GameState::Driving
+            GameState::Loading
         );
         let selection = app.world().resource::<Selection>();
         assert!(selection.line_ref.is_none(), "the built-in line was picked");
@@ -3734,7 +3736,7 @@ mod tests {
         key(&mut app, KeyCode::Enter);
         assert_eq!(
             *app.world().resource::<State<GameState>>().get(),
-            GameState::Driving
+            GameState::Loading
         );
         let selection = app.world().resource::<Selection>();
         let service = selection.service.as_ref().expect("a service was taken");

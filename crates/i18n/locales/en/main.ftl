@@ -1471,6 +1471,21 @@ menu-fact-m = { $value } m
 menu-fact-t = { $value } t
 menu-fact-kmh = { $value } km/h
 
+## Loading screen
+#
+# The screen between picking a run and driving it: what run is being built, how
+# far along it is, and that it is still moving. The steps name what the loader
+# is doing right now.
+
+load-title = Loading run
+load-step-sim = Building timetable and trains …
+load-step-terrain = Shaping terrain and scenery …
+load-step-track = Laying track and signals …
+load-step-vehicles = Parking the trains …
+load-step-sky = Raising the sky over the line …
+load-step-ready = Ready — all aboard …
+load-hint = The first build takes a moment — terrain and models are being prepared.
+
 ## Timetable runs
 #
 # Besides the scenarios a line can be driven from its operating day: the whole

@@ -1472,6 +1472,21 @@ menu-fact-m = { $value } m
 menu-fact-t = { $value } t
 menu-fact-kmh = { $value } km/h
 
+## Ladebildschirm
+#
+# Der Bildschirm zwischen der Auswahl einer Fahrt und dem Fahren: welche Fahrt
+# aufgebaut wird, wie weit es ist — und dass es noch läuft. Die Schritte nennen,
+# was der Lader gerade tut.
+
+load-title = Fahrt wird geladen
+load-step-sim = Fahrplan und Züge werden aufgebaut …
+load-step-terrain = Gelände und Szenerie entstehen …
+load-step-track = Gleise und Signale werden gebaut …
+load-step-vehicles = Züge werden bereitgestellt …
+load-step-sky = Der Himmel geht über der Strecke auf …
+load-step-ready = Fertig — bitte einsteigen …
+load-hint = Der erste Aufbau dauert einen Moment — Gelände und Modelle werden vorbereitet.
+
 ## Fahrplanfahrten
 #
 # Neben den Szenarien lässt sich eine Strecke aus ihrem Betriebstag fahren: der

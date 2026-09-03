@@ -392,6 +392,21 @@ keyboard as a sheet — with a legend of what the ten annunciators mean — and 
 diagnostics: frame time and entity count, terrain, air detail, axles, temperatures, signals
 and the network, which is where everything a driver has no use for lives.
 
+**Finding what costs frame budget.** The top of the `F6` block is a frame profiler:
+average, p95 and maximum frame time over the last 300 frames with a hitch count, a
+per-system CPU breakdown (`sim`, `ai`, `stream`, `hud`, `audio`, … plus how many fixed
+sim steps the last frame ran), an ASCII history graph and the worst spikes with what they
+were made of. Whatever the named spans leave over shows as `rest` — render, present and
+vsync — so a high `rest` next to high triangle/entity counts points at the GPU and a high
+named span at the CPU side. The `F8` console's `prof` prints the same table, `prof reset`
+clears it, `prof pause`/`resume` freezes it, and `prof csv <file>` writes the history for
+analysis outside the simulator. Leaving a run for the menu or quitting to the desktop logs
+the same summary automatically, so every run ends up measurable in the log without
+photographing the overlay. A `--frames N` run logs the summary and the worst spikes
+on exit, which is the scriptable form of the overlay. For deeper dives (per render pass,
+GPU timings) run with Bevy's Tracy feature and connect the Tracy viewer — the in-game
+profiler stays for the quick question of *which* system lags.
+
 **`F7` walks three steps** — full, reduced, off — and rounds back. The reduced step keeps
 what the train is *driven* by (the desk and the protection lamps) and everything that
 interrupts (the banner, scenario messages), and drops what it is *planned* by: the run, the
@@ -461,7 +476,7 @@ The table below is what everything ships with.
 | `F1`–`F4` | Camera: driver's seat / external / lineside / first person |
 | `F5` / `F6` | Keyboard sheet / diagnostics overlay |
 | `F7` | Display: full → reduced → off, and round again |
-| `F8` | Console: `weather` and `time` move the world (`Tab` completes, `↑`/`↓` history, `Enter` runs, `Esc` closes). Against a server the weather is asked of it, the clock stays single player |
+| `F8` | Console: `weather` and `time` move the world, `prof` profiles the frames (`Tab` completes, `↑`/`↓` history, `Enter` runs, `Esc` closes). Against a server the weather is asked of it, the clock stays single player |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 | `WASD` / `Shift` | First person (`F4`): walk (1.5 m/s) and run (5 m/s) through the train and over the ground. The walker falls where the ground drops away, climbs what is no higher than a step, is stopped by what stands at chest height and walks on through the train from vehicle to vehicle. The mouse looks around on its own, the cursor is caught on the crosshair and the driving keys rest until `F1` puts the driver back on the seat |

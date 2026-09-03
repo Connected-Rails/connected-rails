@@ -6,6 +6,7 @@
 
 use crate::SimResource;
 use crate::cab::{self, ControlMesh, ControlNode, Highlightable};
+use crate::profiler::Profiler;
 use bevy::gltf::GltfAssetLabel;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
@@ -339,7 +340,9 @@ pub fn update_lod(
     camera: Query<&GlobalTransform, With<Camera3d>>,
     vehicles: Query<(&VehicleView, &GlobalTransform)>,
     mut nodes: Query<(&LodNode, &mut Visibility)>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("lod");
     let Ok(eye) = camera.single() else {
         return;
     };
@@ -429,7 +432,9 @@ pub fn animate_parts(
     sim: Res<SimResource>,
     mut nodes: Query<(&PartNode, &mut Transform, &mut Visibility)>,
     mut loads: Query<(&LoadNode, &Name, &mut Visibility), Without<PartNode>>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("parts");
     for (node, mut transform, mut visibility) in nodes.iter_mut() {
         let Some((part, value)) = part_of(&sim, node) else {
             continue;
@@ -832,6 +837,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(SimResource(sim));
+        app.init_resource::<Profiler>();
         app.add_systems(Update, animate_parts);
         let nodes: Vec<Entity> = ["coal", "container"]
             .iter()

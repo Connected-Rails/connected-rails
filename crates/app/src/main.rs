@@ -17,6 +17,7 @@ mod menu;
 mod models;
 mod mods_ui;
 mod net;
+mod profiler;
 mod render;
 mod services;
 mod settings;
@@ -446,6 +447,7 @@ fn main() {
         .init_resource::<cab::CabMouse>()
         .init_resource::<mods_ui::ModManager>()
         .init_resource::<hud::Overlays>()
+        .init_resource::<profiler::Profiler>()
         .init_resource::<menu::MenuState>()
         .init_resource::<menu::Selection>()
         // HTML cab screens hold a boa script context, which is `!Send` — a non-send
@@ -566,6 +568,21 @@ fn main() {
                 .chain()
                 .run_if(in_state(GameState::Driving)),
         )
+        // The frame profiler (`profiler.rs`): opens the frame before the driving
+        // systems run and closes it after all of them, so every timed system lands
+        // inside exactly one frame. Local measurement only, never replicated.
+        .add_systems(
+            PreUpdate,
+            profiler::begin_frame.run_if(in_state(GameState::Driving)),
+        )
+        .add_systems(
+            PostUpdate,
+            profiler::end_frame.run_if(in_state(GameState::Driving)),
+        )
+        // Logs the profiler when the process quits, whatever state it is in.
+        // After the window's own exit systems: they write `AppExit` in `Last`,
+        // and an unordered reader runs before them and never sees it.
+        .add_systems(Last, watch_exit.after(bevy::window::ExitSystems))
         // Vehicle models from mods: bind glTF nodes, switch LODs, move parts (plan ch. 15.3).
         .add_systems(
             Update,
@@ -632,6 +649,64 @@ fn main() {
     app.run();
 }
 
+/// Logs the profiler's view of the run: averages and p95 rather than the last
+/// frame's numbers, the CPU breakdown, and the worst spikes with what they
+/// were made of. Called wherever a run ends up in the log — back to the menu
+/// ([`tear_down_run`]), quit to the desktop (`watch_exit`) or `--frames`
+/// ([`exit_after_frames`]) — so a run nobody photographed still says what it
+/// cost. Silent where no frame was ever recorded.
+fn log_profiler(profiler: &profiler::Profiler) {
+    let stats = profiler.frame_stats();
+    if stats.count == 0 {
+        return;
+    }
+    info!(
+        "profiler: {} frames, {:.1} ms avg, {:.1} ms p95, {:.1} ms max, {} hitches; \
+         cpu {} rest {:.1}",
+        stats.count,
+        stats.avg,
+        stats.p95,
+        stats.max,
+        stats.hitches,
+        profiler.top_spans(8),
+        profiler.rest_ms(),
+    );
+    for spike in profiler.spikes().iter().take(3) {
+        let breakdown = spike
+            .spans
+            .iter()
+            .take(4)
+            .map(|(name, ms)| format!("{name} {ms:.1}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        info!(
+            "spike #{}: {:.1} ms ({breakdown})",
+            spike.frame, spike.total_ms,
+        );
+    }
+}
+
+/// Logs the profiler when the process is asked to quit — the window close and
+/// the menu's quit both arrive as [`AppExit`], and neither passes through a
+/// state exit. Runs in every state; [`log_profiler`] stays silent where the
+/// run left nothing behind, and [`tear_down_run`] has already logged and
+/// cleared a run that went back to the menu first, so nothing is logged twice.
+/// A `--frames` run logs through [`exit_after_frames`] instead and is left out
+/// here for the same reason.
+fn watch_exit(
+    mut exits: MessageReader<AppExit>,
+    frame_limit: Option<Res<FrameLimit>>,
+    mut profiler: ResMut<profiler::Profiler>,
+) {
+    if frame_limit.is_some() {
+        return;
+    }
+    if exits.read().next().is_some() {
+        log_profiler(&profiler);
+        profiler.reset();
+    }
+}
+
 /// Exits the app after the given number of frames — with `--screenshot` the window is
 /// captured beforehand.
 ///
@@ -649,6 +724,7 @@ fn exit_after_frames(
     // None in the menu: there is no terrain there, and `--menu <page> --screenshot`
     // is exactly how its pages get photographed.
     terrain: Option<Res<TerrainInfo>>,
+    profiler: Res<profiler::Profiler>,
     mut commands: Commands,
     mut count: Local<u32>,
     mut exit: MessageWriter<AppExit>,
@@ -673,6 +749,7 @@ fn exit_after_frames(
             terrain.map_or(0, |t| t.triangles),
             terrain.map_or(0.0, |t| t.memory() as f64 / (1024.0 * 1024.0)),
         );
+        log_profiler(&profiler);
     }
     let Some(shot) = shot else {
         if *count >= limit.0 {
@@ -751,11 +828,16 @@ fn tear_down_run(
     mixer: Option<ResMut<audio::Audio>>,
     mut walker: ResMut<walk::Walker>,
     mut camera: ResMut<ui::CameraState>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
     // No run has been built yet — this is the title screen the program starts on.
     let Some(before) = before else {
         return;
     };
+    // The run's frame numbers go into the log while they still exist — a new run
+    // starts its history from zero, so each one is measured on its own.
+    log_profiler(&profiler);
+    profiler.reset();
     for entity in &roots {
         if !before.0.contains(&entity) {
             commands.entity(entity).despawn();
@@ -835,7 +917,9 @@ fn terrain_visibility(
     view: Res<ViewDistance>,
     camera: Query<&GlobalTransform, With<ui::CabCamera>>,
     mut tiles: Query<(&TerrainChunk, &Transform, &mut Visibility)>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("cull");
     let Ok(camera) = camera.single() else {
         return;
     };
@@ -1113,7 +1197,9 @@ pub(crate) fn dispatch_services(
     host: Option<Res<net::Host>>,
     mods: Res<Mods>,
     role: Option<Res<net::Role>>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("dispatch");
     let Some(run) = run else { return };
     // A service that names no vehicle of its own gets the built-in one rather than
     // whatever the player picked in the menu: two clients would otherwise put different
@@ -1183,7 +1269,9 @@ pub(crate) fn drive_ai(
     time: Res<Time>,
     host: Option<Res<net::Host>>,
     role: Option<Res<net::Role>>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("ai");
     // On a client every train but the player's is driven from the server's setpoints — a
     // second AI running here would fight them.
     if role.is_some_and(|role| *role == net::Role::Client) {
@@ -1206,8 +1294,15 @@ pub(crate) fn drive_ai(
     }
 }
 
-pub(crate) fn step_simulation(mut sim: ResMut<SimResource>, time: Res<Time>) {
-    sim.0.advance(time.delta_secs_f64());
+pub(crate) fn step_simulation(
+    mut sim: ResMut<SimResource>,
+    time: Res<Time>,
+    mut profiler: ResMut<profiler::Profiler>,
+) {
+    let start = std::time::Instant::now();
+    let steps = sim.0.advance(time.delta_secs_f64());
+    profiler.set_sim_steps(steps);
+    profiler.record("sim", start.elapsed().as_secs_f64() * 1000.0);
 }
 
 /// Hands the walkers their clock (`world_render::PeopleClock`): the
@@ -1226,7 +1321,9 @@ pub(crate) fn run_mod_scripts(
     mut sim: ResMut<SimResource>,
     mut mods: ResMut<Mods>,
     time: Res<Time>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("lua");
     let dt = time.delta_secs_f64().min(0.25);
     mods.0.post_step(&mut sim.0, dt);
 }
@@ -1261,7 +1358,9 @@ fn sync_vehicles(
     sim: Res<SimResource>,
     origin: Res<Origin>,
     mut query: Query<(&VehicleView, &mut Transform, &mut Visibility)>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("sync");
     for (view, mut transform, mut visibility) in query.iter_mut() {
         let Some(train) = sim.0.trains.get(view.train) else {
             continue;
@@ -1299,7 +1398,9 @@ fn feed_sky(
     mut sky: ResMut<sky::Sky>,
     mut ambient: Query<&mut AmbientLight, With<ui::CabCamera>>,
     mut fog: Query<&mut DistanceFog, With<ui::CabCamera>>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("sky");
     let (latitude, longitude, _) = world_coords::geo::from_ecef(origin.0.position());
     let start = sim.0.start;
     *sky = sky::Sky {
@@ -1487,7 +1588,9 @@ fn update_precipitation(
         ),
         Without<ui::CabCamera>,
     >,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("precip");
     let Ok(cam) = camera.single() else {
         return;
     };
@@ -1604,6 +1707,7 @@ mod tests {
             .insert_resource(net::Role::Server)
             .insert_resource(run)
             .insert_resource(SimResource(built.sim))
+            .init_resource::<profiler::Profiler>()
             .add_systems(Update, dispatch_services);
 
         let before = app.world().resource::<SimResource>().0.trains.len();
@@ -1628,6 +1732,7 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<walk::Walker>();
         world.init_resource::<ui::CameraState>();
+        world.init_resource::<profiler::Profiler>();
         let mut snapshot = Schedule::default();
         snapshot.add_systems(remember_before_run);
         let mut leave = Schedule::default();
@@ -1707,6 +1812,7 @@ mod tests {
             .init_resource::<Builds>()
             .init_resource::<walk::Walker>()
             .init_resource::<ui::CameraState>()
+            .init_resource::<profiler::Profiler>()
             .insert_state(GameState::Menu)
             .add_systems(OnEnter(GameState::Menu), tear_down_run)
             .add_systems(

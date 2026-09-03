@@ -159,12 +159,17 @@ impl Sim {
     }
 
     /// Advances the simulation by `dt` seconds of real time (fixed time step internally).
-    pub fn advance(&mut self, dt: f64) {
+    /// Returns how many fixed steps ran — the profiler reads it to tell one expensive
+    /// step apart from catch-up after a hitch.
+    pub fn advance(&mut self, dt: f64) -> usize {
         self.accumulator = (self.accumulator + dt).min(Self::MAX_CATCHUP);
+        let mut steps = 0;
         while self.accumulator >= Self::DT {
             self.step(Self::DT);
             self.accumulator -= Self::DT;
+            steps += 1;
         }
+        steps
     }
 
     /// One fixed simulation step.

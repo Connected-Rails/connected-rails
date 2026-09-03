@@ -658,6 +658,13 @@ pub fn run_dedicated(address: &str) {
         .insert_resource(world.dispatch)
         .insert_resource(SimResource(world.sim))
         .init_resource::<Host>()
+        // The driving systems time themselves into this; without the frame
+        // bracket their spans would only accumulate. Nobody reads it here yet —
+        // the F6 overlay and the console are the client's — but the numbers are
+        // real and cost nothing to keep.
+        .init_resource::<crate::profiler::Profiler>()
+        .add_systems(PreUpdate, crate::profiler::begin_frame)
+        .add_systems(PostUpdate, crate::profiler::end_frame)
         // Nobody stands in a cab on a dedicated server; the clients' trains are protected
         // through `Host::driven` instead.
         .init_resource::<crate::crew::Duty>()

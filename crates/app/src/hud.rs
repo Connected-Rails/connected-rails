@@ -73,6 +73,7 @@ use sim_core::{Sim, TrainRuntime};
 use crate::bindings::{self, Action, Binds};
 use crate::cab::CabMouse;
 use crate::glyphs::{self, Icon};
+use crate::profiler::Profiler;
 use crate::settings::{Gameplay, HudMode};
 use crate::streaming::TerrainStreamer;
 use crate::theme::{
@@ -2389,9 +2390,12 @@ pub fn update_hud(
     session: Option<Res<crate::net::Session>>,
     diagnostics: Res<DiagnosticsStore>,
     mut nodes: Nodes,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let start = std::time::Instant::now();
     let mode = mode(&gameplay, over.as_deref());
     if !mode.drawn() {
+        profiler.record("hud", start.elapsed().as_secs_f64() * 1000.0);
         return;
     }
     let perf = Perf::read(&diagnostics);
@@ -2407,7 +2411,9 @@ pub fn update_hud(
         &view,
         session.as_deref(),
         &perf,
+        &profiler,
     ) else {
+        profiler.record("hud", start.elapsed().as_secs_f64() * 1000.0);
         return;
     };
 
@@ -2458,6 +2464,7 @@ pub fn update_hud(
             node.display = display;
         }
     }
+    profiler.record("hud", start.elapsed().as_secs_f64() * 1000.0);
 }
 
 /// Which stop of the timetable a row of the ribbon shows. Row 1 is always the next stop,
@@ -2552,6 +2559,7 @@ impl<'a> Frame<'a> {
         view: &ViewDistance,
         session: Option<&crate::net::Session>,
         perf: &Perf,
+        profiler: &Profiler,
     ) -> Option<Self> {
         let train = &sim.trains[player];
         // A consist that was coupled away has no leading vehicle to read (plan ch. 11);
@@ -2615,7 +2623,8 @@ impl<'a> Frame<'a> {
         };
         // Only worked out while the panel is open — it walks every signal of the line.
         if overlays.diagnostics {
-            frame.diagnostics = Some(frame.diagnose(terrain, streamer, view, session, perf));
+            frame.diagnostics =
+                Some(frame.diagnose(terrain, streamer, view, session, perf, profiler));
         }
         Some(frame)
     }
@@ -3270,6 +3279,7 @@ impl<'a> Frame<'a> {
         view: &ViewDistance,
         session: Option<&crate::net::Session>,
         perf: &Perf,
+        profiler: &Profiler,
     ) -> String {
         let drive = self.loco.traction.drives[0];
         let aspects: Vec<String> = self
@@ -3295,6 +3305,26 @@ impl<'a> Frame<'a> {
                 millis = decimal(perf.frame_ms, 1),
                 entities = perf.entities,
             ),
+            diagnose_prof(profiler),
+            diagnose_spans(profiler),
+            t!("hud-diag-graph", graph = profiler.graph()),
+        ];
+        if let Some(spike) = profiler.spikes().first() {
+            let breakdown = spike
+                .spans
+                .iter()
+                .take(3)
+                .map(|(name, ms)| format!("{name} {ms:.1}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            lines.push(t!(
+                "hud-diag-spike",
+                frame = spike.frame,
+                total = decimal(spike.total_ms, 1),
+                breakdown = breakdown,
+            ));
+        }
+        lines.extend([
             t!(
                 "hud-diag-terrain",
                 tiles = terrain.0.tiles,
@@ -3326,7 +3356,7 @@ impl<'a> Frame<'a> {
                 resistor = format!("{:.0}", drive.resistor_temp.max(drive.brake_resistor_temp)),
             ),
             t!("hud-diag-signals", aspects = aspects.join("  ")),
-        ];
+        ]);
         if let Some(session) = session {
             lines.push(t!(
                 "hud-diag-network",
@@ -3339,8 +3369,50 @@ impl<'a> Frame<'a> {
                 correction = decimal(session.correction(self.sim.score.train) * 100.0, 1),
             ));
         }
+        lines.push(t!("hud-diag-prof-hint"));
         lines.join("\n")
     }
+}
+
+/// The profiler's frame line for F6: average, p95 and maximum over the history,
+/// the hitch count, and how many fixed sim steps the last frame ran.
+fn diagnose_prof(profiler: &Profiler) -> String {
+    let stats = profiler.frame_stats();
+    let steps = profiler.frames().back().map_or(0, |f| f.sim_steps);
+    // While paused the numbers are the frozen history, not the run — without
+    // the marker a still graph reads as a still simulator.
+    let state = if profiler.paused() {
+        t!("hud-diag-paused")
+    } else {
+        String::new()
+    };
+    t!(
+        "hud-diag-prof",
+        frames = stats.count,
+        avg = decimal(stats.avg, 1),
+        p95 = decimal(stats.p95, 1),
+        max = decimal(stats.max, 1),
+        hitches = stats.hitches,
+        steps = steps,
+        state = state,
+    )
+}
+
+/// The CPU breakdown for F6: the slowest spans by average, and what they leave
+/// for render, present and vsync.
+fn diagnose_spans(profiler: &Profiler) -> String {
+    let spans = profiler
+        .span_stats()
+        .into_iter()
+        .take(6)
+        .map(|span| format!("{} {:.1}", span.name, span.avg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    t!(
+        "hud-diag-spans",
+        spans = spans,
+        rest = decimal(profiler.rest_ms(), 1),
+    )
 }
 
 #[cfg(test)]

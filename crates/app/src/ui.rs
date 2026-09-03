@@ -5,6 +5,7 @@
 
 use crate::bindings::{Action, Input, Lever};
 use crate::mods_ui::ModManager;
+use crate::profiler::Profiler;
 use crate::settings::Gameplay;
 use crate::{Origin, PlayerTrain, SimResource};
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -71,6 +72,7 @@ impl CameraMode {
 
 /// Bound keys and controller buttons → cab inputs. Which key does what is
 /// `bindings.rs`; this is only what each action moves.
+#[allow(clippy::too_many_arguments)]
 pub fn player_input(
     input: Input,
     console: Res<crate::console::Console>,
@@ -79,7 +81,9 @@ pub fn player_input(
     duty: Res<crate::crew::Duty>,
     time: Res<Time>,
     camera: Res<CameraState>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("input");
     // The console holds the keyboard while it is open: `W` is a letter there, not
     // throttle up (`crate::console`).
     if console.open {
@@ -335,7 +339,9 @@ pub fn camera_control(
     walker: Res<crate::walk::Walker>,
     mut state: ResMut<CameraState>,
     mut camera: Query<&mut Transform, With<CabCamera>>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("camera");
     let dt = time.delta_secs();
     if input.just_pressed(Action::ViewCab) {
         state.mode = CameraMode::Cab;

@@ -90,6 +90,11 @@ pub struct Graphics {
     pub mist_quality: Quality,
     /// Size and filtering of the ground textures the simulator generates.
     pub texture_quality: Quality,
+    /// Rendered blade geometry over the painted ground material.
+    pub grass: bool,
+    /// Reach and immediate-detail radius of rendered grass. High is the full
+    /// authored sward; the renderer's lossless batching applies to every level.
+    pub grass_quality: Quality,
     /// Which anti-aliasing runs on the cab camera.
     pub anti_aliasing: AntiAliasing,
     /// How hard it works: the sample count for MSAA, the preset for SMAA, the edge
@@ -120,6 +125,8 @@ impl Default for Graphics {
             mist: true,
             mist_quality: Quality::Medium,
             texture_quality: Quality::Medium,
+            grass: true,
+            grass_quality: Quality::High,
             // What Bevy does without being asked, so a settings file from before this
             // page had the row comes up looking the way it did.
             anti_aliasing: AntiAliasing::Msaa,
@@ -697,6 +704,26 @@ pub fn ground_quality(graphics: &Graphics) -> world_render::GroundQuality {
     world_render::GroundQuality { size, anisotropy }
 }
 
+/// Radial grass bands for the selected quality. High is the authored default;
+/// lower levels trade only grass reach and the radius of the densest local layer.
+fn grass_quality(graphics: &Graphics) -> world_render::GrassRenderSettings {
+    let (bands, fades) = match graphics.grass_quality {
+        Quality::Low => (
+            Vec4::new(24.0, 52.0, 110.0, 14.0),
+            Vec4::new(10.0, 10.0, 12.0, 5.0),
+        ),
+        Quality::Medium => (
+            Vec4::new(28.0, 62.0, 145.0, 18.0),
+            Vec4::new(11.0, 11.0, 12.0, 6.0),
+        ),
+        Quality::High => (
+            Vec4::new(30.0, 70.0, 170.0, 22.0),
+            Vec4::new(12.0, 12.0, 12.0, 8.0),
+        ),
+    };
+    world_render::GrassRenderSettings::new(graphics.grass, bands, fades)
+}
+
 /// Generates the ground textures again into the handles the terrain material already
 /// holds, so a dialled texture quality reaches the terrain standing on screen.
 ///
@@ -777,6 +804,8 @@ fn apply_scene(
     streamer: Option<ResMut<TerrainStreamer>>,
     quality: Option<ResMut<world_render::mist::Quality>>,
     clouds: Option<ResMut<world_render::clouds::Quality>>,
+    grass: Option<ResMut<world_render::GrassRenderSettings>>,
+    grass_materials: Option<ResMut<Assets<world_render::GrassMaterial>>>,
     cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
 ) {
     // The sun's shadow map is a resource of Bevy's own, rebuilt from it every frame.
@@ -795,6 +824,21 @@ fn apply_scene(
         && clouds.volumetric != graphics.volumetric_clouds
     {
         clouds.volumetric = graphics.volumetric_clouds;
+    }
+    let wanted_grass = grass_quality(&graphics);
+    if let Some(mut grass) = grass
+        && *grass != wanted_grass
+    {
+        *grass = wanted_grass;
+    }
+    // Existing material instances update immediately; newly grown cells read
+    // the same resource in `update_field_plants` when their material is made.
+    if let Some(mut materials) = grass_materials {
+        for (_, material) in materials.iter_mut() {
+            if material.extension.grass != wanted_grass.params {
+                material.extension.grass = wanted_grass.params;
+            }
+        }
     }
     if let Some(mut view) = view {
         view.0 = graphics.view_distance;

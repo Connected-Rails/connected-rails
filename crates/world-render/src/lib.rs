@@ -13,12 +13,17 @@ use bevy::asset::io::file::FileAssetReader;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::RenderTarget;
 use bevy::gltf::GltfAssetLabel;
-use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::image::{
+    CompressedImageFormats, ImageAddressMode, ImageFilterMode, ImageSampler,
+    ImageSamplerDescriptor, ImageType,
+};
 use bevy::mesh::{ConeAnchor, CylinderAnchor, MeshBuilder};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{
+    AsBindGroup, Extent3d, ShaderType, TextureDimension, TextureFormat,
+};
 use bevy::shader::ShaderRef;
 use content::{PersonInstance, SceneryInstance, TerrainTile, Tree};
 use sim_core::interlock::{Aspect, DistantAspect, MainAspect, SignalKind, SignalModel};
@@ -53,7 +58,10 @@ pub use people::{
     WalkwayHost, WalkwaysBound, bind_walkways, gait, move_strollers, person_bundle, play_gait,
     spawn_seated, spawn_strollers,
 };
-pub use plants::{FieldPlants, PlantMaterials, update_field_plants};
+pub use plants::{
+    FieldPlants, GrassMaterial, GrassParams, GrassRenderSettings, PlantMaterials,
+    update_field_plants,
+};
 pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, Wood, WorldCatalog,
@@ -102,6 +110,7 @@ impl Plugin for WorldRenderPlugin {
                 clouds::plugin,
                 mist::plugin,
                 precipitation::plugin,
+                plants::plugin,
                 weather::plugin,
                 windscreen::plugin,
                 track::plugin,
@@ -269,9 +278,9 @@ impl WorldAnchored {
 /// Terrain material: the standard PBR path plus texture splatting (plan ch. 14).
 pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainSplat>;
 
-/// Splat extension — three generated ground textures, blended in
-/// `terrain_splat.wgsl` by the vertex-color weights `content::terrain` bakes
-/// into every tile (r = grass, g = rock, b = gravel).
+/// Splat extension — a scanned grass PBR set plus generated rock and gravel,
+/// blended in `terrain_splat.wgsl` by the vertex-color weights
+/// `content::terrain` bakes into every tile (r = grass, g = rock, b = gravel).
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone)]
 pub struct TerrainSplat {
     #[texture(100)]
@@ -279,14 +288,30 @@ pub struct TerrainSplat {
     grass: Handle<Image>,
     #[texture(102)]
     #[sampler(103)]
-    rock: Handle<Image>,
+    grass_normal: Handle<Image>,
     #[texture(104)]
     #[sampler(105)]
+    grass_arm: Handle<Image>,
+    #[texture(106)]
+    #[sampler(107)]
+    rock: Handle<Image>,
+    #[texture(108)]
+    #[sampler(109)]
     gravel: Handle<Image>,
     /// What the weather is doing to the ground — the same uniform the objects
     /// carry, written by `weather::update` (plan 14.1).
-    #[uniform(106)]
+    #[uniform(110)]
     weather: weather::WeatherParams,
+    /// The scan stays unchanged; the material turns it with the scenario's
+    /// season in linear space, without baking another copy of every PBR map.
+    #[uniform(111)]
+    ground: GroundParams,
+}
+
+#[derive(Clone, Copy, Debug, ShaderType)]
+struct GroundParams {
+    /// x = snow cover, y = autumn colour, z/w reserved.
+    season: Vec4,
 }
 
 impl MaterialExtension for TerrainSplat {
@@ -375,20 +400,17 @@ fn opaque(color: [f32; 3]) -> [f32; 4] {
     [color[0], color[1], color[2], 1.0]
 }
 
-/// The one terrain material, its ground textures generated at startup in the
-/// colours of `season` — like the sound sources (ch. 13), the repository
-/// carries no binary assets.
-// ponytail: procedural noise textures instead of authored ones — photographed
-// ground goes into a mod once terrain texturing is moddable content. The
-// season is baked in at load: a run that drives from October into November
-// keeps the ground it started on.
+/// The one terrain material. Grass is a compact CC0 photogrammetry PBR scan;
+/// rock and gravel retain their generated, season-coloured macro texture.
+/// The scan covers two real metres per repeat, so its 1K maps have enough
+/// texel density for a cab-height view without a large terrain texture set.
 pub fn terrain_material(
     images: &mut Assets<Image>,
     materials: &mut Assets<TerrainMaterial>,
     season: Season,
     ground: GroundQuality,
 ) -> Handle<TerrainMaterial> {
-    let [grass, rock, gravel] = ground_textures(season, ground);
+    let textures = ground_textures(season, ground);
     materials.add(TerrainMaterial {
         base: StandardMaterial {
             perceptual_roughness: 0.95,
@@ -396,9 +418,14 @@ pub fn terrain_material(
         },
         extension: TerrainSplat {
             weather: weather::WeatherParams::default(),
-            grass: images.add(grass),
-            rock: images.add(rock),
-            gravel: images.add(gravel),
+            ground: GroundParams {
+                season: Vec4::new(season.snow, season.autumn, 0.0, 0.0),
+            },
+            grass: images.add(textures.grass),
+            grass_normal: images.add(textures.grass_normal),
+            grass_arm: images.add(textures.grass_arm),
+            rock: images.add(textures.rock),
+            gravel: images.add(textures.gravel),
         },
     })
 }
@@ -423,31 +450,38 @@ impl Default for GroundQuality {
     }
 }
 
-/// Grass, rock and gravel, in that order.
-fn ground_textures(season: Season, ground: GroundQuality) -> [Image; 3] {
-    [
-        ground_texture(
-            season.green([0.20, 0.32, 0.11]),
-            season.green([0.41, 0.45, 0.18]),
-            64,
-            1,
-            ground,
-        ),
-        ground_texture(
+struct GroundTextures {
+    grass: Image,
+    grass_normal: Image,
+    grass_arm: Image,
+    rock: Image,
+    gravel: Image,
+}
+
+const GRASS_DIFFUSE: &[u8] = include_bytes!("terrain/leafy_grass_diff_1k.jpg");
+const GRASS_NORMAL: &[u8] = include_bytes!("terrain/leafy_grass_nor_gl_1k.jpg");
+const GRASS_ARM: &[u8] = include_bytes!("terrain/leafy_grass_arm_1k.jpg");
+
+fn ground_textures(season: Season, ground: GroundQuality) -> GroundTextures {
+    GroundTextures {
+        grass: scanned_ground(GRASS_DIFFUSE, true, ground),
+        grass_normal: scanned_ground(GRASS_NORMAL, false, ground),
+        grass_arm: scanned_ground(GRASS_ARM, false, ground),
+        rock: ground_texture(
             season.snowed([0.35, 0.33, 0.31], 0.45),
             season.snowed([0.55, 0.53, 0.50], 0.45),
             48,
             2,
             ground,
         ),
-        ground_texture(
+        gravel: ground_texture(
             season.snowed([0.39, 0.35, 0.29], 0.7),
             season.snowed([0.57, 0.54, 0.49], 0.7),
             12,
             3,
             ground,
         ),
-    ]
+    }
 }
 
 /// Generates the ground textures again and writes them into the handles the material
@@ -463,10 +497,21 @@ pub fn retexture_ground(
     for (_, material) in materials.iter() {
         let splat = &material.extension;
         let made = ground_textures(season, ground);
-        for (handle, image) in [&splat.grass, &splat.rock, &splat.gravel]
-            .into_iter()
-            .zip(made)
-        {
+        for (handle, image) in [
+            &splat.grass,
+            &splat.grass_normal,
+            &splat.grass_arm,
+            &splat.rock,
+            &splat.gravel,
+        ]
+        .into_iter()
+        .zip([
+            made.grass,
+            made.grass_normal,
+            made.grass_arm,
+            made.rock,
+            made.gravel,
+        ]) {
             // The only way this fails is a handle whose asset has gone, and a material
             // that lost its texture is not something this can put right.
             let _ = images.insert(handle.id(), image);
@@ -576,6 +621,11 @@ pub fn spawn_terrain_tile(
         MeshMaterial3d(material.clone()),
         Transform::from_translation(translation).with_rotation(rotation),
         anchored,
+        // The adaptive card/model system grows the default terrain's grass
+        // only near the world camera. Overlay surfaces are indexed as holes,
+        // so blades do not poke through fields, roads or water.
+        plants::TerrainGrass::new(tile),
+        plants::FieldPlants::default(),
     ));
     scatter::spawn_scatter(
         &mut entity,
@@ -1050,6 +1100,38 @@ pub fn bind_lamps(
 /// repeat covers 32 m of terrain (the UV scale above).
 const GROUND_TEXTURE_SIZE: u32 = 256;
 
+/// Decodes one of the three compact scan maps compiled into the renderer,
+/// gives it a full mip chain and the same quality-controlled anisotropy as
+/// the generated layers. The 1K scan is deliberately shared by every quality
+/// preset: at 12 MiB decoded for the complete PBR set it is cheap, while
+/// lowering it is exactly the blur this material is here to remove.
+fn scanned_ground(bytes: &[u8], srgb: bool, ground: GroundQuality) -> Image {
+    let mut image = Image::from_buffer(
+        bytes,
+        ImageType::Extension("jpg"),
+        CompressedImageFormats::NONE,
+        srgb,
+        ImageSampler::Default,
+        RenderAssetUsages::default(),
+    )
+    .expect("compiled-in grass PBR map decodes");
+    let _ = build_mip_chain(&mut image, None);
+    image.sampler = ground_sampler(ground);
+    image
+}
+
+fn ground_sampler(ground: GroundQuality) -> ImageSampler {
+    ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        anisotropy_clamp: ground.anisotropy,
+        ..default()
+    })
+}
+
 /// One tileable ground texture: two octaves of value noise mix `base` towards
 /// `accent`, `cell` sets the patch size in texels of the default size, so a patch stays
 /// the same size on the ground when the texture is generated bigger or smaller.
@@ -1089,15 +1171,7 @@ fn ground_texture(
     );
     image.data = Some(data);
     image.texture_descriptor.mip_level_count = mip_level_count;
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: ImageAddressMode::Repeat,
-        address_mode_v: ImageAddressMode::Repeat,
-        mag_filter: ImageFilterMode::Linear,
-        min_filter: ImageFilterMode::Linear,
-        mipmap_filter: ImageFilterMode::Linear,
-        anisotropy_clamp: ground.anisotropy,
-        ..default()
-    });
+    image.sampler = ground_sampler(ground);
     image
 }
 
@@ -1512,6 +1586,27 @@ fn rescale_alpha(level: &mut [u8], cutoff: f32, target: f32) {
 mod tests {
     use super::*;
     use sim_core::interlock::SignalPart;
+
+    #[test]
+    fn the_grass_scan_is_a_linear_complete_pbr_set() {
+        let textures = ground_textures(Season::default(), GroundQuality::default());
+        for image in [&textures.grass, &textures.grass_normal, &textures.grass_arm] {
+            assert_eq!(image.size(), UVec2::splat(1024));
+            assert!(image.texture_descriptor.mip_level_count > 1);
+        }
+        assert_eq!(
+            textures.grass.texture_descriptor.format,
+            TextureFormat::Rgba8UnormSrgb
+        );
+        assert_eq!(
+            textures.grass_normal.texture_descriptor.format,
+            TextureFormat::Rgba8Unorm
+        );
+        assert_eq!(
+            textures.grass_arm.texture_descriptor.format,
+            TextureFormat::Rgba8Unorm
+        );
+    }
 
     /// An offset anchored object keeps its offset across an origin rebase —
     /// the sleeper chunks hang at their own centre mid-edge, and the rebase's

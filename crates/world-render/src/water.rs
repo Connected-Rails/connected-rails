@@ -2,11 +2,25 @@
 //! with a shader of their own.
 //!
 //! One material for every body of water there is. What differs between a
-//! mill pond and the Rhine is the wind over it, the rain on it, and how deep
-//! the bed lies below the surface — and all three arrive without a byte of
-//! per-water data: the depth is baked into the mesh's vertex colours by
-//! `content::water`, the weather rides the same uniform every other surface
-//! reads (`crate::weather`), and the waves are the shader's own business.
+//! mill pond and the Rhine is the wind over it, the rain on it, how deep the
+//! bed lies below the surface and how far the bank is — and all of it arrives
+//! without a byte of per-water data: the depth and the distance to the
+//! waterline are baked into the mesh's vertex colours by `content::water`,
+//! the fall of a river is in its normals, the weather rides the same uniform
+//! every other surface reads (`crate::weather`), and the waves are the
+//! shader's own business.
+//!
+//! The material is *opaque with specular transmission*, not alpha-blended.
+//! Bevy then draws it in its own phase after the opaque world, with a copy of
+//! the finished picture bound as the "transmission texture": what lies under
+//! the surface is read back out of that copy along the refracted ray, and
+//! attenuated on the way up through the column the mesh carries — a real
+//! refraction of a real bed, with Beer's law between. The same copy is what
+//! the shader marches its reflection rays into when the camera also has a
+//! [`DepthPrepass`](bevy::core_pipeline::prepass::DepthPrepass): the bank,
+//! the trees on it and the train stand in the water where they ought to,
+//! and only where a ray leaves the screen does the sky's environment probe
+//! take over. Both programs put the prepass on their camera for this.
 //!
 //! **Multiplayer.** Nothing here is state. The uniform is a function of
 //! [`Sky`](crate::sky::Sky), which is a function of the scenario clock, and
@@ -39,14 +53,9 @@ impl MaterialExtension for WaterExt {
         "embedded://world_render/water.wgsl".into()
     }
 
-    // The ground shows through where the water is shallow, so a shore reads
-    // as a shore instead of as a hard edge where two opaque planes meet.
-    fn alpha_mode() -> Option<AlphaMode> {
-        Some(AlphaMode::Blend)
-    }
-
-    // A surface that blends has no business in the depth prepass — what it
-    // hides behind it is meant to stay visible — and a horizontal plane casts
+    // What is under the surface has to be in the picture the surface reads
+    // its refraction from, so the water stays out of the prepass — Bevy keeps
+    // transmissive materials out of it anyway — and a horizontal plane casts
     // no shadow worth the fill rate.
     fn enable_prepass() -> bool {
         false
@@ -79,10 +88,20 @@ impl WaterMaterials {
             .get_or_insert_with(|| {
                 materials.add(WaterMaterial {
                     base: StandardMaterial {
-                        // The shader writes the colour from the water column; this
-                        // is only what it starts from.
+                        // The shader writes every one of these per fragment, from
+                        // the water column and the weather; what matters here is
+                        // that they are *on*. A specular transmission above zero
+                        // puts the material into the transmissive phase with the
+                        // picture of the world bound, and a finite attenuation
+                        // distance turns Beer's law on for the way through the
+                        // column.
                         base_color: Color::srgb(0.07, 0.12, 0.11),
                         perceptual_roughness: 0.08,
+                        specular_transmission: 0.9,
+                        thickness: 1.0,
+                        ior: 1.333,
+                        attenuation_distance: 1.5,
+                        attenuation_color: Color::srgb(0.3, 0.6, 0.55),
                         ..default()
                     },
                     extension: WaterExt {
@@ -157,15 +176,16 @@ pub fn mesh(patch: &WaterPatch) -> Mesh {
 mod tests {
     use super::*;
 
-    /// The water carries its depth to the shader in the vertex colour, and
-    /// its mesh keeps the attribute set the shader reads.
+    /// The water carries its depth and its distance from the bank to the
+    /// shader in the vertex colour, and its mesh keeps the attribute set the
+    /// shader reads.
     #[test]
     fn a_patch_is_a_coloured_surface() {
         let patch = WaterPatch {
             positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
             normals: vec![[0.0, 1.0, 0.0]; 3],
             uvs: vec![[0.0, 0.0]; 3],
-            colors: vec![[1.5, 0.0, 0.0, 1.0]; 3],
+            colors: vec![[1.5, 7.0, 0.0, 1.0]; 3],
             indices: vec![0, 1, 2],
             sources: vec![0],
         };
@@ -177,5 +197,6 @@ mod tests {
             panic!("colors");
         };
         assert!((colors[0][0] - 1.5).abs() < 1e-6, "{:?}", colors[0]);
+        assert!((colors[0][1] - 7.0).abs() < 1e-6, "{:?}", colors[0]);
     }
 }

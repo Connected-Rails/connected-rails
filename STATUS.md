@@ -2384,13 +2384,50 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
      members become islands the surface goes around. The surfaces are cut to the
      terrain tiles and laid over the raw elevation data at the level the shoreline
      samples give, so a lake settles flat and a river follows its fall, and an
-     embankment across a valley holds the water back like a dam. The shader
-     (`world_render::water`) makes the waves out of the wind and the rain, the
-     depth-coloured body out of the shoreline level minus the bed, and the
-     reflection out of the sky the atmosphere already computes. Clicking a surface
-     in the editor selects its body — waterline outlined, name editable, centre and
-     delete in the panel; the shape itself is the file's or a fresh import's.
-     Not yet: a hand-editable water level, and vertex handles like the fields have.
+     embankment across a valley holds the water back like a dam. Every vertex
+     carries two numbers and the shader (`world_render::water`) makes the whole
+     look out of them and the weather: the water column under it, which grades
+     the body from murky shallows to a dark deep and decides what shows
+     through; and how far the waterline is, which is how much room a wave had
+     to grow in and where the bank's own band lies. Where a DGM1 models the
+     water surface rather than the bed — the usual German delivery, and every
+     river in one — there is no column to measure, so one is assumed from the
+     distance to the bank; without it a river draws as a dead flat, translucent
+     sheet, because a wave with no water under it dies in the shallows exactly
+     as it should. The surface is ten octaves
+     of directional waves from a lake's swell down to a hand's-breadth ripple,
+     each one grown by the wind it needs (a ripple takes a breath, a swell a
+     gale), bent by the octaves above it and let through a noise of its own, so
+     the crests wander and break instead of weaving a corduroy; every octave
+     that falls below the pixel it would need is not dropped but folded into
+     the roughness (α² = α₀² + 2σ²), which is what makes a far lake glitter
+     rather than alias. **What is under and over the surface is the picture
+     itself**: the material is opaque with specular transmission, so Bevy
+     draws it after the opaque world with a copy of the frame bound, and the
+     bed is read out of that copy along the refracted ray — bent by the waves,
+     absorbed by Beer's law over the column (red first), scattered back as the
+     water's own blue-green — while the reflection is a screen-space march of
+     the mirrored ray against the depth prepass into the same copy, so the
+     bank, its trees and the train stand in the water where they belong and
+     wobble with it; where a ray leaves the screen or the surface is too
+     rough to mirror sharply, the atmosphere's probe takes over. Both
+     programs put a `DepthPrepass` on their camera for this (about 1.5 ms on
+     the demo), and the loader no longer switches foliage from its alpha mask
+     to alpha-to-coverage, because under MSAA Bevy's prepass has no discard
+     for that mode and every leaf card would write its whole quad into the
+     depth. On top of that: foam where a wave runs out on the bank and spume
+     streaks out on the open water from about eight metres a second, the
+     sun's own glitter path, rain rings, and a river that runs — nothing says
+     which body is a river, but a lake's surface is level and a river's
+     follows the fall of the valley, so the mesh's own normal gives Manning's
+     formula the gradient and the wave field is carried downstream at the
+     speed that comes out. Clicking a surface in the editor selects its body
+     — waterline outlined, name editable, centre and delete in the panel; the
+     shape itself is the file's or a fresh import's. Not yet: a hand-editable
+     water level, vertex handles like the fields have, real wave height (the
+     mesh is flat; the surface is all normal), and the cloud deck in the
+     reflection — it is drawn in the transparent phase, after the copy the
+     water reads.
    - **Areas and bands onto a fourth splat channel** — `terrain::splat_weights` already
      carries `[grass, rock, gravel, 1.0]`, the fourth component is free. Roads
      (`highway=*` buffered by their width), farmland and meadow paint into it instead of

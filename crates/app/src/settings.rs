@@ -23,7 +23,7 @@ use bevy::anti_alias::dlss::{
 };
 use bevy::anti_alias::fxaa::{Fxaa, Sensitivity};
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
-use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
+use bevy::core_pipeline::prepass::MotionVectorPrepass;
 use bevy::ecs::system::{EntityCommands, SystemParam};
 use bevy::light::DirectionalLightShadowMap;
 use bevy::post_process::bloom::Bloom;
@@ -442,7 +442,9 @@ pub fn apply_upscaling(
         camera.remove::<crate::fsr::Fsr>();
         #[cfg(feature = "dlss")]
         camera.remove::<Dlss>();
-        camera.remove::<(DepthPrepass, MotionVectorPrepass, TemporalJitter, MipBias)>();
+        // The depth prepass stays: the water's reflections read it, upscaler
+        // or not (`world_render::water`).
+        camera.remove::<(MotionVectorPrepass, TemporalJitter, MipBias)>();
     }
 }
 

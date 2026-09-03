@@ -145,12 +145,33 @@ impl MaterialExtension for GrassExt {
         "embedded://world_render/grass.wgsl".into()
     }
 
+    /// No prepass: the vertex layout below is the main pass's own packed
+    /// format, and the default prepass vertex shader cannot read it — the
+    /// pipeline fails validation at the first grass cell in range
+    /// (`pbr_prepass_pipeline`, location 7). A depth written from unmoved
+    /// positions would disagree with the wind-bent blades that are drawn
+    /// anyway, and the fragment discards blades by coverage, which a
+    /// depth-only pass would not — so the main pass writes its own depth.
+    fn enable_prepass() -> bool {
+        false
+    }
+
+    /// No shadow map either: a centimetre blade in a metre shadow texel is
+    /// noise, not shade — the same reason the conductors stay out. The
+    /// spawned entities carry `NotShadowCaster` as well; this keeps any
+    /// future spawn without it from meeting the same broken pipeline.
+    fn enable_shadows() -> bool {
+        false
+    }
+
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         _key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        // Main pass only — prepass and shadows are off above, so this packed
+        // layout never meets the default depth vertex shader.
         descriptor.vertex.buffers = vec![layout.0.get_layout(&[
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
@@ -2923,6 +2944,19 @@ mod tests {
     /// The number of indices a mesh carries.
     fn index_count(mesh: &Mesh) -> usize {
         mesh.indices().map(Indices::len).unwrap_or(0)
+    }
+
+    /// The blade material stays out of the prepass and the shadow map: its
+    /// `specialize` overwrites the vertex buffers with the main pass's own
+    /// packed layout, which the default depth vertex shader cannot read —
+    /// the first grass cell in range ended the run in
+    /// `pbr_prepass_pipeline` validation instead. The wind-bent blades
+    /// would disagree with an unmoved depth anyway, and a centimetre blade
+    /// is noise in a shadow texel.
+    #[test]
+    fn blades_stay_out_of_prepass_and_shadows() {
+        assert!(!GrassExt::enable_prepass());
+        assert!(!GrassExt::enable_shadows());
     }
 
     #[test]

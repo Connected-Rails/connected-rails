@@ -72,7 +72,7 @@ For a faster edit-compile-run loop, add `--features dev` to any of the four bina
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
 relink after a code change. The first build with the flag recompiles Bevy, and the resulting
 binary needs the Bevy DLL next to it — so use it for development only, never for a release.
-Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit.
+Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit. Release binaries for `x86_64` additionally build with `-C target-cpu=x86-64-v3` (see `.github/workflows/release.yml`) — needs an Intel/AMD CPU from ~2013+ (Haswell/Zen+); for a local release-equivalent build set `RUSTFLAGS="-C target-cpu=x86-64-v3"` yourself.
 
 On Linux the four programs run natively on **Wayland**: winit picks Wayland whenever `WAYLAND_DISPLAY` or `WAYLAND_SOCKET` is set and falls back to X11 (or XWayland) otherwise.
 

@@ -1392,6 +1392,12 @@ hud-key-pause = Pause
 # Die Diagnose, F6. Maschinenausgabe — sie darf so dicht sein, wie sie will.
 hud-diagnostics = Diagnose
 hud-diag-frame = Bild     { $fps } fps, { $millis } ms, { $entities } Entitäten
+hud-diag-prof = Prof     { $frames } Bilder, { $avg } ms im Mittel, p95 { $p95 }, max { $max }, { $hitches } Ruckler, Sim { $steps } Schritte { $state }
+hud-diag-paused = · pausiert
+hud-diag-spans = CPU      { $spans } · Rest { $rest } ms
+hud-diag-graph = { $graph }
+hud-diag-spike = Spitze #{ $frame } { $total } ms ({ $breakdown })
+hud-diag-prof-hint = Konsole: prof · prof reset · prof pause/resume · prof csv <Datei>
 hud-diag-terrain = Gelände  { $tiles } Kacheln (+{ $pending }), { $triangles } Dreiecke, { $megabytes } MB, Sicht { $view } m
 hud-diag-air = Luft     R { $auxiliary } bar   Zusatz { $direct } bar   { $air } Nl verbraucht
 hud-diag-axles = Achsen   { $slipping }/{ $axles } schleudern, schlimmste { $worst } m/s
@@ -1754,11 +1760,23 @@ console-usage-time = time [HH:MM[:SS]]
 console-usage-fly = fly
 console-usage-help = help [command]
 console-usage-clear = clear
+console-usage-prof = prof [reset|pause|resume|csv <Datei>]
 console-help-weather = das Wetter ändern — ohne Name zeigt es das aktuelle
 console-help-time = die Uhr auf eine Tageszeit vorstellen — ohne Zeit zeigt sie die aktuelle
 console-help-fly = die Freikamera zum Überfliegen der Strecke umschalten — ein Werkzeug für die Entwicklung
 console-help-help = die Befehle auflisten
 console-help-clear = den Log leeren
+console-help-prof = zeigen, was die letzten Bilder gekostet haben — der Bild-Profiler
+console-prof-summary = { $frames } Bilder, { $avg } ms im Mittel, p95 { $p95 }, max { $max }, { $hitches } Ruckler
+console-prof-span = { $name } { $avg } ms im Mittel, { $max } ms max ({ $share } %)
+console-prof-rest = Rest (Rendern/Present/Vsync): { $rest } ms
+console-prof-spike = Spitze #{ $frame }: { $total } ms ({ $breakdown })
+console-prof-empty = Noch keine Bilder aufgezeichnet
+console-prof-reset = Profiler-Verlauf gelöscht
+console-prof-paused = Profiler angehalten — die Anzeige zeigt den eingefrorenen Verlauf weiter
+console-prof-resumed = Profiler zeichnet wieder auf
+console-prof-saved = { $rows } Bilder nach { $path } geschrieben
+console-prof-failed = Konnte { $path } nicht schreiben: { $error }
 
 ## Wertung
 

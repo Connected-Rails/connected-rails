@@ -1391,6 +1391,12 @@ hud-key-pause = Pause
 # The diagnostics, F6. Machine output — it may be as dense as it likes.
 hud-diagnostics = Diagnostics
 hud-diag-frame = Frame    { $fps } fps, { $millis } ms, { $entities } entities
+hud-diag-prof = Prof     { $frames } frames, { $avg } ms avg, p95 { $p95 }, max { $max }, { $hitches } hitches, sim { $steps } steps { $state }
+hud-diag-paused = · paused
+hud-diag-spans = CPU      { $spans } · rest { $rest } ms
+hud-diag-graph = { $graph }
+hud-diag-spike = Spike #{ $frame } { $total } ms ({ $breakdown })
+hud-diag-prof-hint = console: prof · prof reset · prof pause/resume · prof csv <file>
 hud-diag-terrain = Terrain  { $tiles } tiles (+{ $pending }), { $triangles } tri, { $megabytes } MB, view { $view } m
 hud-diag-air = Air      AR { $auxiliary } bar   direct { $direct } bar   { $air } Nl used
 hud-diag-axles = Axles    { $slipping }/{ $axles } slipping, worst { $worst } m/s
@@ -1752,11 +1758,23 @@ console-usage-time = time [HH:MM[:SS]]
 console-usage-fly = fly
 console-usage-help = help [command]
 console-usage-clear = clear
+console-usage-prof = prof [reset|pause|resume|csv <file>]
 console-help-weather = change the weather — without a name it shows the current one
 console-help-time = move the clock forward to a time of day — without a time it shows the current one
 console-help-fly = toggle the free camera for flying over the route — a developer tool
 console-help-help = list the commands
 console-help-clear = empty the log
+console-help-prof = show what the last frames cost — the frame profiler
+console-prof-summary = { $frames } frames, { $avg } ms avg, p95 { $p95 }, max { $max }, { $hitches } hitches
+console-prof-span = { $name } { $avg } ms avg, { $max } ms max ({ $share } %)
+console-prof-rest = rest (render/present/vsync): { $rest } ms
+console-prof-spike = spike #{ $frame }: { $total } ms ({ $breakdown })
+console-prof-empty = No frames recorded yet
+console-prof-reset = Profiler history cleared
+console-prof-paused = Profiler paused — the overlay keeps showing the frozen history
+console-prof-resumed = Profiler recording again
+console-prof-saved = Wrote { $rows } frames to { $path }
+console-prof-failed = Could not write { $path }: { $error }
 
 ## Scoring
 

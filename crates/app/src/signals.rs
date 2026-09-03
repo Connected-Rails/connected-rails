@@ -15,6 +15,7 @@
 //! that follows the running interlocking: lamp image, arm travel, placeholder
 //! colour.
 
+use crate::profiler::Profiler;
 use crate::{SimResource, models};
 use bevy::prelude::*;
 use sim_core::train::Motion;
@@ -104,7 +105,12 @@ pub fn update_signal_lods(
 }
 
 /// Shows exactly the lamp nodes whose string is in the signal's lamp image.
-pub fn update_lamps(sim: Res<SimResource>, mut lamps: Query<(&SignalLamp, &mut Visibility)>) {
+pub fn update_lamps(
+    sim: Res<SimResource>,
+    mut lamps: Query<(&SignalLamp, &mut Visibility)>,
+    mut profiler: ResMut<Profiler>,
+) {
+    let _scope = profiler.scope("lamps");
     for (lamp, mut visibility) in lamps.iter_mut() {
         let lit = sim
             .0

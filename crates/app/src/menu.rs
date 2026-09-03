@@ -366,6 +366,8 @@ impl Entry {
 enum Setting {
     ViewDistance,
     TextureQuality,
+    Grass,
+    GrassQuality,
     Shadows,
     ShadowQuality,
     Bloom,
@@ -512,6 +514,8 @@ const SETTINGS: [(&str, &[Setting]); 4] = [
         &[
             Setting::ViewDistance,
             Setting::TextureQuality,
+            Setting::Grass,
+            Setting::GrassQuality,
             Setting::Shadows,
             Setting::ShadowQuality,
             Setting::Bloom,
@@ -540,6 +544,8 @@ impl Setting {
         match self {
             Setting::ViewDistance => "set-view-distance",
             Setting::TextureQuality => "set-texture-quality",
+            Setting::Grass => "set-grass",
+            Setting::GrassQuality => "set-grass-quality",
             Setting::Shadows => "set-shadows",
             Setting::ShadowQuality => "set-shadow-quality",
             Setting::Bloom => "set-bloom",
@@ -575,6 +581,7 @@ impl Setting {
             Setting::Bloom => Control::Toggle(graphics.bloom),
             Setting::VolumetricClouds => Control::Toggle(graphics.volumetric_clouds),
             Setting::Mist => Control::Toggle(graphics.mist),
+            Setting::Grass => Control::Toggle(graphics.grass),
             Setting::VSync => Control::Toggle(graphics.vsync),
             Setting::AntiAliasing
             | Setting::AaQuality
@@ -582,6 +589,7 @@ impl Setting {
             | Setting::UpscalingQuality
             | Setting::ShadowQuality
             | Setting::MistQuality
+            | Setting::GrassQuality
             | Setting::TextureQuality
             | Setting::Window => Control::Choice,
             // Three steps, so it is dialled like the language rather than switched.
@@ -625,6 +633,7 @@ impl Setting {
             )),
             Setting::ShadowQuality => t!(dimmed(graphics.shadows, graphics.shadow_quality)),
             Setting::MistQuality => t!(dimmed(graphics.mist, graphics.mist_quality)),
+            Setting::GrassQuality => t!(dimmed(graphics.grass, graphics.grass_quality)),
             Setting::TextureQuality => t!(graphics.texture_quality.key()),
             Setting::Window => t!(graphics.window.key()),
             // The top step of the slider is not a rate but the absence of one.
@@ -746,6 +755,7 @@ fn change(
         Setting::Bloom => graphics.bloom = !graphics.bloom,
         Setting::VolumetricClouds => graphics.volumetric_clouds = !graphics.volumetric_clouds,
         Setting::Mist => graphics.mist = !graphics.mist,
+        Setting::Grass => graphics.grass = !graphics.grass,
         Setting::AntiAliasing => graphics.anti_aliasing = graphics.anti_aliasing.cycle(dir),
         Setting::AaQuality => graphics.aa_quality = graphics.aa_quality.cycle(dir),
         // The upscaling row only walks through what this machine can run.
@@ -759,6 +769,7 @@ fn change(
         }
         Setting::ShadowQuality => graphics.shadow_quality = graphics.shadow_quality.cycle(dir),
         Setting::MistQuality => graphics.mist_quality = graphics.mist_quality.cycle(dir),
+        Setting::GrassQuality => graphics.grass_quality = graphics.grass_quality.cycle(dir),
         Setting::TextureQuality => graphics.texture_quality = graphics.texture_quality.cycle(dir),
         Setting::Window => graphics.window = graphics.window.cycle(dir),
         Setting::VSync => graphics.vsync = !graphics.vsync,

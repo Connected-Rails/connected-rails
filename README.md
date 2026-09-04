@@ -1,6 +1,9 @@
 # Connected Rails
 
 [![CI](https://github.com/Connected-Rails/connected-rails/actions/workflows/ci.yml/badge.svg)](https://github.com/Connected-Rails/connected-rails/actions/workflows/ci.yml)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/xM9DcHZbR5)
+[![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL--1.2-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org)
 
 A **mod-first** German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
 Current state and open points: [STATUS.md](STATUS.md).

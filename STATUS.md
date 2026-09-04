@@ -575,6 +575,43 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   spent in query order, so a field five hundred metres away filled in while the one under
   the window stayed bare. And a hero card drew a painted card inside the model standing on
   it.
+- **Meadow grass on the GPU (2026-09-04, `world_render::grass`):** the default terrain's
+  grass was first grown like the crops — every 32 m cell within reach of the camera a mesh
+  of a million vertices, built on the main thread the frame the camera came near, uploaded
+  whole, and drawn through the full PBR path with all three LOD levels in one mesh. A train
+  at line speed entered a new row of cells every second, and each one was a visible hitch.
+  Nothing of the meadow is built on the CPU any more. **(1) A ground cache:** the terrain
+  tiles around the camera and the fields, roads and waters draped on them are drawn once,
+  top down, into a 1024² texture of (height, grass weight) by a pass of its own over the
+  meshes already on the GPU — highest surface wins, an excluded surface lifted a little so
+  it wins the coplanar fight against the ground under it — and drawn again only when the
+  camera has left a 64 m margin, a tile has streamed in or out, or the origin was rebased.
+  **(2) A scatter compute pass** each frame over a grid of 4 m patches: a patch out of the
+  frustum costs one box test; a patch in view lays its blades out on Roberts' R2 sequence
+  (any prefix of it is evenly spread, which is what lets a prefix be the thinned stand),
+  keeps a blade where its rank is below the density its own distance asks for — so coming
+  closer only ever adds blades and never moves one — reads its foot off the ground cache,
+  culls it against the frustum, and appends the survivors to one of three instance lists,
+  whose counts land straight in the indirect draw arguments. **(3) Three indirect draws**
+  in the opaque pass, one per level of detail (eleven, seven and three vertices), through
+  Bevy's own mesh pipeline for the view's key with the shaders and the mesh bind group
+  swapped — so MSAA, HDR, the shadow filter, the fog and the atmosphere are whatever the
+  camera has, with no second copy of any of it. The vertex shader grows each 32-byte
+  record into a quadratic Bézier bent by its own lean and the weather's wind (a gust front
+  travelling downwind, a ripple on it, each blade's own flutter, less of all three on a
+  stiff blade), tapers it, keeps it at least a pixel and a half wide so far grass does not
+  shimmer, and turns the normal across the blade so it lights as a rounded stalk; the
+  fragment shader lights it with diffuse transmission for the back-lit glow, a root-to-tip
+  occlusion gradient, and `weather_pbr` for the rain and the snow. Density is 450 blades/m²
+  at the camera falling as 1/(1+(d/10 m)²) out to the range — 220 m on High, 160 on
+  Medium, 110 on Low, the density scaled with it — the survivors widening by 1/√keep so
+  the sward keeps its cover, and a blade at the threshold growing in rather than popping.
+  Fields, roads and water carry `GroundSurface::Excluded`, so no blade stands on them; the
+  splat's gravel and rock take the grass weight away on the formation and on steep ground,
+  and the edge is dithered so a verge thins into the ballast instead of stopping at a
+  line. Deep winter takes the meadow away, and the grassland phenology sets its height, so
+  it is short after the cut. The crop cards and hero models of the fields are untouched.
+  Nothing is state: every blade is a function of the ground and a hash of its position.
 - **No two fields on one piece of ground (2026-08-31, `content::farmland`,
   `fields::geometry`):** a cadastral register's parcels are meant to tile the land and do
   not quite: neighbours are digitised from either side of a boundary and agree to a few

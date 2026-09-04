@@ -165,7 +165,6 @@ fn update(
     mut fields: ResMut<Assets<crate::farmland::FieldMaterial>>,
     mut water: ResMut<Assets<crate::water::WaterMaterial>>,
     mut roads: ResMut<Assets<crate::roads::RoadMaterial>>,
-    mut grass: ResMut<Assets<crate::plants::GrassMaterial>>,
     mut last: Local<Option<WeatherParams>>,
 ) {
     let params = WeatherParams::of(&sky);
@@ -190,11 +189,6 @@ fn update(
     }
     // The roads take it like the fields: wet asphalt polishes, snow covers.
     for (_, material) in roads.iter_mut() {
-        material.extension.weather = params;
-    }
-    // Close meadow blades use their own vertex stage so the same wind bends
-    // them; the fragment stage still receives the world's wetness and snow.
-    for (_, material) in grass.iter_mut() {
         material.extension.weather = params;
     }
 }

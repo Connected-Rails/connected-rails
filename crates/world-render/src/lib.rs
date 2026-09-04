@@ -35,6 +35,7 @@ pub mod buildings;
 pub mod clouds;
 pub mod conductors;
 pub mod farmland;
+pub mod grass;
 pub mod mist;
 pub mod people;
 pub mod plants;
@@ -52,16 +53,14 @@ pub use conductors::{ConductorMark, ConductorMaterial, ConductorMaterials, spawn
 pub use farmland::{
     CropExt, CropParams, FieldDraw, FieldMaterial, FieldMaterials, FieldSurface, spawn_fields,
 };
+pub use grass::{GrassRenderSettings, GroundSurface};
 pub use people::{
     CYCLE_PACE, CYCLE_RATE, CharacterAssets, CharacterGraphs, Dressed, GAIT_FADE, Gait,
     PASSENGER_CULL, PERSON_CULL, Passengers, PeopleClock, Person, Stroller, WALKING_ABOVE,
     WalkwayHost, WalkwaysBound, bind_walkways, gait, move_strollers, person_bundle, play_gait,
     spawn_seated, spawn_strollers,
 };
-pub use plants::{
-    FieldPlants, GrassMaterial, GrassParams, GrassRenderSettings, PlantMaterials,
-    update_field_plants,
-};
+pub use plants::{FieldPlants, PlantMaterials, update_field_plants};
 pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use scatter::{
     OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, Wood, WorldCatalog,
@@ -110,7 +109,7 @@ impl Plugin for WorldRenderPlugin {
                 clouds::plugin,
                 mist::plugin,
                 precipitation::plugin,
-                plants::plugin,
+                grass::plugin,
                 weather::plugin,
                 windscreen::plugin,
                 track::plugin,
@@ -622,11 +621,9 @@ pub fn spawn_terrain_tile(
             MeshMaterial3d(material.clone()),
             Transform::from_translation(translation).with_rotation(rotation),
             anchored,
-            // The adaptive card/model system grows the default terrain's grass
-            // only near the world camera. Overlay surfaces are indexed as holes,
-            // so blades do not poke through fields, roads or water.
-            plants::TerrainGrass::new(tile),
-            plants::FieldPlants::default(),
+            // The meadow grass stands on this: the tile is drawn into the
+            // ground cache the GPU scatters the blades from (`grass`).
+            grass::GroundSurface::Terrain,
         ));
         scatter::spawn_scatter(
             &mut entity,

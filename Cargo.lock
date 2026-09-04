@@ -11261,6 +11261,7 @@ dependencies = [
  "glam 0.32.1",
  "sim-core",
  "track-model",
+ "wgpu",
  "world-coords",
 ]
 

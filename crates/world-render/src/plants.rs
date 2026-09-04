@@ -1,4 +1,4 @@
-//! Camera-local standing vegetation: field crops and the default terrain grass.
+//! The standing crop: plants on the fields (the field plan's deferred pass).
 //!
 //! The painted surface carries a field at any distance but one: close up a
 //! crop is not a colour on the ground but things standing on it. A maize
@@ -7,9 +7,7 @@
 //! field patch grows a crop on its own surface — **real plant models** where
 //! the camera is close enough to make out a leaf, and **painted cards**
 //! (quads standing on the patch mesh) under and between them, out to where
-//! the paint alone is what a field is. The default meadow reuses the same
-//! cell-based LOD system, clipped to the terrain's grass splat and kept out
-//! of fields, roads, and water.
+//! the paint alone is what a field is.
 //!
 //! Everything is a function of the surface mesh and the day: the patch's
 //! vertex colours carry each field's tint and its own week of the crop year,
@@ -45,24 +43,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bevy::asset::{AssetId, AssetPath, LoadState, RenderAssetUsages, embedded_asset};
+use bevy::asset::{AssetId, AssetPath, LoadState, RenderAssetUsages};
 use bevy::camera::RenderTarget;
 use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{Gltf, GltfMesh};
 use bevy::image::Image;
 use bevy::light::NotShadowCaster;
-use bevy::mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
-use bevy::pbr::{
-    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
-};
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
-use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
-    TextureDimension, TextureFormat, VertexFormat,
-};
-use bevy::shader::ShaderRef;
-use content::TerrainTile;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use fields::CropClass;
 use fields::phenology::{self, Stage};
 
@@ -70,129 +59,8 @@ use crate::{
     Season, TextureMips, WorldView,
     farmland::{FieldSurface, linear},
     sky::Sky,
-    weather::{WeatherExt, WeatherMaterial, WeatherParams},
+    weather::{WeatherExt, WeatherMaterial},
 };
-
-/// Physically lit close grass with wind-deformed geometry.
-pub type GrassMaterial = ExtendedMaterial<StandardMaterial, GrassExt>;
-
-// Bevy's standard colour and UV attributes are fixed to 32-bit floats. Grass
-// carries bounded values, so a private packed layout cuts each vertex from 56
-// to 36 bytes while positions and lighting normals remain full precision.
-const ATTRIBUTE_GRASS_COLOR: MeshVertexAttribute =
-    MeshVertexAttribute::new("Grass_Color", 988_540_920, VertexFormat::Unorm8x4);
-const ATTRIBUTE_GRASS_DATA: MeshVertexAttribute =
-    MeshVertexAttribute::new("Grass_Data", 988_540_921, VertexFormat::Unorm16x4);
-
-#[derive(Clone, Copy, Debug, PartialEq, ShaderType)]
-pub struct GrassParams {
-    /// Close, near and far transition centres, followed by the hero-detail centre [m].
-    pub bands: Vec4,
-    /// Half-width of those four smooth transitions [m].
-    pub fades: Vec4,
-    /// x is one while grass is enabled. Kept as a vector for uniform alignment.
-    pub options: Vec4,
-}
-
-impl Default for GrassParams {
-    fn default() -> Self {
-        Self {
-            bands: Vec4::new(CLOSE_END, NEAR_END, PLANT_CULL, 22.0),
-            fades: Vec4::new(12.0, 12.0, 12.0, 8.0),
-            options: Vec4::X,
-        }
-    }
-}
-
-/// Live grass controls shared by streaming and the material. Keeping the same
-/// values on both sides means lowering the range also releases the cell meshes
-/// instead of merely hiding them in the shader.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct GrassRenderSettings {
-    pub params: GrassParams,
-}
-
-impl GrassRenderSettings {
-    pub fn new(enabled: bool, bands: Vec4, fades: Vec4) -> Self {
-        Self {
-            params: GrassParams {
-                bands,
-                fades,
-                options: if enabled { Vec4::X } else { Vec4::ZERO },
-            },
-        }
-    }
-
-    fn enabled(self) -> bool {
-        self.params.options.x > 0.5
-    }
-}
-
-#[derive(Asset, AsBindGroup, TypePath, Debug, Clone, Default)]
-pub struct GrassExt {
-    #[uniform(100)]
-    pub weather: WeatherParams,
-    #[uniform(101)]
-    pub grass: GrassParams,
-}
-
-impl MaterialExtension for GrassExt {
-    fn vertex_shader() -> ShaderRef {
-        "embedded://world_render/grass.wgsl".into()
-    }
-
-    fn fragment_shader() -> ShaderRef {
-        "embedded://world_render/grass.wgsl".into()
-    }
-
-    /// No prepass: the vertex layout below is the main pass's own packed
-    /// format, and the default prepass vertex shader cannot read it — the
-    /// pipeline fails validation at the first grass cell in range
-    /// (`pbr_prepass_pipeline`, location 7). A depth written from unmoved
-    /// positions would disagree with the wind-bent blades that are drawn
-    /// anyway, and the fragment discards blades by coverage, which a
-    /// depth-only pass would not — so the main pass writes its own depth.
-    fn enable_prepass() -> bool {
-        false
-    }
-
-    /// No shadow map either: a centimetre blade in a metre shadow texel is
-    /// noise, not shade — the same reason the conductors stay out. The
-    /// spawned entities carry `NotShadowCaster` as well; this keeps any
-    /// future spawn without it from meeting the same broken pipeline.
-    fn enable_shadows() -> bool {
-        false
-    }
-
-    fn specialize(
-        _pipeline: &MaterialExtensionPipeline,
-        descriptor: &mut RenderPipelineDescriptor,
-        layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialExtensionKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        // Main pass only — prepass and shadows are off above, so this packed
-        // layout never meets the default depth vertex shader.
-        descriptor.vertex.buffers = vec![layout.0.get_layout(&[
-            Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
-            Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
-            ATTRIBUTE_GRASS_COLOR.at_shader_location(2),
-            ATTRIBUTE_GRASS_DATA.at_shader_location(3),
-        ])?];
-        for define in ["VERTEX_UVS_A", "VERTEX_UVS_B", "VERTEX_COLORS"] {
-            descriptor.vertex.shader_defs.push(define.into());
-            if let Some(fragment) = &mut descriptor.fragment {
-                fragment.shader_defs.push(define.into());
-            }
-        }
-        Ok(())
-    }
-}
-
-pub(crate) fn plugin(app: &mut App) {
-    embedded_asset!(app, "grass.wgsl");
-    app.init_resource::<GrassRenderSettings>()
-        .add_plugins(MaterialPlugin::<GrassMaterial>::default());
-}
 
 /// Where the thickest level of the stand hands over to the next [m]. Inside
 /// this the crop is at its real spacing — a clump of wheat every 60 cm — and
@@ -239,9 +107,11 @@ const HERO_TRIANGLE_BUDGET: usize = 40_000;
 /// Height is baked into the geometry, and it moves slowly enough that a
 /// quarter metre is the step an eye catches.
 const HEIGHT_BUCKET: f32 = 0.25;
-/// Work units available for plant construction in one frame. A close terrain
-/// cell consumes all three because it expands to roughly a million vertices;
-/// treating it like a far cell was the source of visible streaming stalls.
+/// How many cells may be grown in one frame, over all patches. A cell of the
+/// closest level is thousands of tufts and tens of thousands of vertices;
+/// two to a frame keeps a train's approach ahead of the camera without the
+/// frame noticing. The queue is worked nearest first, so two is two of the
+/// right ones.
 const BUILD_BUDGET: usize = 3;
 
 /// One draw for a card, 0 … 1 — deterministic on every machine of a run.
@@ -425,10 +295,6 @@ impl CropKey {
 /// pose a card or a model on it.
 #[derive(Debug, Clone, Copy)]
 struct Card {
-    /// Stable random identity, retained so the close grass mesh can grow
-    /// several different blades from one sampled tuft without storing every
-    /// blade in the CPU-side stand.
-    seed: u64,
     /// Foot point, in the tile's own frame.
     pos: Vec3,
     /// The ground's normal under the foot — the card leans with the field.
@@ -989,7 +855,6 @@ fn grow(
     model: Option<&PlantModel>,
     stage: Stage,
     band: Band,
-    terrain: Option<&TerrainGrass>,
 ) -> Vec<Card> {
     // Deep winter takes the crop away: the weather uniform has whitened the
     // paint, and green tufts over snow is the one thing worse than none.
@@ -1023,11 +888,7 @@ fn grow(
     let mut area = 0.0f32;
     let mut scratch = Vec::new();
     let mut poly = Vec::new();
-    let candidates: Box<dyn Iterator<Item = usize> + '_> = match terrain {
-        Some(terrain) => Box::new(terrain.triangles(key).iter().copied()),
-        None => Box::new(0..tris.len()),
-    };
-    for i in candidates {
+    for i in 0..tris.len() {
         let [ia, ib, ic] = tris.at(i);
         if ia.max(ib).max(ic) >= positions.len() {
             continue;
@@ -1066,29 +927,12 @@ fn grow(
     // The factor that brings the cell to the cap — a plain ratio, not a
     // square root: spacing grows with the root of the count, the density
     // falls with the count.
-    // The PBR scan closes the ground between plants. Four evenly distributed
-    // batches per square metre. The base contributes 64 blades/m² and the
-    // immediate curved layer another 88, without carrying millions of
-    // alpha-tested quads into the far field.
-    let wanted_density = if terrain.is_some() {
-        4.0
-    } else {
-        density(crop)
-    };
-    let stretch = ((area * wanted_density) / MAX_CARDS as f32).max(1.0);
-    let density = wanted_density / stretch;
+    let stretch = ((area * density(crop)) / MAX_CARDS as f32).max(1.0);
+    let density = density(crop) / stretch;
     // A cell only ever draws its own level and the coarser ones, and every
     // coarser level is this one thinned — so a far cell has no use for the
     // cards its close level would have kept, and does not pay for them.
-    // Terrain needs the complete deterministic sample in every resident
-    // band: its close and near meshes choose different numbers of blades per
-    // tuft, while the far card mesh applies its own coverage-preserving thin.
-    // Field crops keep their established CPU-side thinning.
-    let keep = if terrain.is_some() {
-        256.0
-    } else {
-        band.stand().0 * 256.0
-    };
+    let keep = band.stand().0 * 256.0;
 
     // The share of cards that stands as a real plant: the model's own
     // density over the cards', capped by the count the model's triangle cost
@@ -1097,8 +941,7 @@ fn grow(
         Some(model) => {
             let by_count =
                 MAX_HEROES.min(MIN_HEROES.max(HERO_TRIANGLE_BUDGET / model.tris.max(1))) as f32;
-            let wanted = model_of(crop, stage).map_or(0.0, |hero| hero.density)
-                * if terrain.is_some() { 0.5 } else { 1.0 };
+            let wanted = model_of(crop, stage).map_or(0.0, |hero| hero.density);
             let cards = area * density;
             if cards > 0.0 {
                 (wanted / density).min(by_count / cards).min(1.0)
@@ -1135,69 +978,30 @@ fn grow(
         }
         for k in 0..count as u64 {
             let seed = i as u64 * 1_009 + k;
-            let (r, u, v) = if terrain.is_some() {
-                // Jittered strata give every part of a terrain triangle its
-                // share of the stand. Pure random sampling left clusters and
-                // holes; the previous additive sequence folded into long
-                // diagonal bands. Hash-jittering a small square lattice has
-                // neither failure mode.
-                let side = (count as f64).sqrt().ceil().max(1.0);
-                let x = (k as f64 % side + draw(seed, salt + 3)) / side;
-                let y = ((k as f64 / side).floor() + draw(seed, salt + 4)) / side;
-                (draw(seed, salt + 2), x, y)
-            } else {
-                (
-                    draw(seed, salt + 2),
-                    draw(seed, salt + 3),
-                    draw(seed, salt + 4),
-                )
-            };
-            let at = sample_polygon(poly, piece, r, u, v);
-            if terrain.is_some_and(|terrain| terrain.covered(key, at)) {
-                continue;
-            }
+            let at = sample_polygon(
+                poly,
+                piece,
+                draw(seed, salt + 2),
+                draw(seed, salt + 3),
+                draw(seed, salt + 4),
+            );
             let Some(w) = barycentric(at, a.xz(), b.xz(), c.xz()) else {
                 continue;
             };
-            if terrain.is_some() {
-                // Interpolated splat weight is the exact decision the ground
-                // shader makes. Once grass is the meaningful surface here,
-                // keep the complete low-discrepancy stand: stochastic
-                // thinning turned smooth splat variation into conspicuous
-                // bare islands. Roads, water and fields are already removed
-                // by the geometric exclusion index above.
-                let grass = (colors[ia][0] * w.x + colors[ib][0] * w.y + colors[ic][0] * w.z)
-                    .clamp(0.0, 1.0);
-                if grass < 0.12 {
-                    continue;
-                }
-            }
             let pos = a * w.x + b * w.y + c * w.z;
             let up = (Vec3::from(normals[ia]) * w.x
                 + Vec3::from(normals[ib]) * w.y
                 + Vec3::from(normals[ic]) * w.z)
                 .normalize_or_zero();
-            let tint = if terrain.is_some() {
-                0.5
-            } else {
-                colors[ia][0] * w.x + colors[ib][0] * w.y + colors[ic][0] * w.z
-            };
-            let week = if terrain.is_some() {
-                0.5
-            } else {
-                (colors[ia][2] * w.x + colors[ib][2] * w.y + colors[ic][2] * w.z).clamp(0.0, 1.0)
-            };
+            let tint = colors[ia][0] * w.x + colors[ib][0] * w.y + colors[ic][0] * w.z;
+            let week =
+                (colors[ia][2] * w.x + colors[ib][2] * w.y + colors[ic][2] * w.z).clamp(0.0, 1.0);
 
             // The field's own week decides what the day is here — two wheat
             // fields in one patch ripen a week apart, and the cards on them
             // do too. `pick` is the card's own draw from that same field.
             let pick = draw(seed, salt + 5) as f32;
-            let mut growth = phenology::growth_offset(crop, today, (week * 2.0 - 1.0) * 7.0);
-            if terrain.is_some() && growth.stage == Stage::Stubble {
-                growth.stage = Stage::Growing;
-                growth.cover = 1.0;
-                growth.height = growth.height.max(0.12);
-            }
+            let growth = phenology::growth_offset(crop, today, (week * 2.0 - 1.0) * 7.0);
             // Nothing stands on ploughed ground. Stubble keeps a third of
             // the tufts, short; a thin stand thins with its cover.
             let (scale, kept) = match growth.stage {
@@ -1212,17 +1016,9 @@ fn grow(
             if (rank as f32) >= keep {
                 continue;
             }
-            let mut height =
+            let height =
                 (growth.height * (0.7 + 0.5 * draw(seed, salt + 9) as f32) * scale).max(0.03);
-            if terrain.is_some() {
-                // A default verge is a close lawn layer, not a field of
-                // knee-high tussocks. A narrow range also makes the fade
-                // into the detailed ground material read as detail loss
-                // instead of vegetation suddenly losing volume.
-                height = height.clamp(0.12, 0.26);
-            }
             cards.push(Card {
-                seed: seed ^ salt,
                 pos,
                 up: if up.length_squared() > 0.5 {
                     up
@@ -1230,9 +1026,7 @@ fn grow(
                     Vec3::Y
                 },
                 yaw: (draw(seed, salt + 7) as f32 - 0.5) * std::f32::consts::TAU,
-                width: card_width(crop, height)
-                    * (0.8 + 0.4 * draw(seed, salt + 6) as f32)
-                    * if terrain.is_some() { 1.1 } else { 1.0 },
+                width: card_width(crop, height) * (0.8 + 0.4 * draw(seed, salt + 6) as f32),
                 height,
                 lean: (draw(seed, salt + 10) as f32 - 0.5) * 0.35,
                 tint,
@@ -1373,13 +1167,6 @@ fn plan_area(p: [Vec3; 3]) -> f32 {
 #[derive(Resource, Default)]
 pub struct PlantMaterials {
     by_crop: HashMap<CropClass, Handle<WeatherMaterial>>,
-    /// The default terrain meadow uses a full-width blade sheet instead of
-    /// the compact crop tuft, so overlapping cards form one continuous mat.
-    terrain: Option<Handle<WeatherMaterial>>,
-    /// Opaque, physically lit blade geometry for the default meadow's close
-    /// level. It deliberately has no cut-out texture: its silhouette is the
-    /// mesh itself, which is what removes the crossed-billboard look.
-    blades_by_crop: HashMap<CropClass, Handle<GrassMaterial>>,
     /// The cut-out sheets the cards are cut from, one per leaf shape, drawn
     /// on first use.
     sheets: HashMap<Leaf, Handle<Image>>,
@@ -1429,77 +1216,10 @@ impl PlantMaterials {
             .clone()
     }
 
-    /// The two-sided foliage material used by real blade geometry close to
-    /// the camera. Diffuse transmission gives a sunlit leaf its bright back
-    /// side without the cost and sorting problems of transparent blending.
-    pub fn blades(
-        &mut self,
-        crop: CropClass,
-        assets: &mut Assets<GrassMaterial>,
-        month: u32,
-        day: u32,
-        grass: GrassParams,
-    ) -> Handle<GrassMaterial> {
-        self.blades_by_crop
-            .entry(crop)
-            .or_insert_with(|| {
-                assets.add(GrassMaterial {
-                    base: StandardMaterial {
-                        base_color: stand_colour(phenology::growth(crop, month, day, 0)),
-                        perceptual_roughness: 0.82,
-                        reflectance: 0.22,
-                        diffuse_transmission: 0.38,
-                        thickness: 0.008,
-                        double_sided: true,
-                        cull_mode: None,
-                        ..default()
-                    },
-                    extension: GrassExt { grass, ..default() },
-                })
-            })
-            .clone()
-    }
-
-    pub fn terrain(
-        &mut self,
-        assets: &mut Assets<WeatherMaterial>,
-        images: &mut Assets<Image>,
-        month: u32,
-        day: u32,
-    ) -> Handle<WeatherMaterial> {
-        if let Some(material) = &self.terrain {
-            return material.clone();
-        }
-        let sheet = self
-            .sheets
-            .entry(Leaf::Meadow)
-            .or_insert_with(|| images.add(card_sheet(Leaf::Meadow)))
-            .clone();
-        let material = assets.add(WeatherMaterial {
-            base: StandardMaterial {
-                base_color: stand_colour(phenology::growth(CropClass::Grassland, month, day, 0)),
-                base_color_texture: Some(sheet),
-                alpha_mode: AlphaMode::Mask(CARD_CUTOFF),
-                cull_mode: None,
-                perceptual_roughness: 0.85,
-                ..default()
-            },
-            extension: WeatherExt::default(),
-        });
-        self.terrain = Some(material.clone());
-        material
-    }
-
     /// Writes the day's colour into every crop's material, if the day moved.
     /// The stage and the height are the meshes' business — a rebuild; the
     /// colour is the material's, and costs one write per crop.
-    pub fn set_date(
-        &mut self,
-        assets: &mut Assets<WeatherMaterial>,
-        blades: &mut Assets<GrassMaterial>,
-        month: u32,
-        day: u32,
-    ) -> bool {
+    pub fn set_date(&mut self, assets: &mut Assets<WeatherMaterial>, month: u32, day: u32) -> bool {
         let today = phenology::day_of_year(month, day);
         if self.day == Some(today) {
             return false;
@@ -1510,22 +1230,11 @@ impl PlantMaterials {
                 material.base.base_color = stand_colour(phenology::growth(*crop, month, day, 0));
             }
         }
-        for (crop, handle) in &self.blades_by_crop {
-            if let Some(mut material) = blades.get_mut(handle) {
-                material.base.base_color = stand_colour(phenology::growth(*crop, month, day, 0));
-            }
-        }
-        if let Some(handle) = &self.terrain
-            && let Some(mut material) = assets.get_mut(handle)
-        {
-            material.base.base_color =
-                stand_colour(phenology::growth(CropClass::Grassland, month, day, 0));
-        }
         true
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_crop.is_empty() && self.blades_by_crop.is_empty() && self.terrain.is_none()
+        self.by_crop.is_empty()
     }
 }
 
@@ -1547,12 +1256,11 @@ pub fn follow_date(
     sky: Res<Sky>,
     mut materials: ResMut<PlantMaterials>,
     mut assets: ResMut<Assets<WeatherMaterial>>,
-    mut blades: ResMut<Assets<GrassMaterial>>,
 ) {
     if materials.is_empty() {
         return;
     }
-    materials.set_date(&mut assets, &mut blades, sky.month, sky.day);
+    materials.set_date(&mut assets, sky.month, sky.day);
 }
 
 /// The standing crop of one field patch: the cells it is cut into, what they
@@ -1572,121 +1280,6 @@ pub struct FieldPlants {
     week: f32,
     /// What the cells that are up were grown for.
     grown: Option<CropKey>,
-}
-
-/// The base terrain as a grass-bearing plant surface.
-///
-/// Two compact spatial indexes are built while the streamed [`TerrainTile`]
-/// is still available: terrain triangles worth sampling in each plant cell,
-/// and the field/road/water triangles where default grass must leave a hole.
-/// A cell build therefore scans a few dozen triangles instead of the whole
-/// 512 metre tile and needs not retain the complete content tile.
-#[derive(Component, Default)]
-pub struct TerrainGrass {
-    triangles: HashMap<IVec2, Vec<usize>>,
-    exclusions: HashMap<IVec2, Vec<[Vec2; 3]>>,
-}
-
-impl TerrainGrass {
-    pub(crate) fn new(tile: &TerrainTile) -> Self {
-        let mut grass = Self::default();
-        for (triangle, indices) in tile.indices.as_chunks::<3>().0.iter().enumerate() {
-            let [ia, ib, ic] = [
-                indices[0] as usize,
-                indices[1] as usize,
-                indices[2] as usize,
-            ];
-            if ia.max(ib).max(ic) >= tile.positions.len() || ia.max(ib).max(ic) >= tile.splat.len()
-            {
-                continue;
-            }
-            // No meaningful grass weight means no tuft. This also drops the
-            // vertical terrain skirt and the gravel formation up front.
-            let weight = (tile.splat[ia][0] + tile.splat[ib][0] + tile.splat[ic][0]) / 3.0;
-            if weight < 0.04 {
-                continue;
-            }
-            let points = [
-                Vec3::from(tile.positions[ia]).xz(),
-                Vec3::from(tile.positions[ib]).xz(),
-                Vec3::from(tile.positions[ic]).xz(),
-            ];
-            if triangle_area(points) <= 1e-4 {
-                continue;
-            }
-            for key in triangle_cells(points) {
-                grass.triangles.entry(key).or_default().push(triangle);
-            }
-        }
-        for patch in &tile.fields {
-            grass.add_exclusions(&patch.positions, &patch.indices);
-        }
-        for patch in &tile.roads {
-            grass.add_exclusions(&patch.positions, &patch.indices);
-        }
-        for patch in &tile.waters {
-            grass.add_exclusions(&patch.positions, &patch.indices);
-        }
-        grass
-    }
-
-    fn add_exclusions(&mut self, positions: &[[f32; 3]], indices: &[u32]) {
-        for indices in indices.as_chunks::<3>().0 {
-            let [ia, ib, ic] = [
-                indices[0] as usize,
-                indices[1] as usize,
-                indices[2] as usize,
-            ];
-            if ia.max(ib).max(ic) >= positions.len() {
-                continue;
-            }
-            let points = [
-                Vec3::from(positions[ia]).xz(),
-                Vec3::from(positions[ib]).xz(),
-                Vec3::from(positions[ic]).xz(),
-            ];
-            if triangle_area(points) <= 1e-4 {
-                continue;
-            }
-            for key in triangle_cells(points) {
-                self.exclusions.entry(key).or_default().push(points);
-            }
-        }
-    }
-
-    fn triangles(&self, key: IVec2) -> &[usize] {
-        self.triangles.get(&key).map(Vec::as_slice).unwrap_or(&[])
-    }
-
-    fn covered(&self, key: IVec2, point: Vec2) -> bool {
-        self.exclusions.get(&key).is_some_and(|tris| {
-            tris.iter()
-                .any(|triangle| point_in_triangle(point, *triangle))
-        })
-    }
-}
-
-fn triangle_area(points: [Vec2; 3]) -> f32 {
-    (points[1] - points[0])
-        .perp_dot(points[2] - points[0])
-        .abs()
-        * 0.5
-}
-
-fn triangle_cells(points: [Vec2; 3]) -> impl Iterator<Item = IVec2> {
-    let lo = cell_of(points[0].min(points[1]).min(points[2]));
-    let hi = cell_of(points[0].max(points[1]).max(points[2]));
-    (lo.x..=hi.x).flat_map(move |x| (lo.y..=hi.y).map(move |y| IVec2::new(x, y)))
-}
-
-fn point_in_triangle(point: Vec2, triangle: [Vec2; 3]) -> bool {
-    let [a, b, c] = triangle;
-    let ab = (b - a).perp_dot(point - a);
-    let bc = (c - b).perp_dot(point - b);
-    let ca = (a - c).perp_dot(point - c);
-    let epsilon = 1e-4;
-    (ab >= -epsilon && bc >= -epsilon && ca >= -epsilon)
-        || (ab <= epsilon && bc <= epsilon && ca <= epsilon)
 }
 
 /// Takes one cell's meshes down: the entities go and their mesh assets with
@@ -1748,43 +1341,12 @@ fn band_for(distance: f32, current: Option<Band>) -> Option<Band> {
     }
 }
 
-/// Terrain meshes are prefetched one complete fade before their shader band
-/// begins. The actual selection is per blade in `grass.wgsl`; these larger
-/// bounds only decide which cell assets must be resident, never what is
-/// visible. That distinction is what prevents the 32 m cell grid becoming a
-/// visible LOD grid.
-fn terrain_band_for(distance: f32, grass: GrassRenderSettings) -> Option<Band> {
-    if !grass.enabled() {
-        return None;
-    }
-    let bands = grass.params.bands;
-    let fades = grass.params.fades;
-    if distance < bands.x + fades.x {
-        Some(Band::Close)
-    } else if distance < bands.y + fades.y {
-        Some(Band::Near)
-    } else if distance < bands.z + fades.z {
-        Some(Band::Far)
-    } else {
-        None
-    }
-}
-
 /// How far a point is from a box, zero inside it.
 fn box_distance(p: Vec3, lo: Vec3, hi: Vec3) -> f32 {
     (lo - p).max(p - hi).max(Vec3::ZERO).length()
 }
 
-/// Horizontal distance to a cell. Terrain grass is cached as a vertical
-/// column around the camera: altitude changes only the shader LOD and never
-/// tears down geometry that an immediate descent needs again.
-fn planar_box_distance(p: Vec3, lo: Vec3, hi: Vec3) -> f32 {
-    let delta = (lo.xz() - p.xz()).max(p.xz() - hi.xz()).max(Vec2::ZERO);
-    delta.length()
-}
-
-/// Grows, regrows and drops the standing crop of every field patch and the
-/// default grass on streamed terrain.
+/// Grows, regrows and drops the standing crop of every field patch.
 ///
 /// A patch measures itself once, then each of its cells grows when the camera
 /// comes near it and drops again when it leaves. A new day regrows what it
@@ -1803,16 +1365,13 @@ pub fn update_field_plants(
     mut mips: ResMut<TextureMips>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<WeatherMaterial>>,
-    mut grass_materials: ResMut<Assets<GrassMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut plants: ResMut<PlantMaterials>,
     mut models: ResMut<PlantModels>,
-    grass: Res<GrassRenderSettings>,
     sky: Res<Sky>,
-    mut surfaces: Query<(
+    mut fields: Query<(
         Entity,
-        Option<&FieldSurface>,
-        Option<&TerrainGrass>,
+        &FieldSurface,
         &Mesh3d,
         &GlobalTransform,
         &mut FieldPlants,
@@ -1832,14 +1391,7 @@ pub fn update_field_plants(
     // costs nothing and so is not budgeted — and writes down what wants
     // growing, with the distance the queue is ordered on.
     let mut wanted: Vec<(f32, Entity, usize, Band)> = Vec::new();
-    for (entity, field, terrain, mesh3d, at, mut state) in &mut surfaces {
-        let terrain = field.is_none().then_some(terrain).flatten();
-        let Some(crop) = field
-            .map(|surface| surface.crop)
-            .or_else(|| terrain.map(|_| CropClass::Grassland))
-        else {
-            continue;
-        };
+    for (entity, surface, mesh3d, at, mut state) in &mut fields {
         // The patch's cells and its reach, measured once from its mesh:
         // everything after this is distance tests against boxes.
         if !state.surveyed {
@@ -1850,13 +1402,8 @@ pub fn update_field_plants(
             if let Some(found) = survey(mesh) {
                 state.centre = found.centre;
                 state.radius = found.radius;
-                state.week = if terrain.is_some() { 0.5 } else { found.week };
+                state.week = found.week;
                 state.cells = found.cells;
-                if let Some(terrain) = terrain {
-                    state
-                        .cells
-                        .retain(|cell| !terrain.triangles(cell.key).is_empty());
-                }
             }
         }
         if state.cells.is_empty() {
@@ -1865,11 +1412,7 @@ pub fn update_field_plants(
         // The camera in the patch's own frame, so a cell's box can be
         // measured to without a transform each.
         let eye_local = at.affine().inverse().transform_point3(eye);
-        let reach = if terrain.is_some() {
-            eye_local.xz().distance(state.centre.xz()) - state.radius
-        } else {
-            eye_local.distance(state.centre) - state.radius
-        };
+        let reach = eye_local.distance(state.centre) - state.radius;
         // Out of sight: the meshes go, the patch keeps its cells.
         if reach > DEMATERIALISE_AT {
             clear(&mut commands, &mut state);
@@ -1883,26 +1426,19 @@ pub fn update_field_plants(
         // patch grows as painted cards, and the missing flag in the key
         // brings it back here the frame the model lands. The stage picks the
         // model as well as the size — a cut field stands straw, not wheat.
-        let mut key = CropKey::of(crop, sky.month, sky.day, state.week, false);
-        // The crop calendar's grassland is cut three times a year. Default
-        // verge and meadow terrain is not one synchronised managed field, so
-        // it keeps the grass model and merely follows the seasonal height.
-        if terrain.is_some() && key.stage == Stage::Stubble {
-            key.stage = Stage::Growing;
-        }
-        key.heroes = terrain.is_none()
-            && models
-                .model(
-                    crop,
-                    key.stage,
-                    &assets,
-                    &gltfs,
-                    &gltf_meshes,
-                    &meshes,
-                    &standards,
-                    &mut mips,
-                )
-                .is_some();
+        let mut key = CropKey::of(surface.crop, sky.month, sky.day, state.week, false);
+        key.heroes = models
+            .model(
+                surface.crop,
+                key.stage,
+                &assets,
+                &gltfs,
+                &gltf_meshes,
+                &meshes,
+                &standards,
+                &mut mips,
+            )
+            .is_some();
         // Grown for the day already? The day's colour rode in with the
         // material; only stage, height, winter and a landed model rebuild.
         if state.grown != Some(key) {
@@ -1912,16 +1448,8 @@ pub fn update_field_plants(
 
         for at in 0..state.cells.len() {
             let cell = &state.cells[at];
-            let distance = if terrain.is_some() {
-                planar_box_distance(eye_local, cell.lo, cell.hi)
-            } else {
-                box_distance(eye_local, cell.lo, cell.hi)
-            };
-            let want = if terrain.is_some() {
-                terrain_band_for(distance, *grass)
-            } else {
-                band_for(distance, cell.band)
-            };
+            let distance = box_distance(eye_local, cell.lo, cell.hi);
+            let want = band_for(distance, cell.band);
             if want == cell.band {
                 continue;
             }
@@ -1935,64 +1463,45 @@ pub fn update_field_plants(
     if wanted.is_empty() {
         return;
     }
-    // Nearest first. Close terrain cells are over ten times heavier than the
-    // coarser levels, so count work rather than cells: three close rebuilds in
-    // one update caused a long main-thread spike whenever grass reappeared.
-    wanted.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-    let mut work = 0;
-    wanted.retain(|&(_, _, _, band)| {
-        let cost = if band == Band::Close { 3 } else { 1 };
-        if work + cost > BUILD_BUDGET {
-            false
-        } else {
-            work += cost;
-            true
-        }
-    });
+    // Nearest first, and only as many as one frame can afford. A cell is a
+    // couple of thousand cards; the rest of the queue is built over the next
+    // few frames, and the painted surface underneath is right the whole time.
+    if wanted.len() > BUILD_BUDGET {
+        wanted.select_nth_unstable_by(BUILD_BUDGET, |a, b| a.0.total_cmp(&b.0));
+        wanted.truncate(BUILD_BUDGET);
+    }
 
     for (_, entity, at, band) in wanted {
-        let Ok((entity, field, terrain, mesh3d, _, mut state)) = surfaces.get_mut(entity) else {
-            continue;
-        };
-        let terrain = field.is_none().then_some(terrain).flatten();
-        let Some(crop) = field
-            .map(|surface| surface.crop)
-            .or_else(|| terrain.map(|_| CropClass::Grassland))
-        else {
+        let Ok((entity, surface, mesh3d, _, mut state)) = fields.get_mut(entity) else {
             continue;
         };
         let Some(key) = state.grown else {
             continue;
         };
         drop_cell(&mut commands, &mut state.cells[at]);
-        let model = if terrain.is_some() {
-            None
-        } else {
-            models.model(
-                crop,
-                key.stage,
-                &assets,
-                &gltfs,
-                &gltf_meshes,
-                &meshes,
-                &standards,
-                &mut mips,
-            )
-        };
+        let model = models.model(
+            surface.crop,
+            key.stage,
+            &assets,
+            &gltfs,
+            &gltf_meshes,
+            &meshes,
+            &standards,
+            &mut mips,
+        );
         let cards = {
             let Some(surface_mesh) = meshes.get(&mesh3d.0) else {
                 continue;
             };
             grow(
                 surface_mesh,
-                crop,
+                surface.crop,
                 sky.month,
                 sky.day,
                 state.cells[at].key,
                 model.as_deref(),
                 key.stage,
                 band,
-                terrain,
             )
         };
         // The cell has had its turn either way: an empty one is a cell of
@@ -2005,21 +1514,20 @@ pub fn update_field_plants(
 
         // The painted cards' colour is the crop's stand colour, per day; the
         // real plants repaint themselves from it in their own vertices.
-        let growth = phenology::growth(crop, sky.month, sky.day, 0);
+        let growth = phenology::growth(surface.crop, sky.month, sky.day, 0);
         let stand = [
             linear(growth.color[0]),
             linear(growth.color[1]),
             linear(growth.color[2]),
         ];
-        let material = if terrain.is_some() {
-            plants.terrain(&mut materials, &mut images, sky.month, sky.day)
-        } else {
-            plants.get(crop, &mut materials, &mut images, sky.month, sky.day)
-        };
-        let blade_material = terrain
-            .is_some()
-            .then(|| plants.blades(crop, &mut grass_materials, sky.month, sky.day, grass.params));
-        let sink = model_of(crop, key.stage).map_or(0.0, |hero| hero.sink);
+        let material = plants.get(
+            surface.crop,
+            &mut materials,
+            &mut images,
+            sky.month,
+            sky.day,
+        );
+        let sink = model_of(surface.crop, key.stage).map_or(0.0, |hero| hero.sink);
         // One dressed material per part of the model. Both this and the
         // model above are cached lookups after the first cell of a crop.
         let skins: Vec<Option<Handle<WeatherMaterial>>> = model
@@ -2035,439 +1543,65 @@ pub fn update_field_plants(
 
         let mut spawned = Vec::new();
         commands.entity(entity).with_children(|parent| {
-            if terrain.is_some() {
-                // Three nested levels use the same actual tapered geometry,
-                // only fewer blades. Their UVs carry the LOD class; the grass
-                // shader selects them against the live camera per blade, not
-                // against this cell entity.
-                if let Some(blade_material) = &blade_material {
-                    let mut combined = None;
-                    for level in band.upwards() {
-                        let detail = blade_mesh(&cards, level);
-                        if detail.count_vertices() == 0 {
+            // The cell's own level and every coarser one. Carrying the coarse
+            // ones as well is what makes the hand-over happen at the distance
+            // the visibility range names rather than wherever the cell's own
+            // residency hysteresis happened to let go.
+            for level in band.upwards() {
+                let (start, end) = level.range();
+                // A cell only ever draws from its own level outwards, so the
+                // nearest one it carries starts where the camera is.
+                let start = if level == band { 0.0 } else { start };
+                if level.crossed()
+                    && let Some(model) = &model
+                {
+                    // The real plants, one mesh per material part. They cast
+                    // shadows and the cards do not: a maize field without one
+                    // is a green carpet, and a shadow off a card is a shadow
+                    // off a rectangle.
+                    for (skin, dressed) in skins.iter().enumerate() {
+                        let Some(dressed) = dressed else {
+                            continue;
+                        };
+                        let mesh = hero_mesh(model, skin, &cards, level, stand, sink);
+                        if mesh.count_vertices() == 0 {
                             continue;
                         }
-                        merge_grass_mesh(&mut combined, detail);
-
-                        // Only the innermost level receives the segmented
-                        // hero blades. They add curvature, varied leaf tips
-                        // and another eighty-eight silhouettes per square metre at
-                        // the camera, then disappear before the first normal
-                        // LOD hand-over begins.
-                        if level == Band::Close {
-                            let hero_detail = curved_blade_mesh(&cards);
-                            if hero_detail.count_vertices() > 0 {
-                                merge_grass_mesh(&mut combined, hero_detail);
-                            }
-                        }
-                    }
-                    // All levels have identical vertex layouts and one material.
-                    // Combining them preserves every blade while turning as many as
-                    // four submissions per terrain cell into one draw call.
-                    if let Some(combined) = combined {
-                        let handle = meshes.add(combined);
-                        let id = parent
-                            .spawn((
-                                Mesh3d(handle.clone()),
-                                MeshMaterial3d(blade_material.clone()),
-                                Transform::IDENTITY,
-                                NotShadowCaster,
-                            ))
-                            .id();
-                        spawned.push((id, handle.id()));
+                        let handle = meshes.add(mesh);
+                        spawned.push((
+                            parent
+                                .spawn((
+                                    Mesh3d(handle.clone()),
+                                    MeshMaterial3d(dressed.clone()),
+                                    Transform::IDENTITY,
+                                    range(start, end),
+                                ))
+                                .id(),
+                            handle.id(),
+                        ));
                     }
                 }
-            } else {
-                // Field crops retain their specialised three-level stand.
-                for level in band.upwards() {
-                    let (start, end) = level.range();
-                    let start = if level == band { 0.0 } else { start };
-                    if level.crossed()
-                        && let Some(model) = &model
-                    {
-                        for (skin, dressed) in skins.iter().enumerate() {
-                            let Some(dressed) = dressed else {
-                                continue;
-                            };
-                            let mesh = hero_mesh(model, skin, &cards, level, stand, sink);
-                            if mesh.count_vertices() == 0 {
-                                continue;
-                            }
-                            let handle = meshes.add(mesh);
-                            spawned.push((
-                                parent
-                                    .spawn((
-                                        Mesh3d(handle.clone()),
-                                        MeshMaterial3d(dressed.clone()),
-                                        Transform::IDENTITY,
-                                        range(start, end),
-                                    ))
-                                    .id(),
-                                handle.id(),
-                            ));
-                        }
-                    }
-                    let mesh = card_mesh(&cards, level, false);
-                    if mesh.count_vertices() == 0 {
-                        continue;
-                    }
-                    let handle = meshes.add(mesh);
-                    spawned.push((
-                        parent
-                            .spawn((
-                                Mesh3d(handle.clone()),
-                                MeshMaterial3d(material.clone()),
-                                Transform::IDENTITY,
-                                range(start, end),
-                                NotShadowCaster,
-                            ))
-                            .id(),
-                        handle.id(),
-                    ));
+                let mesh = card_mesh(&cards, level);
+                if mesh.count_vertices() == 0 {
+                    continue;
                 }
+                let handle = meshes.add(mesh);
+                spawned.push((
+                    parent
+                        .spawn((
+                            Mesh3d(handle.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform::IDENTITY,
+                            range(start, end),
+                            NotShadowCaster,
+                        ))
+                        .id(),
+                    handle.id(),
+                ));
             }
         });
         state.cells[at].lods = spawned;
     }
-}
-
-fn merge_grass_mesh(combined: &mut Option<Mesh>, mesh: Mesh) {
-    if let Some(combined) = combined {
-        // These meshes are all triangle lists with the same five attributes.
-        // A mismatch is a programming error, not content that can vary at run time.
-        combined
-            .merge(&mesh)
-            .expect("grass LOD meshes must have matching vertex layouts");
-    } else {
-        *combined = Some(mesh);
-    }
-}
-
-/// The default meadow's close LOD as actual tapered, curved blade geometry.
-///
-/// Each scattered close sample expands into sixteen real tapered blades.
-/// The closest level has a curved middle joint while the smaller distance
-/// levels collapse to one pointed triangle. The wind shader pins every foot
-/// and bends every tip. Distributing the feet across the sample's neighbourhood
-/// makes one continuous sward instead of isolated radial tufts.
-const GRASS_COLOR_RANGE: f32 = 1.5;
-
-fn grass_color(value: [f32; 4]) -> [u8; 4] {
-    let pack = |channel: f32| {
-        ((channel.clamp(0.0, GRASS_COLOR_RANGE) / GRASS_COLOR_RANGE) * 255.0).round() as u8
-    };
-    [
-        pack(value[0]),
-        pack(value[1]),
-        pack(value[2]),
-        (value[3].clamp(0.0, 1.0) * 255.0).round() as u8,
-    ]
-}
-
-fn grass_uv(lod: f32, random: f32) -> [u16; 2] {
-    [
-        ((lod / 3.0).clamp(0.0, 1.0) * 65_535.0).round() as u16,
-        (random.clamp(0.0, 1.0) * 65_535.0).round() as u16,
-    ]
-}
-
-fn leaf_uv(value: [f32; 2]) -> [u16; 2] {
-    [
-        (value[0].clamp(0.0, 1.0) * 65_535.0).round() as u16,
-        (value[1].clamp(0.0, 1.0) * 65_535.0).round() as u16,
-    ]
-}
-
-fn grass_data(uvs: Vec<[u16; 2]>, leaf_uvs: Vec<[u16; 2]>) -> VertexAttributeValues {
-    debug_assert_eq!(uvs.len(), leaf_uvs.len());
-    VertexAttributeValues::Unorm16x4(
-        uvs.into_iter()
-            .zip(leaf_uvs)
-            .map(|([lod, random], [across, along])| [lod, random, across, along])
-            .collect(),
-    )
-}
-
-fn blade_mesh(cards: &[Card], band: Band) -> Mesh {
-    let (blades_per_tuft, width_scale, spread_floor) = match band {
-        Band::Close => (16u64, 0.72, 0.40),
-        Band::Near => (7u64, 1.55, 0.38),
-        Band::Far => (1u64, 2.35, 0.24),
-    };
-    let lod_code = match band {
-        Band::Close => 0.0,
-        Band::Near => 1.0,
-        Band::Far => 2.0,
-    };
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut colors = Vec::new();
-    let mut uvs = Vec::new();
-    let mut leaf_uvs = Vec::new();
-    let mut indices = Vec::new();
-
-    for card in cards.iter().filter(|card| !card.hero) {
-        let up = if card.up.length_squared() > 0.5 {
-            card.up.normalize()
-        } else {
-            Vec3::Y
-        };
-        let tangent = if up.y.abs() < 0.9 {
-            up.cross(Vec3::Y).normalize()
-        } else {
-            up.cross(Vec3::X).normalize()
-        };
-        let bitangent = up.cross(tangent).normalize();
-
-        for blade in 0..blades_per_tuft {
-            let random = |salt: u64| draw(card.seed ^ blade.wrapping_mul(0x9E37), salt) as f32;
-            let angle = card.yaw + blade as f32 * 2.399_963_1 + (random(41) - 0.5) * 0.7;
-            let (sin, cos) = angle.sin_cos();
-            let lateral = (tangent * cos + bitangent * sin).normalize();
-            let facing = up.cross(lateral).normalize();
-
-            // Blades start across the whole tussock instead of sharing one
-            // pinched foot, which removes the evenly spaced "star" pattern.
-            let foot_angle = card.yaw + blade as f32 * 2.399_963_1 + (random(42) - 0.5) * 0.35;
-            let (foot_sin, foot_cos) = foot_angle.sin_cos();
-            // The sampling point is only the deterministic centre of this
-            // batch, not a visible tussock. Overlap neighbouring batches so
-            // the close meadow becomes continuous instead of a field of
-            // isolated stars.
-            let spread = (card.width * 0.6).max(spread_floor);
-            let radial_rank = (blade as f32 + 0.5 + random(43) * 0.2) / blades_per_tuft as f32;
-            let foot_radius = radial_rank.min(1.0).sqrt() * spread;
-            let foot =
-                card.pos + (tangent * foot_cos + bitangent * foot_sin) * foot_radius + up * 0.004;
-
-            let short_leaf = blade % 6 == 0;
-            let height =
-                card.height * (0.58 + random(44) * 0.52) * if short_leaf { 0.68 } else { 1.0 };
-            let half_width = (0.0045 + height * 0.017)
-                * (0.72 + random(45) * 0.56)
-                * width_scale
-                * if short_leaf { 1.45 } else { 1.0 };
-            let curve = height * (0.045 + random(46) * 0.15 + card.lean * 0.32).clamp(-0.08, 0.22);
-            let p0 = foot;
-            let tip = foot + up * height + facing * curve;
-            let width0 = lateral * half_width;
-
-            // Mostly face the blade, but lift the authored normal enough for
-            // skylight to keep the lower meadow readable. The two-sided PBR
-            // material flips it correctly on the back face.
-            let normal = (facing * 0.9 + up * 0.34).normalize();
-            let hue = (random(47) - 0.5) * 0.2;
-            let light = 0.88 + random(48) * 0.22;
-            let shade = |value: f32, bend: f32| {
-                let value = value * light;
-                [value * (1.0 + hue), value, value * (1.0 - hue * 0.7), bend]
-            };
-            let base = positions.len() as u32;
-            if band == Band::Close {
-                let middle = foot + up * (height * 0.60) + facing * (curve * 0.30);
-                let middle_width = lateral * (half_width * 0.52);
-                positions.extend_from_slice(&[
-                    (p0 - width0).to_array(),
-                    (p0 + width0).to_array(),
-                    (middle - middle_width).to_array(),
-                    (middle + middle_width).to_array(),
-                    tip.to_array(),
-                ]);
-                normals.extend_from_slice(&[[normal.x, normal.y, normal.z]; 5]);
-                colors.extend_from_slice(
-                    &[
-                        shade(0.62, 0.0),
-                        shade(0.62, 0.0),
-                        shade(0.94, 0.58),
-                        shade(0.94, 0.58),
-                        shade(1.24, 1.0),
-                    ]
-                    .map(grass_color),
-                );
-                uvs.extend_from_slice(&[grass_uv(lod_code, random(49)); 5]);
-                leaf_uvs.extend_from_slice(
-                    &[
-                        [0.0, 0.0],
-                        [1.0, 0.0],
-                        [0.24, 0.60],
-                        [0.76, 0.60],
-                        [0.5, 1.0],
-                    ]
-                    .map(leaf_uv),
-                );
-                indices.extend_from_slice(&[
-                    base,
-                    base + 1,
-                    base + 3,
-                    base,
-                    base + 3,
-                    base + 2,
-                    base + 2,
-                    base + 3,
-                    base + 4,
-                ]);
-            } else {
-                positions.extend_from_slice(&[
-                    (p0 - width0).to_array(),
-                    (p0 + width0).to_array(),
-                    tip.to_array(),
-                ]);
-                normals.extend_from_slice(&[[normal.x, normal.y, normal.z]; 3]);
-                colors.extend_from_slice(
-                    &[shade(0.66, 0.0), shade(0.66, 0.0), shade(1.24, 1.0)].map(grass_color),
-                );
-                uvs.extend_from_slice(&[grass_uv(lod_code, random(49)); 3]);
-                leaf_uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]].map(leaf_uv));
-                indices.extend_from_slice(&[base, base + 1, base + 2]);
-            }
-        }
-    }
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(
-        ATTRIBUTE_GRASS_COLOR,
-        VertexAttributeValues::Unorm8x4(colors),
-    );
-    mesh.insert_attribute(ATTRIBUTE_GRASS_DATA, grass_data(uvs, leaf_uvs));
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
-}
-
-/// Segmented hero blades for the camera's immediate surroundings.
-///
-/// The broad meadow still comes from [`blade_mesh`]. These thirty extra leaves
-/// per sample are deliberately a little longer and carry a curved middle
-/// joint, so the nearest grass has overlapping depth, bent tips and a more
-/// organic wind silhouette without paying that geometry across the world.
-fn curved_blade_mesh(cards: &[Card]) -> Mesh {
-    // This layer exists only in the camera's immediate radial neighbourhood.
-    // Thirty leaves per sample bring the local sward to roughly 184 individual
-    // blades/m²; the coarse world never pays for them.
-    const BLADES: u64 = 30;
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut colors = Vec::new();
-    let mut uvs = Vec::new();
-    let mut leaf_uvs = Vec::new();
-    let mut indices = Vec::new();
-
-    for card in cards.iter().filter(|card| !card.hero) {
-        let up = if card.up.length_squared() > 0.5 {
-            card.up.normalize()
-        } else {
-            Vec3::Y
-        };
-        let tangent = if up.y.abs() < 0.9 {
-            up.cross(Vec3::Y).normalize()
-        } else {
-            up.cross(Vec3::X).normalize()
-        };
-        let bitangent = up.cross(tangent).normalize();
-
-        for blade in 0..BLADES {
-            let random = |salt: u64| {
-                draw(
-                    card.seed ^ 0xA24B_AED4_963E_E407 ^ blade.wrapping_mul(0x9E37),
-                    salt,
-                ) as f32
-            };
-            let angle = card.yaw + blade as f32 * 2.399_963_1 + (random(61) - 0.5) * 0.55;
-            let (sin, cos) = angle.sin_cos();
-            let lateral = (tangent * cos + bitangent * sin).normalize();
-            let facing = up.cross(lateral).normalize();
-
-            // A stratified disc overlaps neighbouring batches but never
-            // pinches all leaves into the same visible star-shaped root.
-            let foot_angle = angle + (random(62) - 0.5) * 0.7;
-            let (foot_sin, foot_cos) = foot_angle.sin_cos();
-            let radius = ((blade as f32 + 0.35 + random(63) * 0.3) / BLADES as f32).sqrt() * 0.34;
-            let foot = card.pos + (tangent * foot_cos + bitangent * foot_sin) * radius + up * 0.006;
-
-            let short = blade % 4 == 0;
-            let height =
-                (card.height * (0.72 + random(64) * 0.58) * if short { 0.64 } else { 1.0 })
-                    .clamp(0.09, 0.34);
-            let half_width = (0.004 + height * 0.014)
-                * (0.76 + random(65) * 0.48)
-                * if short { 1.25 } else { 1.0 };
-            let curve = height * (0.07 + random(66) * 0.19 + card.lean.abs() * 0.22);
-            let middle = foot + up * (height * 0.60) + facing * (curve * 0.30);
-            let tip = foot + up * height + facing * curve;
-            let root_width = lateral * half_width;
-            let middle_width = lateral * (half_width * 0.52);
-
-            let normal = (facing * 0.88 + up * 0.38).normalize();
-            let hue = (random(67) - 0.5) * 0.24;
-            let light = 0.90 + random(68) * 0.24;
-            let shade = |value: f32, bend: f32| {
-                let value = value * light;
-                [value * (1.0 + hue), value, value * (1.0 - hue * 0.7), bend]
-            };
-
-            let base = positions.len() as u32;
-            positions.extend_from_slice(&[
-                (foot - root_width).to_array(),
-                (foot + root_width).to_array(),
-                (middle - middle_width).to_array(),
-                (middle + middle_width).to_array(),
-                tip.to_array(),
-            ]);
-            normals.extend_from_slice(&[[normal.x, normal.y, normal.z]; 5]);
-            colors.extend_from_slice(
-                &[
-                    shade(0.58, 0.0),
-                    shade(0.58, 0.0),
-                    shade(0.92, 0.58),
-                    shade(0.92, 0.58),
-                    shade(1.28, 1.0),
-                ]
-                .map(grass_color),
-            );
-            // x = exact radial shader LOD (3 is immediate detail), y = one
-            // stable random threshold shared by every vertex of this leaf.
-            uvs.extend_from_slice(&[grass_uv(3.0, random(69)); 5]);
-            leaf_uvs.extend_from_slice(
-                &[
-                    [0.0, 0.0],
-                    [1.0, 0.0],
-                    [0.24, 0.60],
-                    [0.76, 0.60],
-                    [0.5, 1.0],
-                ]
-                .map(leaf_uv),
-            );
-            indices.extend_from_slice(&[
-                base,
-                base + 1,
-                base + 3,
-                base,
-                base + 3,
-                base + 2,
-                base + 2,
-                base + 3,
-                base + 4,
-            ]);
-        }
-    }
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(
-        ATTRIBUTE_GRASS_COLOR,
-        VertexAttributeValues::Unorm8x4(colors),
-    );
-    mesh.insert_attribute(ATTRIBUTE_GRASS_DATA, grass_data(uvs, leaf_uvs));
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
 }
 
 /// One card as quads: two crossed at a right angle for the near level, one
@@ -2490,13 +1624,9 @@ fn curved_blade_mesh(cards: &[Card]) -> Mesh {
 /// the material is drawn from both sides *without* `double_sided`, so the far
 /// side of a card keeps this normal instead of its negation — a card seen
 /// from behind is the same plant in the same light, not a hole in the field.
-fn card_mesh(cards: &[Card], band: Band, terrain: bool) -> Mesh {
-    let (_, field_width) = band.stand();
-    // Far terrain uses many modest overlapping tufts instead of a handful of
-    // enormous crosses. Their projected coverage matches the middle blade
-    // LOD, so the hand-over changes detail rather than turning grass off.
-    let wider = if terrain { 4.2 } else { field_width };
-    let crossed = terrain || band.crossed();
+fn card_mesh(cards: &[Card], band: Band) -> Mesh {
+    let (_, wider) = band.stand();
+    let crossed = band.crossed();
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut colors = Vec::new();
@@ -2504,8 +1634,7 @@ fn card_mesh(cards: &[Card], band: Band, terrain: bool) -> Mesh {
     let mut indices = Vec::new();
 
     for card in cards {
-        let kept = if terrain { true } else { band.keeps(card) };
-        if !kept {
+        if !band.keeps(card) {
             continue;
         }
         // A real plant stands here at the levels that draw them, and a quad
@@ -2707,8 +1836,6 @@ const SHEET_TUFT_H: usize = 224;
 /// them apart at the distance where the real models have gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Leaf {
-    /// Dense, full-width fine blades for the invariant default-terrain mat.
-    Meadow,
     /// Thin, stiff, upright, a third of them carrying an ear — cereal,
     /// grass, whatever a meadow is made of.
     Blade,
@@ -2756,7 +1883,6 @@ fn card_sheet(leaf: Leaf) -> Image {
     // widths `card_width` gives, a blade comes out 6 to 14 mm across and a
     // maize leaf 50 to 105 — which is what they measure in a field.
     let (count, spread, thick, taper, arch, ears) = match leaf {
-        Leaf::Meadow => (58u64, 0.48, (0.65f32, 1.35f32), 0.78f32, 0.72f32, 0.0),
         Leaf::Blade => (26u64, 0.34, (0.8f32, 1.9f32), 0.8f32, 0.55f32, 0.35),
         Leaf::Broad => (13, 0.42, (2.4, 5.0), 1.3, 1.0, 0.0),
         Leaf::Rosette => (9, 0.44, (6.5, 12.0), 1.7, 1.7, 0.0),
@@ -2877,21 +2003,9 @@ fn stamp(
 /// cell's cards may stand five hundred metres from the tile's origin, and the
 /// origin is what a range without `use_aabb` measures to.
 fn range(start: f32, end: f32) -> VisibilityRange {
-    const FADE: f32 = 12.0;
-    range_with_fade(start, end, FADE)
-}
-
-fn range_with_fade(start: f32, end: f32, fade: f32) -> VisibilityRange {
     VisibilityRange {
-        // The two neighbouring meshes overlap through complementary screen-
-        // door dithering. A whole meadow no longer pops between real blades
-        // and cards on one frame as the camera crosses a round number.
-        start_margin: if start > 0.0 {
-            (start - fade)..(start + fade)
-        } else {
-            0.0..0.0
-        },
-        end_margin: (end - fade)..(end + fade),
+        start_margin: start..start,
+        end_margin: end..end,
         use_aabb: true,
     }
 }
@@ -2946,30 +2060,6 @@ mod tests {
         mesh.indices().map(Indices::len).unwrap_or(0)
     }
 
-    /// The blade material stays out of the prepass and the shadow map: its
-    /// `specialize` overwrites the vertex buffers with the main pass's own
-    /// packed layout, which the default depth vertex shader cannot read —
-    /// the first grass cell in range ended the run in
-    /// `pbr_prepass_pipeline` validation instead. The wind-bent blades
-    /// would disagree with an unmoved depth anyway, and a centimetre blade
-    /// is noise in a shadow texel.
-    #[test]
-    fn blades_stay_out_of_prepass_and_shadows() {
-        assert!(!GrassExt::enable_prepass());
-        assert!(!GrassExt::enable_shadows());
-    }
-
-    #[test]
-    fn overlay_holes_accept_both_windings_and_reject_the_outside() {
-        let clockwise = [Vec2::ZERO, Vec2::Y, Vec2::ONE];
-        let anticlockwise = [Vec2::ZERO, Vec2::ONE, Vec2::Y];
-        for triangle in [clockwise, anticlockwise] {
-            assert!(point_in_triangle(Vec2::new(0.25, 0.5), triangle));
-            assert!(point_in_triangle(Vec2::new(0.0, 0.5), triangle));
-            assert!(!point_in_triangle(Vec2::new(0.75, 0.25), triangle));
-        }
-    }
-
     /// One square of ground, `size` metres on a side, as a patch's mesh —
     /// two triangles, flat, with the vertex colours a field piece carries.
     fn patch(size: f32) -> Mesh {
@@ -3006,19 +2096,7 @@ mod tests {
         survey
             .cells
             .iter()
-            .flat_map(|cell| {
-                grow(
-                    mesh,
-                    crop,
-                    month,
-                    day,
-                    cell.key,
-                    None,
-                    stage,
-                    Band::Close,
-                    None,
-                )
-            })
+            .flat_map(|cell| grow(mesh, crop, month, day, cell.key, None, stage, Band::Close))
             .collect()
     }
 
@@ -3067,7 +2145,6 @@ mod tests {
                 None,
                 Stage::Ripe,
                 Band::Close,
-                None,
             );
             assert!(
                 cards.len() <= MAX_CARDS,
@@ -3096,7 +2173,6 @@ mod tests {
                 None,
                 Stage::Flowering,
                 Band::Close,
-                None,
             ) {
                 let at = card.pos.xz();
                 assert!(
@@ -3127,7 +2203,7 @@ mod tests {
         // Two quads a card near, one far, and none where a model stands
         // except at the level that has no models.
         let heroes = cards.iter().filter(|c| c.hero).count();
-        let quads = |band: Band| index_count(&card_mesh(&cards, band, false)) / 6;
+        let quads = |band: Band| index_count(&card_mesh(&cards, band)) / 6;
         let kept = |band: Band| cards.iter().filter(|c| band.keeps(c)).count();
         assert_eq!(quads(Band::Close), (kept(Band::Close) - heroes) * 2);
         assert_eq!(quads(Band::Far), kept(Band::Far));
@@ -3175,7 +2251,7 @@ mod tests {
     #[test]
     fn a_card_is_two_quads_with_a_base_to_head_gradient() {
         let cards = grow_all(&patch(40.0), CropClass::WinterCereal, 7, 15);
-        let mesh = card_mesh(&cards, Band::Close, false);
+        let mesh = card_mesh(&cards, Band::Close);
         let positions = mesh
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -3227,7 +2303,6 @@ mod tests {
 
     fn card_at(height: f32) -> Card {
         Card {
-            seed: 17,
             pos: Vec3::new(10.0, 0.0, -5.0),
             up: Vec3::Y,
             yaw: 0.0,
@@ -3290,44 +2365,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn close_meadow_tufts_are_real_blade_geometry() {
-        let card = Card {
-            hero: false,
-            ..card_at(0.34)
-        };
-        let mesh = blade_mesh(&[card], Band::Close);
-        assert_eq!(mesh.count_vertices(), 16 * 5);
-        assert_eq!(mesh.indices().unwrap().len(), 16 * 9);
-        let data = match mesh.attribute(ATTRIBUTE_GRASS_DATA) {
-            Some(VertexAttributeValues::Unorm16x4(data)) => data,
-            _ => panic!("blade data carries radial LOD data"),
-        };
-        assert_eq!(data[0][0], 0, "close LOD is encoded per blade");
-        assert_eq!(
-            data[0][..2],
-            data[1][..2],
-            "one blade has one stable fade draw"
-        );
-    }
-
-    #[test]
-    fn immediate_meadow_detail_has_curved_segmented_blades() {
-        let card = Card {
-            hero: false,
-            ..card_at(0.24)
-        };
-        let mesh = curved_blade_mesh(&[card]);
-        assert_eq!(mesh.count_vertices(), 30 * 5);
-        assert_eq!(mesh.indices().unwrap().len(), 30 * 9);
-        let colors = match mesh.attribute(ATTRIBUTE_GRASS_COLOR) {
-            Some(VertexAttributeValues::Unorm8x4(colors)) => colors,
-            _ => panic!("blade colours carry their bend weights"),
-        };
-        assert_eq!(colors[0][3], 0, "roots stay pinned in the wind");
-        assert_eq!(colors[4][3], 255, "tips take the full wind bend");
     }
 
     #[test]
@@ -3538,7 +2575,7 @@ mod tests {
     fn a_card_sheet_is_cut_out_and_not_a_rectangle() {
         // The whole point of the sheet: a card has to be a tuft with sky
         // between its blades. A solid one is the hedge the first stand was.
-        for leaf in [Leaf::Meadow, Leaf::Blade, Leaf::Broad] {
+        for leaf in [Leaf::Blade, Leaf::Broad] {
             let sheet = card_sheet(leaf);
             let (width, height) = (SHEET_TUFTS * SHEET_TUFT_W, SHEET_TUFT_H);
             let data = sheet.data.as_ref().expect("the sheet is built on the CPU");
@@ -3583,7 +2620,6 @@ mod tests {
     /// distance you care to stand at.
     fn blade_millimetres(crop: CropClass, height: f32) -> (f32, f32) {
         let thick = match leaf_of(crop) {
-            Leaf::Meadow => (0.65f32, 1.35f32),
             Leaf::Blade => (0.8f32, 1.9f32),
             Leaf::Broad => (2.4, 5.0),
             Leaf::Rosette => (6.5, 12.0),

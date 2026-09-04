@@ -96,8 +96,8 @@ pub struct Graphics {
     pub texture_quality: Quality,
     /// Rendered blade geometry over the painted ground material.
     pub grass: bool,
-    /// Reach and immediate-detail radius of rendered grass. High is the full
-    /// authored sward; the renderer's lossless batching applies to every level.
+    /// Reach and density of the rendered grass. High is the full authored
+    /// sward; the lower levels shorten the reach and thin the stand.
     pub grass_quality: Quality,
     /// Which anti-aliasing runs on the cab camera.
     pub anti_aliasing: AntiAliasing,
@@ -709,24 +709,16 @@ pub fn ground_quality(graphics: &Graphics) -> world_render::GroundQuality {
     world_render::GroundQuality { size, anisotropy }
 }
 
-/// Radial grass bands for the selected quality. High is the authored default;
-/// lower levels trade only grass reach and the radius of the densest local layer.
+/// Reach and density of the meadow for the selected quality. High is the
+/// authored default; lower levels trade reach and blades per square metre,
+/// which is what the scatter pass and the three draws cost.
 fn grass_quality(graphics: &Graphics) -> world_render::GrassRenderSettings {
-    let (bands, fades) = match graphics.grass_quality {
-        Quality::Low => (
-            Vec4::new(24.0, 52.0, 110.0, 14.0),
-            Vec4::new(10.0, 10.0, 12.0, 5.0),
-        ),
-        Quality::Medium => (
-            Vec4::new(28.0, 62.0, 145.0, 18.0),
-            Vec4::new(11.0, 11.0, 12.0, 6.0),
-        ),
-        Quality::High => (
-            Vec4::new(30.0, 70.0, 170.0, 22.0),
-            Vec4::new(12.0, 12.0, 12.0, 8.0),
-        ),
+    let (range, density) = match graphics.grass_quality {
+        Quality::Low => (110.0, 0.4),
+        Quality::Medium => (160.0, 0.7),
+        Quality::High => (220.0, 1.0),
     };
-    world_render::GrassRenderSettings::new(graphics.grass, bands, fades)
+    world_render::GrassRenderSettings::new(graphics.grass, range, density)
 }
 
 /// Generates the ground textures again into the handles the terrain material already
@@ -810,7 +802,6 @@ fn apply_scene(
     quality: Option<ResMut<world_render::mist::Quality>>,
     clouds: Option<ResMut<world_render::clouds::Quality>>,
     grass: Option<ResMut<world_render::GrassRenderSettings>>,
-    grass_materials: Option<ResMut<Assets<world_render::GrassMaterial>>>,
     cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
     mut projections: Query<&mut bevy::camera::Projection, With<CabCamera>>,
 ) {
@@ -836,15 +827,6 @@ fn apply_scene(
         && *grass != wanted_grass
     {
         *grass = wanted_grass;
-    }
-    // Existing material instances update immediately; newly grown cells read
-    // the same resource in `update_field_plants` when their material is made.
-    if let Some(mut materials) = grass_materials {
-        for (_, material) in materials.iter_mut() {
-            if material.extension.grass != wanted_grass.params {
-                material.extension.grass = wanted_grass.params;
-            }
-        }
     }
     if let Some(mut view) = view {
         view.0 = graphics.view_distance;

@@ -150,6 +150,9 @@ pub fn spawn_waters(
                 MeshMaterial3d(material.clone()),
                 // The patch is already in the tile's own frame.
                 Transform::IDENTITY,
+                // No meadow grass grows through it: the patch cuts a hole into
+                // the grass ground cache (`crate::grass`).
+                crate::grass::GroundSurface::Excluded,
                 WaterSurface {
                     sources: patch.sources.clone(),
                 },

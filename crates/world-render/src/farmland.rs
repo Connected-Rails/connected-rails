@@ -276,6 +276,9 @@ pub fn spawn_fields(
                 // level meshes with their own distances — the patch grows it
                 // when a camera comes near, and takes it back when none does.
                 crate::plants::FieldPlants::default(),
+                // No meadow grass grows through it: the patch cuts a hole into
+                // the grass ground cache (`crate::grass`).
+                crate::grass::GroundSurface::Excluded,
             ));
         }
     });

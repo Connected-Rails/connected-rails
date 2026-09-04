@@ -365,6 +365,7 @@ impl Entry {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Setting {
     ViewDistance,
+    Fov,
     TextureQuality,
     Grass,
     GrassQuality,
@@ -513,6 +514,7 @@ const SETTINGS: [(&str, &[Setting]); 4] = [
         "set-graphics",
         &[
             Setting::ViewDistance,
+            Setting::Fov,
             Setting::TextureQuality,
             Setting::Grass,
             Setting::GrassQuality,
@@ -543,6 +545,7 @@ impl Setting {
     fn key(self) -> &'static str {
         match self {
             Setting::ViewDistance => "set-view-distance",
+            Setting::Fov => "set-fov",
             Setting::TextureQuality => "set-texture-quality",
             Setting::Grass => "set-grass",
             Setting::GrassQuality => "set-grass-quality",
@@ -569,11 +572,12 @@ impl Setting {
     }
 
     fn control(self, graphics: &Graphics, audio: &Audio, gameplay: &Gameplay) -> Control {
-        use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
+        use settings::{FOV, LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
         match self {
             Setting::ViewDistance => {
                 Control::Slider(fraction(graphics.view_distance, VIEW_DISTANCE))
             }
+            Setting::Fov => Control::Slider(fraction(graphics.fov, FOV)),
             Setting::Volume => Control::Slider(fraction(audio.master, VOLUME)),
             Setting::MaxFps => Control::Slider(fraction(graphics.max_fps, MAX_FPS)),
             Setting::LookSpeed => Control::Slider(fraction(gameplay.look_speed, LOOK_SPEED)),
@@ -607,6 +611,12 @@ impl Setting {
                 t!(
                     "set-metres",
                     value = i18n::decimal(f64::from(graphics.view_distance), 0)
+                )
+            }
+            Setting::Fov => {
+                t!(
+                    "set-degrees",
+                    value = i18n::decimal(f64::from(graphics.fov), 0)
                 )
             }
             Setting::Volume => t!(
@@ -746,10 +756,13 @@ fn change(
     gameplay: &mut Gameplay,
     support: &settings::UpscalingSupport,
 ) {
-    use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
+    use settings::{FOV, LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
     match setting {
         Setting::ViewDistance => {
             graphics.view_distance = step(graphics.view_distance, dir, VIEW_DISTANCE);
+        }
+        Setting::Fov => {
+            graphics.fov = step(graphics.fov, dir, FOV);
         }
         Setting::Shadows => graphics.shadows = !graphics.shadows,
         Setting::Bloom => graphics.bloom = !graphics.bloom,
@@ -4044,6 +4057,7 @@ mod tests {
             (settings::VIEW_DISTANCE.0..=settings::VIEW_DISTANCE.1)
                 .contains(&graphics.view_distance)
         );
+        assert!((settings::FOV.0..=settings::FOV.1).contains(&graphics.fov));
         assert!((settings::VOLUME.0..=settings::VOLUME.1).contains(&audio.master));
         assert!((settings::LOOK_SPEED.0..=settings::LOOK_SPEED.1).contains(&gameplay.look_speed));
         // The language cycles through system + every shipped language and back.

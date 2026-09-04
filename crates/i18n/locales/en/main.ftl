@@ -1546,6 +1546,8 @@ set-gameplay = Gameplay
 set-stored = Kept between runs in the settings file of your user account.
 set-view-distance = View distance
 set-view-distance-hint = How far terrain is built and drawn — the biggest single cost.
+set-fov = Field of view
+set-fov-hint = Vertical field of view of the cab camera, in degrees. Applies right away, while driving too.
 set-shadows = Shadows
 set-shadows-hint = Shadow maps of the sun.
 set-bloom = Bloom
@@ -1616,6 +1618,7 @@ set-reset = Reset to defaults
 set-reset-hint = Puts every setting on this page back to how it shipped.
 # Units of the values on the right of a settings row.
 set-metres = { $value } m
+set-degrees = { $value }°
 set-percent = { $value } %
 set-factor = { $value } ×
 

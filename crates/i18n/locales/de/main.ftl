@@ -1549,6 +1549,8 @@ set-gameplay = Spiel
 set-stored = Bleibt zwischen zwei Starts in der Einstellungsdatei des Benutzerkontos erhalten.
 set-view-distance = Sichtweite
 set-view-distance-hint = Wie weit Gelände gebaut und gezeichnet wird — der größte einzelne Posten.
+set-fov = Sichtfeld
+set-fov-hint = Vertikales Sichtfeld der Führerstandskamera, in Grad. Wirkt sofort, auch während der Fahrt.
 set-shadows = Schatten
 set-shadows-hint = Schattenkarten der Sonne.
 set-bloom = Lichtschein
@@ -1619,6 +1621,7 @@ set-reset = Auf Standard zurücksetzen
 set-reset-hint = Setzt jede Einstellung dieser Seite auf den Auslieferungszustand.
 # Einheiten der Werte am rechten Rand einer Einstellungszeile.
 set-metres = { $value } m
+set-degrees = { $value }°
 set-percent = { $value } %
 set-factor = { $value } ×
 

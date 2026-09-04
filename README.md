@@ -148,6 +148,7 @@ built world down with it, so the next one starts from an empty world.
 | Section | Setting | Effect |
 |---|---|---|
 | `[graphics]` | `view_distance` | How far terrain is built and drawn [m], 1000 … 12000. The biggest single cost. |
+| | `fov` | Vertical field of view of the cab camera [°], 60 … 120. Applies immediately, also while driving. |
 | | `shadows` | Shadow maps of the sun. |
 | | `bloom` | Glow around lamps and signals after dark. |
 | | `shadow_quality` | Edge length of the sun's shadow map: `Low` 1024, `Medium` 2048, `High` 4096 texels. |

@@ -801,10 +801,11 @@ pub(crate) fn load_sky(
             // itself is bloom, which the settings can switch off.
             bevy::camera::Hdr,
             // The sky lights the scene itself; what stays here is the floor a
-            // moonless night needs to keep the ground off pure black (`feed_sky`).
+            // moonless night needs to keep the ground off pure black. `feed_sky`
+            // writes the brightness every frame.
             AmbientLight {
                 color: Color::srgb(0.7, 0.8, 1.0),
-                brightness: 20.0,
+                brightness: 0.0,
                 ..default()
             },
             world_render::sky::camera_settings(),

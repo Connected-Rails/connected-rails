@@ -9,7 +9,7 @@
 //!
 //! **Every setting applies the moment it is dialled.** Language, volume, HUD and look
 //! sensitivity are read where they are used; window mode and vertical sync go onto the
-//! window; view distance, shadows, bloom, anti-aliasing, upscaling and the shadow and
+//! window; view distance, field of view, shadows, bloom, anti-aliasing, upscaling and the shadow and
 //! mist quality reach into a running scene through `apply_scene`; the texture quality
 //! generates the ground textures again into the handles the terrain already holds. A
 //! setting that needs a restart is an excuse, and it would go stale the moment there is
@@ -46,6 +46,8 @@ const APP_ID: &str = "dev.vanlueck.connected-rails";
 
 /// Terrain load and draw radius: smallest, largest, one step of the menu [m].
 pub const VIEW_DISTANCE: (f32, f32, f32) = (1_000.0, 12_000.0, 500.0);
+/// Vertical field of view of the cab camera: smallest, largest, one step [°].
+pub const FOV: (f32, f32, f32) = (60.0, 120.0, 5.0);
 /// Master volume: smallest, largest, one step (0 … 1).
 pub const VOLUME: (f32, f32, f32) = (0.0, 1.0, 0.05);
 /// Mouse look sensitivity as a factor on the built-in speed.
@@ -62,6 +64,8 @@ pub const MAX_FPS: (f32, f32, f32) = (30.0, 250.0, 10.0);
 pub struct Graphics {
     /// Terrain load and draw radius [m] — read by `setup` when the run starts.
     pub view_distance: f32,
+    /// Vertical field of view of the cab camera [°].
+    pub fov: f32,
     /// Windowed, borderless over the monitor, or exclusive fullscreen.
     ///
     /// A settings file from before this was three steps carries `fullscreen = true`; the
@@ -115,6 +119,7 @@ impl Default for Graphics {
     fn default() -> Self {
         Self {
             view_distance: 4_000.0,
+            fov: 90.0,
             window: WindowStyle::Windowed,
             vsync: true,
             max_fps: MAX_FPS.1,
@@ -789,7 +794,7 @@ fn apply_window(graphics: Res<Graphics>, mut window: Query<&mut Window, With<Pri
     }
 }
 
-/// View distance, upscaling, bloom and anti-aliasing into a scene that is already running. Every parameter is
+/// View distance, field of view, upscaling, bloom and anti-aliasing into a scene that is already running. Every parameter is
 /// optional because none of it exists while the menu is up — the world is built on
 /// leaving it.
 ///
@@ -807,6 +812,7 @@ fn apply_scene(
     grass: Option<ResMut<world_render::GrassRenderSettings>>,
     grass_materials: Option<ResMut<Assets<world_render::GrassMaterial>>>,
     cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
+    mut projections: Query<&mut bevy::camera::Projection, With<CabCamera>>,
 ) {
     // The sun's shadow map is a resource of Bevy's own, rebuilt from it every frame.
     commands.insert_resource(DirectionalLightShadowMap {
@@ -845,6 +851,14 @@ fn apply_scene(
     }
     if let Some(mut streamer) = streamer {
         streamer.set_load_radius(f64::from(graphics.view_distance));
+    }
+    // A hand-edited settings file may hold anything; the menu clamps on every step,
+    // so only the file needs it here.
+    let fov = graphics.fov.clamp(FOV.0, FOV.1).to_radians();
+    for mut projection in &mut projections {
+        if let bevy::camera::Projection::Perspective(perspective) = &mut *projection {
+            perspective.fov = fov;
+        }
     }
     for (camera, has_bloom) in &cameras {
         match (graphics.bloom, has_bloom) {
@@ -936,6 +950,7 @@ mod tests {
     fn defaults_lie_inside_the_ranges() {
         let graphics = Graphics::default();
         assert!((VIEW_DISTANCE.0..=VIEW_DISTANCE.1).contains(&graphics.view_distance));
+        assert!((FOV.0..=FOV.1).contains(&graphics.fov));
         assert!((VOLUME.0..=VOLUME.1).contains(&Audio::default().master));
         assert!((LOOK_SPEED.0..=LOOK_SPEED.1).contains(&Gameplay::default().look_speed));
     }

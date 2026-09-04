@@ -821,6 +821,11 @@ pub(crate) fn load_sky(
             },
             Projection::Perspective(PerspectiveProjection {
                 far: 20_000.0,
+                fov: settings
+                    .graphics
+                    .fov
+                    .clamp(crate::settings::FOV.0, crate::settings::FOV.1)
+                    .to_radians(),
                 ..default()
             }),
             Transform::default(),

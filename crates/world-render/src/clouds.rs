@@ -152,12 +152,13 @@ const WIND_ALOFT: f32 = 2.5;
 /// for two frames.
 const SKY_TINT: Vec3 = Vec3::new(0.50, 0.62, 0.85);
 
-/// What the sky's own light on the ground is against the sun's illuminance, and
-/// the least a cloud is ever lit to against the same, as fractions of
-/// [`SUN_ILLUMINANCE`](crate::sky::SUN_ILLUMINANCE). The floor is what keeps a
-/// night cloud a shape against the stars instead of a hole in them.
-const SKY_SHARE: f32 = 0.10;
-const NIGHT_FLOOR: f32 = 0.005;
+/// What the sky's own light on the ground is against the sun's illuminance, as a
+/// fraction of [`SUN_ILLUMINANCE`](crate::sky::SUN_ILLUMINANCE).
+pub(crate) const SKY_SHARE: f32 = 0.10;
+/// The least a cloud is ever lit to \[cd/m²\]: an overcast night sky over open
+/// country, a hundredth of a candela — what keeps a night cloud a shape against
+/// the stars instead of a hole in them once the exposure has opened for the dark.
+const NIGHT_FLOOR: f32 = 0.01;
 
 /// Albedo of what lies under the deck: fields and woods, the same when wet but
 /// darker, and snow. A cloud base over a snowfield is lit nearly as brightly
@@ -738,7 +739,7 @@ fn update(
             .extend(weather.cover),
         // Never quite black, or a night cloud would be a hole in the stars. The
         // lightning is *not* in here — it is on the dome, where every frame runs.
-        floor: (SKY_TINT * crate::sky::SUN_ILLUMINANCE * NIGHT_FLOOR).extend(0.0),
+        floor: (SKY_TINT * NIGHT_FLOOR).extend(0.0),
         layer: Vec4::new(
             weather.base,
             // A closed deck is a thick one; a fair-weather cumulus is not.
@@ -848,7 +849,7 @@ fn sequence(turn: u32) -> Vec3 {
 /// The colour of the sunlight that reaches the cloud layer, from the sun's
 /// elevation alone — Kasten & Young's air mass through the same zenith optical
 /// depth the star shader uses, so the two agree on what a low sun looks like.
-fn sunlight(sin_elevation: f32) -> Vec3 {
+pub(crate) fn sunlight(sin_elevation: f32) -> Vec3 {
     const ZENITH_OPTICAL_DEPTH: Vec3 = Vec3::new(0.081, 0.150, 0.315);
     let degrees = sin_elevation.clamp(-1.0, 1.0).asin().to_degrees();
     let air_mass =
@@ -877,7 +878,7 @@ fn ground_light(sin_elevation: f32, daylight: f32, cover: f32, wetness: f32, sno
     albedo * (sun + sky) * under_deck
 }
 
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+pub(crate) fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }

@@ -39,7 +39,7 @@
 
 use crate::Daylight;
 use bevy::asset::{RenderAssetUsages, embedded_asset};
-use bevy::camera::Camera3d;
+use bevy::camera::{Camera3d, Exposure};
 use bevy::light::atmosphere::{Falloff, PhaseFunction, ScatteringMedium, ScatteringTerm};
 use bevy::light::{Atmosphere, AtmosphereEnvironmentMapLight, SunDisk, light_consts::lux};
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -48,7 +48,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use sim_core::weather::Weather;
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 use world_coords::sun;
 
 /// Registers the sky's materials and its update. Part of
@@ -97,6 +97,12 @@ pub struct Sky {
     /// A lightning channel lighting the sky, 1 … 0
     /// (`sim_core::weather::Strike::brightness`).
     pub flash: f32,
+    /// Illuminance of the vehicle's own lights on what the view rests on \[lx\]:
+    /// the headlights on the track ahead, the cab lamp on the desk. The camera's
+    /// exposure follows it the way an eye follows a lit road, so the beam is
+    /// neither a white wall on a moonless night nor a candle under a full moon.
+    /// The simulator writes it; the editor has no lamps.
+    pub artificial: f32,
     /// The weather (plan 14.1). The sky reads three things out of it: the cover,
     /// which dims the sun and puts out the stars; the visibility, which becomes a
     /// scattering term of the atmosphere itself; and the depth of a ground fog
@@ -121,6 +127,7 @@ impl Default for Sky {
             snow: 0.0,
             cloud_shadow: 0.0,
             flash: 0.0,
+            artificial: 0.0,
             weather: Weather::default(),
         }
     }
@@ -182,41 +189,143 @@ struct MoonDisk;
 /// does not depend on it.
 pub(crate) const SKY_RADIUS: f32 = 9_000.0;
 
-/// Illuminance the sun is given \[lx\].
+/// Illuminance the sun is given \[lx\]: the real figure, 130 klx above the
+/// atmosphere.
 ///
-/// Physically this is [`lux::RAW_SUNLIGHT`] (130 klx above the atmosphere), and
-/// that is what the scattering model wants: Bevy hands the atmosphere the light's
+/// That is what the scattering model wants: Bevy hands the atmosphere the light's
 /// own colour and applies the transmittance itself, so anything taken off the light
-/// is taken off the sky with it. The value below is the raw figure scaled by 0.15 —
-/// an exposure choice written into the light, because the camera's exposure is
-/// fixed at Bevy's default and the rest of the night lighting is tuned to it.
-///
-/// ponytail: one constant instead of an EV curve over the whole day. The correct
-/// version is `lux::RAW_SUNLIGHT` here plus an `Exposure` that rides from EV 13 at
-/// noon down to the night — worth doing once the artificial lights (headlights, cab
-/// lamps, the `_NIGHT` emissives in the mods) are in physical units too.
-pub(crate) const SUN_ILLUMINANCE: f32 = lux::RAW_SUNLIGHT * 0.15;
+/// is taken off the sky with it. What makes the picture the right brightness is
+/// not this number but the camera's [`Exposure`], which [`exposure`] rides from
+/// about EV 14 under a high sun to EV −3 under the moon. Every light in the world
+/// carries its real figure and the exposure does the rest — the one place a
+/// number is chosen for the look is the exposure itself.
+pub(crate) const SUN_ILLUMINANCE: f32 = lux::RAW_SUNLIGHT;
 
-/// Illuminance of a full moon at the zenith \[lx\].
-///
-/// ponytail: a real full moon is 0.25 lx and would be pure black without eye
-/// adaptation — the night is lit artistically bright instead, as it already was.
-const MOON_ILLUMINANCE: f32 = 40.0;
+/// Exposure the view is never opened past \[EV100\]. A meter keeps opening as
+/// long as there is something to measure, and would lift a moonless night to
+/// daylight; an eye does not, and a night has to be dark.
+pub(crate) const MIN_EV100: f32 = -3.5;
 
-/// Luminance of the fully lit moon's disk \[cd/m²\] — the real figure, which at
-/// the camera's fixed exposure lands almost exactly where it should: a disk that
-/// clips to white where the sun is on it, an earthshine grey where it is not.
+/// Where the eye stops keeping up \[EV100 of the metered scene\] — about 4 cd/m²,
+/// the mesopic knee. Above it the exposure follows the light one for one; below
+/// it only by [`ADAPTATION`], so a moonlit field is dim and a headlit track
+/// bright rather than both being middle grey.
+const KNEE_EV100: f32 = 5.0;
+const ADAPTATION: f32 = 0.7;
+
+/// How far the picture is exposed off the meter's reading \[EV\]. The meter puts
+/// the metered scene at middle grey, which is a photograph; a picture looked at
+/// in a room rather than held up to the sun wants nearly two stops more, or a
+/// June meadow reads as late afternoon.
+const EXPOSURE_BIAS: f32 = -1.8;
+
+/// Albedo the meter assumes for the ground in view: fields and woods.
+const METER_ALBEDO: f32 = 0.15;
+
+/// How much brighter the band of sky in a level view is than the hemisphere's
+/// mean — the horizon against the zenith.
+const SKY_VIEW: f32 = 2.0;
+
+/// Luminance of the sky at sunset \[cd/m²\] — the exposure tables' EV 12 — and
+/// how fast it goes out once the sun is under \[decades per degree\]: 0.38 takes
+/// it through civil twilight to the hundredth of a lux the nautical end has.
+const TWILIGHT_SKY: f32 = 1_000.0;
+const TWILIGHT_SLOPE: f32 = 0.38;
+
+/// Starlight and airglow on the ground \[lx\], so a moonless night meters as
+/// something rather than as the logarithm of nothing.
+const STARLIGHT: f32 = 0.002;
+
+/// How fast the exposure closes when light comes \[EV/s\], and opens when it goes.
+/// An eye is quick to protect itself and slow to dark-adapt — though the minutes
+/// real dark adaptation takes would leave the player blind for a whole tunnel,
+/// so the slow side is seconds too.
+const DARKEN_RATE: f32 = 4.0;
+const BRIGHTEN_RATE: f32 = 1.5;
+
+/// How fast the sun is taken down once it is under the horizon \[decades per
+/// degree\]. Bevy's atmosphere has no earth shadow: a sun that geometrically
+/// cannot reach the air it is scattering in still lights it, and through the sky
+/// the ground, so its twilight fades at a fifth of a decade per degree where the
+/// real one fades at two fifths. This makes up the difference — the end of civil
+/// twilight is a decade under sunset, the nautical end three — and it takes the
+/// light off the faces a set sun was still lighting from underneath.
+const EARTH_SHADOW_SLOPE: f32 = 0.15;
+
+/// A clock that moves by more than this between two frames has jumped \[s\] —
+/// the console's `time`, a new run — and the exposure snaps rather than adapts,
+/// or a run started at night would open up over its first seconds like a camera
+/// switched on.
+const TIME_JUMP: f64 = 10.0;
+
+/// What is left of the sun's light once it is this far under the horizon \[°\],
+/// 1 while it is up ([`EARTH_SHADOW_SLOPE`]).
+fn earth_shadow(elevation: f32) -> f32 {
+    10f32.powf(EARTH_SHADOW_SLOPE * elevation.min(0.0))
+}
+
+/// Exposure of the view \[EV100\] for a sun at this elevation, this much moonlight
+/// and artificial light on the ground \[lx\], under this much cloud.
+///
+/// A reflected-light meter over a level view — half ground, half sky — with the
+/// eye's limits put on top:
+///
+/// * The ground is lit by the sun through the air mass of its elevation, averaged
+///   between a level meadow and a face turned to the sun (a meter on the meadow
+///   alone would open three stops for a sun at 12° and burn every sunlit face and
+///   the whole sky with it — the world in view is not flat), by the sky's tenth
+///   of it, by the twilight glow, the moon, the lamps and starlight. The deck
+///   takes its share off the sun, and the meter opens up for part of that the
+///   way a camera does: an overcast day still looks darker than a clear one.
+/// * The sky is the clear sky's share plus the twilight glow, going out at a
+///   third of a decade per degree once the sun is under — so a sunset meters at
+///   the tables' EV 12, the end of civil twilight near 6 and a moonlit landscape
+///   at −3, where the tables put them.
+/// * Below the mesopic knee the exposure follows only in part, and never past
+///   [`MIN_EV100`]: the night stays dark, and the headlights light the track
+///   rather than the exposure lighting it.
+///
+/// Continuous everywhere, so a day run through at speed shows no step.
+pub(crate) fn exposure(sin_elevation: f32, moon: f32, artificial: f32, cover: f32) -> f32 {
+    let up = sin_elevation.max(0.0);
+    let elevation = sin_elevation.clamp(-1.0, 1.0).asin().to_degrees();
+    // Kasten & Young's air mass is for a sun above the horizon; below it the disk
+    // is behind the earth, and the fade is the last light on a face after sunset.
+    let sun = crate::clouds::sunlight(up) * crate::clouds::smoothstep(-0.035, 0.0, sin_elevation);
+    let transmittance = 0.2126 * sun.x + 0.7152 * sun.y + 0.0722 * sun.z;
+    let direct = SUN_ILLUMINANCE * transmittance * 0.5 * (1.0 + up) * (1.0 - 0.85 * cover);
+    let twilight = TWILIGHT_SKY * 10f32.powf(TWILIGHT_SLOPE * elevation.min(0.0));
+    let sky_illuminance =
+        SUN_ILLUMINANCE * crate::clouds::SKY_SHARE * up + PI * twilight / SKY_VIEW;
+    let ground = METER_ALBEDO * (direct + sky_illuminance + moon + artificial + STARLIGHT) / PI;
+    let sky = SKY_VIEW * sky_illuminance / PI;
+    // ISO 2720's reflected-light constant K = 12.5: EV = log₂(L · 100 / K).
+    let meter = (0.5 * (ground + sky) * 8.0).log2();
+    let adapted = if meter > KNEE_EV100 {
+        meter
+    } else {
+        KNEE_EV100 + ADAPTATION * (meter - KNEE_EV100)
+    };
+    (adapted + EXPOSURE_BIAS).max(MIN_EV100)
+}
+
+/// Illuminance of a full moon at the zenith \[lx\] — the real quarter of a lux.
+/// What makes it a lit field rather than black is the exposure, which opens to
+/// [`MIN_EV100`] for it.
+const MOON_ILLUMINANCE: f32 = 0.25;
+
+/// Luminance of the fully lit moon's disk \[cd/m²\] — the real figure: a disk
+/// that clips to white where the sun is on it, an earthshine grey where it is
+/// not, and by day a pale coin that is dimmer than the sky around it.
 const MOON_LUMINANCE: f32 = 2_500.0;
 
-/// Rendered peak luminance of a magnitude-0 star's sprite \[cd/m²\]. Every other
-/// star is this times `10^(-0.4 · magnitude)`, so the catalogue's own brightness
-/// ratios survive and a constellation reads by its shape.
-///
-/// ponytail: physically the sprite would be about 1.7 cd/m², and at the camera's
-/// fixed exposure that is black. The stars are the one thing here that has to be
-/// lifted wholesale — the moon's own figure needs no such help — and the lift is
-/// a constant rather than a curve because the exposure never moves either.
-const STAR_LUMINANCE: f32 = 12_000.0;
+/// Peak luminance of a magnitude-0 star's sprite \[cd/m²\]: the star's light
+/// spread over the two pixels of blur a lens gives it. Every other star is this
+/// times `10^(-0.4 · magnitude)`, so the catalogue's own brightness ratios
+/// survive and a constellation reads by its shape — the bright ones under the
+/// headlights, down to the fifth magnitude once the exposure has opened for a
+/// moonlit field.
+const STAR_LUMINANCE: f32 = 1.7;
 
 /// Angular diameter a star's point sprite is drawn at \[rad\]. A star is a point
 /// source; this is the width of the blur a lens gives it, chosen at about two
@@ -283,12 +392,14 @@ pub fn spawn(
     ));
 }
 
-/// What a camera needs to see the sky: the atmosphere for this view, and the
-/// image-based light the sky itself casts back into the scene.
-pub fn camera_settings() -> (AtmosphereSettings, AtmosphereEnvironmentMapLight) {
+/// What a camera needs to see the sky: the atmosphere for this view, the
+/// image-based light the sky itself casts back into the scene, and the exposure
+/// [`update`] rides over the day and the night.
+pub fn camera_settings() -> (AtmosphereSettings, AtmosphereEnvironmentMapLight, Exposure) {
     (
         AtmosphereSettings::default(),
         AtmosphereEnvironmentMapLight::default(),
+        Exposure::default(),
     )
 }
 
@@ -329,6 +440,10 @@ fn update(
     mut star_materials: ResMut<Assets<StarMaterial>>,
     mut moon_materials: ResMut<Assets<MoonMaterial>>,
     camera: Query<&GlobalTransform, (With<Camera3d>, With<AtmosphereSettings>)>,
+    mut exposures: Query<&mut Exposure, With<AtmosphereSettings>>,
+    time: Res<Time>,
+    // The exposure the view has adapted to, and the clock it was last written at.
+    mut adapted: Local<Option<(f64, f32)>>,
     mut sun: BodyLight<Sun, Moon>,
     mut moon: BodyLight<Moon, Sun>,
     mut stars: BodyMesh<Stars, MoonDisk, StarMaterial>,
@@ -381,10 +496,11 @@ fn update(
     let cover = sky.weather.cover;
     if let Ok((marker, mut transform, mut light)) = sun.single_mut() {
         *transform = Transform::default().looking_to(-sun_dir, Vec3::Y);
-        // The light keeps the raw above-atmosphere value whatever the elevation:
-        // the atmosphere reddens and dims it on its own, and a light dimmed here
-        // would take the twilight sky down with it.
-        light.illuminance = SUN_ILLUMINANCE * (1.0 - 0.85 * cover);
+        // The light keeps the raw above-atmosphere value while the sun is up: the
+        // atmosphere reddens and dims it on its own, and a light dimmed here would
+        // take the sky down with it. Under the horizon that is the point — the
+        // atmosphere's twilight is too slow and too bright without an earth shadow.
+        light.illuminance = SUN_ILLUMINANCE * (1.0 - 0.85 * cover) * earth_shadow(elevation);
         // A closed deck casts no shadow of its own. It comes back when it clears,
         // which is why this reads the setting and not the light's own state.
         light.shadow_maps_enabled = marker.shadows && cover < 0.5;
@@ -403,6 +519,33 @@ fn update(
     if let Ok((_, mut transform, mut light)) = moon.single_mut() {
         *transform = Transform::default().looking_to(-moon_dir, Vec3::Y);
         light.illuminance = MOON_ILLUMINANCE * moonlight * (1.0 - cover);
+    }
+
+    // The camera follows the light the way an eye does: whole stops between a
+    // high sun and dusk, part of them below the mesopic knee, and a few seconds
+    // to get there — closing at once when the headlights come on, opening slowly
+    // when they go off. Written only on a change, or every frame would mark the
+    // view dirty.
+    let moon_on_ground =
+        MOON_ILLUMINANCE * moonlight * (1.0 - cover) * moon_el.sin().max(0.0) as f32;
+    let target = exposure(sun_el.sin() as f32, moon_on_ground, sky.artificial, cover);
+    let ev100 = match *adapted {
+        Some((seconds, current)) if (sky.seconds - seconds).abs() < TIME_JUMP => {
+            let rate = if target > current {
+                DARKEN_RATE
+            } else {
+                BRIGHTEN_RATE
+            };
+            let step = rate * time.delta_secs();
+            current + (target - current).clamp(-step, step)
+        }
+        _ => target,
+    };
+    *adapted = Some((sky.seconds, ev100));
+    for mut exposure in &mut exposures {
+        if exposure.ev100 != ev100 {
+            exposure.ev100 = ev100;
+        }
     }
 
     // Stars and moon ride at the camera: they are a background, not scenery, and
@@ -897,6 +1040,64 @@ mod tests {
             direct.distance(rotated) < 0.01,
             "sun at {direct:?}, star sphere puts it at {rotated:?}"
         );
+    }
+
+    /// A high sun exposes at about EV 14, the curve only falls with the sun,
+    /// sunset and twilight land where the exposure tables put them, and the
+    /// night is a moonlit −3 that the lamps close down again.
+    #[test]
+    fn exposure_rides_the_sun_down_into_the_night() {
+        let clear = |sin: f32| exposure(sin, 0.0, 0.0, 0.0);
+        let noon = clear(0.88);
+        assert!((13.5..14.5).contains(&noon), "noon: {noon}");
+        let steps: Vec<f32> = [0.88, 0.5, 0.25, 0.12, 0.06, 0.0, -0.05, -0.1, -0.2, -0.3]
+            .iter()
+            .map(|&s| clear(s))
+            .collect();
+        assert!(
+            steps.windows(2).all(|w| w[0] >= w[1]),
+            "not monotonic: {steps:?}"
+        );
+        // A sun at 12° is a golden hour, not a dusk: a stop and a half under noon.
+        let morning = clear(0.21);
+        assert!((1.0..2.5).contains(&(noon - morning)), "morning: {morning}");
+        // The tables: sunset EV 12, the end of civil twilight about 6 — less the
+        // bias the whole curve carries.
+        let sunset = clear(0.0);
+        assert!((9.5..11.0).contains(&sunset), "sunset: {sunset}");
+        let civil = clear(-0.105);
+        assert!((2.0..5.0).contains(&civil), "civil twilight: {civil}");
+        // A moonless night stops at the floor; a full moon is at it too, and it
+        // is the light that tells them apart, not the exposure.
+        assert_eq!(clear(-0.5), MIN_EV100);
+        let moonlit = exposure(-0.5, MOON_ILLUMINANCE, 0.0, 0.0);
+        assert!(
+            (MIN_EV100..MIN_EV100 + 1.0).contains(&moonlit),
+            "moon: {moonlit}"
+        );
+        // Headlights on the track close the eye by four stops or more.
+        let headlit = exposure(-0.5, MOON_ILLUMINANCE, 30.0, 0.0);
+        assert!((0.5..3.0).contains(&headlit), "headlights: {headlit}");
+        // A closed deck takes 2.7 stops off the light and the camera gives part
+        // of it back: an overcast noon is darker than a clear one, not dusk.
+        let overcast = exposure(0.88, 0.0, 0.0, 1.0);
+        assert!(
+            (0.5..2.0).contains(&(noon - overcast)),
+            "deck: {}",
+            noon - overcast
+        );
+    }
+
+    /// The earth's shadow leaves a risen sun alone and takes a set one down a
+    /// decade every seven degrees — civil twilight ends a decade under sunset.
+    #[test]
+    fn earth_shadow_follows_the_tables() {
+        assert_eq!(earth_shadow(30.0), 1.0);
+        assert_eq!(earth_shadow(0.0), 1.0);
+        let civil = earth_shadow(-6.0);
+        assert!((0.08..0.16).contains(&civil), "civil: {civil}");
+        let nautical = earth_shadow(-12.0);
+        assert!((0.008..0.03).contains(&nautical), "nautical: {nautical}");
     }
 
     /// A midsummer noon is daylight, midnight is not, and the sky knows the date.

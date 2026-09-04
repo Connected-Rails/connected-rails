@@ -110,6 +110,30 @@ const PRECIP_PERIOD: f32 = 24.0;
 /// the haze of a clear day, and a second one on top of it would be a grey veil.
 pub(crate) const CLEAR_VISIBILITY: f32 = 8_000.0;
 
+/// Luminous intensity of a headlight on full beam \[cd\]: a locomotive's
+/// Fernlicht, 200 kcd, which puts 20 lx on the track 100 m out. Bevy takes a
+/// spot light in lumens over the whole sphere, hence the 4π at the light.
+const HEADLIGHT_CANDELA: f32 = 200_000.0;
+
+/// Luminous flux of the cab lamp \[lm\]: one ceiling light over the desk.
+const CAB_LAMP_LUMENS: f32 = 800.0;
+
+/// What the headlights put on the track where the eye rests, about 80 m out
+/// \[lx\], and what the cab lamp puts on the desk \[lx\]: what the camera's
+/// exposure is metered on while they are lit (`sky::Sky::artificial`).
+const HEADLIGHT_METER_LX: f32 = 30.0;
+const CAB_LAMP_METER_LX: f32 = 30.0;
+
+/// What a moonless night sky puts on the ground \[cd/m²\]: airglow, starlight
+/// and the glow of the next town, a few hundredths of a candela — dark, not
+/// blind. By day the sky's own image-based light does this and the floor is
+/// nothing against it.
+const NIGHT_SKY_GLOW: f32 = 0.02;
+
+/// The sky lit by a lightning channel \[cd/m²\], put on the ground as ambient
+/// light for the third of a second the strike lasts.
+const FLASH_SKY: f32 = 4_000.0;
+
 /// Which train is driven by the player.
 #[derive(Resource)]
 pub struct PlayerTrain(pub usize);
@@ -408,7 +432,13 @@ fn main() {
         ))
         .insert_resource(OffscreenSize(size))
         .add_systems(PreStartup, open_offscreen)
-        .add_systems(PreUpdate, retarget_offscreen);
+        // After every spawn of the frame and before Bevy sizes the cameras
+        // against their targets: a camera the loading stages spawn in `Update`
+        // would otherwise reach the renderer still pointing at the window.
+        .add_systems(
+            PostUpdate,
+            retarget_offscreen.before(bevy::camera::CameraUpdateSystems),
+        );
     }
     app.add_plugins(app_icon::plugin)
         // FSR 3 upscaling (`fsr.rs`): its render-side systems and pipelines, next to
@@ -1391,10 +1421,13 @@ fn sync_vehicles(
 ///
 /// What stays here is the two things the sky does not own: the ambient floor a
 /// moonless night needs, and the distance fog the weather pulls in (M6).
+// A Bevy system takes its resources as parameters — the argument count says nothing here.
+#[allow(clippy::too_many_arguments)]
 fn feed_sky(
     sim: Res<SimResource>,
     origin: Res<Origin>,
     daylight: Res<Daylight>,
+    player: Res<PlayerTrain>,
     mut sky: ResMut<sky::Sky>,
     mut ambient: Query<&mut AmbientLight, With<ui::CabCamera>>,
     mut fog: Query<&mut DistanceFog, With<ui::CabCamera>>,
@@ -1403,6 +1436,8 @@ fn feed_sky(
     let _scope = profiler.scope("sky");
     let (latitude, longitude, _) = world_coords::geo::from_ecef(origin.0.position());
     let start = sim.0.start;
+    let night = 1.0 - daylight.0;
+    let cab = &sim.0.controls[player.0];
     *sky = sky::Sky {
         year: start.year,
         month: start.month,
@@ -1422,6 +1457,10 @@ fn feed_sky(
             .weather
             .lightning(sim.0.time)
             .map_or(0.0, |strike| strike.brightness(sim.0.time)),
+        // The lamps the exposure is metered on. The headlights follow the
+        // darkness the way `update_headlights` dims them; the cab lamp is a switch.
+        artificial: f32::from(u8::from(cab.headlights)) * night * HEADLIGHT_METER_LX
+            + f32::from(u8::from(cab.cab_light)) * CAB_LAMP_METER_LX,
     };
 
     // Fog and heavy snow: the scattering medium reddens and brightens them
@@ -1440,13 +1479,12 @@ fn feed_sky(
         fog.color = Color::srgb(0.66 * lit, 0.69 * lit, 0.74 * lit);
     }
 
-    let night = 1.0 - daylight.0;
     for mut ambient in &mut ambient {
         // The sky's own image-based light carries the day; this is the floor
         // underneath it, so a night without a moon is dark and not blind. A
         // lightning flash comes on top of it, and at night it is the only light
         // there is.
-        ambient.brightness = 8.0 + 24.0 * night + 4_000.0 * sky.flash;
+        ambient.brightness = NIGHT_SKY_GLOW * night + FLASH_SKY * sky.flash;
     }
 }
 
@@ -1467,9 +1505,13 @@ fn update_headlights(
         let cab = &sim.0.controls[head.train];
         let backwards = cab.reverser < 0;
         let on = cab.headlights && head.reverse == backwards;
-        // ponytail: like the moon above, lit artistically bright — the night
-        // scene has no auto-exposure to lift a physical beam out of the black.
-        light.intensity = if on { 2_000_000_000.0 * night } else { 0.0 };
+        // The real figure: the exposure (`sky::exposure`) closes for the lit
+        // track, so a real beam lights a real distance.
+        light.intensity = if on {
+            HEADLIGHT_CANDELA * 4.0 * std::f32::consts::PI * night
+        } else {
+            0.0
+        };
     }
     for (tail, mut vis) in &mut tails {
         let cab = &sim.0.controls[tail.train];
@@ -1482,7 +1524,7 @@ fn update_headlights(
     }
     let on = sim.0.controls[player.0].cab_light;
     for mut lamp in &mut cab_lamp {
-        lamp.intensity = if on { 60_000.0 } else { 0.0 };
+        lamp.intensity = if on { CAB_LAMP_LUMENS } else { 0.0 };
     }
 }
 
@@ -1575,6 +1617,7 @@ fn update_precipitation(
     player: Res<PlayerTrain>,
     origin: Res<Origin>,
     daylight: Res<Daylight>,
+    sky: Res<sky::Sky>,
     view: Res<ui::CameraState>,
     camera: Query<&Transform, With<ui::CabCamera>>,
     sun: Query<&Transform, (With<sky::Sun>, Without<Precipitation>)>,
@@ -1626,8 +1669,13 @@ fn update_precipitation(
     // around the camera and stays where it belongs, outside the glass.
     let inside = view.mode.inside();
     for (field, material, mut tf, mut visibility) in &mut fields {
-        let mut params =
-            world_render::precipitation::params(weather, daylight.0, field.snow, field.near);
+        let mut params = world_render::precipitation::params(
+            weather,
+            daylight.0,
+            sky.artificial,
+            field.snow,
+            field.near,
+        );
         params.state.x *= 1.0 - sheltered;
         if inside && field.near {
             params.state.x = 0.0;

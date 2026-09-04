@@ -2314,13 +2314,19 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   draws the same sky over the same module** — its Time-of-day panel sets date,
   clock, time zone and cloud cover, and a slider runs a whole day past; latitude
   and longitude are the module's anchor, exactly as in a run, so the sun comes over
-  the same hillside in both programs. Two ceilings the sky carries: the camera's
-  exposure is fixed at Bevy's default, so the sun's illuminance and the stars'
-  luminance are lifted or lowered into it by constants rather than by an EV curve
-  (`world_render::sky` names them and says what the correct version is), and a sun
-  below the horizon still lights vertical faces from underneath, because Bevy hands
-  the atmosphere the directional light's own colour and anything taken off the
-  light would take the twilight sky with it. **The seasonal appearance hangs off
+  the same hillside in both programs. **Every light carries its real figure** — the
+  sun its 130 klx, the moon its quarter lux, the headlights 200 kcd, the cab lamp
+  800 lm, the stars and the moon's disk their luminance — and the camera's exposure
+  does the rest: `world_render::sky::exposure` is a reflected-light meter over a
+  level view with the eye's limits on top, about EV 14 under a high sun, the tables'
+  sunset and twilight, a floor of −3 under the moon, and it closes again by four
+  stops when the headlights or the cab lamp are lit (`Sky::artificial`), adapting
+  over seconds. Emissive surfaces stay display-referred on purpose — a driver has
+  to read a screen and a signal at any exposure. One ceiling the sky still carries:
+  Bevy's atmosphere has no earth shadow, so a set sun still lights the air and the
+  faces under it; the light is dimmed a decade every seven degrees below the
+  horizon (`EARTH_SHADOW_SLOPE`), which brings the twilight down to the tables' but
+  is a factor on the light where the real thing is a shadow on the air. **The seasonal appearance hangs off
   the same date** (`world_render::Season`, ch. 14 "seasons v2"): the generated ground
   textures and the placeholder trees are built in the colours of the start day — meadows
   turn through October, ground, gravel and foliage go under snow from November to March,

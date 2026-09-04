@@ -713,11 +713,13 @@ fn setup(
             ..default()
         }),
         Transform::default(),
-        // The sky lights the module itself; this is the floor that keeps the
-        // relief readable when the time panel is set to the middle of the night.
+        // The sky lights the module itself; this is a moonless night sky's glow
+        // on the ground, the floor that keeps the relief readable when the time
+        // panel is set to the middle of the night and the exposure has opened
+        // for it (`world_render::sky::exposure`).
         AmbientLight {
             color: Color::srgb(0.75, 0.82, 1.0),
-            brightness: 60.0,
+            brightness: 0.05,
             ..default()
         },
         sky::camera_settings(),

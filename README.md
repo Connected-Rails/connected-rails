@@ -767,9 +767,10 @@ button to look and fly with `WASD` (`Q`/`E` down and up, `Shift` slower, the whe
 camera speed dial), `Alt`+left orbits the view point, the middle button pans, `F` frames the
 selection. Selecting is a question about pixels: whatever is under the cursor, near or far.
 
-The **camera speed dial** is Unreal's, down to the numbers: eight steps, each one doubling the
-flight speed, and a free multiplier of 1 to 128 on top of them for the distances eight steps do
-not cover. It sits on the viewport bar as the step with a caret, and the same value is under the
+The **camera speed dial** is Unreal's in shape: steps that each double the flight speed —
+twelve of them rather than Unreal's eight, from 2.5 m/s up to 5 km/s, because a module is
+tens of kilometres long and the wheel is the one control a flying hand can reach — and a free
+multiplier of 1 to 128 on top of them. It sits on the viewport bar as the step with a caret, and the same value is under the
 wheel while the right mouse button is held — one notch, one step, so the speed is set with the
 hand that is already flying. `Shift` is the precision modifier and *halves* the speed, as it does
 in Unreal: the dial is what makes the camera fast, Shift is for the last metres up to a signal. The speed is metres per second and nothing else: it is deliberately
@@ -781,7 +782,15 @@ The selection carries a **transform gizmo**, `W` for the arrows and `E` for the 
 not world X/Y/Z: dragging the red arrow slides a signal *along* the track (`s`), the green one
 across it (`lateral_offset`) and the blue one up (`height`) — so the saved file still reads
 like a placement. Trees, markers and terrain strokes are free of the track and get east/north
-instead. There is no scale handle, because nothing in the file format has a scale.
+instead. There is no scale handle, because nothing in the file format has a scale. A selected
+**track with a free start** — a geo-anchored start nothing else is welded to — carries the
+gizmo too, at that start: the arrows move the whole piece, the ring turns it about its
+anchor, the way the World Editor's gizmo moves a selected track piece; a track welded at its
+start is bent by its support points alone. Every handle answers before it is taken: a
+support point, a gradient break point or a gizmo arrow under the cursor turns the grab
+yellow, the pointer becomes a hand, and a label beside the cursor reads out what the handle
+stands for — the length and radius of the segment a support point ends, the height and the
+two per mille at a break point.
 
 **A module starts as a place, not as a blank sheet.** *File → New module* (`Ctrl+N`) asks for
 a name and the module's anchor — latitude and longitude as fields, and beneath them a small
@@ -812,12 +821,12 @@ be laid, which never touches one already lying there.
 | **Every category** | |
 | `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it. `Ctrl`+click gathers devices, objects, parametric buildings, trees and markers into a multi-selection (a second `Ctrl`+click takes one out again); a press on empty ground dragged open selects everything inside the circle — `Ctrl` adds it to what is gathered, `Delete` removes the lot in one step |
 | **Track** | |
-| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series, lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions — and snaps the piece to the terrain: sampled ground heights become its gradient profile, a free start drops onto the surface, an end joined onto other track keeps that track's height |
+| `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. Length and radius read out beside the cursor, as the World Editor writes them at the running end, and in the status bar; an arrowhead on the running end shows which way the next piece would leave. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series, lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions — and snaps the piece to the terrain: sampled ground heights become its gradient profile, a free start drops onto the surface, an end joined onto other track keeps that track's height |
 | `3` Split track | Cuts the track at the click — two tracks on one joint |
 | `4` Join ends | First click one open end, then another: ends on the same spot are welded into one node, ends apart are **staked out like Zusi's Absteckrechner** — transitions, arc and one compensating straight (the radius on automatic grows until exactly one remains), or a double arc with an intermediate straight where no single arc reaches. The *Tool* section carries the staking parameters: design speed, radius (0 = automatic), transition length, cant, and the least intermediate straight; the transitions themselves are the toolbox's easement toggle |
 | `5` Parallel track | Lays the clicked track's parallel at the set spacing, on the side of the click — exact offsets for straights and arcs |
 | `6` Crossover | First click cuts the track it leaves, the second names the parallel track it reaches: both are cut and wired into the two turnouts of a crossover, built from arcs of the set turnout radius |
-| `7` Gradient | Puts a gradient break point on the track; the selection panel edits the per mille between the points and reads out the climb |
+| `7` Gradient | Puts a gradient break point on the track; the break points of every track are shown, and one taken hold of is pulled up or down by moving the mouse up or down the screen — the stretches either side change their per mille, every other point keeps its height (the World Editor's elevation gesture). The selection panel edits the figures and reads out the climb |
 | `8` Mark area | Press on a track and drag along it: the tool paints a wide coloured stroke over the rails, and that stretch is the area. With an area selected the next stroke joins it. A marked area carries speed, cant, gradient, track type and electrification — set the stretch once instead of editing a step profile per property per track |
 | **Lineside equipment** | |
 | `2` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
@@ -857,8 +866,12 @@ accent and the join tool's first pick is filled.
 
 Placement is previewed before it happens: the object and tree tools carry a **ghost of
 the model at the cursor**, standing on its track snap with the spec's own offset and
-rotation — the World Editor's loose preview — and the device tool marks the snap point
-and track direction the stamp would take. A **double click** on anything selectable
+rotation — the World Editor's loose preview — and every tool that lands on a track (split,
+parallel, crossover, gradient, area, device, object, and the lay tool before its first press)
+marks the point on the rail the click would take with the World Editor's **yellow arrow**,
+pointing the running direction; the parallel tool adds a ring where the new track's centre
+will lie, on the side of the cursor. The select tool lights the track a click would pick
+before the click. A **double click** on anything selectable
 sends the properties panel to its selection section, and with the gradient tool the map
 wears **slope chevrons**: a V every 60 m pointing uphill on every graded stretch. The
 editor also **remembers** language, window size and panel width between runs

@@ -14,6 +14,7 @@
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use content::route::EdgeStart;
 use glam::DVec3;
 use world_coords::{EcefPos, EnuFrame, RenderOrigin, geo};
 
@@ -79,6 +80,12 @@ impl GizmoState {
     pub fn is_dragging(&self) -> bool {
         self.drag.is_some()
     }
+
+    /// Whether a handle is under the cursor — the next press takes it, so
+    /// nothing else may light up as grabbable at the same time.
+    pub fn is_hovering(&self) -> bool {
+        self.hovered.is_some()
+    }
 }
 
 /// Origin and handles of the current selection, in world coordinates.
@@ -88,6 +95,26 @@ fn handles(
     focus: &Focus,
     marks: &crate::terrain::Marks,
 ) -> Option<(EcefPos, Vec<(Axis, DVec3)>)> {
+    // A track with a free start is moved and turned as one piece, about the
+    // point the file anchors it at — the World Editor's gizmo on a selected
+    // track, minus its tilt ball. One welded to other track at its start has
+    // no such freedom: its support points bend it, and that is all.
+    if let Selection::Edge(i) = selection {
+        if !tools::free_start(&line.source, i) {
+            return None;
+        }
+        let edge = line.net.edges().get(i)?;
+        let at = edge.eval(0.0).pos;
+        let frame = EnuFrame::at(at);
+        return Some((
+            at,
+            vec![
+                (Axis::East, frame.east),
+                (Axis::North, frame.north),
+                (Axis::Yaw, frame.up),
+            ],
+        ));
+    }
     let at = tools::selection_pos(line, selection, focus, marks)?;
     // On the track: the pose at the item's arc length gives the three axes.
     let on_track = |edge: u32, s: f64| {
@@ -137,9 +164,10 @@ fn handles(
                 vec![(Axis::East, frame.east), (Axis::North, frame.north)],
             ))
         }
-        // An edge is dragged by its support points, which it already has; a
-        // walkway is reshaped vertex by vertex with its own tool; a water
-        // body has no handles — it is picked whole, and reshaped in the file.
+        // A welded edge is bent by its support points, which it already has
+        // (the free one was answered above); a walkway is reshaped vertex by
+        // vertex with its own tool; a water body has no handles — it is
+        // picked whole, and reshaped in the file.
         Selection::Edge(_)
         | Selection::TrackArea(_)
         | Selection::EnvelopePoint(_)
@@ -367,8 +395,30 @@ fn apply(line: &mut Line, selection: Selection, axis: Axis, dir: DVec3, delta: f
                 move_geo(&mut edit.lat, &mut edit.lon, focus, dir, delta);
             }
         }
-        Selection::Edge(_)
-        | Selection::TrackArea(_)
+        // The whole piece moves with its anchor and turns about it — the
+        // geometry after the start is arc lengths and curvatures, which
+        // know nothing of where they stand. The height stays: the map plane
+        // has no say over the railhead.
+        Selection::Edge(i) => {
+            if !tools::free_start(&line.source, i) {
+                return;
+            }
+            let Some(EdgeStart::Geo { point, heading_deg }) =
+                line.source.edges.get_mut(i).map(|e| &mut e.start)
+            else {
+                return;
+            };
+            match axis {
+                Axis::East | Axis::North => {
+                    move_geo(&mut point.lat, &mut point.lon, focus, dir, delta);
+                }
+                // `heading_deg` runs clockwise from north, the ring angle
+                // counter-clockwise — the same sign flip as an object's yaw.
+                Axis::Yaw => *heading_deg = (*heading_deg - delta.to_degrees()).rem_euclid(360.0),
+                _ => {}
+            }
+        }
+        Selection::TrackArea(_)
         | Selection::EnvelopePoint(_)
         | Selection::WalkPath(_)
         | Selection::WalkArea(_)
@@ -446,7 +496,14 @@ fn ring_angle(
     Some(local.y.atan2(local.x))
 }
 
-/// Pixels from the cursor to the drawn arrow.
+/// Share of an arrow, from its root, that does not grab. The root of the
+/// gizmo is where the item itself sits — a track's first support point, a
+/// loose end's square — and those want to be picked by their own tools; an
+/// arrow that grabbed from its very root would sit on top of them.
+const HANDLE_ROOT: f64 = 0.3;
+
+/// Pixels from the cursor to the drawn arrow — its outer part, see
+/// [`HANDLE_ROOT`].
 fn handle_distance(
     camera: &Camera,
     transform: &GlobalTransform,
@@ -456,8 +513,9 @@ fn handle_distance(
     dir: DVec3,
     length: f64,
 ) -> Option<f32> {
+    let root = EcefPos(at.0 + dir * (length * HANDLE_ROOT));
     let a = camera
-        .world_to_viewport(transform, origin.to_render(at))
+        .world_to_viewport(transform, origin.to_render(root))
         .ok()?;
     let tip = EcefPos(at.0 + dir * length);
     let b = camera
@@ -636,6 +694,88 @@ mod tests {
             &focus,
         );
         assert_eq!(line.source.devices[0].s, 0.0);
+    }
+
+    /// A track with a free start moves as one piece and turns about its
+    /// anchor: the start goes where the arrow took it, the heading turns with
+    /// the ring, and the arc lengths behind them are untouched. A track
+    /// welded at its start offers no such handles at all.
+    #[test]
+    fn free_track_moves_and_turns_as_one() {
+        let source = content::musterbahn();
+        let mut line = Line {
+            net: source.compile().expect("compiles").net,
+            source,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        };
+        let focus = Focus {
+            position: geo::to_ecef_deg(52.0, 10.0, 146.0),
+            height: 500.0,
+            yaw: 0.0,
+            pitch: 0.9,
+            speed_step: crate::view::DEFAULT_SPEED_STEP,
+            speed_scalar: 1.0,
+        };
+        let marks = crate::terrain::Marks::default();
+        let free = (0..line.source.edges.len())
+            .find(|i| tools::free_start(&line.source, *i))
+            .expect("the example has a track with a free start");
+        let segments = line.source.edges[free].segments.clone();
+        let (before, heading_before) = match line.source.edges[free].start {
+            EdgeStart::Geo { point, heading_deg } => (point, heading_deg),
+            _ => unreachable!("free_start says Geo"),
+        };
+        let at = geo::to_ecef_deg(before.lat, before.lon, 146.0);
+        let east = EnuFrame::at(at).east;
+
+        let (_, offered) =
+            handles(&line, Selection::Edge(free), &focus, &marks).expect("handles offered");
+        assert_eq!(offered.len(), 3, "east, north and the ring");
+
+        apply(
+            &mut line,
+            Selection::Edge(free),
+            Axis::East,
+            east,
+            50.0,
+            &focus,
+        );
+        apply(
+            &mut line,
+            Selection::Edge(free),
+            Axis::Yaw,
+            DVec3::Z,
+            0.1,
+            &focus,
+        );
+        let EdgeStart::Geo { point, heading_deg } = line.source.edges[free].start else {
+            panic!("still Geo");
+        };
+        let after = geo::to_ecef_deg(point.lat, point.lon, 146.0);
+        assert!((after.0.distance(at.0) - 50.0).abs() < 0.01);
+        assert!(
+            (point.height - before.height).abs() < 1e-9,
+            "height untouched"
+        );
+        // Ring counter-clockwise, heading clockwise: 0.1 rad off the heading.
+        let turned = (heading_before - 0.1f64.to_degrees()).rem_euclid(360.0);
+        assert!(
+            (heading_deg - turned).abs() < 1e-9,
+            "{heading_deg} vs {turned}"
+        );
+        assert_eq!(line.source.edges[free].segments, segments);
+
+        // A track continuing from another has no gizmo.
+        if let Some(welded) = (0..line.source.edges.len())
+            .find(|i| matches!(line.source.edges[*i].start, EdgeStart::Continue { .. }))
+        {
+            assert!(handles(&line, Selection::Edge(welded), &focus, &marks).is_none());
+        }
     }
 
     /// A tree dragged east lands east of where it stood, by the metres asked

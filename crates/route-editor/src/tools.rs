@@ -529,6 +529,46 @@ pub struct Readout {
     pub straight: bool,
 }
 
+impl Readout {
+    /// The readout as one line — the status bar and the label at the cursor
+    /// say the same thing.
+    pub fn text(&self) -> String {
+        match (self.straight, self.radius, self.cant) {
+            (true, _, _) | (_, None, _) => t!(
+                "draw-readout-straight",
+                length = format!("{:.0}", self.length)
+            ),
+            (false, Some(radius), Some(cant)) => t!(
+                "draw-readout-arc-canted",
+                length = format!("{:.0}", self.length),
+                radius = editor_ui::group_digits(radius.round()),
+                cant = format!("{cant:.0}")
+            ),
+            (false, Some(radius), None) => t!(
+                "draw-readout-arc",
+                length = format!("{:.0}", self.length),
+                radius = editor_ui::group_digits(radius.round())
+            ),
+        }
+    }
+}
+
+/// A gradient break point being pulled up or down — the World Editor's
+/// elevation gesture: the mouse moves forward or back, the point rises or
+/// falls, and the two stretches meeting there change their per mille.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradeDrag {
+    pub edge: usize,
+    /// Index into the edge's grade steps.
+    pub point: usize,
+    /// Cursor height last frame [logical pixels].
+    last_y: f32,
+    /// How much one pixel of mouse travel lifts the point [m] — measured at
+    /// the press from the point's own distance, so the drag feels the same
+    /// close up and from afar.
+    metres_per_pixel: f64,
+}
+
 /// An open end of the track — a buffer node, seen from the edge that ends
 /// there. What the lay tool continues from and snaps onto, and what the join
 /// tool welds.
@@ -559,6 +599,24 @@ pub struct EditorState {
     pub drawing: Option<Drawing>,
     /// Active support-point drag of the Select tool: `(edge, point index)`.
     pub drag: Option<(usize, usize)>,
+    /// Support point of the selected edge under the cursor — drawn as
+    /// grabbable before it is grabbed.
+    pub hover_support: Option<usize>,
+    /// The track the select tool would pick with a click, while nothing is
+    /// being dragged — lit up so a click never picks a surprise.
+    pub hover_edge: Option<usize>,
+    /// Where a track tool would land on the rail: `(edge, s)` — the World
+    /// Editor's yellow arrow on the track, pointing the running direction.
+    pub hover_track: Option<(usize, f64)>,
+    /// Gradient break point under the cursor: `(edge, step index)`.
+    pub hover_grade: Option<(usize, usize)>,
+    /// A gradient break point being pulled up or down.
+    pub grade_drag: Option<GradeDrag>,
+    /// What the label beside the cursor reads: the piece being laid, the
+    /// segment a handle ends, the height a break point is pulled to. The
+    /// World Editor puts its radius next to the running end, not in a bar at
+    /// the far edge of the screen.
+    pub cursor_label: Option<String>,
     /// Corner of the module envelope being dragged.
     pub envelope_drag: Option<usize>,
     /// Edge length the envelope is reset to [km]; `None` = the default a new
@@ -1188,6 +1246,17 @@ impl Drawing {
         ])
     }
 
+    /// Where the running end points after the piece the next click would
+    /// append: the direction, in world coordinates, the piece after that one
+    /// would leave in. `None` where no piece fits the cursor.
+    pub fn running_end_dir(&self, cursor: Target) -> Option<DVec3> {
+        let (_, heading) = self.preview(cursor)?;
+        Some(
+            self.frame
+                .dir_to_ecef(DVec3::new(heading.cos(), heading.sin(), 0.0)),
+        )
+    }
+
     fn to_render(&self, p: DVec2, origin: &RenderOrigin) -> Vec3 {
         origin.to_render(self.frame.to_ecef(DVec3::new(p.x, p.y, 0.5)))
     }
@@ -1612,6 +1681,29 @@ pub fn select_tool(state: &mut EditorState, tool: Tool) {
     state.join_from = None;
     state.crossover_from = None;
     state.select_circle = None;
+    state.grade_drag = None;
+    state.hover_support = None;
+    state.hover_edge = None;
+    state.hover_track = None;
+    state.hover_grade = None;
+    state.cursor_label = None;
+}
+
+/// The tools that land on a track: what a click of theirs does happens at
+/// the nearest point of the nearest rail, and the map shows that point
+/// before the click (see [`EditorState::hover_track`]).
+fn lands_on_track(tool: Tool) -> bool {
+    matches!(
+        tool,
+        Tool::DrawTrack
+            | Tool::Split
+            | Tool::Offset
+            | Tool::Crossover
+            | Tool::Gradient
+            | Tool::MarkArea
+            | Tool::PlaceDevice
+            | Tool::PlaceObject
+    )
 }
 
 /// Where the running end points: snapped onto an open end within reach —
@@ -1897,13 +1989,40 @@ pub fn support_points(line: &Line, i: usize) -> Vec<EcefPos> {
     points
 }
 
-/// Index of the first draggable support point: the start is only free on a
-/// geo-anchored edge — a `Continue` start belongs to the previous edge.
+/// Whether the start of `edge` is free to be moved and turned: it stands on
+/// its own coordinates, and no other track is welded to it there. A
+/// `Continue` start belongs to the previous edge; a geo-anchored start at a
+/// joint or a switch (a trailing branch, a staked-out join) belongs to the
+/// weld — moving it would tear the joint while the file still says joined.
+pub fn free_start(source: &LineSource, edge: usize) -> bool {
+    source.edges.get(edge).is_some_and(|e| {
+        matches!(e.start, EdgeStart::Geo { .. })
+            && matches!(source.nodes.get(e.from as usize), Some(NodeSource::Buffer))
+    })
+}
+
+/// Index of the first draggable support point: the start, where it is free
+/// (see [`free_start`]), else the first joint after it.
 pub fn first_draggable(source: &LineSource, edge: usize) -> usize {
-    match source.edges.get(edge).map(|e| e.start) {
-        Some(EdgeStart::Geo { .. }) => 0,
-        _ => 1,
-    }
+    if free_start(source, edge) { 0 } else { 1 }
+}
+
+/// Length and radius of the segment that ends at support point `point` of
+/// `edge` — what the label at the cursor reads while the handle is hovered.
+pub fn segment_readout(line: &Line, edge: usize, point: usize) -> Option<Readout> {
+    let segment = line
+        .net
+        .edges()
+        .get(edge)?
+        .segments
+        .get(point.checked_sub(1)?)?;
+    let k = segment.k0.abs().max(segment.end_curvature().abs());
+    Some(Readout {
+        length: segment.len,
+        radius: (k > 1e-9).then(|| 1.0 / k),
+        cant: None,
+        straight: k <= 1e-9,
+    })
 }
 
 /// Handle under the cursor: index into the selected edge's support points.
@@ -2831,6 +2950,128 @@ pub fn add_grade_step(line: &mut Line, index: usize, s: f64) -> bool {
     true
 }
 
+/// The gradient break points of edge `index`, as `(step index, s, position
+/// on the rail)` — what the gradient tool draws and grabs.
+pub fn grade_points(line: &Line, index: usize) -> Vec<(usize, f64, EcefPos)> {
+    let (Some(source), Some(edge)) = (line.source.edges.get(index), line.net.edges().get(index))
+    else {
+        return Vec::new();
+    };
+    source
+        .grade
+        .iter()
+        .enumerate()
+        .map(|(k, (s, _))| {
+            let s = s.clamp(0.0, edge.length());
+            (k, s, edge.eval(s).pos)
+        })
+        .collect()
+}
+
+/// Whether break point `point` of `edge` can be pulled up or down. The first
+/// step sets the grade the edge starts with; the height there is the
+/// anchor's, and lifting it would mean moving the anchor — which is the
+/// previous track's business on a `Continue` start.
+pub fn grade_point_movable(line: &Line, edge: usize, point: usize) -> bool {
+    point >= 1
+        && line
+            .source
+            .edges
+            .get(edge)
+            .is_some_and(|e| point < e.grade.len())
+}
+
+/// Gradient break point under the cursor, on any track: `(edge, step)`.
+fn pick_grade_point(line: &Line, pick: &ScreenPick) -> Option<(usize, usize)> {
+    (0..line.source.edges.len())
+        .flat_map(|i| {
+            grade_points(line, i)
+                .into_iter()
+                .map(move |(k, _, p)| (i, k, p))
+        })
+        .filter(|(i, k, _)| grade_point_movable(line, *i, *k))
+        .filter_map(|(i, k, p)| Some(((i, k), pick.hits(p)?)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(hit, _)| hit)
+}
+
+/// The steepest gradient the tools write [‰] — the panel's range.
+const GRADE_LIMIT: f64 = 50.0;
+
+/// Lifts break point `point` of `edge` by `dh` metres. Every other break
+/// point and both ends of the edge keep their height: the stretch before
+/// steepens or eases to reach the new height, the stretch after does the
+/// opposite to land where it landed before — a vertex of the height polyline
+/// moves, nothing else. Refused where a stretch would leave the panel's
+/// range, so the drag stops at the limit instead of overshooting it.
+pub fn drag_grade_point(line: &mut Line, edge: usize, point: usize, dh: f64) -> bool {
+    if !grade_point_movable(line, edge, point) {
+        return false;
+    }
+    let length = line.net.edges().get(edge).map_or(0.0, |e| e.length());
+    let Some(source) = line.source.edges.get_mut(edge) else {
+        return false;
+    };
+    // The first step applies from the very start, whatever its own `s`.
+    let before = if point == 1 {
+        0.0
+    } else {
+        source.grade[point - 1].0
+    };
+    let here = source.grade[point].0.clamp(0.0, length);
+    let after = source
+        .grade
+        .get(point + 1)
+        .map_or(length, |(s, _)| s.clamp(0.0, length));
+    let (run_in, run_out) = (here - before, after - here);
+    if run_in < 1.0 || run_out < 1.0 {
+        return false;
+    }
+    let steeper = source.grade[point - 1].1 + dh * 1000.0 / run_in;
+    let easier = source.grade[point].1 - dh * 1000.0 / run_out;
+    if steeper.abs() > GRADE_LIMIT || easier.abs() > GRADE_LIMIT {
+        return false;
+    }
+    source.grade[point - 1].1 = steeper;
+    source.grade[point].1 = easier;
+    true
+}
+
+/// What the cursor label reads at break point `point`: the rail height
+/// there and the per mille of the two stretches meeting at it.
+pub fn grade_point_readout(line: &Line, edge: usize, point: usize) -> Option<String> {
+    let source = line.source.edges.get(edge)?;
+    let compiled = line.net.edges().get(edge)?;
+    let (s, after) = *source.grade.get(point)?;
+    let before = if point == 0 {
+        after
+    } else {
+        source.grade[point - 1].1
+    };
+    let height = geo::from_ecef(compiled.eval(s.clamp(0.0, compiled.length())).pos).2
+        - line.source.geoid_offset;
+    Some(t!(
+        "grade-point-readout",
+        height = format!("{height:.1}"),
+        before = format!("{before:.1}"),
+        after = format!("{after:.1}")
+    ))
+}
+
+/// What the cursor label reads on the rail at `s`: the per mille in force
+/// there and the rail height.
+pub fn grade_at_readout(line: &Line, edge: usize, s: f64) -> Option<String> {
+    let compiled = line.net.edges().get(edge)?;
+    let s = s.clamp(0.0, compiled.length());
+    let grade = compiled.grade.at(s);
+    let height = geo::from_ecef(compiled.eval(s).pos).2 - line.source.geoid_offset;
+    Some(t!(
+        "grade-at-readout",
+        grade = format!("{grade:.1}"),
+        height = format!("{height:.1}")
+    ))
+}
+
 /// Mouse and keyboard input of the tools.
 #[allow(clippy::too_many_arguments)]
 pub fn tool_input(
@@ -2910,6 +3151,12 @@ pub fn tool_input(
     {
         state.crossover_from = None;
     }
+    // What the cursor stands on is answered afresh every frame.
+    state.cursor_label = None;
+    state.hover_support = None;
+    state.hover_edge = None;
+    state.hover_track = None;
+    state.hover_grade = None;
     // A gizmo handle owns the mouse while it is dragged — a click that is
     // moving a signal must not also reselect what lies under it.
     if state.typing || gizmo.is_dragging() {
@@ -2986,6 +3233,25 @@ pub fn tool_input(
             state.drag = None;
         } else if let Some(p) = picked {
             drag_support_point(&mut line, edge, point, snap_ghost(p, &ghost, &focus));
+            state.cursor_label = segment_readout(&line, edge, point).map(|r| r.text());
+        }
+        return;
+    }
+
+    // And a gradient break point — pulled by the mouse's travel up the
+    // screen, not by where the cursor lands: a height is not a point on the
+    // map plane.
+    if let Some(drag) = &mut state.grade_drag {
+        if !buttons.pressed(MouseButton::Left) {
+            state.grade_drag = None;
+        } else if let Some(c) = cursor {
+            let dh = (drag.last_y - c.y) as f64 * drag.metres_per_pixel;
+            drag.last_y = c.y;
+            let (edge, point) = (drag.edge, drag.point);
+            if dh != 0.0 {
+                drag_grade_point(&mut line, edge, point, dh);
+            }
+            state.cursor_label = grade_point_readout(&line, edge, point);
         }
         return;
     }
@@ -3010,6 +3276,68 @@ pub fn tool_input(
             Vec::new()
         };
         drawing.easements = easements;
+    }
+
+    // What is under the cursor, before any click: the handle it could grab,
+    // the track it would pick, the point on the rail a track tool would land
+    // on. The map draws these, and the press below acts on them — so what is
+    // lit up is exactly what a click does, never something else.
+    // The gizmo's arrow outranks everything under it: nothing else lights
+    // while it is hovered.
+    if !buttons.pressed(MouseButton::Left)
+        && !gizmo.is_hovering()
+        && let Some(pick) = pick.as_ref()
+    {
+        match state.tool {
+            Tool::Select => {
+                if let Selection::Edge(i) = state.selection {
+                    state.hover_support = pick_support_point(&line, i, pick);
+                }
+                if let Some(k) = state.hover_support
+                    && let Selection::Edge(i) = state.selection
+                {
+                    state.cursor_label = if k == 0 {
+                        line.net.edges().get(i).map(|edge| {
+                            let heading = (90.0 - edge.heading0.to_degrees()).rem_euclid(360.0);
+                            t!("hover-edge-start", heading = format!("{heading:.0}"))
+                        })
+                    } else {
+                        segment_readout(&line, i, k).map(|r| r.text())
+                    };
+                } else {
+                    state.hover_edge = nearest_edge(&line, pick)
+                        .filter(|i| state.selection != Selection::Edge(*i));
+                }
+            }
+            Tool::Gradient => {
+                state.hover_grade = pick_grade_point(&line, pick);
+                if let Some((edge, k)) = state.hover_grade {
+                    state.cursor_label = grade_point_readout(&line, edge, k);
+                }
+            }
+            _ => {}
+        }
+        // The point on the rail a track tool lands on — not while a break
+        // point is under the cursor (the point outranks the rail), and not
+        // while the lay tool has an open end in reach (the end square lights
+        // instead) or a drawing in hand (the running end is the preview).
+        let lay_idle = state.tool != Tool::DrawTrack
+            || (state.drawing.is_none()
+                && picked.is_some_and(|p| {
+                    nearest_open_end(&state.open_ends, p, pick_radius(&focus)).is_none()
+                }));
+        if lands_on_track(state.tool)
+            && state.hover_grade.is_none()
+            && lay_idle
+            && let Some(p) = picked
+            && let Some((edge, s, distance)) = nearest_on_network(&line.net, p)
+            && distance <= pick_radius(&focus)
+        {
+            state.hover_track = Some((edge, s));
+            if state.tool == Tool::Gradient {
+                state.cursor_label = grade_at_readout(&line, edge, s);
+            }
+        }
     }
 
     if keys.just_pressed(KeyCode::Escape) {
@@ -3095,7 +3423,8 @@ pub fn tool_input(
                 drawing.aiming = false;
             }
         }
-        // What the piece under the cursor would be — the status bar reads it.
+        // What the piece under the cursor would be — the status bar reads it,
+        // and so does the label beside the running end.
         let readout = match (&state.drawing, snapped) {
             (Some(drawing), Some(p)) if !drawing.aiming => {
                 drawing.readout(lay_target(&state.open_ends, drawing, p, &focus))
@@ -3103,6 +3432,9 @@ pub fn tool_input(
             _ => None,
         };
         state.readout = readout;
+        if let Some(readout) = readout {
+            state.cursor_label = Some(readout.text());
+        }
     } else {
         state.readout = None;
     }
@@ -3315,13 +3647,45 @@ pub fn tool_input(
             }
             _ => overlay.status = t!("status-no-track-hit"),
         },
-        Tool::Gradient => match nearest_on_network(&line.net, p) {
-            Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
-                add_grade_step(&mut line, edge, s);
+        Tool::Gradient => {
+            // A break point under the cursor is taken hold of — the World
+            // Editor's elevation gesture: the mouse's travel up the screen
+            // lifts it. The scale is measured once, at the point's own
+            // distance: one metre of rail height projected to pixels.
+            if let Some((edge, point)) = state.hover_grade
+                && let Some((c, (camera, transform))) = view
+                && let Some((_, _, at)) = grade_points(&line, edge)
+                    .into_iter()
+                    .find(|(k, _, _)| *k == point)
+            {
+                let up = EnuFrame::at(at).up;
+                let px = |p: EcefPos| {
+                    camera
+                        .world_to_viewport(transform, origin.0.to_render(p))
+                        .ok()
+                };
+                let metres_per_pixel = px(at)
+                    .zip(px(EcefPos(at.0 + up)))
+                    .map(|(a, b)| a.distance(b))
+                    .filter(|d| *d > 1e-3)
+                    .map_or(0.0, |d| 1.0 / d as f64);
                 state.selection = Selection::Edge(edge);
+                state.grade_drag = Some(GradeDrag {
+                    edge,
+                    point,
+                    last_y: c.y,
+                    metres_per_pixel,
+                });
+                return;
             }
-            _ => overlay.status = t!("status-no-track-hit"),
-        },
+            match nearest_on_network(&line.net, p) {
+                Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
+                    add_grade_step(&mut line, edge, s);
+                    state.selection = Selection::Edge(edge);
+                }
+                _ => overlay.status = t!("status-no-track-hit"),
+            }
+        }
         Tool::PlaceDevice => {
             match nearest_on_network(&line.net, p) {
                 Some((edge, s, distance)) if distance <= pick_radius(&focus) => {
@@ -4080,6 +4444,10 @@ pub fn draw_gizmos(
     mut gizmos: Gizmos,
 ) {
     let accent = Color::srgb(0.36, 0.61, 0.96);
+    // The grab colour: what the cursor can take hold of right now, and what
+    // it holds — the World Editor's yellow, the same the gizmo's hovered
+    // arrow wears.
+    let grab = Color::srgb(1.0, 0.85, 0.20);
     // The tile grid lies on the ground the cursor is over — the height the
     // status bar reads out anyway. Without terrain it keeps the view point's.
     let grid_height = ground
@@ -4101,6 +4469,19 @@ pub fn draw_gizmos(
             }
             edge_line(&mut gizmos, &origin.0, edge, spline);
         }
+    }
+    // The track a click of the select tool would pick, lit before the click
+    // — brighter than the loft line, paler than the selection, so the eye
+    // reads "this one" without mistaking it for chosen.
+    if let Some(i) = state.hover_edge
+        && let Some(edge) = line.net.edges().get(i)
+    {
+        edge_line(
+            &mut gizmos,
+            &origin.0,
+            edge,
+            Color::srgba(0.72, 0.82, 1.0, 0.95),
+        );
     }
 
     if let Some(highlight) = state.highlight {
@@ -4163,14 +4544,29 @@ pub fn draw_gizmos(
                     end_arrow(&mut gizmos, &origin.0, pose, sign, len, color);
                 }
             }
-            // Draggable support points as handles.
+            // Draggable support points as handles. The one under the cursor
+            // turns the grab yellow and grows a little, the one being dragged
+            // is filled — the same three states the gizmo's arrows have, so
+            // a handle answers "can I take this?" before it is taken.
             if state.tool == Tool::Select {
                 let handle_radius = (focus.height * 0.008).max(2.5) as f32;
-                for p in support_points(&line, i)
+                let dragged = state.drag.filter(|(edge, _)| *edge == i).map(|(_, k)| k);
+                for (k, p) in support_points(&line, i)
                     .iter()
+                    .enumerate()
                     .skip(first_draggable(&line.source, i))
                 {
-                    ground_circle(&mut gizmos, &origin.0, *p, handle_radius, accent);
+                    let active = dragged == Some(k) || state.hover_support == Some(k);
+                    let color = if active { grab } else { accent };
+                    let radius = if active {
+                        handle_radius * 1.3
+                    } else {
+                        handle_radius
+                    };
+                    ground_circle(&mut gizmos, &origin.0, *p, radius, color);
+                    if dragged == Some(k) {
+                        ground_circle(&mut gizmos, &origin.0, *p, radius * 0.45, color);
+                    }
                 }
             }
         }
@@ -4435,15 +4831,73 @@ pub fn draw_gizmos(
         let radius = (focus.height * 0.012).max(4.0) as f32;
         ground_circle(&mut gizmos, &origin.0, edge.eval(s).pos, radius, accent);
     }
-    // Gradient break points of the selected edge while the gradient tool is
-    // up — where the profile steps, a circle on the rail.
-    if state.tool == Tool::Gradient
-        && let Selection::Edge(i) = state.selection
-        && let (Some(source), Some(edge)) = (line.source.edges.get(i), line.net.edges().get(i))
-    {
+    // Gradient break points while the gradient tool is up — every track's,
+    // as the World Editor shows them all: a circle on the rail where the
+    // profile steps, the grab yellow under the cursor and while pulled. The
+    // first step of an edge is drawn fainter: it is where the grade starts,
+    // not a point that can be lifted.
+    if state.tool == Tool::Gradient {
         let radius = (focus.height * 0.010).max(3.5) as f32;
-        for (s, _) in &source.grade {
-            ground_circle(&mut gizmos, &origin.0, edge.eval(*s).pos, radius, accent);
+        let fixed = Color::srgba(0.36, 0.61, 0.96, 0.5);
+        let held = state.grade_drag.map(|d| (d.edge, d.point));
+        for i in 0..line.source.edges.len() {
+            for (k, _, p) in grade_points(&line, i) {
+                let active = held == Some((i, k)) || state.hover_grade == Some((i, k));
+                let color = if active {
+                    grab
+                } else if grade_point_movable(&line, i, k) {
+                    accent
+                } else {
+                    fixed
+                };
+                let r = if active { radius * 1.3 } else { radius };
+                ground_circle(&mut gizmos, &origin.0, p, r, color);
+                if held == Some((i, k)) {
+                    ground_circle(&mut gizmos, &origin.0, p, r * 0.45, color);
+                }
+            }
+        }
+    }
+    // Where a track tool lands: the World Editor's yellow arrow on the rail
+    // at the cursor, pointing the running direction — the click happens
+    // here, not under the pointer, and the arrow says which way `s` runs
+    // (what a split's halves, a device's facing and a branch's "facing" are
+    // measured against).
+    if let Some((edge, s)) = state.hover_track
+        && let Some(edge_ref) = line.net.edges().get(edge)
+    {
+        let pose = edge_ref.eval(s);
+        let len = pick_radius(&focus);
+        end_arrow(&mut gizmos, &origin.0, pose, 1.0, len, grab);
+        ground_circle(
+            &mut gizmos,
+            &origin.0,
+            pose.pos,
+            (focus.height * 0.006).max(2.0) as f32,
+            grab,
+        );
+        // The parallel tool: a ring where the new track's centre will lie,
+        // on the side of the cursor — the side is the whole decision.
+        if state.tool == Tool::Offset
+            && let Some(p) = cursor
+        {
+            let left = pose.up.cross(pose.tangent).normalize_or_zero();
+            let side = (p.0 - pose.pos.0).dot(left).signum();
+            let spacing = state.lay.spacing.max(1.0);
+            let centre = EcefPos(pose.pos.0 + left * (spacing * side));
+            ground_circle(
+                &mut gizmos,
+                &origin.0,
+                centre,
+                (focus.height * 0.006).max(2.0) as f32,
+                grab,
+            );
+            let lift = origin.0.dir_to_render(pose.up) * MARK_LIFT;
+            gizmos.line(
+                origin.0.to_render(pose.pos) + lift,
+                origin.0.to_render(centre) + lift,
+                grab,
+            );
         }
     }
     // Gradient chevrons while the gradient tool is up, after the World
@@ -4477,21 +4931,6 @@ pub fn draw_gizmos(
                 }
             }
         }
-    }
-    // Where the device tool would stamp: the snap point on the rail and a
-    // tick along the track — the click lands here, not under the pointer.
-    if state.tool == Tool::PlaceDevice
-        && let Some(p) = cursor
-        && let Some((edge, s, distance)) = nearest_on_network(&line.net, p)
-        && distance <= pick_radius(&focus)
-        && let Some(edge) = line.net.edges().get(edge)
-    {
-        let pose = edge.eval(s);
-        let radius = (focus.height * 0.010).max(3.5) as f32;
-        ground_circle(&mut gizmos, &origin.0, pose.pos, radius, accent);
-        let base = origin.0.to_render(pose.pos) + origin.0.dir_to_render(pose.up) * MARK_LIFT;
-        let dir = origin.0.dir_to_render(pose.tangent) * (radius * 2.0);
-        gizmos.line(base - dir, base + dir, accent);
     }
     // A building is placed where the cursor stands beside its nearest track.
     // Show its full footprint, because unlike a mast its size materially
@@ -4555,7 +4994,23 @@ pub fn draw_gizmos(
             } else {
                 None
             };
-            gizmos.linestrip(drawing.polyline(target, &origin.0, follow), color);
+            let points = drawing.polyline(target, &origin.0, follow);
+            // An arrowhead on the running end, pointing the way the next
+            // piece would leave — the frame's far edge in the World Editor,
+            // which is what tells a builder whether the curve they are about
+            // to click lands them facing the right way.
+            if let (Some(target), Some(&tip)) = (target, points.last())
+                && let Some(dir) = drawing.running_end_dir(target)
+            {
+                let head = (pick_radius(&focus) * 0.8) as f32;
+                let dir3 = origin.0.dir_to_render(dir);
+                let side = origin
+                    .0
+                    .dir_to_render(dir.cross(EnuFrame::at(target.pos).up).normalize_or_zero());
+                gizmos.line(tip, tip - dir3 * head + side * (head * 0.6), color);
+                gizmos.line(tip, tip - dir3 * head - side * (head * 0.6), color);
+            }
+            gizmos.linestrip(points, color);
         }
     }
     // Footpaths and walk areas, with the way being drawn.
@@ -6056,5 +6511,116 @@ mod palette_tests {
         assert_eq!(line.source.buildings[1].spec, original.spec);
         assert_eq!(line.source.buildings[1].yaw_deg, original.yaw_deg);
         assert_eq!(state.selection, Selection::Building(1));
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    fn line() -> Line {
+        let source = content::musterbahn();
+        Line {
+            net: source.compile().expect("compiles").net,
+            source,
+            path: None,
+            dirty: false,
+            needs_rebuild: false,
+            terrain_change: Default::default(),
+            recenter: false,
+            issues: Vec::new(),
+        }
+    }
+
+    /// The vertices of the edge's height polyline: the start (the first
+    /// step's grade applies from there, whatever its own `s`), every later
+    /// break point, and the end.
+    fn heights(source: &EdgeSource, length: f64) -> Vec<f64> {
+        let profile = track_model::StepProfile::new(source.grade.clone());
+        source
+            .grade
+            .iter()
+            .enumerate()
+            .map(|(k, (s, _))| if k == 0 { 0.0 } else { *s })
+            .chain([length])
+            .map(|s| profile.integrate(s) / 1000.0)
+            .collect()
+    }
+
+    /// Pulling a break point up lifts the rail there by the metres asked
+    /// for, steepens the stretch before it and eases the one after — and
+    /// every other vertex of the height polyline, the edge's end included,
+    /// stays where it was.
+    #[test]
+    fn a_lifted_break_point_moves_alone() {
+        let mut line = line();
+        let edge = 0;
+        let length = line.net.edges()[edge].length();
+        assert!(length > 400.0, "the example's first edge is long enough");
+        for s in [100.0, 200.0, 300.0] {
+            assert!(add_grade_step(&mut line, edge, s));
+        }
+        let before = heights(&line.source.edges[edge], length);
+        let was = line.source.edges[edge].grade.clone();
+        // The step at 200 m; the example's own steps may sort around it.
+        let point = was
+            .iter()
+            .position(|(s, _)| (*s - 200.0).abs() < 1e-9)
+            .expect("step added");
+        let run_in = 200.0 - if point == 1 { 0.0 } else { was[point - 1].0 };
+        let run_out = was.get(point + 1).map_or(length, |(s, _)| *s) - 200.0;
+        assert!(grade_point_movable(&line, edge, point));
+        assert!(drag_grade_point(&mut line, edge, point, 1.5));
+        let after = heights(&line.source.edges[edge], length);
+        for (k, (b, a)) in before.iter().zip(&after).enumerate() {
+            let expected = if k == point { b + 1.5 } else { *b };
+            assert!((a - expected).abs() < 1e-9, "vertex {k}: {a} vs {expected}");
+        }
+        let grade = line.source.edges[edge].grade.clone();
+        let steeper = grade[point - 1].1 - was[point - 1].1;
+        let easier = grade[point].1 - was[point].1;
+        assert!(
+            (steeper - 1500.0 / run_in).abs() < 1e-9,
+            "{steeper} over {run_in} m"
+        );
+        assert!(
+            (easier + 1500.0 / run_out).abs() < 1e-9,
+            "{easier} over {run_out} m"
+        );
+        // The first step is where the grade starts, not a point to lift.
+        assert!(!grade_point_movable(&line, edge, 0));
+        assert!(!drag_grade_point(&mut line, edge, 0, 1.0));
+        // Past the panel's range the drag refuses rather than overshoots.
+        assert!(!drag_grade_point(&mut line, edge, point, 1000.0));
+        assert_eq!(line.source.edges[edge].grade, grade);
+    }
+
+    /// A geo-anchored start is only free while nothing else is welded to it.
+    #[test]
+    fn a_start_is_free_only_at_a_loose_end() {
+        let mut line = line();
+        let free = (0..line.source.edges.len())
+            .find(|i| free_start(&line.source, *i))
+            .expect("the example has a free start");
+        assert_eq!(first_draggable(&line.source, free), 0);
+        let from = line.source.edges[free].from as usize;
+        line.source.nodes[from] = NodeSource::Joint;
+        assert!(!free_start(&line.source, free));
+        assert_eq!(first_draggable(&line.source, free), 1);
+    }
+
+    /// The label at a support point reads the segment that ends there.
+    #[test]
+    fn a_handle_reads_out_its_segment() {
+        let line = line();
+        let edge = 0;
+        let segment = line.net.edges()[edge].segments[0];
+        let readout = segment_readout(&line, edge, 1).expect("second point ends the first segment");
+        assert!((readout.length - segment.len).abs() < 1e-9);
+        assert_eq!(readout.straight, segment.k0.abs() <= 1e-9);
+        assert!(
+            segment_readout(&line, edge, 0).is_none(),
+            "the start ends nothing"
+        );
     }
 }

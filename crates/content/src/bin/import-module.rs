@@ -4,7 +4,8 @@
 //!
 //! ```text
 //! import-module --line mods/example/lines/boerde.ron
-//!               [--no-fields] [--no-roads] [--no-power]
+//!               [--no-fields] [--no-roads] [--no-power] [--no-wind]
+//!               [--small-turbines] [--no-register]
 //!               [--tracks] [--narrow] [--refresh-fields]
 //!               [--dgm <dir>] [--fetch-dgm nrw] [--zone 32] [--cell 10]
 //!               [--no-fit-track] [--list-dgm-tiles]
@@ -15,6 +16,10 @@
 //!   into the module; hand-drawn fields stay.
 //! * **Roads** — Overpass over the envelope's box. Replaces the road list:
 //!   the module is being rebuilt, so the previous import's roads go with it.
+//! * **Wind turbines** — Overpass for where they stand, the
+//!   Marktstammdatenregister for what they are (`--no-register` to skip the
+//!   second question, `--small-turbines` to keep the farmyard ones). Replaces
+//!   the turbine list.
 //! * **Heights** — the corridor's terrain tiles are sampled out of a DGM
 //!   delivery into `<mod>/heights/<line>/` (one ESRI ASCII grid each) and
 //!   the line records them, so the module carries its ground. With
@@ -25,7 +30,9 @@
 
 use content::TerrainBuilder;
 use content::import::dgm::{HeightTile, TerrainSource};
-use content::route::{EdgeStart, HeightSource, LineSource, PowerLineSource, RoadSource};
+use content::route::{
+    EdgeStart, HeightSource, LineSource, PowerLineSource, RoadSource, WindTurbineSource,
+};
 use fields::{Area, Clip, CropTable, FieldCache, ImportOptions, ImportReport};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -43,6 +50,7 @@ fn main() -> ExitCode {
     if args.is_empty() || args.iter().any(|a| a == "--help") {
         eprintln!(
             "Usage: import-module --line <file.ron> [--no-fields] [--no-roads] [--no-power]\n\
+             \x20                     [--no-wind] [--small-turbines] [--no-register]\n\
              \x20                     [--tracks] [--narrow] [--refresh-fields]\n\
              \x20                     [--dgm <dir>] [--fetch-dgm nrw] [--zone 32] [--cell 10]\n\
              \x20                     [--no-fit-track] [--list-dgm-tiles]"
@@ -64,6 +72,9 @@ fn main() -> ExitCode {
     let do_fields = !set("--no-fields");
     let do_roads = !set("--no-roads");
     let do_power = !set("--no-power");
+    let do_wind = !set("--no-wind");
+    let small_turbines = set("--small-turbines");
+    let register = !set("--no-register");
     let tracks = set("--tracks");
     let narrow = set("--narrow");
     let refresh_fields = set("--refresh-fields");
@@ -153,6 +164,23 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("Error: the overhead line import failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if do_wind {
+        let Some(bbox) = envelope_bbox(&line) else {
+            eprintln!("Error: the line has no envelope to import inside");
+            return ExitCode::FAILURE;
+        };
+        match import_wind(bbox, small_turbines, register) {
+            Ok((turbines, matched)) => {
+                print_wind_report(&turbines, matched);
+                line.wind_turbines = turbines;
+            }
+            Err(e) => {
+                eprintln!("Error: the wind turbine import failed: {e}");
                 return ExitCode::FAILURE;
             }
         }
@@ -354,6 +382,59 @@ fn import_power(bbox: (f64, f64, f64, f64)) -> Result<Vec<PowerLineSource>, Stri
     let config = fields::RequestConfig::default();
     let json = fields::osm::fetch_raw(&query, &config).map_err(|e| e.to_string())?;
     content::import::parse_power_lines(&json).map_err(|e| e.to_string())
+}
+
+/// The wind turbines of the envelope's box: OpenStreetMap for where they
+/// stand, the register for what they are — the same two questions the editor's
+/// import asks, in the same order.
+fn import_wind(
+    bbox: (f64, f64, f64, f64),
+    small: bool,
+    register: bool,
+) -> Result<(Vec<WindTurbineSource>, content::RegisterMatch), String> {
+    let query = content::import::wind_query(bbox.0, bbox.1, bbox.2, bbox.3);
+    let config = fields::RequestConfig::default();
+    let json = fields::osm::fetch_raw(&query, &config).map_err(|e| e.to_string())?;
+    let mut turbines = content::import::parse_wind_turbines(&json).map_err(|e| e.to_string())?;
+
+    let mut matched = content::RegisterMatch::default();
+    if register {
+        let units = fields::mastr::fetch_wind(bbox.0, bbox.1, bbox.2, bbox.3, &config)
+            .map_err(|e| e.to_string())?;
+        matched = content::wind::match_register(&mut turbines, &units);
+    }
+    if !small {
+        turbines.retain(|t| !content::wind::is_small(t));
+    }
+    Ok((turbines, matched))
+}
+
+/// Prints the wind turbine import's summary — the machines, because that is
+/// what says whether the register was asked the right question.
+fn print_wind_report(turbines: &[WindTurbineSource], matched: content::RegisterMatch) {
+    let mut machines: BTreeMap<&str, usize> = BTreeMap::new();
+    for turbine in turbines {
+        let name = if turbine.model.is_empty() {
+            "(unknown machine)"
+        } else {
+            turbine.model.as_str()
+        };
+        *machines.entry(name).or_default() += 1;
+    }
+    let estimated = turbines
+        .iter()
+        .filter(|t| t.tags.iter().any(|tag| tag == "estimated"))
+        .count();
+    eprintln!(
+        "Wind turbines: {} turbine(s), {} named by the register, {estimated} sized by their power, \
+         {} standing register unit(s) with no turbine on the map",
+        turbines.len(),
+        matched.matched,
+        matched.spare
+    );
+    for (name, count) in &machines {
+        eprintln!("    {name}: {count}");
+    }
 }
 
 /// Prints the overhead line import's summary — the mast types and how many of

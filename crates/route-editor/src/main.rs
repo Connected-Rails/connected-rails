@@ -5,7 +5,7 @@
 //! ```text
 //! trainsim-route-editor [line.ron] [--imagery <config.ron>] [--frames N] [--height M]
 //!                        [--window WxH] [--drawer [objects|signal-types|signal-models|track-types]]
-//!                        [--ai <ai.ron>] [--detect] [--at KM]
+//!                        [--ai <ai.ron>] [--detect] [--import-wind] [--at KM]
 //!                        [--detect-run [--corridor M] [--keep-clear M] [--model <id>]
 //!                                      [--stand <name>]]
 //! ```
@@ -37,6 +37,7 @@ mod tools;
 mod ui;
 mod view;
 mod walkways;
+mod wind;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -359,6 +360,8 @@ pub struct Request {
     pub import_roads: bool,
     /// Open the overhead line import dialog (menu, see [`power`]).
     pub import_power: bool,
+    /// Open the wind turbine import dialog (menu, see [`wind`]).
+    pub import_wind: bool,
     /// Open the dialog that reads the imagery with a local model (menu, see
     /// [`ai`]).
     pub detect_imagery: bool,
@@ -391,6 +394,8 @@ fn main() {
     // reason `--drawer` opens the content drawer: a screenshot run has no
     // keyboard and no mouse, and a dialog nobody can open cannot be looked at.
     let detect = args.iter().any(|a| a == "--detect");
+    // `--import-wind` opens the wind turbine import for the same reason.
+    let import_wind = args.iter().any(|a| a == "--import-wind");
     // `--detect-run` does not open the dialog, it *is* the dialog: the run
     // along the track, committed, and the line written back. For a module
     // being rebuilt from its sources by a script, beside `import-module`.
@@ -523,6 +528,11 @@ fn main() {
     .init_resource::<fields::FieldImport>()
     .init_resource::<power::PowerImport>()
     .init_resource::<roads::RoadImport>()
+    .insert_resource(if import_wind {
+        wind::WindImport::opened()
+    } else {
+        wind::WindImport::default()
+    })
     // Not through `Request`: `overlay_control` takes that whole resource once
     // per frame, and it runs before the pass the dialogs are drawn in — a flag
     // set at start-up would be gone before anyone read it.
@@ -549,6 +559,7 @@ fn main() {
             fields::draw,
             roads::draw,
             power::draw,
+            wind::draw,
             ai::draw,
         )
             .chain(),

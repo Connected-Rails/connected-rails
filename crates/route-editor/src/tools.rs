@@ -23,7 +23,6 @@ use bevy::world_serialization::WorldAsset;
 use content::LineSource;
 use content::TerrainOptions;
 use content::import::alignment::{CantRules, ramp_cant};
-#[cfg(test)]
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
     ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,

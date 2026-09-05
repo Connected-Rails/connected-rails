@@ -113,29 +113,60 @@ export class BufferBuilder {
   }
 }
 
-/**
- * Writes one glTF file.
- *
- * @param {object} options
- * @param {string} options.path where to write
- * @param {string} options.name scene name
- * @param {string} options.buffer file name of the shared `.bin`
- * @param {number} options.bufferLength its byte length
- * @param {Array} options.levels `[{ name, parts: [{ packed, material }] }]`, finest first
- * @param {Array} options.materials `[{ name, color, metallic, roughness, maps }]`,
- *   where `maps` is `{ colour, orm, normal }` of image file names — a material
- *   without it is a plain constant, which is what the insulators are.
- * @param {Array} options.images image file names, in the order the materials
- *   index them
- * @param {string} options.copyright
- * @param {string} options.generator
- */
-export function writeGltf(options) {
-  const bufferViews = [];
-  const accessors = [];
-  const meshes = [];
-  const nodes = [];
+/** One glTF material out of the pipeline's description of it. */
+function materialOf(m) {
+  const material = {
+    name: m.name,
+    pbrMetallicRoughness: {
+      baseColorFactor: m.color,
+      metallicFactor: m.metallic ?? 0,
+      roughnessFactor: m.roughness ?? 0.8,
+    },
+    doubleSided: m.doubleSided ?? false,
+  };
+  if (m.maps) {
+    // The base colour is sRGB and the other two are linear; in glTF that
+    // is implied by the slot, not declared, so the same image must never
+    // be used for both kinds.
+    if (m.maps.colour !== undefined) {
+      material.pbrMetallicRoughness.baseColorTexture = { index: m.maps.colour };
+    }
+    // A material may carry a base colour and nothing else — a baked atlas
+    // out of a photogrammetry tool has no separate roughness or normal map
+    // to give, and writing slots that point nowhere is worse than not
+    // writing them.
+    if (m.maps.orm !== undefined) {
+      material.pbrMetallicRoughness.metallicRoughnessTexture = { index: m.maps.orm };
+      material.occlusionTexture = { index: m.maps.orm };
+    }
+    // `null` explicitly disables a tangent-space map. Smooth low-sided
+    // tubes need that: their tangent changes at each mesh segment and even
+    // a nearly flat map otherwise reveals every segment as a vertical seam.
+    if (m.normalScale !== null && m.maps.normal !== undefined) {
+      material.normalTexture = { index: m.maps.normal, scale: m.normalScale ?? 1 };
+    }
+  }
+  // A lamp: the factor is the colour, the strength how bright it is against a
+  // physically exposed sky (`KHR_materials_emissive_strength`, which the
+  // game's loader reads). A signal lens without the strength is a red dot at
+  // noon and nothing at all beside a sunset.
+  if (m.emissive) {
+    material.emissiveFactor = m.emissive;
+    if (m.emissiveStrength !== undefined && m.emissiveStrength !== 1) {
+      material.extensions = {
+        KHR_materials_emissive_strength: { emissiveStrength: m.emissiveStrength },
+      };
+    }
+  }
+  return material;
+}
 
+/**
+ * The accessors and primitives of one packed geometry, appended to the file's
+ * tables. Shared by the flat and the hierarchical writer.
+ */
+function primitiveOf(p, material, tables) {
+  const { bufferViews, accessors } = tables;
   const view = (offset, length, target, stride) => {
     bufferViews.push({
       buffer: 0,
@@ -150,97 +181,69 @@ export function writeGltf(options) {
     accessors.push({ bufferView, componentType, count, type, ...extra });
     return accessors.length - 1;
   };
-
-  for (const level of options.levels) {
-    const primitives = level.parts.map(({ packed: p, material }) => ({
-      attributes: {
-        POSITION: accessor(
-          view(p.offsets.position, p.lengths.position, ARRAY_BUFFER, 12),
-          FLOAT,
-          p.count,
-          'VEC3',
-          { min: p.min, max: p.max },
-        ),
-        NORMAL: accessor(
-          view(p.offsets.normal, p.lengths.normal, ARRAY_BUFFER, 12),
-          FLOAT,
-          p.count,
-          'VEC3',
-        ),
-        ...(p.lengths.uv
-          ? {
-              TEXCOORD_0: accessor(
-                view(p.offsets.uv, p.lengths.uv, ARRAY_BUFFER, 8),
-                FLOAT,
-                p.count,
-                'VEC2',
-              ),
-            }
-          : {}),
-        COLOR_0: accessor(
-          view(p.offsets.color, p.lengths.color, ARRAY_BUFFER, 4),
-          UNSIGNED_BYTE,
-          p.count,
-          'VEC4',
-          { normalized: true },
-        ),
-      },
-      indices: accessor(
-        view(p.offsets.index, p.lengths.index, ELEMENT_ARRAY_BUFFER),
-        p.short ? UNSIGNED_SHORT : UNSIGNED_INT,
-        p.indexCount,
-        'SCALAR',
+  return {
+    attributes: {
+      POSITION: accessor(
+        view(p.offsets.position, p.lengths.position, ARRAY_BUFFER, 12),
+        FLOAT,
+        p.count,
+        'VEC3',
+        { min: p.min, max: p.max },
       ),
-      material,
-    }));
-    meshes.push({ name: level.name, primitives });
-    nodes.push({ name: level.name, mesh: meshes.length - 1 });
-  }
+      NORMAL: accessor(
+        view(p.offsets.normal, p.lengths.normal, ARRAY_BUFFER, 12),
+        FLOAT,
+        p.count,
+        'VEC3',
+      ),
+      ...(p.lengths.uv
+        ? {
+            TEXCOORD_0: accessor(
+              view(p.offsets.uv, p.lengths.uv, ARRAY_BUFFER, 8),
+              FLOAT,
+              p.count,
+              'VEC2',
+            ),
+          }
+        : {}),
+      COLOR_0: accessor(
+        view(p.offsets.color, p.lengths.color, ARRAY_BUFFER, 4),
+        UNSIGNED_BYTE,
+        p.count,
+        'VEC4',
+        { normalized: true },
+      ),
+    },
+    indices: accessor(
+      view(p.offsets.index, p.lengths.index, ELEMENT_ARRAY_BUFFER),
+      p.short ? UNSIGNED_SHORT : UNSIGNED_INT,
+      p.indexCount,
+      'SCALAR',
+    ),
+    material,
+  };
+}
 
-  const gltf = {
+/** The file's tail: materials, images, samplers, the buffer. */
+function assemble(options, tables, nodes, meshes, roots) {
+  const extensionsUsed = new Set();
+  const materials = options.materials.map((m) => {
+    const material = materialOf(m);
+    for (const name of Object.keys(material.extensions ?? {})) extensionsUsed.add(name);
+    return material;
+  });
+  return {
     asset: {
       version: '2.0',
       generator: options.generator ?? 'tools/pylons/build_pylons.mjs (Connected Rails)',
       copyright: options.copyright,
     },
+    ...(extensionsUsed.size ? { extensionsUsed: [...extensionsUsed].sort() } : {}),
     scene: 0,
-    scenes: [{ name: options.name, nodes: nodes.map((_, i) => i) }],
+    scenes: [{ name: options.name, nodes: roots }],
     nodes,
     meshes,
-    materials: options.materials.map((m) => {
-      const material = {
-        name: m.name,
-        pbrMetallicRoughness: {
-          baseColorFactor: m.color,
-          metallicFactor: m.metallic ?? 0,
-          roughnessFactor: m.roughness ?? 0.8,
-        },
-        doubleSided: false,
-      };
-      if (m.maps) {
-        // The base colour is sRGB and the other two are linear; in glTF that
-        // is implied by the slot, not declared, so the same image must never
-        // be used for both kinds.
-        if (m.maps.colour !== undefined) {
-          material.pbrMetallicRoughness.baseColorTexture = { index: m.maps.colour };
-        }
-        // A material may carry a base colour and nothing else — a baked atlas
-        // out of a photogrammetry tool has no separate roughness or normal map
-        // to give, and writing slots that point nowhere is worse than not
-        // writing them.
-        if (m.maps.orm !== undefined) {
-          material.pbrMetallicRoughness.metallicRoughnessTexture = { index: m.maps.orm };
-          material.occlusionTexture = { index: m.maps.orm };
-        }
-        // `null` explicitly disables a tangent-space map. Smooth low-sided
-        // tubes need that: their tangent changes at each mesh segment and even
-        // a nearly flat map otherwise reveals every segment as a vertical seam.
-        if (m.normalScale !== null && m.maps.normal !== undefined) {
-          material.normalTexture = { index: m.maps.normal, scale: m.normalScale ?? 1 };
-        }
-      }
-      return material;
-    }),
+    materials,
     ...(options.images?.length
       ? {
           images: options.images.map((uri) => ({ uri })),
@@ -248,10 +251,82 @@ export function writeGltf(options) {
           samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }],
         }
       : {}),
-    accessors,
-    bufferViews,
+    accessors: tables.accessors,
+    bufferViews: tables.bufferViews,
     buffers: [{ uri: options.buffer, byteLength: options.bufferLength }],
   };
+}
+
+/**
+ * Writes one glTF file.
+ *
+ * @param {object} options
+ * @param {string} options.path where to write
+ * @param {string} options.name scene name
+ * @param {string} options.buffer file name of the shared `.bin`
+ * @param {number} options.bufferLength its byte length
+ * @param {Array} options.levels `[{ name, parts: [{ packed, material }] }]`, finest first
+ * @param {Array} options.materials `[{ name, color, metallic, roughness, maps }]`,
+ *   where `maps` is `{ colour, orm, normal }` of image file names — a material
+ *   without it is a plain constant, which is what the insulators are. An
+ *   `emissive` colour with an `emissiveStrength` makes a lamp.
+ * @param {Array} options.images image file names, in the order the materials
+ *   index them
+ * @param {string} options.copyright
+ * @param {string} options.generator
+ */
+export function writeGltf(options) {
+  const tables = { bufferViews: [], accessors: [] };
+  const meshes = [];
+  const nodes = [];
+  for (const level of options.levels) {
+    const primitives = level.parts.map(({ packed, material }) =>
+      primitiveOf(packed, material, tables),
+    );
+    meshes.push({ name: level.name, primitives });
+    nodes.push({ name: level.name, mesh: meshes.length - 1 });
+  }
+  const gltf = assemble(options, tables, nodes, meshes, nodes.map((_, i) => i));
+  writeFileSync(options.path, `${JSON.stringify(gltf, null, 1)}\n`, 'utf8');
+}
+
+/**
+ * Writes one glTF file with a **node tree** — for a model whose parts move
+ * against each other. A wind turbine's nacelle yaws on its tower and its rotor
+ * turns on the nacelle, and the game moves them by node name, so the nodes have
+ * to be real nodes with their own transforms rather than one flat list.
+ *
+ * `options.roots` is a list of nodes, each
+ * `{ name, translation?, rotation?, scale?, extras?, parts?, children? }`:
+ * `parts` are `[{ packed, material }]` and make the node a mesh node, `extras`
+ * is any JSON the game may read off the node (the loader hands it over as the
+ * node's `GltfExtras`), and `children` nest. Everything else is as
+ * [`writeGltf`].
+ */
+export function writeGltfScene(options) {
+  const tables = { bufferViews: [], accessors: [] };
+  const meshes = [];
+  const nodes = [];
+  const emit = (node) => {
+    const index = nodes.length;
+    const out = { name: node.name };
+    nodes.push(out);
+    if (node.translation) out.translation = node.translation;
+    if (node.rotation) out.rotation = node.rotation;
+    if (node.scale) out.scale = node.scale;
+    if (node.extras) out.extras = node.extras;
+    if (node.parts?.length) {
+      meshes.push({
+        name: node.name,
+        primitives: node.parts.map(({ packed, material }) => primitiveOf(packed, material, tables)),
+      });
+      out.mesh = meshes.length - 1;
+    }
+    if (node.children?.length) out.children = node.children.map(emit);
+    return index;
+  };
+  const roots = options.roots.map(emit);
+  const gltf = assemble(options, tables, nodes, meshes, roots);
   writeFileSync(options.path, `${JSON.stringify(gltf, null, 1)}\n`, 'utf8');
 }
 

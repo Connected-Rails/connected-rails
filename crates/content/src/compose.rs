@@ -392,6 +392,12 @@ fn merge_module(merged: &mut LineSource, module: &LineSource, off: ModuleOffsets
     merged
         .power_lines
         .extend(module.power_lines.iter().cloned());
+    // Wind turbines the same way: geo-positioned, and one that stands between
+    // two modules is imported by both and put on a tile by whichever builds
+    // the ground under it.
+    merged
+        .wind_turbines
+        .extend(module.wind_turbines.iter().cloned());
     // Terrain strokes likewise; they keep their order, so a stroke of a later
     // module wins where two modules shape the same ground.
     merged.terrain.extend(module.terrain.iter().cloned());

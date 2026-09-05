@@ -10,8 +10,8 @@ pub mod fit;
 pub mod osm;
 
 pub use osm::{
-    parse_forests, parse_markers, parse_power_lines, parse_roads, parse_water, power_query,
-    roads_query,
+    parse_forests, parse_markers, parse_power_lines, parse_roads, parse_water, parse_wind_turbines,
+    power_query, roads_query, wind_query,
 };
 
 use crate::route::{EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource};

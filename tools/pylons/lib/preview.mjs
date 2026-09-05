@@ -21,7 +21,7 @@ import { buildMast, finestMember } from './kit.mjs';
  * right past the camera, so the crossarms are seen in full), `'side'` looks
  * along +X (down the line, the view a driver gets).
  */
-function raster(geometry, { width, height, metresPerPixel, originX, originY, axis, rgba, colour }) {
+export function raster(geometry, { width, height, metresPerPixel, originX, originY, axis, rgba, colour }) {
   const depth = new Float32Array(width * height).fill(Infinity);
   const p = geometry.positions;
   const n = geometry.normals;
@@ -77,7 +77,7 @@ function raster(geometry, { width, height, metresPerPixel, originX, originY, axi
 }
 
 /** A one-pixel scale rule every ten metres up the left edge. */
-function scaleRule(rgba, width, height, originY, metresPerPixel) {
+export function scaleRule(rgba, width, height, originY, metresPerPixel) {
   for (let m = 0; m <= 100; m += 10) {
     const y = Math.round(originY - m / metresPerPixel);
     if (y < 0 || y >= height) continue;

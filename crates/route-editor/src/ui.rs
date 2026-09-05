@@ -1117,6 +1117,7 @@ pub(crate) fn new_line(
         waters: vec![],
         roads: vec![],
         power_lines: vec![],
+        wind_turbines: vec![],
         terrain: vec![],
         heights: vec![],
         sections: vec![],
@@ -1208,6 +1209,10 @@ fn menu_bar(
                     if ui.button(t!("action-import-power")).clicked() {
                         ui.close();
                         request.import_power = true;
+                    }
+                    if ui.button(t!("action-import-wind")).clicked() {
+                        ui.close();
+                        request.import_wind = true;
                     }
                     if ui.button(t!("action-detect-imagery")).clicked() {
                         ui.close();

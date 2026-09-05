@@ -11,6 +11,8 @@ sim-core = { workspace = true }
 world-coords = { workspace = true }
 fields = { workspace = true }
 glam = { workspace = true }
+# The turbine's rotor node says how big and how fast it is in its glTF extras.
+serde_json = "1"
 # `jpeg`: the road and ground textures are compiled-in JPEGs — without the
 # feature the asset loader rejects them and every material waits forever.
 # `dds`: the vehicle atlases ship as block-compressed DDS *with a mip chain*.

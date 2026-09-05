@@ -14,7 +14,9 @@
 //! line (a few thousand nodes); a PBF reader would only be necessary if whole federal
 //! states had to be read in.
 
-use crate::route::{CenterLine, MarkerSource, RoadSource, RoadSurface, WaterSource};
+use crate::route::{
+    CenterLine, MarkerSource, RoadSource, RoadSurface, WaterSource, WindTurbineSource,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -1238,6 +1240,185 @@ fn pick_type(design: Option<&str>, volts: Option<u32>, railway: bool, minor: boo
     }
 }
 
+/// The Overpass QL for the wind turbines of a box.
+///
+/// Both spellings are asked for: `generator:source=wind` is the tag that says
+/// what drives the generator, `generator:method=wind_turbine` the one that says
+/// how, and a turbine in the wild carries either or both. Ways come along
+/// because a few turbines are mapped as the circle of their foundation rather
+/// than as a point, and `(._;>;)` pulls the nodes those circles are made of in.
+pub fn wind_query(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> String {
+    // Overpass takes its box south, west, north, east.
+    let bbox = format!("{min_lat:.6},{min_lon:.6},{max_lat:.6},{max_lon:.6}");
+    format!(
+        "[out:json][timeout:120];(\
+         node[\"generator:source\"=\"wind\"]({bbox});\
+         way[\"generator:source\"=\"wind\"]({bbox});\
+         node[\"generator:method\"=\"wind_turbine\"]({bbox});\
+         way[\"generator:method\"=\"wind_turbine\"]({bbox});\
+         );(._;>;);out body;"
+    )
+}
+
+/// The wind turbines of an Overpass extract.
+///
+/// What OSM reliably has is the **position**: somebody stood at the foot of the
+/// tower. What it has less often is the machine — over two German boxes of a
+/// thousand turbines, `manufacturer` and `model` were on a third to a half of
+/// them, `height:hub` on a fifth and `rotor:diameter` on one in fourteen. So
+/// what is read here is everything the mapper wrote, and the gaps are left for
+/// the register to fill ([`crate::wind::match_register`]); where nothing fills
+/// them, the rated power gives the dimensions ([`crate::wind::estimate`]) and
+/// the turbine is tagged `estimated` so the file says so.
+///
+/// `ref:mastr` is the tag that matters most and reads like nothing:
+/// half the turbines carry their number in the Marktstammdatenregister, which
+/// is the machine's identity and turns the match with the register from a guess
+/// at a distance into a lookup.
+// ponytail: `height=*` is deliberately not read, although it is on more
+// turbines than `height:hub` is. Where a mapper wrote both, `height` is the tip
+// height and the two agree to the metre (119 + 112/2 = 175). Where only
+// `height` is there, it is as often the hub height: an MM82 tagged `height=59`
+// has a hub of 59 and a tip of 100, and an E-101 tagged `height=135` stands on
+// a 135 m tower. A tag that means two things cannot be turned into one number,
+// and a hub height that is 40 m out is a turbine of the wrong generation.
+pub fn parse_wind_turbines(json: &str) -> Result<Vec<WindTurbineSource>, OsmError> {
+    let response: OverpassResponse =
+        serde_json::from_str(json).map_err(|e| OsmError::Json(e.to_string()))?;
+
+    let mut nodes: HashMap<i64, (f64, f64)> = HashMap::new();
+    for e in &response.elements {
+        if let (Some(lat), Some(lon)) = (e.lat, e.lon) {
+            nodes.insert(e.id, (lat, lon));
+        }
+    }
+
+    let mut out = Vec::new();
+    for e in &response.elements {
+        if !is_wind_turbine(&e.tags) {
+            continue;
+        }
+        // A turbine mapped as its foundation becomes the middle of it — the
+        // same trade the marker import makes with a platform.
+        let Some((lat, lon)) = position(e, &nodes) else {
+            continue;
+        };
+
+        let hub = metres(e.tags.get("height:hub")).unwrap_or(0.0);
+        let rotor = metres(e.tags.get("rotor:diameter")).unwrap_or(0.0);
+        let power = power_kw(e.tags.get("generator:output:electricity")).unwrap_or(0.0);
+        // The estimate fills whichever of the two the mapper left out; a
+        // turbine both of whose numbers are surveyed is not estimated at all.
+        let (guessed_hub, guessed_rotor) = crate::wind::estimate(power);
+        let estimated = hub <= 0.0 || rotor <= 0.0;
+        let rotor = if rotor > 0.0 { rotor } else { guessed_rotor };
+        let hub = if hub > 0.0 { hub } else { guessed_hub };
+
+        out.push(crate::wind::source_from(
+            lat,
+            lon,
+            hub,
+            rotor,
+            machine(&e.tags),
+            e.tags.get("ref:mastr").cloned().unwrap_or_default(),
+            estimated,
+        ));
+    }
+    Ok(out)
+}
+
+/// Whether an element's tags say it is a wind turbine. A `power=plant` area
+/// carrying `plant:source=wind` is the wind farm around them, not a machine,
+/// and is left where it is.
+fn is_wind_turbine(tags: &HashMap<String, String>) -> bool {
+    let generator = tags.get("power").map(String::as_str) == Some("generator")
+        || tags.contains_key("generator:source")
+        || tags.contains_key("generator:method");
+    generator
+        && (tags.get("generator:source").map(String::as_str) == Some("wind")
+            || tags.get("generator:method").map(String::as_str) == Some("wind_turbine"))
+}
+
+/// Where an element stands: its own coordinates, or the middle of the way's
+/// nodes.
+fn position(element: &Element, nodes: &HashMap<i64, (f64, f64)>) -> Option<(f64, f64)> {
+    if let (Some(lat), Some(lon)) = (element.lat, element.lon) {
+        return Some((lat, lon));
+    }
+    // A closed way repeats its first node at the end; counting it twice would
+    // pull the middle towards that corner.
+    let mut ids = element.nodes.as_slice();
+    if ids.len() > 1 && ids.first() == ids.last() {
+        ids = &ids[..ids.len() - 1];
+    }
+    let ring: Vec<(f64, f64)> = ids.iter().filter_map(|id| nodes.get(id).copied()).collect();
+    if ring.is_empty() {
+        return None;
+    }
+    let n = ring.len() as f64;
+    Some((
+        ring.iter().map(|p| p.0).sum::<f64>() / n,
+        ring.iter().map(|p| p.1).sum::<f64>() / n,
+    ))
+}
+
+/// The machine's name out of `manufacturer=*` and `model=*` — `Enercon E-115
+/// EP3`. A model that already carries the manufacturer does not get it twice,
+/// and either tag alone is still worth writing down.
+fn machine(tags: &HashMap<String, String>) -> String {
+    let make = tags.get("manufacturer").map(String::as_str).unwrap_or("");
+    let model = tags.get("model").map(String::as_str).unwrap_or("");
+    let (make, model) = (make.trim(), model.trim());
+    if make.is_empty() {
+        return model.to_string();
+    }
+    if model.is_empty() {
+        return make.to_string();
+    }
+    let head = format!("{make} ");
+    if model.len() > head.len() && model[..head.len()].eq_ignore_ascii_case(&head) {
+        return model.to_string();
+    }
+    format!("{make} {model}")
+}
+
+/// A tag that names a length in metres: `112`, `112 m`, `112.5`. The unit is
+/// written about as often as it is left out, and it is always metres.
+fn metres(value: Option<&String>) -> Option<f64> {
+    let text = value?.trim();
+    let number: String = text
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+        .collect();
+    number
+        .replace(',', ".")
+        .parse::<f64>()
+        .ok()
+        .filter(|v| *v > 0.0)
+}
+
+/// The rated power a `generator:output:electricity` names [kW]. The tag is
+/// `4.2 MW` as often as `3200 kW`, and `yes` often enough to be worth passing
+/// over rather than reading as a number.
+fn power_kw(value: Option<&String>) -> Option<f64> {
+    let text = value?.trim();
+    let number: String = text
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
+        .collect();
+    let amount = number.replace(',', ".").parse::<f64>().ok()?;
+    let unit = text[number.len()..].trim().to_ascii_lowercase();
+    let factor = match unit.as_str() {
+        "mw" => 1_000.0,
+        "kw" | "" => 1.0,
+        "w" => 0.001,
+        // A unit nobody writes on a wind turbine: better no number than a
+        // number that is out by a thousand.
+        _ => return None,
+    };
+    Some(amount * factor).filter(|v| *v > 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1674,6 +1855,92 @@ mod tests {
         assert!(query.contains("power"));
         assert!(query.contains("line|minor_line"));
         assert!(query.contains("(._;>;)"), "the nodes come too");
+        assert!(query.contains("52.000000,10.000000,52.100000,10.100000"));
+    }
+
+    /// A turbine as the mappers of Dithmarschen write one, one with nothing but
+    /// its power, one mapped as its foundation, and a wind farm outline that is
+    /// not a machine.
+    #[test]
+    fn wind_turbines_come_out_of_overpass_json() {
+        let json = r#"{"elements": [
+            {"type": "node", "id": 1, "lat": 54.2683, "lon": 9.0135, "tags": {
+                "power": "generator", "generator:source": "wind",
+                "generator:method": "wind_turbine", "generator:type": "horizontal_axis",
+                "manufacturer": "Enercon", "model": "E-70 E4",
+                "generator:output:electricity": "2.3 MW",
+                "height:hub": "64", "rotor:diameter": "71 m",
+                "ref:mastr": "SEE945374201878"}},
+            {"type": "node", "id": 2, "lat": 54.2, "lon": 9.0, "tags": {
+                "power": "generator", "generator:source": "wind",
+                "generator:output:electricity": "3450 kW"}},
+            {"type": "node", "id": 10, "lat": 54.10, "lon": 9.10},
+            {"type": "node", "id": 11, "lat": 54.10, "lon": 9.12},
+            {"type": "node", "id": 12, "lat": 54.12, "lon": 9.12},
+            {"type": "node", "id": 13, "lat": 54.12, "lon": 9.10},
+            {"type": "way", "id": 20, "nodes": [10, 11, 12, 13, 10], "tags": {
+                "power": "generator", "generator:source": "wind"}},
+            {"type": "way", "id": 21, "nodes": [10, 11, 12, 13, 10], "tags": {
+                "power": "plant", "plant:source": "wind"}}
+        ]}"#;
+        let turbines = parse_wind_turbines(json).expect("parses");
+        // The farm outline is not a machine; the foundation ring is one.
+        assert_eq!(turbines.len(), 3);
+
+        let surveyed = &turbines[0];
+        assert_eq!(surveyed.model, "Enercon E-70 E4");
+        assert_eq!(surveyed.mastr, "SEE945374201878");
+        assert_eq!(surveyed.hub_height, 64.0);
+        // The unit is written on the tag as often as it is left off.
+        assert_eq!(surveyed.rotor_diameter, 71.0);
+        assert_eq!(surveyed.yaw_deg, crate::wind::PREVAILING_BEARING);
+        assert_eq!(surveyed.tags, vec!["wea-80"]);
+        // An Enercon of the 2 MW class stands on the Enercon build of it.
+        assert_eq!(surveyed.object, "wind:wea_80_enercon");
+
+        // Nothing but a rated power: the dimensions are worked out and the
+        // file says so.
+        let guessed = &turbines[1];
+        assert!(guessed.tags.iter().any(|t| t == "estimated"));
+        assert!((100.0..120.0).contains(&guessed.rotor_diameter));
+        assert!(guessed.model.is_empty());
+
+        // The foundation ring becomes its middle.
+        let ring = &turbines[2];
+        assert!((ring.lat - 54.11).abs() < 1e-9);
+        assert!((ring.lon - 9.11).abs() < 1e-9);
+
+        // A turbine-free extract is empty, not an error.
+        assert_eq!(parse_wind_turbines(r#"{"elements": []}"#), Ok(vec![]));
+    }
+
+    /// The tag values the German extracts actually carry.
+    #[test]
+    fn the_turbine_tags_are_read_as_they_are_written() {
+        assert_eq!(power_kw(Some(&"4.2 MW".to_string())), Some(4200.0));
+        assert_eq!(power_kw(Some(&"3200 kW".to_string())), Some(3200.0));
+        assert_eq!(power_kw(Some(&"600kW".to_string())), Some(600.0));
+        assert_eq!(power_kw(Some(&"2000".to_string())), Some(2000.0));
+        // "yes" says a turbine produces electricity, which was never in doubt.
+        assert_eq!(power_kw(Some(&"yes".to_string())), None);
+        assert_eq!(metres(Some(&"112 m".to_string())), Some(112.0));
+        assert_eq!(metres(Some(&"122.5".to_string())), Some(122.5));
+        assert_eq!(metres(Some(&"unknown".to_string())), None);
+        // The manufacturer is not said twice.
+        let mut tags = HashMap::new();
+        tags.insert("manufacturer".to_string(), "Vestas".to_string());
+        tags.insert("model".to_string(), "Vestas V112".to_string());
+        assert_eq!(machine(&tags), "Vestas V112");
+    }
+
+    /// The query asks for both spellings of a turbine, and for the nodes of a
+    /// turbine mapped as an area.
+    #[test]
+    fn the_wind_query_asks_for_both_spellings() {
+        let query = wind_query(52.0, 10.0, 52.1, 10.1);
+        assert!(query.contains("generator:source\"=\"wind"));
+        assert!(query.contains("generator:method\"=\"wind_turbine"));
+        assert!(query.contains("(._;>;)"), "the ways' nodes come too");
         assert!(query.contains("52.000000,10.000000,52.100000,10.100000"));
     }
 }

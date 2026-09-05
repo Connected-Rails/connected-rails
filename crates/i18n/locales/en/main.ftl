@@ -2805,6 +2805,26 @@ pylon-masttrafo-20kv = Masttransformatorstation — Pole-mounted transformer, 20
 pylon-holzmast-nsp = Niederspannungsmast, Holz — Low-voltage pole, wood, 400 V
 pylon-fernmeldemast-bahn = Streckenfernmeldemast — Lineside telegraph pole
 
+# Wind turbines (route editor: File ▸ Import wind turbines…). Where they stand
+# comes from OpenStreetMap, what they are from the Bundesnetzagentur's
+# Marktstammdatenregister.
+action-import-wind = Import wind turbines…
+wind-import-title = Import wind turbines
+wind-import-intro = Asks OpenStreetMap where the turbines of the module envelope stand, and the Marktstammdatenregister what each machine is — manufacturer, type, hub height and rotor diameter, which OpenStreetMap has for about a third of them and the register for all of them. Everything stays editable afterwards.
+wind-import-register = Ask the register
+wind-import-register-hint = A second request to the Bundesnetzagentur's Marktstammdatenregister, matched by the MaStR number or by distance. Without it, most turbines are sized from their rated power alone.
+wind-import-small = Small turbines too
+wind-import-small-hint = The farmyard machines under a 20 m rotor. Many, small, and rarely what a module is after.
+wind-import-no-models = The turbine models are still to come: the machines are written into the module with their dimensions, and nothing stands on the terrain until the models are there.
+wind-import-fetching = Asking OpenStreetMap
+wind-import-parsing = Reading the answer
+wind-import-asking-register = Asking the Marktstammdatenregister
+wind-import-found = { $turbines } turbines found, { $named } named by the register
+wind-import-spare = { $count } more stand in the register but not on the map — they are left out
+wind-import-machine = { $model } — hub { $hub } m, rotor { $rotor } m
+wind-import-unknown-machine = Machine unknown
+status-wind-imported = { $count } wind turbines imported — dimensions and machine are in the module; the models are still to come
+
 # Reading the imagery with a local model (route editor: File ▸ Detect from
 # imagery…, and the AI area tool). The models themselves are not shipped —
 # `ai.ron` says where each one's weights are expected.

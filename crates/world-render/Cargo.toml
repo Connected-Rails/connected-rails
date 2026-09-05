@@ -20,6 +20,7 @@ glam = { workspace = true }
 # train moves. A mip chain is the only cure, and DDS is the one format that
 # carries one and that ImageMagick can write (`tools/cars/import_cars.mjs`).
 bevy = { workspace = true, features = ["jpeg", "dds"] }
+ab_glyph = "0.2"
 # Only for `wgpu::Color`, the clear value of the grass ground cache; unifies
 # with the version Bevy pins.
 wgpu = { version = "29", default-features = false }

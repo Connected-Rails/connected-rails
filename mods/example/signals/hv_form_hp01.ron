@@ -1,0 +1,11 @@
+// Two-aspect, one-arm Formhauptsignal: Hp 0 / Hp 1.
+(
+    system: HV,
+    rules: [
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: ["lamp_red"]),
+        (when: (), show: (main: Some(Proceed)), lamps: ["fluegel1", "lamp_green"]),
+    ],
+    script: None,
+    model: Some("example:form_hp_8m_gitter_1fl"),
+    tags: ["hv", "semaphore", "main-signal", "one-arm", "hp0", "hp1", "epoch-3"],
+)

@@ -1046,10 +1046,19 @@ look like. `mods/example/signals/ks_main.ron`:
 )
 ```
 
-A line references the type by name:
+A line references the type by name.  Every signal placement also carries its
+operational designation and the interlocking which controls it:
 
 ```ron
-signals: [(kind: Main, system: Ks, device: 1, guarded: [0], signal_type: Some("example:ks_main"))],
+signals: [(
+    designation: "24P3",
+    interlocking: "Lf",
+    kind: Main,
+    system: Ks,
+    device: 1,
+    guarded: [0],
+    signal_type: Some("example:ks_main"),
+)],
 ```
 
 ### Signal models
@@ -1082,22 +1091,48 @@ script's `lamps` (the Zs1 below) lights them the same way.
 
 **Moving parts — semaphore signals.** `motions` binds a lamp-image string to a node
 that *travels* instead of switching: while the string is in the lamp image the node
-moves to full travel, without it back to rest, linearly over `seconds` — a quick
-aspect change swings a semaphore arm through its real intermediate positions. The
+moves to full travel, without it back to rest. The default `profile: Linear` covers
+generic mechanisms. `profile: Semaphore(...)` drives an arm upwards with finite
+acceleration, then lets it fall back under gravity and rebound with diminishing height
+at its mechanical stop. `seconds` is the driven raising time, `fall_seconds` the free
+return from full travel, and `rebound` the coefficient of restitution (0 = no bounce).
+The small physics steps are independent of the render frame rate. The
 strings name the moved elements, so an aspect that moves two arms lists two of them
 (`signals/hv_form.ron` + `signal_models/form_hp.ron`):
 
 ```ron
 motions: [
     (lamp: "fluegel1", node: "fluegel1",
-     motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 45.0), seconds: 1.8),
+     motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 45.0), seconds: 1.8,
+     profile: Semaphore(fall_seconds: 0.75, rebound: 0.36)),
     (lamp: "fluegel2", node: "fluegel2",
-     motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: 135.0), seconds: 1.8),
+     motion: Rotate(axis: (0.0, 0.0, 1.0), degrees: -45.0), seconds: 1.8,
+     profile: Semaphore(fall_seconds: 0.85, rebound: 0.34)),
 ]
 ```
 
 `motion` takes the same `Rotate`/`Translate`/`Visibility` as vehicle parts; one
 binding per node. Rest pose (travel 0) is the stop position.
+
+The example mod also ships the full-size German mechanical family: Hp masts at
+6/8/10/12/14 m nominal height from rail underside to upper blade pivot in lattice and
+narrow construction (one or two arms, long or shortened),
+Vr discs at 2.76/4.87/5.37 m (two or three aspects), and low/high Sh rotating-disc
+signals. Complete DB pale-green and iron-grey catalogues plus historical painted-mast
+and negative-blade examples make 188 selectable geometric models. The 14-m Hp models
+are historical special-height variants; later installation principles preferred at
+most 12 m. The distant-signal subset
+also covers gas or modern LED night signs, attached or freestanding Ne 2 boards,
+green or iron-grey masts and three decreasing geometry LODs. The generated
+`example:formsignal_showcase` line places every model in one row.
+On the gas variants, two separate 180-degree colour-selector motions exchange amber
+and green in opposite directions in front of fixed lanterns; Vr 2 moves only the right
+selector. The gas cylinders remain on their service lift and do not move during an
+aspect change. LED variants deliberately have neither those selector motions nor gas
+cylinders.
+Their embedded PBR maps, macro weathering and matching catalogue files are rebuilt with
+`python tools/gen_form_signals.py`; the researched dimensions, scope and naming are listed
+in [`mods/example/FORMSIGNALE.md`](mods/example/FORMSIGNALE.md).
 
 **Levels of detail.** An optional `lods` table switches nodes named
 `<name>_LOD<level>` by camera distance, exactly like vehicles: coarsest last,
@@ -1119,6 +1154,64 @@ look, e.g. an emissive factor — switching is pure visibility). The
 **signal editor** (`trainsim-signal-editor`) assembles parts, binds lamps with
 suggestions from these names, and lights any lamp image in its preview.
 
+### Per-placement designation plates and subsidiary signals
+
+`designation` is rendered onto a real plate at runtime, so A, N1 and every other
+placement can share the same mast model.  It uses a bundled DIN-style condensed font,
+not letter meshes.  The plate follows the 285 × 300 mm field: a location prefix in a
+long name is stacked over the operational name (`24` over `P3`) inside that one field
+instead of widening the plate.  `interlocking` is operational metadata and is not painted onto the mast.
+Both fields are edited in the route editor and the checker reports either one missing.
+
+`addons` describes only equipment physically carried by this signal.  A dense but valid
+example is:
+
+```ron
+addons: (
+    zs1: Some(ThreeLights),
+    zs2: Some(["K", "S"]),
+    zs3: Some((values: [4, 6], construction: Light)),
+    zs6: Some(Form),
+    zs12: true,
+)
+```
+
+The editor offers the prototype constructions rather than arbitrary geometry:
+
+| field | selectable construction / value |
+|---|---|
+| `zs1` | `ThreeLights` (A) or `BlinkingLight` |
+| `zs2`, `zs2v` | one identifying letter per route-dependent value; several values share the fitted dot-matrix display |
+| `zs3`, `zs3v` | fixed `Form` board with one code, or a `Light` display with several codes (1 … 16; ×10 km/h) |
+| `zs6` | `Form` board or `Light` strip |
+| `zs7` | three yellow lights in a V |
+| `zs8` | `ThreeLights` (flashing A) or `LightStrip` |
+| `zs12` | fixed M board |
+| `zs13` | fixed `Form` board or `Light` display |
+| `zs103` | historical DV-301 board with six white diamonds |
+
+Main-signal fittings are accepted on `Main`/`Combined`, advance indicators on
+`Distant`/`Combined`.  Zs 13 cannot be combined with a Zs 3 code 1, 2 or 3.  Zs 1 and
+Zs 8 in A form share one three-lamp housing when both are fitted; likewise light-strip
+Zs 6 and Zs 8 share their physical display.  Light faces listen to `zs1`, `zs2_K`,
+`zs2v_K`, `zs3_4`, `zs3v_4`, `zs6`, `zs7`, `zs8` and `zs13`; where a display has only
+one possible value the generic `zs2`/`zs3`/`zs2v`/`zs3v` alias works too.  Form boards,
+Zs 12 and Zs 103 are permanently visible.
+
+Zs 9 and Zs 10 are deliberately not in `addons`: Zs 9 stands *before* the applicable
+light main signal, while Zs 10 is a separate signal inside the points area.  Modelling
+either as mast furniture would create a placement the signal book does not permit.
+
+The dedicated line `example:zusatzsignal_showcase` places every fitting, both shared
+housings, form/light alternatives, multi-value displays and combined examples in one
+row.  A reproducible front overview is:
+
+```sh
+cargo run -p app -- --line example:zusatzsignal_showcase --loco example:br101_afb \
+  --camera fly --fly 0,18,280 --look 0,5,458 --hud off \
+  --window 1920x1080 --frames 70 --screenshot /tmp/zusatzsignal-showcase.png
+```
+
 ### Aspect hook `aspect(ctx)`
 
 Runs after the rule table and sees its result. `nil` keeps that result.
@@ -1127,9 +1220,9 @@ Runs after the rule table and sees its result. `nil` keeps that result.
 |---|---|
 | `signal`, `time` | signal index and simulation time [s] |
 | `clear`, `route`, `diverging`, `next_stop`, `next_slow` | the situation, as above |
-| `main`, `distant`, `speed` | what the table decided (`"stop"`, `"proceed"`, `"proceed_slow"`, `"substitute"`, `"dark"`; `"expect_stop"`, `"expect_proceed"`, `"expect_slow"`) |
+| `main`, `distant`, `shunt`, `speed` | what the table decided (`"stop"`, `"proceed"`, `"proceed_slow"`, `"substitute"`, `"dark"`; `"expect_stop"`, `"expect_proceed"`, `"expect_slow"`; Sh `"stop"`/`"proceed"`) |
 
-The return table takes the same `main`, `distant`, `speed` and `lamps`.
+The return table takes the same `main`, `distant`, `shunt`, `speed` and `lamps`.
 
 `mods/example/scripts/zs1.lua` — the substitute signal, a case that needs memory:
 
@@ -1180,9 +1273,10 @@ that compiles but fails on the line — a distant signal without its 1000 Hz mag
 beyond its track, a boundary on a node that is no buffer.
 
 The interlocking tables are edited there as well, so none of them has to be typed as RON:
-a placed `Signal` device gets its **signal table entry** in the selection panel (kind, system,
-the signal it announces, guarded sections, whether it needs a route, diverging speed, signal
-type and 3D model) together with **the routes that start at it** — where each one ends and
+a placed `Signal` device gets its **signal table entry** in the selection panel (designation,
+controlling interlocking, kind, system, the signal it announces, guarded sections, whether it
+needs a route, diverging speed, signal type, 3D model and optional Zs fittings) together with
+**the routes that start at it** — where each one ends and
 what it locks, and *Find routes*, which runs out over the track and offers one route per leg
 of every turnout ahead, each ending at the next signal on it. Routes already in the file stay
 as they are, so finding again after a change adds what is new and touches nothing else.

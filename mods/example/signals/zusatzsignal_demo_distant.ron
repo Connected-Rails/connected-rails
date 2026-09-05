@@ -1,0 +1,8 @@
+// Static Vr 0 base aspect; the showcase script lights the fitted advance indicator.
+(
+    system: HV,
+    rules: [(when: (), show: (distant: Some(ExpectStop)), lamps: ["vr0_licht"])],
+    script: Some("example:zusatzsignal_showcase"),
+    model: None,
+    tags: ["showcase", "semaphore", "subsidiary-signals"],
+)

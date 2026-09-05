@@ -593,6 +593,7 @@ pub(crate) fn load_track(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     world_materials: render::WorldMaterials,
+    mut images: ResMut<Assets<Image>>,
     assets: Res<AssetServer>,
     mods: Res<Mods>,
     stash: Res<LoadingStash>,
@@ -646,12 +647,15 @@ pub(crate) fn load_track(
             kind: s.kind,
             aspect: s.aspect,
             model: signal_models.get(i).and_then(|m| m.as_ref()),
+            designation: &line_source.signals[i].designation,
+            addons: &line_source.signals[i].addons,
         })
         .collect();
     let aspect_materials = world_render::spawn_signals(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut images,
         &assets,
         &world.sim.net,
         &views,

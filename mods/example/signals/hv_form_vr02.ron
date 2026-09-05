@@ -1,0 +1,19 @@
+// Fixed route variant announcing only Vr 0 or Vr 2.
+(
+    system: HV,
+    rules: [
+        (
+            when: (next_stop: Some(true)),
+            show: (distant: Some(ExpectStop)),
+            lamps: ["vr0_licht"],
+        ),
+        (
+            when: (),
+            show: (distant: Some(ExpectSlow)),
+            lamps: ["vr2_fluegel", "vr2_licht", "vr_blende_rechts_gruen"],
+        ),
+    ],
+    script: None,
+    model: Some("example:form_vr_2_76m_3begr"),
+    tags: ["hv", "semaphore", "distant-signal", "vr0", "vr2", "fixed-route", "epoch-3"],
+)

@@ -1,0 +1,10 @@
+// Fixed warning distant signal: Vr 0 only, e.g. before a terminal-track Sh 2.
+(
+    system: HV,
+    rules: [
+        (when: (), show: (distant: Some(ExpectStop)), lamps: ["vr0_licht"]),
+    ],
+    script: None,
+    model: Some("example:form_vr_2_76m_2begr"),
+    tags: ["hv", "semaphore", "distant-signal", "vr0", "fixed", "epoch-3"],
+)

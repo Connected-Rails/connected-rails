@@ -1,0 +1,27 @@
+// Three-aspect Formvorsignal with auxiliary wing: Vr 0 / Vr 1 / Vr 2.
+(
+    system: HV,
+    rules: [
+        (
+            when: (next_stop: Some(true)),
+            show: (distant: Some(ExpectStop)),
+            lamps: ["vr0_licht"],
+        ),
+        (
+            when: (next_slow: Some(true)),
+            show: (distant: Some(ExpectSlow)),
+            lamps: ["vr2_fluegel", "vr2_licht", "vr_blende_rechts_gruen"],
+        ),
+        (
+            when: (),
+            show: (distant: Some(ExpectProceed)),
+            lamps: [
+                "scheibe_weg", "vr1_licht",
+                "vr_blende_links_gruen", "vr_blende_rechts_gruen",
+            ],
+        ),
+    ],
+    script: None,
+    model: Some("example:form_vr_2_76m_3begr"),
+    tags: ["hv", "semaphore", "distant-signal", "three-aspect", "vr0", "vr1", "vr2", "epoch-3"],
+)

@@ -31,7 +31,7 @@
     ],
     sections: [(edges: [0])],
     signals: [
-        (kind: Main, system: Ks, device: 0, guarded: [0], signal_type: Some("example:ks_main")),
+        (designation: "A", interlocking: "Bks", kind: Main, system: Ks, device: 0, guarded: [0], signal_type: Some("example:ks_main")),
     ],
     routes: [],
     // Vegetation: every tree its own row, geo-positioned, height from the

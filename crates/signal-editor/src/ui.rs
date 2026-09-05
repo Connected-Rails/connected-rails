@@ -4,12 +4,12 @@
 //! things a signal model is made of: the part list (glTF files chained by
 //! mount points), the lamp bindings, and a lamp test for the preview.
 
-use crate::{Editor, PartState, Status};
+use crate::{CaptureSettings, Editor, PartState, Status};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use editor_ui::{colors, space};
 use i18n::t;
-use sim_core::interlock::{LampBinding, MotionBinding, SignalModel, SignalPart};
+use sim_core::interlock::{LampBinding, MotionBinding, MotionProfile, SignalModel, SignalPart};
 use sim_core::train::{Lod, Motion, lod_level};
 
 const SHORTCUT_NEW: egui::KeyboardShortcut =
@@ -26,7 +26,11 @@ pub fn draw(
     mut themed: Local<bool>,
     mut view: ResMut<crate::View>,
     windows: Query<&bevy::window::RawHandleWrapper, With<bevy::window::PrimaryWindow>>,
+    capture: Option<Res<CaptureSettings>>,
 ) -> Result {
+    if capture.is_some() {
+        return Ok(());
+    }
     let ctx = contexts.ctx_mut()?.clone();
     editor.window = windows.single().ok().cloned();
     if !*themed {
@@ -669,6 +673,7 @@ fn motions_section(ui: &mut egui::Ui, editor: &mut Editor) {
                 degrees: 45.0,
             },
             seconds: 1.5,
+            profile: MotionProfile::Linear,
         });
     }
 }
@@ -735,6 +740,57 @@ fn motion_row(ui: &mut egui::Ui, index: usize, binding: &mut MotionBinding) {
                 .suffix(" s"),
         )
         .on_hover_text(t!("sig-seconds-hint"));
+    });
+    ui.horizontal(|ui| {
+        ui.label(t!("sig-motion-profile"));
+        let profile_name = match binding.profile {
+            MotionProfile::Linear => t!("sig-motion-linear"),
+            MotionProfile::Semaphore { .. } => t!("sig-motion-semaphore"),
+        };
+        egui::ComboBox::from_id_salt(("motion-profile", index))
+            .selected_text(profile_name)
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(
+                        matches!(binding.profile, MotionProfile::Linear),
+                        t!("sig-motion-linear"),
+                    )
+                    .clicked()
+                {
+                    binding.profile = MotionProfile::Linear;
+                }
+                if ui
+                    .selectable_label(
+                        matches!(binding.profile, MotionProfile::Semaphore { .. }),
+                        t!("sig-motion-semaphore"),
+                    )
+                    .clicked()
+                    && !matches!(binding.profile, MotionProfile::Semaphore { .. })
+                {
+                    binding.profile = MotionProfile::Semaphore {
+                        fall_seconds: 0.75,
+                        rebound: 0.18,
+                    };
+                }
+            });
+        if let MotionProfile::Semaphore {
+            fall_seconds,
+            rebound,
+        } = &mut binding.profile
+        {
+            ui.label(t!("sig-fall-seconds"));
+            ui.add(
+                egui::DragValue::new(fall_seconds)
+                    .speed(0.05)
+                    .range(0.05..=60.0)
+                    .suffix(" s"),
+            )
+            .on_hover_text(t!("sig-fall-seconds-hint"));
+            ui.label(t!("sig-rebound"));
+            ui.add(egui::DragValue::new(rebound).speed(0.01).range(0.0..=0.8))
+                .on_hover_text(t!("sig-rebound-hint"));
+        }
     });
 }
 

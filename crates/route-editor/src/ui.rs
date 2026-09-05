@@ -294,7 +294,71 @@ pub fn draw(
     }
     state.typing = ctx.memory(|m| m.focused().is_some());
     viewport_hint(&ctx, &root, &state);
+    cursor_readout(&ctx, &state);
+    cursor_shape(&ctx, &state, &gizmo);
     Ok(())
+}
+
+/// The label beside the cursor: the piece being laid, the segment a handle
+/// ends, the height a break point is pulled to. The World Editor writes its
+/// radius next to the running end; a figure in the status bar is a glance
+/// away from where the hand is, and the hand is what has to be steered.
+fn cursor_readout(ctx: &egui::Context, state: &EditorState) {
+    let Some(text) = state.cursor_label.as_deref() else {
+        return;
+    };
+    let Some(pointer) = ctx.pointer_latest_pos() else {
+        return;
+    };
+    let over = state.viewport.contains(Vec2::new(pointer.x, pointer.y)) && !state.pointer_over_ui;
+    if !over {
+        return;
+    }
+    // Below and to the right of the pointer, off the handle it reads about;
+    // not interactable, or the label would sit between the cursor and the
+    // map it describes the moment the mouse stops.
+    egui::Area::new("cursor-readout".into())
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .fixed_pos(pointer + egui::vec2(space::L, space::L))
+        .show(ctx, |ui| {
+            editor_ui::card_frame().show(ui, |ui| {
+                ui.label(egui::RichText::new(text).small().color(colors::TEXT));
+            });
+        });
+}
+
+/// The pointer's shape over the map, after what the input systems found
+/// under it last frame: a hand over a handle, a fist while one is held, a
+/// crosshair for the tools that place something, the arrow otherwise. Set
+/// through egui, which owns the window's cursor already.
+fn cursor_shape(ctx: &egui::Context, state: &EditorState, gizmo: &crate::gizmo::GizmoState) {
+    let Some(pointer) = ctx.pointer_latest_pos() else {
+        return;
+    };
+    if !state.viewport.contains(Vec2::new(pointer.x, pointer.y)) || state.pointer_over_ui {
+        return;
+    }
+    let holding = gizmo.is_dragging()
+        || state.drag.is_some()
+        || state.grade_drag.is_some()
+        || state.envelope_drag.is_some()
+        || state.walk_drag.is_some();
+    let grabbable =
+        gizmo.is_hovering() || state.hover_support.is_some() || state.hover_grade.is_some();
+    let icon = if holding {
+        egui::CursorIcon::Grabbing
+    } else if grabbable {
+        egui::CursorIcon::Grab
+    } else if state.hover_edge.is_some() {
+        egui::CursorIcon::PointingHand
+    } else {
+        match state.tool {
+            Tool::Select | Tool::PickTile => egui::CursorIcon::Default,
+            _ => egui::CursorIcon::Crosshair,
+        }
+    };
+    ctx.set_cursor_icon(icon);
 }
 
 /// Says how to move the camera, in the viewport, until the user has done it.
@@ -1414,26 +1478,7 @@ fn status_bar(
                             segments = drawing.segments.len()
                         );
                         match state.readout {
-                            Some(r) => {
-                                let piece = match (r.straight, r.radius, r.cant) {
-                                    (true, _, _) | (_, None, _) => t!(
-                                        "draw-readout-straight",
-                                        length = format!("{:.0}", r.length)
-                                    ),
-                                    (false, Some(radius), Some(cant)) => t!(
-                                        "draw-readout-arc-canted",
-                                        length = format!("{:.0}", r.length),
-                                        radius = editor_ui::group_digits(radius.round()),
-                                        cant = format!("{cant:.0}")
-                                    ),
-                                    (false, Some(radius), None) => t!(
-                                        "draw-readout-arc",
-                                        length = format!("{:.0}", r.length),
-                                        radius = editor_ui::group_digits(radius.round())
-                                    ),
-                                };
-                                format!("{piece} · {progress}")
-                            }
+                            Some(r) => format!("{} · {progress}", r.text()),
                             None => progress,
                         }
                     }

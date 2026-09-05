@@ -38,8 +38,12 @@ const MIN_DISTANCE: f64 = 3.0;
 const MAX_DISTANCE: f64 = 20_000.0;
 /// Distance `F` leaves between the camera and what it framed [m].
 const FRAME_DISTANCE: f64 = 80.0;
-/// Steps on the camera speed dial — Unreal's `MaxCameraSpeeds`.
-pub const SPEED_STEPS: i32 = 8;
+/// Steps on the camera speed dial. Unreal's `MaxCameraSpeeds` is eight; the
+/// dial here runs four steps further, because a module is tens of kilometres
+/// long and the wheel under the right button is the one control a flying
+/// hand can reach — 320 m/s at the old top step took a minute to cross one,
+/// and the scalar that would have helped sits in a menu.
+pub const SPEED_STEPS: i32 = 12;
 /// The step the dial opens at, the one that leaves the speed unscaled.
 pub const DEFAULT_SPEED_STEP: i32 = 4;
 /// Ceiling of the fine multiplier — Unreal's `CameraSpeedScalar` UI range.
@@ -141,8 +145,9 @@ impl Focus {
         EcefPos(self.camera_pos().0 + self.viewport_offset(free, window))
     }
 
-    /// Flight speed [m/s]. Unreal's dial doubles per step, so the eight steps
-    /// span 0.125x to 16x the base, and the scalar multiplies on top of them.
+    /// Flight speed [m/s]. Unreal's dial doubles per step, so the twelve
+    /// steps span 0.125x to 256x the base (2.5 m/s to 5 km/s), and the
+    /// scalar multiplies on top of them.
     ///
     /// Deliberately not scaled by the distance to the pivot: a speed that
     /// changes under the builder as they zoom is a speed they do not control,

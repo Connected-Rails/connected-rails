@@ -75,7 +75,7 @@ pub struct WorldCatalog {
     /// installed mod object.
     trees: Vec<Option<Species>>,
     /// Indexed by [`SceneryInstance::object`].
-    objects: Vec<Option<Handle<WorldAsset>>>,
+    objects: Vec<Option<SceneryModel>>,
     /// Indexed by [`PersonInstance::character`].
     people: Passengers,
     /// Placeholder conifer and broadleaf, coloured by vertex so one white
@@ -118,9 +118,12 @@ impl WorldCatalog {
         let objects = object_names
             .iter()
             .map(|name| match registry.get(name) {
-                Some(object) => Some(assets.load(
-                    GltfAssetLabel::Scene(0).from_asset(asset_path(season.model_of(object))),
-                )),
+                Some(object) => Some(SceneryModel {
+                    scene: assets.load(
+                        GltfAssetLabel::Scene(0).from_asset(asset_path(season.model_of(object))),
+                    ),
+                    bands: Arc::from(object.lod_distances.as_slice()),
+                }),
                 None => {
                     warn!("scenery: unknown object {name:?} — placeholder shown");
                     None
@@ -145,6 +148,14 @@ impl WorldCatalog {
             placeholder_object,
         }
     }
+}
+
+/// One scenery object of the catalogue: its scene, and the object's own
+/// level-of-detail table — empty for the renderer's bands and [`OBJECT_CULL`].
+#[derive(Clone)]
+struct SceneryModel {
+    scene: Handle<WorldAsset>,
+    bands: Arc<[f32]>,
 }
 
 /// One species of the catalogue: the glTF its levels are read out of and the
@@ -563,17 +574,21 @@ pub fn spawn_scatter(
     tile.with_children(|parent| {
         for object in objects {
             let transform = Transform::from_translation(Vec3::from(object.pos))
-                .with_rotation(Quat::from_array(object.rotation));
+                .with_rotation(Quat::from_array(object.rotation))
+                .with_scale(Vec3::splat(object.scale));
             let scene = catalog
                 .objects
                 .get(object.object as usize)
                 .and_then(|s| s.clone());
             match scene {
-                Some(scene) => {
+                Some(SceneryModel { scene, bands }) => {
+                    // The levels are put on the meshes once the scene has
+                    // spawned (`apply_scene_lods`); a range on the root alone
+                    // reaches none of them.
                     parent.spawn((
                         WorldAssetRoot(scene),
                         transform,
-                        VisibilityRange::abrupt(0.0, OBJECT_CULL),
+                        SceneLods(bands),
                         SceneryIndex(object.index),
                         WalkwayHost {
                             people: catalog.people.clone(),
@@ -619,6 +634,72 @@ pub fn spawn_scatter(
             );
         }
     });
+}
+
+/// The level-of-detail table of a scenery object, waiting on the root of its
+/// scene for the hierarchy to spawn: the object's own distances, or empty for
+/// the renderer's bands and [`OBJECT_CULL`].
+#[derive(Component, Clone)]
+pub struct SceneLods(pub Arc<[f32]>);
+
+/// The levels have been put on the meshes.
+#[derive(Component)]
+pub struct LodsApplied;
+
+/// Puts the visibility ranges on the meshes of a spawned scenery scene.
+///
+/// A [`VisibilityRange`] reaches the entity it sits on and nothing below it,
+/// so a range on the scene's root reached no mesh at all — every level of a
+/// mast placed by hand was drawn at once, out to no distance in particular.
+/// The hierarchy is walked once it is there: a mesh under a node named
+/// `_LOD<n>` gets that level's band, a mesh under no level is drawn out to the
+/// cull distance, the same rule the people and the trees follow.
+pub fn apply_scene_lods(
+    mut commands: Commands,
+    roots: Query<(Entity, &SceneLods), Without<LodsApplied>>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    meshes: Query<(), With<Mesh3d>>,
+) {
+    for (root, lods) in &roots {
+        // The scene spawns some frames after the entity.
+        let Ok(kids) = children.get(root) else {
+            continue;
+        };
+        let mut stack: Vec<(Entity, Option<u8>)> = kids.iter().map(|e| (e, None)).collect();
+        let mut found: Vec<(Entity, Option<u8>)> = Vec::new();
+        while let Some((entity, inherited)) = stack.pop() {
+            let level = names
+                .get(entity)
+                .ok()
+                .and_then(|name| lod_level(name.as_str()))
+                .or(inherited);
+            if meshes.contains(entity) {
+                found.push((entity, level));
+            }
+            if let Ok(kids) = children.get(entity) {
+                stack.extend(kids.iter().map(|e| (e, level)));
+            }
+        }
+        let mut levels: Vec<u8> = found.iter().filter_map(|(_, l)| *l).collect();
+        levels.sort_unstable();
+        levels.dedup();
+        let cull = lods.0.last().copied().unwrap_or(OBJECT_CULL);
+        for (entity, level) in &found {
+            let (start, end) = match level.and_then(|l| levels.iter().position(|x| *x == l)) {
+                Some(rank) => {
+                    let table: &[f32] = if lods.0.is_empty() { &[] } else { &lods.0 };
+                    let (start, end) = band(rank, levels.len(), table);
+                    (start, end.min(cull))
+                }
+                None => (0.0, cull),
+            };
+            commands
+                .entity(*entity)
+                .insert(VisibilityRange::abrupt(start, end));
+        }
+        commands.entity(root).insert(LodsApplied);
+    }
 }
 
 #[cfg(test)]

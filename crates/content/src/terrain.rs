@@ -199,7 +199,35 @@ pub struct SceneryInstance {
     /// Index into [`Scenery::objects`].
     pub object: u16,
     /// Index of the placement in the line file — what the editor selects.
+    /// [`GeoObject::INDEX`] for an object that is not a line placement.
     pub index: u32,
+    /// Uniform scale on the object's own size — one for a placed object, the
+    /// machine's size over its class's for a wind turbine.
+    pub scale: f32,
+}
+
+/// A scenery object that stands at a point on the earth rather than beside
+/// the track: a wind turbine ([`crate::wind::placements`]). It takes the same
+/// path through the tiles as an [`ObjectSource`] does — a scene instance,
+/// culled and levelled by its object's own distances — and stands on the
+/// ground wherever that is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeoObject {
+    /// The mod object (`"<mod>:<name>"`).
+    pub object: String,
+    /// Where it stands [deg]; the height comes from the terrain.
+    pub lat: f64,
+    pub lon: f64,
+    /// Which way the model's front looks [deg, clockwise from north].
+    pub yaw_deg: f64,
+    /// Uniform scale on the object's own size.
+    pub scale: f64,
+}
+
+impl GeoObject {
+    /// What a geo-positioned object carries as its placement index: it is
+    /// nobody's entry in `objects:`, and the editor must not select one there.
+    pub const INDEX: u32 = u32::MAX;
 }
 
 /// One tree instance on a tile — a hand-placed [`TreeSource`] or one grown out
@@ -451,7 +479,9 @@ impl Vegetation {
     /// those and there is no reason to build it a second time. So the masts
     /// come in here, and everything downstream — bucketing, streaming,
     /// instanced draws, levels of detail — treats a Donaumast as it treats a
-    /// spruce (see [`crate::power::masts`]).
+    /// spruce (see [`crate::power::masts`]). A wind turbine is **not** one of
+    /// these: its rotor turns and its nacelle yaws, and a thing with moving
+    /// parts is a scene ([`Scenery::from_line`]).
     pub fn from_line(line: &LineSource, zone: u8) -> Self {
         let mut sources = line.trees.clone();
         sources.extend(crate::power::masts(&line.power_lines));
@@ -579,11 +609,45 @@ struct PlacedObject {
     snap: bool,
     object: u16,
     index: u32,
+    scale: f64,
 }
 
 impl Scenery {
+    /// The line's placed objects **and** its wind turbines — the turbines
+    /// are geo-positioned scenery, and they join here so that the app and the
+    /// editor get them through the one path there is.
     pub fn from_line(line: &LineSource, net: &TrackNetwork, zone: u8) -> Self {
-        Self::from_parts(&line.objects, net, zone)
+        let mut scenery = Self::from_parts(&line.objects, net, zone);
+        scenery.add_geo(&crate::wind::placements(&line.wind_turbines), zone);
+        scenery
+    }
+
+    /// Adds objects that stand at a point on the earth: on the ground there,
+    /// the front turned to the bearing they name, scaled as they say.
+    pub fn add_geo(&mut self, objects: &[GeoObject], zone: u8) {
+        for placement in objects {
+            let (lat, lon) = (placement.lat.to_radians(), placement.lon.to_radians());
+            let base = geo::to_ecef(lat, lon, 0.0);
+            let frame = EnuFrame::at(base);
+            // Clockwise from north, seen from above: 90° is east.
+            let (sin, cos) = placement.yaw_deg.to_radians().sin_cos();
+            let dir = frame.north * cos + frame.east * sin;
+            let (e, n) = geo::to_utm(lat, lon, zone);
+            let Some(object) = intern(&mut self.objects, &placement.object) else {
+                continue;
+            };
+            self.placed.push(PlacedObject {
+                pos: DVec2::new(e, n),
+                base,
+                up: frame.up,
+                dir,
+                height: 0.0,
+                snap: true,
+                object,
+                index: GeoObject::INDEX,
+                scale: placement.scale,
+            });
+        }
     }
 
     pub fn from_parts(placements: &[ObjectSource], net: &TrackNetwork, zone: u8) -> Self {
@@ -616,6 +680,7 @@ impl Scenery {
                     object: intern(&mut objects, &placement.object)
                         .unwrap_or_else(|| intern(&mut objects, "").unwrap_or(0)),
                     index: index as u32,
+                    scale: 1.0,
                 })
             })
             .collect();
@@ -1721,6 +1786,7 @@ fn scatter_objects(
                 rotation: model_rotation(frame, object.dir, object.up).to_array(),
                 object: object.object,
                 index: object.index,
+                scale: object.scale as f32,
             }
         })
         .collect()

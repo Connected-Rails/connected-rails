@@ -2808,6 +2808,26 @@ pylon-masttrafo-20kv = Masttransformatorstation (20/0.4 kV)
 pylon-holzmast-nsp = Niederspannungsmast, Holz (400 V)
 pylon-fernmeldemast-bahn = Streckenfernmeldemast
 
+# Windenergieanlagen (Streckeneditor: Datei ▸ Windräder importieren…). Wo sie
+# stehen, kommt aus OpenStreetMap, was dort steht, aus dem
+# Marktstammdatenregister der Bundesnetzagentur.
+action-import-wind = Windräder importieren…
+wind-import-title = Windräder importieren
+wind-import-intro = Fragt OpenStreetMap, wo die Windräder im Modulumschreibungs-Polygon stehen, und das Marktstammdatenregister, was dort jeweils steht — Hersteller, Typ, Nabenhöhe und Rotordurchmesser, die OpenStreetMap für etwa ein Drittel kennt und das Register für alle. Alles bleibt danach editierbar.
+wind-import-register = Register fragen
+wind-import-register-hint = Eine zweite Abfrage beim Marktstammdatenregister der Bundesnetzagentur, zugeordnet über die MaStR-Nummer oder über die Entfernung. Ohne sie werden die meisten Anlagen allein aus ihrer Leistung abgeschätzt.
+wind-import-small = Kleinwindanlagen mitnehmen
+wind-import-small-hint = Die Hofanlagen unter 20 m Rotordurchmesser. Viele, klein und selten das, worauf es einem Modul ankommt.
+wind-import-no-models = Die Windradmodelle kommen noch: Die Anlagen werden mit ihren Maßen ins Modul geschrieben, aufs Gelände gestellt wird bis dahin nichts.
+wind-import-fetching = OpenStreetMap wird gefragt
+wind-import-parsing = Antwort wird gelesen
+wind-import-asking-register = Marktstammdatenregister wird gefragt
+wind-import-found = { $turbines } Windräder gefunden, { $named } vom Register benannt
+wind-import-spare = { $count } weitere stehen im Register, aber nicht auf der Karte — sie bleiben weg
+wind-import-machine = { $model } — Nabe { $hub } m, Rotor { $rotor } m
+wind-import-unknown-machine = Anlage unbekannt
+status-wind-imported = { $count } Windräder importiert — Maße und Anlage stehen im Modul, die Modelle kommen noch
+
 # Luftbildauswertung mit einem lokalen Modell (Streckeneditor: Datei ▸ Aus
 # Luftbild erkennen… und das Werkzeug „KI-Bereich“). Die Modelle selbst liegen
 # nicht bei — ai.ron sagt, wo die Gewichte erwartet werden.

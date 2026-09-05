@@ -11261,6 +11261,7 @@ dependencies = [
  "content",
  "fields",
  "glam 0.32.1",
+ "serde_json",
  "sim-core",
  "track-model",
  "wgpu",

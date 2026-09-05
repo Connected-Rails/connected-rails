@@ -1,6 +1,6 @@
 # Implementation status against PLAN.md
 
-As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and fmt clean.
+As of 2026-09-05 · `cargo test --workspace`: **1269 tests green** · clippy and fmt clean.
 
 **This project is mod-first.** See [MODS.md](MODS.md) for how to create trains, signals and lines.
 
@@ -434,8 +434,8 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   from `GDAL_NODATA`) from a single file or
   an entire directory supply the gradient profile. Tiles are loaded lazily (sheet boundaries
   from the file name) and kept in an LRU, so even a federal state's DGM1 is usable.
-  CLI: `import-line`, and `import-module` for re-fetching a whole module's fields, roads
-  and heights headless (2026-08-31, see below).
+  CLI: `import-line`, and `import-module` for re-fetching a whole module's fields, roads,
+  overhead lines, wind turbines and heights headless (2026-08-31, see below).
 - **Fields from the agricultural registers (field plan, complete):** the countryside beside
   the line is farmed, and a field is a crop rather than a green rectangle. A line stores the
   outline, the crop, the working direction and a seed (`route::FieldSource`); what a field
@@ -1324,6 +1324,136 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   a copy of the atlas and a test reads `pylons.json` to fail when the two drift,
   because a crossarm changed on one side only puts the conductors beside the
   insulator strings instead of on them.
+
+- **Wind turbines from two registers (2026-09-05, `content::wind`, `fields::mastr`,
+  route editor File ▸ Import wind turbines…):** a module in the Börde or in
+  Dithmarschen has dozens of them on its horizon, so they come out of public data
+  like the roads and the overhead lines do — but from **two** sources, because
+  neither answers alone.
+
+  *OpenStreetMap knows where they stand.* Somebody walked to the foot of the
+  tower. What it mostly does not know is the machine: over 554 turbines in a
+  Dithmarschen box and 605 in the Magdeburger Börde, the mappers wrote
+  `manufacturer` on 31–55 % of them, `model` on 31–46 %, `height:hub` on 8–21 %
+  and `rotor:diameter` on 7 %. Hub height and rotor diameter are exactly the two
+  numbers a viewer perceives, so a turbine without them is a guess.
+
+  *The Bundesnetzagentur's Marktstammdatenregister knows what they are.* Every
+  generating unit in Germany is registered with its manufacturer, type
+  designation, hub height, rotor diameter, rated power, operating status and
+  coordinates, and the register publishes that as open data (dl-de/by-2-0). The
+  extended public unit data its own web front end reads is a JSON endpoint that
+  takes no key and **filters on the WGS84 coordinates**, so a module's envelope
+  box is one query — 500 rows a page, some two megabytes, about a second
+  (`fields::mastr`, beside the field registers of `fields::wfs` because a
+  register client belongs with the register clients).
+
+  *Putting the two together* is `content::wind::match_register`: a turbine
+  carrying `ref:mastr` — half of them do — is matched on that number and nothing
+  else, the rest take the nearest **standing** unit within a hundred metres. In
+  a test box of 78 mapped turbines, 75 carried the reference, the nearest-unit
+  match agreed with every one of them, and the two positions differed by 1.9 m
+  in the median, 16 m at the ninth decile and 98 m in the single worst case.
+  German turbines stand hundreds of metres apart, so the radius is wide enough
+  for the outlier and far too narrow to reach the neighbour. What the register
+  cannot answer for falls back to the **specific power** — the rated power per
+  square metre of swept area, 335 W/m² in the median over 387 operating
+  machines — with the tower following the rotor at `40 + 0.75 d`, and the entry
+  is tagged `estimated` so the file says which of its numbers were surveyed.
+  The tag is worth having: the same 112 m rotor sits on a 94 m tower on the
+  windy coast and on a 140 m one in the Hunsrück, where the machine has to reach
+  over a forest.
+
+  `height=*` is deliberately **not** read although more turbines carry it than
+  carry `height:hub`. Where a mapper wrote both, it is the tip height and the
+  two agree to the metre (119 + 112/2 = 175); where it stands alone it is as
+  often the hub height — an MM82 tagged `height=59` has a hub of 59 and a tip of
+  100. A tag that means two things cannot be turned into one number.
+
+  *Which way they face is not a datum and cannot be one.* A turbine yaws into
+  the wind and keeps no direction of its own, so the import writes the
+  prevailing German westerly (250°) for every turbine of a box: a park whose
+  machines all face one way is right at every moment, one whose machines face at
+  random is wrong at all of them. The live answer is already in the world —
+  `sim_core::weather::Weather::bearing` and `wind` are a function of the
+  scenario clock, shared by every client — so a nacelle that follows the wind
+  and a rotor that turns with it cost nothing over the network when the models
+  arrive.
+
+  *In the world* a turbine is `wind_turbines:` on the line file
+  (`WindTurbineSource`): the position, the hub height, the rotor diameter, the
+  machine's name, its MaStR number and the tags. It is **scenery with moving
+  parts** — a scene instance on the ground like a placed hut, not a flattened
+  instance in the vegetation like a mast, because its nacelle yaws and its
+  rotor turns (`content::terrain::GeoObject`, `Scenery::add_geo`).
+
+  **The models (`mods/wind`, `tools/wind/`)** are generated like the masts:
+  `wind.json` is the catalogue — four size classes, the German fleet's own
+  generations at the register's median dimensions (50 m rotor on 65 m, 80 on
+  95, 115 on 125, 150 on 140) — and `build_wind.mjs` turns it into ten builds:
+  the box nacelle of Vestas, Nordex, Senvion, GE and Siemens, Enercon's drop
+  with the seven green rings of its tower foot, and a lattice tower under the
+  two small classes for a Fuhrländer of the nineties. The blade is a loft
+  through NACA sections — round at the bolt circle, widest at a quarter of the
+  length, twisted eighteen degrees at the root to nothing at the tip, the
+  pitch axis at thirty per cent of the chord — the nacelle a rounded box or a
+  body of revolution, the tower a tapered tube with its section flanges and a
+  door, or four battered legs with X bracing. Four levels of detail cut on
+  the blade's outer chord (three pixels, a pixel and a quarter, then the
+  tower foot under two pixels), culled at eight kilometres, and a lamp that
+  grows with the level so it survives as a pixel of red. The materials are
+  one painted coating — RAL 7035 kept bright, orange peel and rain streaks
+  and chalking in the roughness — plus the masts' concrete and zinc, with the
+  machine's own marks in the vertex colours: the AVV day marking (red, white,
+  red on the tips, ending on a ring; a red band round the tower at forty
+  metres), the leading-edge erosion, the dirt at the foot, the green rings.
+  `--check` asserts every face is wound the way its normals point (the
+  masts' centre-of-piece test cannot judge a coned blade) and every moved
+  node is there; `--preview` draws every build, a close-up of the head, and
+  each hand-over pair at the distance it happens at.
+
+  *They move.* The model's `nacelle` and `rotor` are nodes, the levels hang
+  under them, and `world_render::wind` moves them by name: the rotor at the
+  speed the wind at hub height gives it (a tip-speed ratio of seven up to the
+  rated speed off the node's extras, idling under the cut-in, stopped over
+  the cut-out, the wind grown from ten metres to the hub by the Hellmann
+  law), the nacelle yawed to the wind's bearing at half a degree a second
+  with a dead band, and the lamps blinked on the scenario clock — one second
+  on, half off, every machine of a park in step, as the regulation asks. The
+  lamp is the model's own emissive material, forty times a red, and it blooms
+  the way a signal lens does. It cost an afternoon to believe that: every
+  screenshot of it came out dark, through a whole ladder of experiments that
+  blamed the emissive, the weather material swap, the bindless slab and the
+  exposure weight in turn — until the blink's own log showed the capture frame
+  sitting in the lamp's half second *off* every time (`--frames 235` lands at
+  the same tick of the scenario clock run after run), and a pixel scan for
+  pure red that could never match a lit lamp, which blooms to pink-white. Two
+  confounds, no bug. What the ladder did establish on the way: the emissive
+  alpha reaches the shader as the exposure weight it should be, and
+  `ExtendedMaterial` is not bindless when its extension is not. The
+  weather is a shared function of the clock, so nothing is sent; the rotor's
+  phase accumulates locally, which is not state because nobody can compare
+  two clients' blade angles. A steady breeze stands in where there is no sky,
+  so the editor's preview turns too.
+
+  *Scenery objects now level.* A `VisibilityRange` on a scene's root reaches
+  no mesh below it, so every level of a hand-placed mast was drawn at once —
+  `scatter::apply_scene_lods` walks a spawned scene and puts each mesh's band
+  on the mesh, from the object's own `lod_distances` or the renderer's,
+  which is what lets a 200 m machine be drawn to eight kilometres and a hut
+  to three. The example line got a park of five to show every build.
+
+  *The dialog* has filters rather than a list, like the road import: whether to
+  ask the register at all (on — it is the difference between a third of the
+  machines knowing their size and all of them) and whether the farmyard
+  Kleinwindanlagen under a 20 m rotor come too (off — they are many and they are
+  furniture). Headless the same import is `import-module --no-wind`,
+  `--small-turbines`, `--no-register`.
+
+  Fixed on the way: **the route editor binary did not build.** A stray
+  `#[cfg(test)]` on the `use content::route::{…}` of `tools.rs` made every type
+  it names test-only, so `cargo build -p route-editor` failed with 49 errors
+  while `cargo test` — which compiles the same crate *with* `cfg(test)` — passed.
 
 - **Artist vegetation of Central Europe (2026-09-02, `mods/trees`, `tools/trees/`):** the
   old ez-tree procedural catalogue and its texture/geometry generators were removed.

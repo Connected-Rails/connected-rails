@@ -4,7 +4,7 @@
 
 use crate::route::{
     DeviceSource, EdgeSource, EdgeStart, GeoPoint, LineSource, NodeSource, SectionSource,
-    SignalSource, TreeSource, WaterPoint, WaterSource, YardSource,
+    SignalSource, TreeSource, WaterPoint, WaterSource, WindTurbineSource, YardSource,
 };
 use sim_core::interlock::BlockMarkerPayload;
 use sim_core::interlock::{SignalKind, SignalSystem};
@@ -167,6 +167,32 @@ fn demo_trees() -> Vec<TreeSource> {
 
 /// Builds the example line: 3 km straight, 1 km curve, 3 km climb.
 ///
+/// A small wind park north of the first straight — what the wind turbine
+/// import puts into a real module, placed by hand here so the demo shows
+/// every build the `wind` mod has: the box nacelle, Enercon's drop, and a
+/// 1990s machine on a lattice tower. All of them face the prevailing westerly
+/// until the weather turns them (`world_render::wind`).
+fn demo_turbines() -> Vec<WindTurbineSource> {
+    let machine = |lat: f64, lon: f64, hub: f64, rotor: f64, model: &str| {
+        crate::wind::source_from(
+            lat,
+            lon,
+            hub,
+            rotor,
+            model.to_string(),
+            String::new(),
+            false,
+        )
+    };
+    vec![
+        machine(52.0035, 10.0035, 98.0, 71.0, "Enercon E-70 E4"),
+        machine(52.0042, 10.0090, 95.0, 90.0, "Vestas V90"),
+        machine(52.0058, 10.0060, 100.0, 90.0, "Vestas V90"),
+        machine(52.0075, 10.0120, 120.0, 117.0, "Nordex N117"),
+        machine(52.0030, 9.9975, 65.0, 48.0, "Fuhrländer FL 600"),
+    ]
+}
+
 /// Signalling: distant signal at km 1.0 and main signal at km 2.0 (end of block),
 /// plus the three PZB magnets. From the third section on there is a line cable (LZB).
 ///
@@ -343,6 +369,7 @@ pub fn musterbahn() -> LineSource {
             },
         ],
         trees: demo_trees(),
+        wind_turbines: demo_turbines(),
         // A lake south of the first straight — the stand-in for the water
         // import, so the demo shows a body of water without an extract. Its
         // surface is laid over the terrain when the tiles are built, like the

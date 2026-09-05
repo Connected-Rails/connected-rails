@@ -16,6 +16,7 @@ pub mod scenarios;
 pub mod terrain;
 pub mod vehicles;
 pub mod water;
+pub mod wind;
 
 pub use buildings::{
     BakedBuilding, BuildingPreset, BuildingSource, BuildingSpec, BuildingUse, FacadeMaterial,
@@ -32,10 +33,13 @@ pub use people::{
 };
 pub use power::{ConductorPatch, PowerLines};
 pub use roads::{RoadPatch, Roads};
-pub use route::{CompiledLine, FieldSource, LineSource, PowerLineSource, TreeSource};
+pub use route::{
+    CompiledLine, FieldSource, LineSource, PowerLineSource, TreeSource, WindTurbineSource,
+};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{
     Buildings, Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions,
     TerrainStats, TerrainTile, TileKey, Tree, Vegetation,
 };
 pub use water::{WaterPatch, Waters};
+pub use wind::{RegisterMatch, WindPreset};

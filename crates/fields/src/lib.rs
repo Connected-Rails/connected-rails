@@ -24,6 +24,13 @@
 //! ([`geometry`]) and hand back [`FieldFeature`]s. Nothing here writes to a
 //! line — the editor shows what came back and the user commits it.
 //!
+//! The crate is where the register clients live, and the field registers are
+//! not the only one: [`mastr`] asks the Bundesnetzagentur's
+//! Marktstammdatenregister what wind turbine stands at a point, because
+//! OpenStreetMap surveys where they stand and the register knows what they are
+//! (`content::wind`). [`osm`] is here for the same reason — a fetcher belongs
+//! with the other fetchers.
+//!
 //! No Bevy and no ECS: this is a fetch-and-convert library, the same way
 //! [`imagery`](../imagery/index.html) is, and the editor is what hooks it up.
 
@@ -33,6 +40,7 @@ pub mod crops;
 pub mod geometry;
 pub mod import;
 pub mod land;
+pub mod mastr;
 pub mod model;
 pub mod osm;
 pub mod phenology;
@@ -45,6 +53,7 @@ pub use crops::{CropClass, CropTable};
 pub use import::{Area, Clip, ImportOptions, ImportProgress, ImportReport, Stage};
 pub use land::Land;
 pub use land::{Access, Level as DataLevel, Licence, Service};
+pub use mastr::{Status as UnitStatus, WindUnit};
 pub use model::{FieldFeature, Level};
 pub use phenology::{Growth, Stage as GrowthStage};
 pub use wfs::{RequestConfig, ServiceError};

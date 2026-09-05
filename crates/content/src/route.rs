@@ -558,6 +558,67 @@ impl PowerLineSource {
     }
 }
 
+/// A wind turbine: where it stands, and which machine it is.
+///
+/// The two numbers a viewer perceives are the ones stored — the hub height and
+/// the rotor diameter. Everything else about a turbine looks the same from a
+/// train: a white tube, a nacelle, three blades. So the file carries the
+/// dimensions rather than a type key, the way [`RoadSource`] carries a width
+/// rather than a road class, and a builder who knows better edits two numbers.
+///
+/// Where they come from is written in [`tags`](Self::tags): OpenStreetMap
+/// surveys where a turbine stands, the Marktstammdatenregister knows what it
+/// is, and the import puts the two together (see [`crate::wind`]).
+///
+/// Scenery, like the overhead lines: no state, nothing to replicate, and both
+/// clients of a multiplayer run build the same turbines out of the same line
+/// file. The nacelle turning into the wind is a function of the shared weather
+/// (`sim_core::weather::Weather::bearing`), not of anything sent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindTurbineSource {
+    /// Where it stands [deg]; the height comes from the terrain.
+    pub lat: f64,
+    pub lon: f64,
+    /// Hub height over ground [m] — the height of the rotor's axis, which is
+    /// what a wind turbine's height means everywhere it is written down.
+    pub hub_height: f64,
+    /// Rotor diameter [m].
+    pub rotor_diameter: f64,
+    /// The 3D object from a mod (`"<mod>:<name>"`). **Empty means nothing is
+    /// placed** — which is what the import writes until the turbine models
+    /// ship; the entries are in the file, on the right spot and with the right
+    /// dimensions, and the day the objects exist [`crate::wind::PRESETS`] names
+    /// them and they stand up.
+    #[serde(default)]
+    pub object: String,
+    /// Which way the nacelle looks [deg, clockwise from north, 0 = north] —
+    /// the direction the rotor faces *into*.
+    ///
+    /// Nothing surveys this and nothing can: a turbine yaws into the wind and
+    /// keeps no direction of its own. What the import writes is the prevailing
+    /// wind of the region ([`crate::wind::PREVAILING_BEARING`]), the same for
+    /// every turbine of a box — a park whose machines all face one way is
+    /// right at every moment, one whose machines face at random is wrong at
+    /// all of them.
+    #[serde(default)]
+    pub yaw_deg: f64,
+    /// Manufacturer and type as the sources name it (`Enercon E-115 EP3`);
+    /// empty where neither knew. Free text: the register writes the same
+    /// machine three ways, so it is a label, not a key.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// The unit's number in the Marktstammdatenregister (`SEE945374201878`),
+    /// so the machine can be looked up and the next import recognises it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mastr: String,
+    /// Free-form tags, lower-case kebab like everywhere else. The import
+    /// records the size class it matched (`wea-115`), `mastr` where the
+    /// register answered for the machine, and `estimated` where the dimensions
+    /// are worked out from the rated power rather than known.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
 /// A road: the centre line OSM maps a street with, and the width, surface and
 /// markings that turn it into a carriageway.
 ///
@@ -1415,6 +1476,11 @@ pub struct LineSource {
     /// conductors between them when the tiles are built (see [`crate::power`]).
     #[serde(default)]
     pub power_lines: Vec<PowerLineSource>,
+    /// Wind turbines (see [`WindTurbineSource`]) — imported from OpenStreetMap
+    /// and the Marktstammdatenregister. Each one stands on the terrain as an
+    /// instance, like a mast of an overhead line does (see [`crate::wind`]).
+    #[serde(default)]
+    pub wind_turbines: Vec<WindTurbineSource>,
     /// Terrain brush strokes on top of the elevation data (see
     /// [`TerrainEditSource`]).
     #[serde(default)]
@@ -1479,6 +1545,7 @@ impl Default for LineSource {
             waters: Vec::new(),
             roads: Vec::new(),
             power_lines: Vec::new(),
+            wind_turbines: Vec::new(),
             terrain: Vec::new(),
             heights: Vec::new(),
             sections: Vec::new(),

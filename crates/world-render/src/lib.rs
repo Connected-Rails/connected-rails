@@ -47,6 +47,7 @@ pub mod sky;
 pub mod track;
 pub mod water;
 pub mod weather;
+pub mod wind;
 pub mod windscreen;
 
 pub use buildings::{BuildingAssets, BuildingIndex, spawn_buildings};
@@ -64,8 +65,8 @@ pub use people::{
 pub use plants::{FieldPlants, PlantMaterials, update_field_plants};
 pub use roads::{RoadDraw, RoadMaterial, RoadMaterials, RoadSurfaceMark, spawn_roads};
 pub use scatter::{
-    OBJECT_CULL, PendingTrees, Scattered, SceneryIndex, TREE_CULL, TreeModels, Wood, WorldCatalog,
-    cull_distant_woods, materialise_trees,
+    OBJECT_CULL, PendingTrees, Scattered, SceneLods, SceneryIndex, TREE_CULL, TreeModels, Wood,
+    WorldCatalog, cull_distant_woods, materialise_trees,
 };
 pub use track::{GAUGE, RailMaterial, spawn_track};
 pub use water::{WaterMaterial, WaterMaterials, WaterSurface, spawn_waters};
@@ -120,7 +121,17 @@ impl Plugin for WorldRenderPlugin {
                 (
                     switch_night_nodes,
                     materialise_trees,
+                    scatter::apply_scene_lods,
                     scatter::cull_distant_woods,
+                    // The turbines: bound by node name as their scenes come
+                    // in, then turned by the weather every frame.
+                    (
+                        wind::bind_parts,
+                        wind::turn_rotors,
+                        wind::yaw_nacelles,
+                        wind::blink_lights,
+                    )
+                        .chain(),
                     farmland::follow_date,
                     // The standing crop follows the same calendar as the
                     // paint under it: the material turns with the day, and a

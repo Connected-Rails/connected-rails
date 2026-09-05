@@ -19,6 +19,7 @@
 //! it needs no wire at all.
 
 use crate::bindings;
+use crate::profiler::Profiler;
 use crate::theme::{Face, Fonts, TEXT_BRIGHT, TEXT_FAINT, TEXT_MID, text};
 use crate::ui::{CameraMode, CameraState};
 use crate::{GameState, SimResource, net};
@@ -245,13 +246,16 @@ pub fn console(
             Without<SuggestMarker>,
         ),
     >,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let prof_start = std::time::Instant::now();
     if input.just_pressed(bindings::Action::Console) {
         state.open = !state.open;
         state.completing = None;
         state.history_pos = None;
     }
     if !state.open {
+        profiler.record("console", prof_start.elapsed().as_secs_f64() * 1000.0);
         return;
     }
     // Characters with a modifier held are shortcuts, not text — except AltRight, which
@@ -273,6 +277,7 @@ pub fn console(
                     &mut state,
                     &mut sim.0,
                     &mut camera,
+                    &mut profiler,
                     is_client(role.as_deref()),
                 ) {
                     wishes.write(net::WeatherRequest(preset));
@@ -316,6 +321,7 @@ pub fn console(
         return;
     };
     **line = format!("> {}", state.input);
+    profiler.record("console", prof_start.elapsed().as_secs_f64() * 1000.0);
 }
 
 fn is_client(role: Option<&net::Role>) -> bool {
@@ -443,6 +449,9 @@ struct Ctx<'a> {
     console: &'a mut Console,
     /// The view state, which `fly` flips — the camera is nothing the simulation holds.
     camera: &'a mut CameraState,
+    /// The frame profiler, which `prof` reads and controls — local measurement,
+    /// never replicated.
+    profiler: &'a mut Profiler,
     /// True on a multiplayer client — the world is the server's, so commands wish.
     client: bool,
     /// The weather a client's `weather` command asked the server for.
@@ -460,7 +469,7 @@ struct Command {
     run: fn(&mut Ctx, &[&str]),
 }
 
-const COMMANDS: [Command; 5] = [
+const COMMANDS: [Command; 6] = [
     Command {
         name: "weather",
         usage: "console-usage-weather",
@@ -496,6 +505,13 @@ const COMMANDS: [Command; 5] = [
         args: no_args,
         run: cmd_clear,
     },
+    Command {
+        name: "prof",
+        usage: "console-usage-prof",
+        help: "console-help-prof",
+        args: prof_args,
+        run: cmd_prof,
+    },
 ];
 
 fn no_args(_: usize) -> Vec<String> {
@@ -513,6 +529,18 @@ fn command_args(word: usize) -> Vec<String> {
 fn weather_args(word: usize) -> Vec<String> {
     if word == 0 {
         Preset::ALL.iter().map(|p| preset_name(*p)).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// The subcommands `prof` takes on its first argument.
+fn prof_args(word: usize) -> Vec<String> {
+    if word == 0 {
+        ["reset", "pause", "resume", "csv"]
+            .into_iter()
+            .map(Into::into)
+            .collect()
     } else {
         Vec::new()
     }
@@ -637,6 +665,91 @@ fn cmd_clear(ctx: &mut Ctx, _: &[&str]) {
     ctx.console.log.clear();
 }
 
+/// The frame profiler (`crate::profiler`): prints what the last frames cost,
+/// freezes or clears the history, or writes it to a CSV file for analysis
+/// outside the simulator. Local measurement only — nothing here travels.
+fn cmd_prof(ctx: &mut Ctx, args: &[&str]) {
+    let profiler = &mut *ctx.profiler;
+    match args.first().map(|word| word.to_ascii_lowercase()) {
+        None => {
+            let stats = profiler.frame_stats();
+            if stats.count == 0 {
+                ctx.console.print(t!("console-prof-empty"));
+                return;
+            }
+            ctx.console.print(t!(
+                "console-prof-summary",
+                frames = stats.count,
+                avg = i18n::decimal(stats.avg, 1),
+                p95 = i18n::decimal(stats.p95, 1),
+                max = i18n::decimal(stats.max, 1),
+                hitches = stats.hitches,
+            ));
+            for span in profiler.span_stats().iter().take(12) {
+                ctx.console.print(t!(
+                    "console-prof-span",
+                    name = span.name,
+                    avg = i18n::decimal(span.avg, 2),
+                    max = i18n::decimal(span.max, 1),
+                    share = i18n::decimal(100.0 * span.avg / stats.avg.max(1e-9), 0),
+                ));
+            }
+            ctx.console.print(t!(
+                "console-prof-rest",
+                rest = i18n::decimal(profiler.rest_ms(), 1),
+            ));
+            for spike in profiler.spikes().iter().take(3) {
+                let breakdown = spike
+                    .spans
+                    .iter()
+                    .take(3)
+                    .map(|(name, ms)| format!("{name} {ms:.1}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                ctx.console.print(t!(
+                    "console-prof-spike",
+                    frame = spike.frame,
+                    total = i18n::decimal(spike.total_ms, 1),
+                    breakdown = breakdown,
+                ));
+            }
+        }
+        Some(action) if action == "reset" => {
+            profiler.reset();
+            ctx.console.print(t!("console-prof-reset"));
+        }
+        Some(action) if action == "pause" => {
+            profiler.set_paused(true);
+            ctx.console.print(t!("console-prof-paused"));
+        }
+        Some(action) if action == "resume" => {
+            profiler.set_paused(false);
+            ctx.console.print(t!("console-prof-resumed"));
+        }
+        Some(action) if action == "csv" => {
+            let Some(path) = args.get(1) else {
+                ctx.console.print(t!("console-usage-prof"));
+                return;
+            };
+            match std::fs::write(path, profiler.csv()) {
+                Ok(()) => ctx.console.print(t!(
+                    "console-prof-saved",
+                    rows = profiler.frames().len(),
+                    path = *path,
+                )),
+                Err(error) => ctx.console.print(t!(
+                    "console-prof-failed",
+                    path = *path,
+                    error = error.to_string(),
+                )),
+            }
+        }
+        Some(other) => {
+            ctx.console.print(t!("console-unknown", name = other));
+        }
+    }
+}
+
 /// The wall clock of the run as `HH:MM:SS`.
 fn clock_text(clock: f64) -> String {
     let seconds = clock.rem_euclid(DAY).floor() as u64;
@@ -668,6 +781,7 @@ fn run_line(
     state: &mut Console,
     sim: &mut Sim,
     camera: &mut CameraState,
+    profiler: &mut Profiler,
     client: bool,
 ) -> Option<Preset> {
     let line = state.input.trim().to_string();
@@ -694,6 +808,7 @@ fn run_line(
         sim,
         console: state,
         camera,
+        profiler,
         client,
         wish: None,
     };
@@ -755,10 +870,12 @@ mod tests {
         sim.start.minute = 0;
         sim.time = 20.0 * 3_600.0;
         let mut camera = CameraState::default();
+        let mut profiler = Profiler::default();
         let mut ctx = Ctx {
             sim: &mut sim,
             console: &mut console,
             camera: &mut camera,
+            profiler: &mut profiler,
             client: false,
             wish: None,
         };
@@ -811,8 +928,12 @@ mod tests {
         let mut console = Console::default();
         let mut sim = sim();
         let mut camera = CameraState::default();
+        let mut profiler = Profiler::default();
         console.input = "frobnicate now".into();
-        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, false),
+            None
+        );
         assert!(
             console.log.iter().any(|l| l.contains("> frobnicate now")),
             "the line is echoed before it is answered"
@@ -825,7 +946,10 @@ mod tests {
         );
         // A known command runs, and a client's weather becomes a wish for the server.
         console.input = "weather rain".into();
-        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, false),
+            None
+        );
         assert_eq!(
             sim.weather.now.precip,
             Precip::None,
@@ -833,7 +957,7 @@ mod tests {
         );
         console.input = "weather snow".into();
         assert_eq!(
-            run_line(&mut console, &mut sim, &mut camera, true),
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, true),
             Some(Preset::Snow)
         );
         assert_eq!(
@@ -855,11 +979,18 @@ mod tests {
         let mut console = Console::default();
         let mut sim = sim();
         let mut camera = CameraState::default();
+        let mut profiler = Profiler::default();
         console.input = "fly".into();
-        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, false),
+            None
+        );
         assert_eq!(camera.mode, CameraMode::Fly);
         console.input = "/fly".into();
-        assert_eq!(run_line(&mut console, &mut sim, &mut camera, false), None);
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, false),
+            None
+        );
         assert_eq!(camera.mode, CameraMode::Cab);
         assert!(
             console.log.iter().any(|l| l.contains("> /fly")),
@@ -867,8 +998,59 @@ mod tests {
         );
         // A client flies its own camera: no wish for the server comes of it.
         console.input = "/fly".into();
-        assert_eq!(run_line(&mut console, &mut sim, &mut camera, true), None);
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, true),
+            None
+        );
         assert_eq!(camera.mode, CameraMode::Fly);
+    }
+
+    #[test]
+    fn prof_reports_and_controls_the_profiler() {
+        let mut console = Console::default();
+        let mut sim = sim();
+        let mut camera = CameraState::default();
+        let mut profiler = Profiler::default();
+        profiler.record("sim", 2.0);
+        profiler.end(16.0);
+        profiler.begin();
+
+        console.input = "prof".into();
+        let lines = console.log.len();
+        assert_eq!(
+            run_line(&mut console, &mut sim, &mut camera, &mut profiler, false),
+            None,
+            "prof prints and wishes nothing"
+        );
+        assert!(
+            console.log.len() > lines + 1,
+            "the summary is a header plus span rows"
+        );
+
+        console.input = "prof pause".into();
+        run_line(&mut console, &mut sim, &mut camera, &mut profiler, false);
+        assert!(profiler.paused());
+        console.input = "prof resume".into();
+        run_line(&mut console, &mut sim, &mut camera, &mut profiler, false);
+        assert!(!profiler.paused());
+
+        console.input = "prof frobnicate".into();
+        run_line(&mut console, &mut sim, &mut camera, &mut profiler, false);
+
+        let path = std::env::temp_dir().join("connected-rails-prof-test.csv");
+        console.input = format!("prof csv {}", path.display());
+        run_line(&mut console, &mut sim, &mut camera, &mut profiler, false);
+        let csv = std::fs::read_to_string(&path).expect("the csv is written");
+        assert!(
+            csv.starts_with("frame,total_ms,sim_steps"),
+            "header plus span columns, got {csv:?}"
+        );
+        std::fs::remove_file(&path).ok();
+
+        console.input = "prof reset".into();
+        run_line(&mut console, &mut sim, &mut camera, &mut profiler, false);
+        assert!(profiler.frames().is_empty());
+        assert!(profiler.spikes().is_empty());
     }
 
     #[test]

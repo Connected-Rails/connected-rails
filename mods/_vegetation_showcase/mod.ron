@@ -5,6 +5,6 @@
     version: "1.0.0",
     author: "Connected Rails",
     description: "Temporäre Ingame-Schaufläche der neuen Vegetation.",
-    depends: ["trees"],
+    depends: ["trees", "example"],
     enabled: true,
 )

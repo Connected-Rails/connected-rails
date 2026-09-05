@@ -9,7 +9,7 @@
 //!
 //! **Every setting applies the moment it is dialled.** Language, volume, HUD and look
 //! sensitivity are read where they are used; window mode and vertical sync go onto the
-//! window; view distance, shadows, bloom, anti-aliasing, upscaling and the shadow and
+//! window; view distance, field of view, shadows, bloom, anti-aliasing, upscaling and the shadow and
 //! mist quality reach into a running scene through `apply_scene`; the texture quality
 //! generates the ground textures again into the handles the terrain already holds. A
 //! setting that needs a restart is an excuse, and it would go stale the moment there is
@@ -23,7 +23,7 @@ use bevy::anti_alias::dlss::{
 };
 use bevy::anti_alias::fxaa::{Fxaa, Sensitivity};
 use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
-use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
+use bevy::core_pipeline::prepass::MotionVectorPrepass;
 use bevy::ecs::system::{EntityCommands, SystemParam};
 use bevy::light::DirectionalLightShadowMap;
 use bevy::post_process::bloom::Bloom;
@@ -46,6 +46,8 @@ const APP_ID: &str = "dev.vanlueck.connected-rails";
 
 /// Terrain load and draw radius: smallest, largest, one step of the menu [m].
 pub const VIEW_DISTANCE: (f32, f32, f32) = (1_000.0, 12_000.0, 500.0);
+/// Vertical field of view of the cab camera: smallest, largest, one step [°].
+pub const FOV: (f32, f32, f32) = (60.0, 120.0, 5.0);
 /// Master volume: smallest, largest, one step (0 … 1).
 pub const VOLUME: (f32, f32, f32) = (0.0, 1.0, 0.05);
 /// Mouse look sensitivity as a factor on the built-in speed.
@@ -62,6 +64,8 @@ pub const MAX_FPS: (f32, f32, f32) = (30.0, 250.0, 10.0);
 pub struct Graphics {
     /// Terrain load and draw radius [m] — read by `setup` when the run starts.
     pub view_distance: f32,
+    /// Vertical field of view of the cab camera [°].
+    pub fov: f32,
     /// Windowed, borderless over the monitor, or exclusive fullscreen.
     ///
     /// A settings file from before this was three steps carries `fullscreen = true`; the
@@ -90,6 +94,11 @@ pub struct Graphics {
     pub mist_quality: Quality,
     /// Size and filtering of the ground textures the simulator generates.
     pub texture_quality: Quality,
+    /// Rendered blade geometry over the painted ground material.
+    pub grass: bool,
+    /// Reach and density of the rendered grass. High is the full authored
+    /// sward; the lower levels shorten the reach and thin the stand.
+    pub grass_quality: Quality,
     /// Which anti-aliasing runs on the cab camera.
     pub anti_aliasing: AntiAliasing,
     /// How hard it works: the sample count for MSAA, the preset for SMAA, the edge
@@ -110,6 +119,7 @@ impl Default for Graphics {
     fn default() -> Self {
         Self {
             view_distance: 4_000.0,
+            fov: 90.0,
             window: WindowStyle::Windowed,
             vsync: true,
             max_fps: MAX_FPS.1,
@@ -120,6 +130,8 @@ impl Default for Graphics {
             mist: true,
             mist_quality: Quality::Medium,
             texture_quality: Quality::Medium,
+            grass: true,
+            grass_quality: Quality::High,
             // What Bevy does without being asked, so a settings file from before this
             // page had the row comes up looking the way it did.
             anti_aliasing: AntiAliasing::Msaa,
@@ -442,7 +454,9 @@ pub fn apply_upscaling(
         camera.remove::<crate::fsr::Fsr>();
         #[cfg(feature = "dlss")]
         camera.remove::<Dlss>();
-        camera.remove::<(DepthPrepass, MotionVectorPrepass, TemporalJitter, MipBias)>();
+        // The depth prepass stays: the water's reflections read it, upscaler
+        // or not (`world_render::water`).
+        camera.remove::<(MotionVectorPrepass, TemporalJitter, MipBias)>();
     }
 }
 
@@ -695,6 +709,18 @@ pub fn ground_quality(graphics: &Graphics) -> world_render::GroundQuality {
     world_render::GroundQuality { size, anisotropy }
 }
 
+/// Reach and density of the meadow for the selected quality. High is the
+/// authored default; lower levels trade reach and blades per square metre,
+/// which is what the scatter pass and the three draws cost.
+fn grass_quality(graphics: &Graphics) -> world_render::GrassRenderSettings {
+    let (range, density) = match graphics.grass_quality {
+        Quality::Low => (110.0, 0.4),
+        Quality::Medium => (160.0, 0.7),
+        Quality::High => (220.0, 1.0),
+    };
+    world_render::GrassRenderSettings::new(graphics.grass, range, density)
+}
+
 /// Generates the ground textures again into the handles the terrain material already
 /// holds, so a dialled texture quality reaches the terrain standing on screen.
 ///
@@ -760,7 +786,7 @@ fn apply_window(graphics: Res<Graphics>, mut window: Query<&mut Window, With<Pri
     }
 }
 
-/// View distance, upscaling, bloom and anti-aliasing into a scene that is already running. Every parameter is
+/// View distance, field of view, upscaling, bloom and anti-aliasing into a scene that is already running. Every parameter is
 /// optional because none of it exists while the menu is up — the world is built on
 /// leaving it.
 ///
@@ -775,7 +801,9 @@ fn apply_scene(
     streamer: Option<ResMut<TerrainStreamer>>,
     quality: Option<ResMut<world_render::mist::Quality>>,
     clouds: Option<ResMut<world_render::clouds::Quality>>,
+    grass: Option<ResMut<world_render::GrassRenderSettings>>,
     cameras: Query<(Entity, Has<Bloom>), With<CabCamera>>,
+    mut projections: Query<&mut bevy::camera::Projection, With<CabCamera>>,
 ) {
     // The sun's shadow map is a resource of Bevy's own, rebuilt from it every frame.
     commands.insert_resource(DirectionalLightShadowMap {
@@ -794,11 +822,25 @@ fn apply_scene(
     {
         clouds.volumetric = graphics.volumetric_clouds;
     }
+    let wanted_grass = grass_quality(&graphics);
+    if let Some(mut grass) = grass
+        && *grass != wanted_grass
+    {
+        *grass = wanted_grass;
+    }
     if let Some(mut view) = view {
         view.0 = graphics.view_distance;
     }
     if let Some(mut streamer) = streamer {
         streamer.set_load_radius(f64::from(graphics.view_distance));
+    }
+    // A hand-edited settings file may hold anything; the menu clamps on every step,
+    // so only the file needs it here.
+    let fov = graphics.fov.clamp(FOV.0, FOV.1).to_radians();
+    for mut projection in &mut projections {
+        if let bevy::camera::Projection::Perspective(perspective) = &mut *projection {
+            perspective.fov = fov;
+        }
     }
     for (camera, has_bloom) in &cameras {
         match (graphics.bloom, has_bloom) {
@@ -890,6 +932,7 @@ mod tests {
     fn defaults_lie_inside_the_ranges() {
         let graphics = Graphics::default();
         assert!((VIEW_DISTANCE.0..=VIEW_DISTANCE.1).contains(&graphics.view_distance));
+        assert!((FOV.0..=FOV.1).contains(&graphics.fov));
         assert!((VOLUME.0..=VOLUME.1).contains(&Audio::default().master));
         assert!((LOOK_SPEED.0..=LOOK_SPEED.1).contains(&Gameplay::default().look_speed));
     }

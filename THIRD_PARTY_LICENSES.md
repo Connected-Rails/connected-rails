@@ -4,6 +4,13 @@ The simulator itself is licensed under the EUPL v. 1.2, see [LICENSE](LICENSE).
 Material from other projects that is checked into this repository keeps its own
 licence; this file lists it.
 
+## Leafy Grass PBR texture in `crates/world-render/src/terrain/`
+
+The terrain's grass albedo, OpenGL normal map and packed AO/roughness/metallic
+map are the 1K JPEG release of [Leafy Grass by Charlotte Baglioni on Poly Haven](https://polyhaven.com/a/leafy_grass).
+The asset is dedicated to the public domain under
+[CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/).
+
 ## Agent skills in `.claude/skills/`
 
 The `bevy*` skills and `similarity-rs` are taken from

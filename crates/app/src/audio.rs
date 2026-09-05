@@ -46,7 +46,7 @@
 //!   volumes have no shared head-room otherwise.
 
 use crate::render::VehicleView;
-use crate::{PlayerTrain, SimResource, settings, ui};
+use crate::{PlayerTrain, SimResource, profiler, settings, ui};
 use bevy::prelude::*;
 use kira::effect::compressor::CompressorBuilder;
 use kira::effect::filter::{FilterBuilder, FilterHandle};
@@ -421,7 +421,9 @@ pub fn update_audio(
     walker: Res<crate::walk::Walker>,
     camera: Query<&GlobalTransform, With<ui::CabCamera>>,
     views: Query<(&VehicleView, &GlobalTransform)>,
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("audio");
     let Some(mut audio) = audio else {
         return;
     };

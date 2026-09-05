@@ -30,6 +30,8 @@ action-quit = Beenden
 action-suggest = Vorschlag
 action-undo = Rückgängig
 action-redo = Wiederherstellen
+action-copy = Kopieren
+action-paste = Einfügen
 
 filter-vehicle-ron = Fahrzeug (RON)
 filter-line-ron = Modul (RON)
@@ -982,6 +984,7 @@ check-yard-off-edge = Gleis { $yard } liegt außerhalb seines Gleises
 check-portal-inside = Portal { $yard } liegt nicht am Rand der Strecke — das Gleis dahinter muss auf einen Prellbock oder eine Modulgrenze auslaufen
 check-yard-name-twice = Gleis { $yard } trägt einen Namen, den ein anderes schon hat
 check-unknown-object = Objekt { $object }: nennt ein Objekt, das kein installierter Mod hat
+check-building-off-edge = Gebäude { $building } liegt außerhalb seines Gleises
 check-flank-guard = Fahrstraße { $route }: Flankenschutz nennt einen Knoten, der keine Weiche ist, oder ein Signal, das es nicht mehr gibt
 obj-repeat = Wiederholung
 obj-repeat-interval = Abstand
@@ -1438,6 +1441,12 @@ hud-key-pause = Pause
 # Die Diagnose, F6. Maschinenausgabe — sie darf so dicht sein, wie sie will.
 hud-diagnostics = Diagnose
 hud-diag-frame = Bild     { $fps } fps, { $millis } ms, { $entities } Entitäten
+hud-diag-prof = Prof     { $frames } Bilder, { $avg } ms im Mittel, p95 { $p95 }, max { $max }, { $hitches } Ruckler, Sim { $steps } Schritte { $state }
+hud-diag-paused = · pausiert
+hud-diag-spans = CPU      { $spans } · Rest { $rest } ms
+hud-diag-graph = { $graph }
+hud-diag-spike = Spitze #{ $frame } { $total } ms ({ $breakdown })
+hud-diag-prof-hint = Konsole: prof · prof reset · prof pause/resume · prof csv <Datei>
 hud-diag-terrain = Gelände  { $tiles } Kacheln (+{ $pending }), { $triangles } Dreiecke, { $megabytes } MB, Sicht { $view } m
 hud-diag-air = Luft     R { $auxiliary } bar   Zusatz { $direct } bar   { $air } Nl verbraucht
 hud-diag-axles = Achsen   { $slipping }/{ $axles } schleudern, schlimmste { $worst } m/s
@@ -1518,6 +1527,21 @@ menu-fact-m = { $value } m
 menu-fact-t = { $value } t
 menu-fact-kmh = { $value } km/h
 
+## Ladebildschirm
+#
+# Der Bildschirm zwischen der Auswahl einer Fahrt und dem Fahren: welche Fahrt
+# aufgebaut wird, wie weit es ist — und dass es noch läuft. Die Schritte nennen,
+# was der Lader gerade tut.
+
+load-title = Fahrt wird geladen
+load-step-sim = Fahrplan und Züge werden aufgebaut …
+load-step-terrain = Gelände und Szenerie entstehen …
+load-step-track = Gleise und Signale werden gebaut …
+load-step-vehicles = Züge werden bereitgestellt …
+load-step-sky = Der Himmel geht über der Strecke auf …
+load-step-ready = Fertig — bitte einsteigen …
+load-hint = Der erste Aufbau dauert einen Moment — Gelände und Modelle werden vorbereitet.
+
 ## Fahrplanfahrten
 #
 # Neben den Szenarien lässt sich eine Strecke aus ihrem Betriebstag fahren: der
@@ -1574,6 +1598,8 @@ set-gameplay = Spiel
 set-stored = Bleibt zwischen zwei Starts in der Einstellungsdatei des Benutzerkontos erhalten.
 set-view-distance = Sichtweite
 set-view-distance-hint = Wie weit Gelände gebaut und gezeichnet wird — der größte einzelne Posten.
+set-fov = Sichtfeld
+set-fov-hint = Vertikales Sichtfeld der Führerstandskamera, in Grad. Wirkt sofort, auch während der Fahrt.
 set-shadows = Schatten
 set-shadows-hint = Schattenkarten der Sonne.
 set-bloom = Lichtschein
@@ -1602,6 +1628,10 @@ set-upscaling-quality = Hochskalierstufe
 set-upscaling-quality-hint = Wie viel vom Bild beim Hochskalieren wirklich gezeichnet wird: Niedrig am wenigsten, Hoch am meisten. Eine Größenänderung des Fensters setzt das Bild kurz zurück.
 set-texture-quality = Texturqualität
 set-texture-quality-hint = Größe und Filterung der erzeugten Bodentexturen. Gilt auch für das Gelände, das schon zu sehen ist.
+set-grass = Gerendertes Gras
+set-grass-hint = Zeichnet echte, windbewegte Grashalme über dem Bodenmaterial. Änderungen gelten sofort.
+set-grass-quality = Grasqualität
+set-grass-quality-hint = Reichweite des gerenderten Grases und wie viele Halme auf einem Quadratmeter stehen. Das Gras wird jedes Bild auf der Grafikkarte verteilt; eine niedrigere Stufe kostet dort weniger.
 set-shadow-quality = Schattenqualität
 set-shadow-quality-hint = Kantenlänge der Schattenkarte der Sonne: 1024, 2048 oder 4096 Texel. Eine Stufe kostet die vierfache Zahl an Texeln — die Einstellung, die man zuerst senkt.
 set-mist-quality = Nebelqualität
@@ -1640,6 +1670,7 @@ set-reset = Auf Standard zurücksetzen
 set-reset-hint = Setzt jede Einstellung dieser Seite auf den Auslieferungszustand.
 # Einheiten der Werte am rechten Rand einer Einstellungszeile.
 set-metres = { $value } m
+set-degrees = { $value }°
 set-percent = { $value } %
 set-factor = { $value } ×
 
@@ -1781,11 +1812,23 @@ console-usage-time = time [HH:MM[:SS]]
 console-usage-fly = fly
 console-usage-help = help [command]
 console-usage-clear = clear
+console-usage-prof = prof [reset|pause|resume|csv <Datei>]
 console-help-weather = das Wetter ändern — ohne Name zeigt es das aktuelle
 console-help-time = die Uhr auf eine Tageszeit vorstellen — ohne Zeit zeigt sie die aktuelle
 console-help-fly = die Freikamera zum Überfliegen der Strecke umschalten — ein Werkzeug für die Entwicklung
 console-help-help = die Befehle auflisten
 console-help-clear = den Log leeren
+console-help-prof = zeigen, was die letzten Bilder gekostet haben — der Bild-Profiler
+console-prof-summary = { $frames } Bilder, { $avg } ms im Mittel, p95 { $p95 }, max { $max }, { $hitches } Ruckler
+console-prof-span = { $name } { $avg } ms im Mittel, { $max } ms max ({ $share } %)
+console-prof-rest = Rest (Rendern/Present/Vsync): { $rest } ms
+console-prof-spike = Spitze #{ $frame }: { $total } ms ({ $breakdown })
+console-prof-empty = Noch keine Bilder aufgezeichnet
+console-prof-reset = Profiler-Verlauf gelöscht
+console-prof-paused = Profiler angehalten — die Anzeige zeigt den eingefrorenen Verlauf weiter
+console-prof-resumed = Profiler zeichnet wieder auf
+console-prof-saved = { $rows } Bilder nach { $path } geschrieben
+console-prof-failed = Konnte { $path } nicht schreiben: { $error }
 
 ## Wertung
 
@@ -2826,3 +2869,64 @@ ai-open-dialog = Erkennen…
 ai-clear-area = Bereich löschen
 ai-blank = { $blank } Ausschnitte hatten kein Luftbild — offline, oder der Anbieter deckt diesen Boden nicht ab
 ai-no-roads = Im Modul liegen keine Straßen, also konnte nichts von einer Fahrbahn ferngehalten werden. Importiere sie und lauf noch einmal, damit die Fahrspuren für den Verkehr frei bleiben.
+
+## Dynamische Gebäude
+
+tool-building = Dynamisches Gebäude
+sel-building-summary = Dynamisches Gebäude { $index } an Gleis { $edge }
+building-generation = Generierung
+building-preset = Vorlage
+building-preset-custom = Benutzerdefiniert
+building-preset-detached = Einfamilienhaus
+building-preset-farmhouse = Bauernhaus
+building-preset-townhouse = Stadthaus
+building-preset-apartment = Mehrfamilienhaus
+building-preset-office = Bürogebäude
+building-preset-retail = Ladenzeile
+building-preset-workshop = Werkstatt
+building-preset-warehouse = Lagerhalle
+building-preset-factory = Fabrikhalle
+building-preset-logistics = Logistikhalle
+building-use = Nutzung
+building-use-residential = Wohngebäude
+building-use-commercial = Gewerbegebäude
+building-use-industrial = Industriegebäude
+building-width = Breite
+building-length = Länge
+building-floors = Stockwerke
+building-floor-height = Stockwerkhöhe
+building-total-height = Gesamthöhe
+building-roof-style = Dachform
+building-roof-height = Dachhöhe
+building-facade = Fassadenmaterial
+building-color = Fassadenfarbe
+building-roof-material = Dachmaterial
+building-window-spacing = Fensterabstand
+building-window-width = Fensterbreite
+building-window-height = Fensterhöhe
+building-lit-share = Beleuchtete Fenster nachts
+building-balconies = Balkone
+building-balcony-every = Balkon jedes Stockwerk
+building-balcony-depth = Balkontiefe
+building-chimneys = Schornsteine
+building-roof-vents = Dachlüfter
+building-skylights = Oberlichter
+building-rain-gutters = Regenrinnen und Fallrohre
+building-entrance-canopy = Eingangs-/Ladevordach
+building-loading-doors = Verladetore
+building-seed = Muster-Seed
+roof-gable = Satteldach
+roof-hip = Walmdach
+roof-flat = Flachdach
+roof-shed = Pultdach
+roof-mansard = Mansarddach
+roof-sawtooth = Sägezahndach
+facade-plaster = Putz
+facade-red-brick = Roter Klinker
+facade-yellow-brick = Gelber Klinker
+facade-concrete = Sichtbeton
+facade-metal-panel = Metallpaneele
+roof-material-clay = Tonziegel
+roof-material-slate = Schiefer
+roof-material-seam = Stehfalzblech
+roof-material-bitumen = Bitumen

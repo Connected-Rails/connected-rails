@@ -1,6 +1,9 @@
 # Connected Rails
 
 [![CI](https://github.com/Connected-Rails/connected-rails/actions/workflows/ci.yml/badge.svg)](https://github.com/Connected-Rails/connected-rails/actions/workflows/ci.yml)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/xM9DcHZbR5)
+[![License: EUPL-1.2](https://img.shields.io/badge/License-EUPL--1.2-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org)
 
 A **mod-first** German train simulator built on Bevy — implementation of [PLAN.md](PLAN.md).
 Current state and open points: [STATUS.md](STATUS.md).
@@ -72,7 +75,7 @@ For a faster edit-compile-run loop, add `--features dev` to any of the four bina
 (`app`, `route-editor`, `vehicle-editor`, `signal-editor`). It links Bevy as a shared library, which cuts the
 relink after a code change. The first build with the flag recompiles Bevy, and the resulting
 binary needs the Bevy DLL next to it — so use it for development only, never for a release.
-Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit.
+Builds also use the toolchain's own `rust-lld` linker on Windows (see `.cargo/config.toml`), dependencies compile at `opt-level = 3` while the workspace itself stays at `1`, and `--release` adds thin LTO with a single codegen unit. Release binaries for `x86_64` additionally build with `-C target-cpu=x86-64-v3` (see `.github/workflows/release.yml`) — needs an Intel/AMD CPU from ~2013+ (Haswell/Zen+); for a local release-equivalent build set `RUSTFLAGS="-C target-cpu=x86-64-v3"` yourself.
 
 On Linux the four programs run natively on **Wayland**: winit picks Wayland whenever `WAYLAND_DISPLAY` or `WAYLAND_SOCKET` is set and falls back to X11 (or XWayland) otherwise.
 
@@ -148,6 +151,7 @@ built world down with it, so the next one starts from an empty world.
 | Section | Setting | Effect |
 |---|---|---|
 | `[graphics]` | `view_distance` | How far terrain is built and drawn [m], 1000 … 12000. The biggest single cost. |
+| | `fov` | Vertical field of view of the cab camera [°], 60 … 120. Applies immediately, also while driving. |
 | | `shadows` | Shadow maps of the sun. |
 | | `bloom` | Glow around lamps and signals after dark. |
 | | `shadow_quality` | Edge length of the sun's shadow map: `Low` 1024, `Medium` 2048, `High` 4096 texels. |
@@ -392,6 +396,21 @@ keyboard as a sheet — with a legend of what the ten annunciators mean — and 
 diagnostics: frame time and entity count, terrain, air detail, axles, temperatures, signals
 and the network, which is where everything a driver has no use for lives.
 
+**Finding what costs frame budget.** The top of the `F6` block is a frame profiler:
+average, p95 and maximum frame time over the last 300 frames with a hitch count, a
+per-system CPU breakdown (`sim`, `ai`, `stream`, `hud`, `audio`, … plus how many fixed
+sim steps the last frame ran), an ASCII history graph and the worst spikes with what they
+were made of. Whatever the named spans leave over shows as `rest` — render, present and
+vsync — so a high `rest` next to high triangle/entity counts points at the GPU and a high
+named span at the CPU side. The `F8` console's `prof` prints the same table, `prof reset`
+clears it, `prof pause`/`resume` freezes it, and `prof csv <file>` writes the history for
+analysis outside the simulator. Leaving a run for the menu or quitting to the desktop logs
+the same summary automatically, so every run ends up measurable in the log without
+photographing the overlay. A `--frames N` run logs the summary and the worst spikes
+on exit, which is the scriptable form of the overlay. For deeper dives (per render pass,
+GPU timings) run with Bevy's Tracy feature and connect the Tracy viewer — the in-game
+profiler stays for the quick question of *which* system lags.
+
 **`F7` walks three steps** — full, reduced, off — and rounds back. The reduced step keeps
 what the train is *driven* by (the desk and the protection lamps) and everything that
 interrupts (the banner, scenario messages), and drops what it is *planned* by: the run, the
@@ -461,7 +480,7 @@ The table below is what everything ships with.
 | `F1`–`F4` | Camera: driver's seat / external / lineside / first person |
 | `F5` / `F6` | Keyboard sheet / diagnostics overlay |
 | `F7` | Display: full → reduced → off, and round again |
-| `F8` | Console: `weather` and `time` move the world (`Tab` completes, `↑`/`↓` history, `Enter` runs, `Esc` closes). Against a server the weather is asked of it, the clock stays single player |
+| `F8` | Console: `weather` and `time` move the world, `prof` profiles the frames (`Tab` completes, `↑`/`↓` history, `Enter` runs, `Esc` closes). Against a server the weather is asked of it, the clock stays single player |
 | `F9` | Mod manager (↑/↓ select, `Enter` toggles; in-game it applies on the next restart, on the main menu it applies on start, rows are clickable) |
 | Arrow keys | View direction, `Numpad +/-` camera distance |
 | `WASD` / `Shift` | First person (`F4`): walk (1.5 m/s) and run (5 m/s) through the train and over the ground. The walker falls where the ground drops away, climbs what is no higher than a step, is stopped by what stands at chest height and walks on through the train from vehicle to vehicle. The mouse looks around on its own, the cursor is caught on the crosshair and the driving keys rest until `F1` puts the driver back on the seat |
@@ -529,6 +548,16 @@ forest over an 8 km line holds 140 fps in a debug build. Tiles are built several
 builder is shared read-only, the DGM sheets keep their own short lock. Terrain, splatting,
 vegetation and track objects live in `world-render` and therefore look the same in the
 simulator and in the route editor.
+
+Parametric buildings use the same streamed terrain path without replacing static scenery.
+Their route entry keeps an editable recipe (residential, commercial or industrial use,
+width, length, floor count and height, five roof shapes, facade/roof material, colour,
+window rhythm, balconies and a stable variation seed). The terrain compiler normalises and
+bakes that recipe into a compact placement; `world-render` caches one three-level LOD mesh
+set per distinct recipe and shares a global PBR library of plaster, red/yellow brick,
+concrete, metal panels, clay tile, slate, standing seam and bitumen. Window illumination is
+chosen deterministically from the seed and appears only at night. Copy/paste preserves the
+whole recipe and seed, while all fields remain editable in the module editor.
 
 **Fields** lie on that ground: the outline and the crop are line content, and what a field
 looks like on the day is a function of the crop, the date and the field's own seed — winter
@@ -781,7 +810,7 @@ be laid, which never touches one already lying there.
 | Tool | What a click does |
 |---|---|
 | **Every category** | |
-| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it. `Ctrl`+click gathers devices, objects, trees and markers into a multi-selection (a second `Ctrl`+click takes one out again); a press on empty ground dragged open selects everything inside the circle — `Ctrl` adds it to what is gathered, `Delete` removes the lot in one step |
+| `1` Select | In every category: pick whatever stands on the map and edit its fields; `Delete` removes it. `Ctrl`+click gathers devices, objects, parametric buildings, trees and markers into a multi-selection (a second `Ctrl`+click takes one out again); a press on empty ground dragged open selects everything inside the circle — `Ctrl` adds it to what is gathered, `Delete` removes the lot in one step |
 | **Track** | |
 | `2` Lay track | Press and drag sets the standing end and its heading — on an open end it continues that track, on a track's middle it starts the branch of a turnout (drag along the track = facing, against it = trailing). Every further click appends the arc that leaves the alignment tangentially and hits the point — G1-continuous by construction — or a straight while `Ctrl` is held; the running end snaps onto open ends and closes the gap with two tangent arcs. The status bar reads out length and radius. `Enter` or right-click finishes, `Esc` cancels. The *Tool* section sets what the piece is laid as: track type, speed, gradient, electrification, parallel tracks at a spacing; the toolbox's toggle box snaps radii onto the standard series, lays easements — a curve then goes down as clothoid – arc – clothoid with the rulebook's cant for the piece's speed, ramped over the transitions — and snaps the piece to the terrain: sampled ground heights become its gradient profile, a free start drops onto the surface, an end joined onto other track keeps that track's height |
 | `3` Split track | Cuts the track at the click — two tracks on one joint |
@@ -793,11 +822,12 @@ be laid, which never touches one already lying there.
 | **Lineside equipment** | |
 | `2` Place device | Puts the chosen device kind (signal, magnet, LZB, platform, …) on the clicked track |
 | `3` Place object | Drops a mod's 3D object at its predefined offset and rotation; the toolbox's terrain-snap toggle bases it on the ground instead of the rail plane |
-| `4` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
+| `4` Parametric building | Places an editable residential, commercial or industrial building. Its properties panel controls dimensions, floors and total height, facade colour/material, five roof shapes, windows, stable night lighting and balconies; `Ctrl+C` / `Ctrl+V` preserves the complete recipe |
+| `5` Place marker | A reference marker in a named layer — a drawing aid, nothing in the simulation reads it |
 | **Vegetation** | |
 | `2` / `3` Tree / forest | One tree per click, or an outlined area baked into single trees — each one stays editable |
 | `4` Field | Clicks outline a piece of farmland, Enter or right-click closes it, the crop comes from the tool options. The usual way to get fields is **File ▸ Import fields…**, which fetches them from the state agricultural registers |
-| `5` Marking brush | Sweep to mark trees and objects in bulk and delete them together |
+| `6` Marking brush | Sweep to mark trees, objects and parametric buildings in bulk and delete them together |
 | **Terrain** | |
 | `2` Raise ground | One lifting stroke per click, by the set amount and radius. The track keeps its height, cutting and embankment are laid over the strokes afterwards |
 | `3` Lower ground | The same stroke downward — a hollow, a pond bed, a pit |

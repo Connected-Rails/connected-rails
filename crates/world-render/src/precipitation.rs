@@ -70,8 +70,13 @@ impl Material for PrecipitationMaterial {
     }
 }
 
+/// Luminance of the night sky a drop carries when nothing else lights it
+/// \[cd/m²\] — the same overcast night as the clouds' floor.
+const NIGHT_SKY: f32 = 0.01;
+
 /// What the weather makes of a field of drops: how many of them are alive, how
-/// long they are drawn and how brightly.
+/// long they are drawn and how brightly. `artificial` is the vehicle's own
+/// light on the ground \[lx\] (`Sky::artificial`).
 ///
 /// `near` is the layer of a few big out-of-focus drops close to the lens — the
 /// one that actually sells rain, which is why it is thinned to a tenth and drawn
@@ -79,6 +84,7 @@ impl Material for PrecipitationMaterial {
 pub fn params(
     weather: Weather,
     daylight: f32,
+    artificial: f32,
     snow_field: bool,
     near: bool,
 ) -> PrecipitationParams {
@@ -116,11 +122,13 @@ pub fn params(
         // shimmer and the same streak against a dark cutting is a line.
         // A streak is a lens that averages the whole sky behind it — its mean
         // luminance sits *below* the bright horizon, which is why real rain is a
-        // grey shimmer and never a white line.
+        // grey shimmer and never a white line. At night the sky is a hundredth
+        // of a candela and the streaks are what the headlights catch
+        // (`Sky::artificial`, lux on the track, over π as a white thing in it).
         light: (Vec3::new(0.66, 0.69, 0.75)
-            * crate::sky::SUN_ILLUMINANCE
-            * 0.16
-            * (0.10 + 0.90 * daylight))
+            * (crate::sky::SUN_ILLUMINANCE * 0.16 * daylight
+                + NIGHT_SKY
+                + artificial / std::f32::consts::PI))
             .extend(1.6),
         sun: Vec4::new(0.0, 1.0, 0.0, daylight),
     }
@@ -134,31 +142,51 @@ mod tests {
     #[test]
     fn each_field_draws_only_what_matches_it() {
         let rain = Preset::Rain.weather();
-        assert!(params(rain, 1.0, false, false).state.x > 0.0, "rain falls");
-        assert_eq!(params(rain, 1.0, true, false).state.x, 0.0, "not as snow");
+        assert!(
+            params(rain, 1.0, 0.0, false, false).state.x > 0.0,
+            "rain falls"
+        );
+        assert_eq!(
+            params(rain, 1.0, 0.0, true, false).state.x,
+            0.0,
+            "not as snow"
+        );
 
         let snow = Preset::Snow.weather();
-        assert!(params(snow, 1.0, true, false).state.x > 0.0, "snow falls");
-        assert_eq!(params(snow, 1.0, false, false).state.x, 0.0, "not as rain");
+        assert!(
+            params(snow, 1.0, 0.0, true, false).state.x > 0.0,
+            "snow falls"
+        );
+        assert_eq!(
+            params(snow, 1.0, 0.0, false, false).state.x,
+            0.0,
+            "not as rain"
+        );
 
         let clear = Preset::Clear.weather();
-        assert_eq!(params(clear, 1.0, false, false).state.x, 0.0);
-        assert_eq!(params(clear, 1.0, true, false).state.x, 0.0);
+        assert_eq!(params(clear, 1.0, 0.0, false, false).state.x, 0.0);
+        assert_eq!(params(clear, 1.0, 0.0, true, false).state.x, 0.0);
     }
 
     #[test]
     fn a_drizzle_is_thinner_than_a_downpour() {
-        let drizzle = params(Preset::Drizzle.weather(), 1.0, false, false).state.x;
-        let rain = params(Preset::Rain.weather(), 1.0, false, false).state.x;
-        let storm = params(Preset::Storm.weather(), 1.0, false, false).state.x;
+        let drizzle = params(Preset::Drizzle.weather(), 1.0, 0.0, false, false)
+            .state
+            .x;
+        let rain = params(Preset::Rain.weather(), 1.0, 0.0, false, false)
+            .state
+            .x;
+        let storm = params(Preset::Storm.weather(), 1.0, 0.0, false, false)
+            .state
+            .x;
         assert!(drizzle < rain && rain <= storm, "{drizzle} {rain} {storm}");
         assert_eq!(storm, 1.0, "a downpour fills the field");
     }
 
     #[test]
     fn the_near_layer_is_a_few_big_drops() {
-        let far = params(Preset::Rain.weather(), 1.0, false, false);
-        let near = params(Preset::Rain.weather(), 1.0, false, true);
+        let far = params(Preset::Rain.weather(), 1.0, 0.0, false, false);
+        let near = params(Preset::Rain.weather(), 1.0, 0.0, false, true);
         assert!(near.state.x < far.state.x * 0.2, "far fewer of them");
         assert!(near.state.z < far.state.z, "and dimmer");
     }

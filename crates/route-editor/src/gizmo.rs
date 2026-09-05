@@ -116,6 +116,19 @@ fn handles(
                 ],
             ))
         }
+        Selection::Building(i) => {
+            let building = line.source.buildings.get(i)?;
+            let (along, across, up) = on_track(building.edge, building.s)?;
+            Some((
+                at,
+                vec![
+                    (Axis::Along, along),
+                    (Axis::Across, across),
+                    (Axis::Up, up),
+                    (Axis::Yaw, up),
+                ],
+            ))
+        }
         // Free of the track — a tree stands where it stands.
         Selection::Tree(_) | Selection::Marker(_) | Selection::TerrainEdit(_) => {
             let frame = EnuFrame::at(at);
@@ -317,6 +330,24 @@ fn apply(line: &mut Line, selection: Selection, axis: Axis, dir: DVec3, delta: f
                 // counter-clockwise — the sign flip is the whole conversion.
                 Axis::Yaw => {
                     object.yaw_deg = (object.yaw_deg - delta.to_degrees()).rem_euclid(360.0)
+                }
+                _ => {}
+            }
+        }
+        Selection::Building(i) => {
+            let Some(edge) = line.source.buildings.get(i).map(|building| building.edge) else {
+                return;
+            };
+            let length = edge_length(line, edge);
+            let Some(building) = line.source.buildings.get_mut(i) else {
+                return;
+            };
+            match axis {
+                Axis::Along => building.s = (building.s + delta).clamp(0.0, length),
+                Axis::Across => building.lateral_offset += delta,
+                Axis::Up => building.height += delta,
+                Axis::Yaw => {
+                    building.yaw_deg = (building.yaw_deg - delta.to_degrees()).rem_euclid(360.0)
                 }
                 _ => {}
             }

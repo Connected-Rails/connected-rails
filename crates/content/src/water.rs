@@ -16,6 +16,12 @@
 //!   raised to the shoreline level, so the lake stays visible instead of
 //!   drowning under its own ground.
 //!
+//! Each vertex carries what the renderer needs of that: the water column under
+//! it, and how far its waterline is. In the first case there is no column to
+//! measure — the ground *is* the water — so one is assumed from the distance
+//! to the bank ([`assumed_depth`]), because the one thing known about the bed
+//! of any body is that it falls away from the edge.
+//!
 //! Everything is computed as a pure function of position, so the pieces two
 //! neighbouring tiles cut out of one polygon meet without a seam, and an
 //! embankment carrying the line across a valley holds the water back exactly
@@ -55,11 +61,14 @@ pub const LIFT: f64 = 0.12;
 /// climbs from one end to the other, is clamped only at its lowest reach.
 const LEVEL_PERCENTILE: f64 = 0.05;
 
-/// The column assumed where the elevation data has no word [m]. A module
-/// without a DGM would otherwise draw every body as flat as the ground it
-/// lies on — a dull green sheet — where "a few metres of water under it" is
-/// the honest guess.
+/// The column assumed where the elevation data has no word about it [m]. A
+/// module without a DGM would otherwise draw every body as flat as the ground
+/// it lies on — a dull green sheet — where "a few metres of water under it"
+/// is the honest guess. Also the deepest the guess in [`assumed_depth`] goes.
 pub(crate) const NOMINAL_DEPTH: f64 = 2.5;
+
+/// How far from the bank the assumed column reaches its full depth [m].
+const PROFILE_REACH: f64 = 40.0;
 
 /// Target edge length of a water surface's mesh [m]. The waves are the
 /// shader's business; the geometry only has to follow the fall of a river,
@@ -69,6 +78,13 @@ const TARGET_EDGE: f64 = 16.0;
 /// Most a single patch is subdivided. Three levels turn one triangle into 64 —
 /// a tile-wide river at [`TARGET_EDGE`] needs no more.
 const MAX_LEVELS: u32 = 3;
+
+/// How far from the waterline the distance to it is still measured [m].
+/// Everything beyond is open water as far as the shader is concerned: the
+/// longest wave it carries has all the room it wants, and no shore is near
+/// enough to break on. Also the cell size of the lookup that finds it, so a
+/// larger reach costs a longer list per cell and nothing else.
+const SHORE_REACH: f64 = 48.0;
 
 /// The bodies of water of a line, indexed by the terrain tiles they touch.
 #[derive(Debug, Clone, Default)]
@@ -240,7 +256,12 @@ pub struct WaterPatch {
     /// the tile boundaries it crosses.
     pub uvs: Vec<[f32; 2]>,
     /// Per-vertex data: `r` carries the depth of the water column under the
-    /// vertex [m] — what the shader makes its shore-to-deep colours of.
+    /// vertex [m] — what the shader makes its shore-to-deep colours of — and
+    /// `g` how far the waterline is [m], out to [`SHORE_REACH`]. The depth
+    /// says how dark the body is; the distance says how much room a wave had
+    /// to grow in, and where the shore's own band of foam and stirred sand
+    /// lies. Both are pure functions of position, so a body cut across two
+    /// tiles carries the same numbers on either side of the seam.
     pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     /// The bodies that went into this patch, in line order — what a click on
@@ -303,6 +324,10 @@ pub(crate) fn patches(
                 .unwrap_or(fallback - NOMINAL_DEPTH);
             (bottom.max(level) + LIFT, bottom)
         };
+        // The whole waterline of the body, islands included — not the piece
+        // this tile cut out of it, or every tile boundary would read as a
+        // shore.
+        let shore = Shore::of(water);
         // The outline and the islands are each cut to the tile, and an outer
         // piece takes the island pieces it holds as its holes.
         let hole_pieces: Vec<Vec<DVec2>> = water
@@ -320,7 +345,7 @@ pub(crate) fn patches(
                 .cloned()
                 .collect();
             add_piece(
-                &mut patch, &piece, &holes, water, level, zone, surface, sampler, frame,
+                &mut patch, &piece, &holes, water, &shore, level, zone, surface, sampler, frame,
             );
         }
     }
@@ -340,6 +365,7 @@ fn add_piece(
     ring: &[DVec2],
     holes: &[Vec<DVec2>],
     water: &Water,
+    shore: &Shore,
     level: f64,
     zone: u8,
     surface: impl Fn(DVec2, &mut Sampler<'_>) -> (f64, f64),
@@ -361,21 +387,122 @@ fn add_piece(
 
     for p in &points {
         let (height, bottom) = surface(*p, sampler);
-        let depth = (level - bottom).max(0.0);
+        let edge = shore.distance(*p);
+        let depth = (level - bottom).max(0.0).max(assumed_depth(edge));
         let (lat, lon) = geo::from_utm(p.x, p.y, zone);
         let world = geo::to_ecef(lat, lon, height);
         patch.positions.push(to_render(frame.to_local(world)));
         patch.normals.push(normal_at(*p, &surface, sampler));
         let offset = *p - centre;
         patch.uvs.push([offset.x as f32, offset.y as f32]);
-        // r: the water column in metres. g, b, a spare.
-        patch.colors.push([depth as f32, 0.0, 0.0, 1.0]);
+        // r: the water column in metres, g: how far the waterline is. b, a spare.
+        patch.colors.push([depth as f32, edge as f32, 0.0, 1.0]);
     }
     for [a, b, c] in tris {
         patch
             .indices
             .extend_from_slice(&[base + a, base + b, base + c]);
     }
+}
+
+/// The waterline of one body as a lookup: how far a point on the surface is
+/// from the nearest shore, out to [`SHORE_REACH`].
+///
+/// The shader wants that distance per vertex — a wave needs room to grow, and
+/// the band where the water works its edge is measured from the waterline,
+/// not from the tile it happens to be cut by. Answering it by walking the
+/// whole outline would be a lake's ring against a lake's vertices; instead
+/// every edge is filed into the cells of a [`SHORE_REACH`]-metre grid, and a
+/// point only ever looks at its own cell and the eight around it — which is
+/// every edge that could be nearer than the reach.
+struct Shore {
+    edges: HashMap<TileKey, Vec<[DVec2; 2]>>,
+}
+
+impl Shore {
+    /// The outline and the islands of one body. Both are shore: an island's
+    /// bank breaks a wave exactly as the far bank does.
+    fn of(water: &Water) -> Self {
+        let mut out = Shore {
+            edges: HashMap::new(),
+        };
+        out.add(&water.ring);
+        for hole in &water.holes {
+            out.add(hole);
+        }
+        out
+    }
+
+    /// Files one closed ring. Edges longer than a cell are cut into pieces
+    /// first, so a piece's bounding box never spans more than four cells and
+    /// filing it into every cell of that box stays cheap — and complete: an
+    /// edge is in every cell it passes through.
+    fn add(&mut self, ring: &[DVec2]) {
+        for i in 0..ring.len() {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            let pieces = (a.distance(b) / SHORE_REACH).ceil().max(1.0);
+            for step in 0..pieces as usize {
+                let t0 = step as f64 / pieces;
+                let t1 = (step + 1) as f64 / pieces;
+                let edge = [a.lerp(b, t0), a.lerp(b, t1)];
+                let (lo, hi) = (edge[0].min(edge[1]), edge[0].max(edge[1]));
+                let (kx0, ky0) = key(lo, SHORE_REACH);
+                let (kx1, ky1) = key(hi, SHORE_REACH);
+                for ky in ky0..=ky1 {
+                    for kx in kx0..=kx1 {
+                        self.edges.entry((kx, ky)).or_default().push(edge);
+                    }
+                }
+            }
+        }
+    }
+
+    /// How far `p` is from the waterline [m], capped at [`SHORE_REACH`].
+    fn distance(&self, p: DVec2) -> f64 {
+        let (kx, ky) = key(p, SHORE_REACH);
+        let mut best = SHORE_REACH * SHORE_REACH;
+        for ky in ky - 1..=ky + 1 {
+            for kx in kx - 1..=kx + 1 {
+                let Some(edges) = self.edges.get(&(kx, ky)) else {
+                    continue;
+                };
+                for [a, b] in edges {
+                    best = best.min(distance_squared(p, *a, *b));
+                }
+            }
+        }
+        best.sqrt().min(SHORE_REACH)
+    }
+}
+
+/// The column to assume this far from the bank [m].
+///
+/// German DGM1 usually models the *water surface*, not the bed: sample a river
+/// and the height that comes back is the height of the water, so the measured
+/// column is zero along its whole length. Left at that, a river draws as a
+/// murky, translucent, dead flat sheet — the shader takes its waves, its
+/// colour and its opacity from the column, and a wave that has no water under
+/// it dies in the shallows exactly as it should.
+///
+/// So where nothing was measured, something is assumed, and the one thing
+/// known about the bed of any body is that it falls away from the bank. This
+/// is that profile: nothing at the waterline, [`NOMINAL_DEPTH`] once
+/// [`PROFILE_REACH`] from it. Where the data does model a bed, its number is
+/// deeper than the guess and stands.
+fn assumed_depth(shore: f64) -> f64 {
+    let t = (shore / PROFILE_REACH).clamp(0.0, 1.0);
+    NOMINAL_DEPTH * t * t * (3.0 - 2.0 * t)
+}
+
+/// Square of the distance from `p` to the segment `a b`.
+fn distance_squared(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+    let along = b - a;
+    let len = along.length_squared();
+    if len < 1e-12 {
+        return (p - a).length_squared();
+    }
+    let t = ((p - a).dot(along) / len).clamp(0.0, 1.0);
+    (p - (a + along * t)).length_squared()
 }
 
 /// Triangulates a ring with holes: each island is **bridged** into the
@@ -834,15 +961,74 @@ mod tests {
         // + 46 geoid + lift.
         let y = patch.positions[0][1];
         assert!((y - (146.0 + LIFT as f32)).abs() < 0.01, "{y}");
-        // Flat ground at the level: no column to colour.
+        // Flat ground at the level: nothing was measured, so the column is
+        // the assumed profile — nothing at the bank, deepening away from it.
+        // A body drawn with a column of zero everywhere is a wet meadow.
+        let (shallowest, deepest) = patch.colors.iter().fold((f32::MAX, 0.0f32), |acc, c| {
+            (acc.0.min(c[0]), acc.1.max(c[0]))
+        });
+        assert!(shallowest < 1e-4, "{shallowest}");
         assert!(
-            patch.colors.iter().all(|c| c[0] < 1e-4),
-            "{:?}",
-            patch.colors[0]
+            (deepest - assumed_depth(100.0) as f32).abs() < 0.01,
+            "{deepest}"
         );
         // Every index addresses a vertex that exists.
         let count = patch.positions.len() as u32;
         assert!(patch.indices.iter().all(|i| *i < count));
+    }
+
+    /// Every vertex knows how far its waterline is — the shader grows its
+    /// waves in the room that distance gives them and lays the band of foam
+    /// where it runs out.
+    #[test]
+    fn a_vertex_knows_how_far_the_shore_is() {
+        let tile = (1171, 11249);
+        let min = DVec2::new(tile.0 as f64 * 512.0, tile.1 as f64 * 512.0);
+        let patches = patch_of(
+            &[source(min.x + 100.0, min.y + 100.0, 200.0, "See")],
+            tile,
+            |_, _| 100.0,
+        );
+        let patch = &patches[0];
+        // The corners of the outline are vertices, and they are on the water's
+        // edge.
+        let nearest = patch.colors.iter().fold(f32::MAX, |m, c| m.min(c[1]));
+        assert!(nearest < 1e-3, "{nearest}");
+        // The middle of a 200 m square is a hundred metres from every bank —
+        // past the reach, so it reads as open water.
+        let furthest = patch.colors.iter().fold(0.0f32, |m, c| m.max(c[1]));
+        assert!((furthest - SHORE_REACH as f32).abs() < 1e-3, "{furthest}");
+        // And nothing in a square body is further from a bank than half its
+        // side, whatever the mesh looks like.
+        assert!(patch.colors.iter().all(|c| c[1] <= 100.0));
+    }
+
+    /// A tile seam is not a shore: the distance is measured against the body's
+    /// own outline, so the water does not calm down and foam up where the
+    /// terrain streaming happened to cut it.
+    #[test]
+    fn a_tile_seam_is_no_waterline() {
+        let tile = (1171, 11249);
+        let min = DVec2::new(tile.0 as f64 * 512.0, tile.1 as f64 * 512.0);
+        // 200 m square from 452 to 652 east of the tile corner: the seam at
+        // 512 cuts 60 m off it, well inside the body.
+        let body = source(min.x + 452.0, min.y + 100.0, 200.0, "See");
+        let patches = patch_of(&[body], tile, |_, _| 100.0);
+        let patch = &patches[0];
+        // `uv` is the offset from the body's centre in metres, so the seam
+        // lies at u = 512 − 552.
+        let on_seam: Vec<f32> = patch
+            .uvs
+            .iter()
+            .zip(&patch.colors)
+            .filter(|(uv, _)| (uv[0] + 40.0).abs() < 0.5 && uv[1].abs() < 40.0)
+            .map(|(_, c)| c[1])
+            .collect();
+        assert!(!on_seam.is_empty(), "no vertex on the seam");
+        assert!(
+            on_seam.iter().all(|d| *d > 40.0),
+            "the seam reads as a bank: {on_seam:?}"
+        );
     }
 
     /// A DGM that models the bed: the surface is raised to the shoreline, so

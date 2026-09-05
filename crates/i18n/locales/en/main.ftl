@@ -30,6 +30,8 @@ action-quit = Quit
 action-suggest = Suggest
 action-undo = Undo
 action-redo = Redo
+action-copy = Copy
+action-paste = Paste
 
 filter-vehicle-ron = Vehicle (RON)
 filter-line-ron = Module (RON)
@@ -981,6 +983,7 @@ check-yard-off-edge = Road { $yard } sits outside its track
 check-portal-inside = Portal { $yard } is not at the edge of the line — the track behind it has to run out to a buffer stop or a module boundary
 check-yard-name-twice = Road { $yard } carries a name another one already has
 check-unknown-object = Object { $object }: names an object no installed mod has
+check-building-off-edge = Building { $building } sits outside its track
 check-flank-guard = Route { $route }: flank protection names a node that is no turnout, or a signal that is gone
 obj-repeat = Repeat
 obj-repeat-interval = Spacing
@@ -1437,6 +1440,12 @@ hud-key-pause = Pause
 # The diagnostics, F6. Machine output — it may be as dense as it likes.
 hud-diagnostics = Diagnostics
 hud-diag-frame = Frame    { $fps } fps, { $millis } ms, { $entities } entities
+hud-diag-prof = Prof     { $frames } frames, { $avg } ms avg, p95 { $p95 }, max { $max }, { $hitches } hitches, sim { $steps } steps { $state }
+hud-diag-paused = · paused
+hud-diag-spans = CPU      { $spans } · rest { $rest } ms
+hud-diag-graph = { $graph }
+hud-diag-spike = Spike #{ $frame } { $total } ms ({ $breakdown })
+hud-diag-prof-hint = console: prof · prof reset · prof pause/resume · prof csv <file>
 hud-diag-terrain = Terrain  { $tiles } tiles (+{ $pending }), { $triangles } tri, { $megabytes } MB, view { $view } m
 hud-diag-air = Air      AR { $auxiliary } bar   direct { $direct } bar   { $air } Nl used
 hud-diag-axles = Axles    { $slipping }/{ $axles } slipping, worst { $worst } m/s
@@ -1517,6 +1526,21 @@ menu-fact-m = { $value } m
 menu-fact-t = { $value } t
 menu-fact-kmh = { $value } km/h
 
+## Loading screen
+#
+# The screen between picking a run and driving it: what run is being built, how
+# far along it is, and that it is still moving. The steps name what the loader
+# is doing right now.
+
+load-title = Loading run
+load-step-sim = Building timetable and trains …
+load-step-terrain = Shaping terrain and scenery …
+load-step-track = Laying track and signals …
+load-step-vehicles = Parking the trains …
+load-step-sky = Raising the sky over the line …
+load-step-ready = Ready — all aboard …
+load-hint = The first build takes a moment — terrain and models are being prepared.
+
 ## Timetable runs
 #
 # Besides the scenarios a line can be driven from its operating day: the whole
@@ -1571,6 +1595,8 @@ set-gameplay = Gameplay
 set-stored = Kept between runs in the settings file of your user account.
 set-view-distance = View distance
 set-view-distance-hint = How far terrain is built and drawn — the biggest single cost.
+set-fov = Field of view
+set-fov-hint = Vertical field of view of the cab camera, in degrees. Applies right away, while driving too.
 set-shadows = Shadows
 set-shadows-hint = Shadow maps of the sun.
 set-bloom = Bloom
@@ -1599,6 +1625,10 @@ set-upscaling-quality = Upscaling quality
 set-upscaling-quality-hint = How much of the picture is really drawn while upscaling is on: Low the least, High the most. A window resize resets the picture for a moment.
 set-texture-quality = Texture quality
 set-texture-quality-hint = Size and filtering of the generated ground textures. Applies to the terrain already on screen.
+set-grass = Rendered grass
+set-grass-hint = Draws real, wind-animated grass blades over the ground material. Changes apply immediately.
+set-grass-quality = Grass quality
+set-grass-quality-hint = Reach of the rendered grass and how many blades stand on a square metre. The grass is laid out on the graphics card every frame; a lower level costs less there.
 set-shadow-quality = Shadow quality
 set-shadow-quality-hint = Edge length of the sun's shadow map: 1024, 2048 or 4096 texels. Four times the texels a step, so it is the setting to lower first.
 set-mist-quality = Mist quality
@@ -1637,6 +1667,7 @@ set-reset = Reset to defaults
 set-reset-hint = Puts every setting on this page back to how it shipped.
 # Units of the values on the right of a settings row.
 set-metres = { $value } m
+set-degrees = { $value }°
 set-percent = { $value } %
 set-factor = { $value } ×
 
@@ -1779,11 +1810,23 @@ console-usage-time = time [HH:MM[:SS]]
 console-usage-fly = fly
 console-usage-help = help [command]
 console-usage-clear = clear
+console-usage-prof = prof [reset|pause|resume|csv <file>]
 console-help-weather = change the weather — without a name it shows the current one
 console-help-time = move the clock forward to a time of day — without a time it shows the current one
 console-help-fly = toggle the free camera for flying over the route — a developer tool
 console-help-help = list the commands
 console-help-clear = empty the log
+console-help-prof = show what the last frames cost — the frame profiler
+console-prof-summary = { $frames } frames, { $avg } ms avg, p95 { $p95 }, max { $max }, { $hitches } hitches
+console-prof-span = { $name } { $avg } ms avg, { $max } ms max ({ $share } %)
+console-prof-rest = rest (render/present/vsync): { $rest } ms
+console-prof-spike = spike #{ $frame }: { $total } ms ({ $breakdown })
+console-prof-empty = No frames recorded yet
+console-prof-reset = Profiler history cleared
+console-prof-paused = Profiler paused — the overlay keeps showing the frozen history
+console-prof-resumed = Profiler recording again
+console-prof-saved = Wrote { $rows } frames to { $path }
+console-prof-failed = Could not write { $path }: { $error }
 
 ## Scoring
 
@@ -2823,3 +2866,64 @@ ai-open-dialog = Detect…
 ai-clear-area = Clear area
 ai-blank = { $blank } windows had no imagery — offline, or the provider does not cover this ground
 ai-no-roads = No roads in the module, so nothing could be kept off a carriageway. Import them and run again to leave the running lanes clear for the traffic.
+
+## Parametric buildings
+
+tool-building = Parametric building
+sel-building-summary = Parametric building { $index } on track { $edge }
+building-generation = Generation
+building-preset = Preset
+building-preset-custom = Custom
+building-preset-detached = Detached house
+building-preset-farmhouse = Farmhouse
+building-preset-townhouse = Town house
+building-preset-apartment = Apartment block
+building-preset-office = Office block
+building-preset-retail = Retail row
+building-preset-workshop = Workshop
+building-preset-warehouse = Warehouse
+building-preset-factory = Factory hall
+building-preset-logistics = Logistics hall
+building-use = Use
+building-use-residential = Residential
+building-use-commercial = Commercial
+building-use-industrial = Industrial
+building-width = Width
+building-length = Length
+building-floors = Floors
+building-floor-height = Floor height
+building-total-height = Total height
+building-roof-style = Roof shape
+building-roof-height = Roof height
+building-facade = Facade material
+building-color = Facade colour
+building-roof-material = Roof material
+building-window-spacing = Window spacing
+building-window-width = Window width
+building-window-height = Window height
+building-lit-share = Lit windows at night
+building-balconies = Balconies
+building-balcony-every = Balcony every floor
+building-balcony-depth = Balcony depth
+building-chimneys = Chimneys
+building-roof-vents = Roof vents
+building-skylights = Skylights
+building-rain-gutters = Gutters and downpipes
+building-entrance-canopy = Entrance/loading canopy
+building-loading-doors = Loading doors
+building-seed = Pattern seed
+roof-gable = Gable roof
+roof-hip = Hip roof
+roof-flat = Flat roof
+roof-shed = Shed roof
+roof-mansard = Mansard roof
+roof-sawtooth = Sawtooth roof
+facade-plaster = Plaster
+facade-red-brick = Red brick
+facade-yellow-brick = Yellow brick
+facade-concrete = Exposed concrete
+facade-metal-panel = Metal panels
+roof-material-clay = Clay tiles
+roof-material-slate = Slate
+roof-material-seam = Standing seam metal
+roof-material-bitumen = Bitumen

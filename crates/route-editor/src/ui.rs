@@ -13,6 +13,7 @@ use content::route::{
     BoundarySource, FlankSource, NodeSource, RouteSource, RuleIssue, SectionSource, SignalAddons,
     SignalSource, Zs1Display, Zs8Display, ZsConstruction, ZsNumber,
 };
+use content::{BuildingPreset, BuildingSpec, BuildingUse, FacadeMaterial, RoofMaterial, RoofStyle};
 use editor_ui::{colors, space};
 use i18n::t;
 use imagery::ZoomMode;
@@ -154,6 +155,10 @@ const SHORTCUT_DRAWER: egui::KeyboardShortcut =
 /// names the key beside the menu entry.
 const SHORTCUT_DELETE: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Delete);
+const SHORTCUT_COPY: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::C);
+const SHORTCUT_PASTE: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::V);
 
 /// One frame of UI. Panels live inside a background `Ui` (egui 0.35).
 #[allow(clippy::too_many_arguments)]
@@ -477,6 +482,12 @@ fn handle_shortcuts(
     }
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_UNDO)) {
         undo(line, history, state);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_COPY)) {
+        tools::copy_building(line, state);
+    }
+    if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_PASTE)) {
+        tools::paste_building(line, state);
     }
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT_SAVE)) && needs_saving(line) {
         save(line, state, overlay);
@@ -1095,6 +1106,7 @@ pub(crate) fn new_line(
         edges: vec![],
         devices: vec![],
         objects: vec![],
+        buildings: vec![],
         yards: vec![],
         trees: vec![],
         walk_paths: vec![],
@@ -1236,6 +1248,23 @@ fn menu_bar(
                         .clicked()
                     {
                         redo(line, history, state);
+                        ui.close();
+                    }
+                    ui.separator();
+                    let can_copy = matches!(state.selection, Selection::Building(_));
+                    let copy_button = egui::Button::new(t!("action-copy"))
+                        .shortcut_text(keys(ui, &SHORTCUT_COPY));
+                    if ui.add_enabled(can_copy, copy_button).clicked() {
+                        tools::copy_building(line, state);
+                        ui.close();
+                    }
+                    let paste_button = egui::Button::new(t!("action-paste"))
+                        .shortcut_text(keys(ui, &SHORTCUT_PASTE));
+                    if ui
+                        .add_enabled(state.building_clipboard.is_some(), paste_button)
+                        .clicked()
+                    {
+                        tools::paste_building(line, state);
                         ui.close();
                     }
                     ui.separator();
@@ -1768,6 +1797,55 @@ fn detail_panel(
                                 }
                             }
                         }
+                        if state.tool == Tool::PlaceBuilding {
+                            ui.add_space(space::XS);
+                            editor_ui::form_grid("place-building").show(ui, |ui| {
+                                row(ui, "building-preset", |ui| {
+                                    building_preset_combo(ui, usize::MAX, &mut state.building_spec);
+                                });
+                                row(ui, "building-use", |ui| {
+                                    building_use_combo(
+                                        ui,
+                                        usize::MAX,
+                                        &mut state.building_spec.use_kind,
+                                    );
+                                });
+                                row(ui, "building-width", |ui| {
+                                    editor_ui::field(
+                                        ui,
+                                        &mut state.building_spec.width,
+                                        0.25,
+                                        3.0..=150.0,
+                                        "m",
+                                    );
+                                });
+                                row(ui, "building-length", |ui| {
+                                    editor_ui::field(
+                                        ui,
+                                        &mut state.building_spec.length,
+                                        0.25,
+                                        3.0..=250.0,
+                                        "m",
+                                    );
+                                });
+                                row(ui, "building-floors", |ui| {
+                                    editor_ui::field(
+                                        ui,
+                                        &mut state.building_spec.floors,
+                                        0.1,
+                                        1.0..=40.0,
+                                        "",
+                                    );
+                                });
+                                row(ui, "building-roof-style", |ui| {
+                                    roof_style_combo(
+                                        ui,
+                                        usize::MAX,
+                                        &mut state.building_spec.roof_style,
+                                    );
+                                });
+                            });
+                        }
                         if matches!(state.tool, Tool::PlaceTree | Tool::PlaceForest) {
                             ui.add_space(space::XS);
                             editor_ui::form_grid("place-tree").show(ui, |ui| {
@@ -2050,6 +2128,125 @@ fn object_combo(ui: &mut egui::Ui, id: &str, objects: &TrackObjects, state: &mut
             for name in objects.map.keys() {
                 if ui.selectable_label(&current == name, name).clicked() {
                     state.object = Some(name.clone());
+                }
+            }
+        });
+}
+
+fn building_use_combo(ui: &mut egui::Ui, id: usize, value: &mut BuildingUse) {
+    enum_combo(
+        ui,
+        ("building-use", id),
+        value,
+        &[
+            (BuildingUse::Residential, "building-use-residential"),
+            (BuildingUse::Commercial, "building-use-commercial"),
+            (BuildingUse::Industrial, "building-use-industrial"),
+        ],
+    );
+}
+
+fn building_preset_combo(ui: &mut egui::Ui, id: usize, spec: &mut BuildingSpec) {
+    let choices = [
+        (BuildingPreset::DetachedHouse, "building-preset-detached"),
+        (BuildingPreset::Farmhouse, "building-preset-farmhouse"),
+        (BuildingPreset::TownHouse, "building-preset-townhouse"),
+        (BuildingPreset::ApartmentBlock, "building-preset-apartment"),
+        (BuildingPreset::OfficeBlock, "building-preset-office"),
+        (BuildingPreset::RetailRow, "building-preset-retail"),
+        (BuildingPreset::Workshop, "building-preset-workshop"),
+        (BuildingPreset::Warehouse, "building-preset-warehouse"),
+        (BuildingPreset::FactoryHall, "building-preset-factory"),
+        (BuildingPreset::LogisticsHall, "building-preset-logistics"),
+    ];
+    debug_assert_eq!(choices.len(), BuildingPreset::ALL.len());
+    let selected = choices
+        .iter()
+        .find(|(preset, _)| {
+            let mut candidate = preset.spec();
+            candidate.seed = spec.seed;
+            candidate.normalised() == spec.normalised()
+        })
+        .map_or_else(|| t!("building-preset-custom"), |(_, key)| t!(*key));
+    egui::ComboBox::from_id_salt(("building-preset", id))
+        .width(space::FIELD)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (preset, key) in choices {
+                if ui.selectable_label(false, t!(key)).clicked() {
+                    let seed = spec.seed;
+                    *spec = preset.spec();
+                    spec.seed = seed;
+                }
+            }
+        });
+}
+
+fn roof_style_combo(ui: &mut egui::Ui, id: usize, value: &mut RoofStyle) {
+    enum_combo(
+        ui,
+        ("roof-style", id),
+        value,
+        &[
+            (RoofStyle::Gable, "roof-gable"),
+            (RoofStyle::Hip, "roof-hip"),
+            (RoofStyle::Flat, "roof-flat"),
+            (RoofStyle::Shed, "roof-shed"),
+            (RoofStyle::Mansard, "roof-mansard"),
+            (RoofStyle::Sawtooth, "roof-sawtooth"),
+        ],
+    );
+}
+
+fn facade_combo(ui: &mut egui::Ui, id: usize, value: &mut FacadeMaterial) {
+    enum_combo(
+        ui,
+        ("facade", id),
+        value,
+        &[
+            (FacadeMaterial::Plaster, "facade-plaster"),
+            (FacadeMaterial::RedBrick, "facade-red-brick"),
+            (FacadeMaterial::YellowBrick, "facade-yellow-brick"),
+            (FacadeMaterial::Concrete, "facade-concrete"),
+            (FacadeMaterial::MetalPanel, "facade-metal-panel"),
+        ],
+    );
+}
+
+fn roof_material_combo(ui: &mut egui::Ui, id: usize, value: &mut RoofMaterial) {
+    enum_combo(
+        ui,
+        ("roof-material", id),
+        value,
+        &[
+            (RoofMaterial::ClayTile, "roof-material-clay"),
+            (RoofMaterial::Slate, "roof-material-slate"),
+            (RoofMaterial::StandingSeam, "roof-material-seam"),
+            (RoofMaterial::Bitumen, "roof-material-bitumen"),
+        ],
+    );
+}
+
+fn enum_combo<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut T,
+    choices: &[(T, &'static str)],
+) {
+    let selected = choices
+        .iter()
+        .find(|(candidate, _)| candidate == value)
+        .map_or_else(|| t!(choices[0].1), |(_, key)| t!(*key));
+    egui::ComboBox::from_id_salt(id)
+        .width(space::FIELD)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (candidate, key) in choices {
+                if ui
+                    .selectable_label(*value == *candidate, t!(*key))
+                    .clicked()
+                {
+                    *value = *candidate;
                 }
             }
         });
@@ -2607,6 +2804,155 @@ fn selection_panel(
                     tools::delete_selection(line, state);
                 }
             });
+        }
+        Selection::Building(i) => {
+            let Some(building) = line.source.buildings.get(i) else {
+                return;
+            };
+            let edge_length = line
+                .net
+                .edges()
+                .get(building.edge as usize)
+                .map(|edge| edge.length())
+                .unwrap_or(f64::MAX);
+            let position = tools::building_pos(&line.net, building);
+            ui.label(t!("sel-building-summary", index = i, edge = building.edge));
+            let building = &mut line.source.buildings[i];
+            editor_ui::form_grid("sel-building-placement").show(ui, |ui| {
+                row(ui, "obj-s", |ui| {
+                    editor_ui::field(ui, &mut building.s, 1.0, 0.0..=edge_length, "m");
+                });
+                row(ui, "obj-lateral", |ui| {
+                    editor_ui::field(ui, &mut building.lateral_offset, 0.1, -250.0..=250.0, "m");
+                });
+                row(ui, "obj-yaw", |ui| {
+                    editor_ui::field(ui, &mut building.yaw_deg, 1.0, -360.0..=360.0, "°");
+                });
+                row(ui, "obj-height", |ui| {
+                    editor_ui::field(ui, &mut building.height, 0.1, -20.0..=100.0, "m");
+                });
+                row(ui, "obj-snap", |ui| {
+                    ui.checkbox(&mut building.snap_to_terrain, "");
+                });
+            });
+            editor_ui::subheading(ui, t!("building-generation"));
+            editor_ui::form_grid("sel-building-generation").show(ui, |ui| {
+                row(ui, "building-preset", |ui| {
+                    building_preset_combo(ui, i, &mut building.spec)
+                });
+                row(ui, "building-use", |ui| {
+                    building_use_combo(ui, i, &mut building.spec.use_kind)
+                });
+                row(ui, "building-width", |ui| {
+                    editor_ui::field(ui, &mut building.spec.width, 0.25, 3.0..=150.0, "m");
+                });
+                row(ui, "building-length", |ui| {
+                    editor_ui::field(ui, &mut building.spec.length, 0.25, 3.0..=250.0, "m");
+                });
+                row(ui, "building-floors", |ui| {
+                    editor_ui::field(ui, &mut building.spec.floors, 0.1, 1.0..=40.0, "");
+                });
+                row(ui, "building-floor-height", |ui| {
+                    editor_ui::field(ui, &mut building.spec.floor_height, 0.05, 2.2..=8.0, "m");
+                });
+                row(ui, "building-total-height", |ui| {
+                    let mut total = building.spec.total_height();
+                    if editor_ui::field(ui, &mut total, 0.1, 2.2..=340.0, "m").changed() {
+                        let roof = if building.spec.roof_style == RoofStyle::Flat {
+                            0.35
+                        } else {
+                            building.spec.roof_height
+                        };
+                        building.spec.floor_height =
+                            ((total - roof) / building.spec.floors.max(1) as f32).clamp(2.2, 8.0);
+                    }
+                });
+                row(ui, "building-roof-style", |ui| {
+                    roof_style_combo(ui, i, &mut building.spec.roof_style)
+                });
+                row(ui, "building-roof-height", |ui| {
+                    editor_ui::field(ui, &mut building.spec.roof_height, 0.1, 0.0..=20.0, "m");
+                });
+                row(ui, "building-facade", |ui| {
+                    facade_combo(ui, i, &mut building.spec.facade)
+                });
+                row(ui, "building-color", |ui| {
+                    ui.color_edit_button_rgb(&mut building.spec.facade_color);
+                });
+                row(ui, "building-roof-material", |ui| {
+                    roof_material_combo(ui, i, &mut building.spec.roof)
+                });
+                row(ui, "building-window-spacing", |ui| {
+                    editor_ui::field(ui, &mut building.spec.window_spacing, 0.1, 1.2..=12.0, "m");
+                });
+                row(ui, "building-window-width", |ui| {
+                    editor_ui::field(ui, &mut building.spec.window_width, 0.05, 0.5..=8.0, "m");
+                });
+                row(ui, "building-window-height", |ui| {
+                    editor_ui::field(ui, &mut building.spec.window_height, 0.05, 0.5..=6.0, "m");
+                });
+                row(ui, "building-lit-share", |ui| {
+                    editor_ui::field(ui, &mut building.spec.lit_window_share, 0.02, 0.0..=1.0, "");
+                });
+                row(ui, "building-balconies", |ui| {
+                    ui.checkbox(&mut building.spec.balconies, "");
+                });
+                if building.spec.balconies {
+                    row(ui, "building-balcony-every", |ui| {
+                        editor_ui::field(ui, &mut building.spec.balcony_every, 0.1, 1.0..=20.0, "");
+                    });
+                    row(ui, "building-balcony-depth", |ui| {
+                        editor_ui::field(
+                            ui,
+                            &mut building.spec.balcony_depth,
+                            0.05,
+                            0.6..=4.0,
+                            "m",
+                        );
+                    });
+                }
+                row(ui, "building-chimneys", |ui| {
+                    editor_ui::field(ui, &mut building.spec.chimneys, 0.1, 0.0..=8.0, "");
+                });
+                row(ui, "building-roof-vents", |ui| {
+                    editor_ui::field(ui, &mut building.spec.roof_vents, 0.1, 0.0..=24.0, "");
+                });
+                row(ui, "building-skylights", |ui| {
+                    editor_ui::field(ui, &mut building.spec.skylights, 0.1, 0.0..=24.0, "");
+                });
+                row(ui, "building-rain-gutters", |ui| {
+                    ui.checkbox(&mut building.spec.rain_gutters, "");
+                });
+                row(ui, "building-entrance-canopy", |ui| {
+                    ui.checkbox(&mut building.spec.entrance_canopy, "");
+                });
+                if building.spec.use_kind == BuildingUse::Industrial {
+                    row(ui, "building-loading-doors", |ui| {
+                        editor_ui::field(ui, &mut building.spec.loading_doors, 0.1, 1.0..=10.0, "");
+                    });
+                }
+                row(ui, "building-seed", |ui| {
+                    editor_ui::field(ui, &mut building.spec.seed, 1.0, 0.0..=u32::MAX as f64, "");
+                });
+            });
+            ui.add_space(space::XS);
+            let mut delete_building = false;
+            ui.horizontal(|ui| {
+                if ui.button(t!("action-center")).clicked()
+                    && let Some(position) = position
+                {
+                    focus.position = position;
+                }
+                if ui.button(t!("action-copy")).clicked() {
+                    state.building_clipboard = Some(building.clone());
+                }
+                if ui.button(t!("action-delete")).clicked() {
+                    delete_building = true;
+                }
+            });
+            if delete_building {
+                tools::delete_selection(line, state);
+            }
         }
         Selection::Tree(i) => {
             let Some(tree) = line.source.trees.get(i) else {
@@ -4404,6 +4750,13 @@ fn issue_target(
                 .and_then(|o| tools::object_pos(&line.net, o)),
             Selection::Object(*object as usize),
         ),
+        RuleIssue::BuildingOffEdge { building } => (
+            line.source
+                .buildings
+                .get(*building as usize)
+                .and_then(|building| tools::building_pos(&line.net, building)),
+            Selection::Building(*building as usize),
+        ),
         // A stabling road or portal is a mark on the track; the edge it names is where
         // looking at it starts. It has no selection of its own yet — the roads are
         // written by hand, like the interlocking tables were.
@@ -4502,6 +4855,9 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::LzbTypeWithoutConductor { edge } => t!("check-lzb-no-conductor", edge = edge),
         RuleIssue::ObjectOffEdge { object } => t!("check-object-off-edge", object = object),
         RuleIssue::UnknownObject { object } => t!("check-unknown-object", object = object),
+        RuleIssue::BuildingOffEdge { building } => {
+            t!("check-building-off-edge", building = building)
+        }
         RuleIssue::FlankGuardInvalid { route } => t!("check-flank-guard", route = route),
         RuleIssue::YardOffEdge { yard } => t!("check-yard-off-edge", yard = yard),
         RuleIssue::PortalNotAtTheEdge { yard } => t!("check-portal-inside", yard = yard),

@@ -713,14 +713,18 @@ fn setup(
             ..default()
         }),
         Transform::default(),
-        // The sky lights the module itself; this is the floor that keeps the
-        // relief readable when the time panel is set to the middle of the night.
+        // The sky lights the module itself; this is a moonless night sky's glow
+        // on the ground, the floor that keeps the relief readable when the time
+        // panel is set to the middle of the night and the exposure has opened
+        // for it (`world_render::sky::exposure`).
         AmbientLight {
             color: Color::srgb(0.75, 0.82, 1.0),
-            brightness: 60.0,
+            brightness: 0.05,
             ..default()
         },
         sky::camera_settings(),
+        // The water reflects the module out of this (`world_render::water`).
+        bevy::core_pipeline::prepass::DepthPrepass,
         PrimaryEguiContext,
     ));
     // The same sky the simulator draws, over the same module: the sun where the
@@ -883,6 +887,15 @@ fn diff(
                 change
                     .scatter
                     .add_disc(utm(lat.to_degrees(), lon.to_degrees()), 1.0);
+            }
+        }
+        for building in changed(&last.buildings, &now.buildings) {
+            if let Some(pos) = tools::building_pos(net, building) {
+                let (lat, lon, _) = geo::from_ecef(pos);
+                change.scatter.add_disc(
+                    utm(lat.to_degrees(), lon.to_degrees()),
+                    building.spec.width.max(building.spec.length) as f64,
+                );
             }
         }
         // A field is not something standing on the ground — it *is* the ground,
@@ -1406,7 +1419,11 @@ fn overlay_control(
         changed = true;
     }
 
-    if keys.just_pressed(KeyCode::KeyC) {
+    let command = keys.pressed(KeyCode::ControlLeft)
+        || keys.pressed(KeyCode::ControlRight)
+        || keys.pressed(KeyCode::SuperLeft)
+        || keys.pressed(KeyCode::SuperRight);
+    if keys.just_pressed(KeyCode::KeyC) && !command {
         overlay.source.clear_cache();
         overlay.clear(&mut commands);
         overlay.status = t!("status-cache-cleared");

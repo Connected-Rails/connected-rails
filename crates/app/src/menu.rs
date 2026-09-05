@@ -365,7 +365,10 @@ impl Entry {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Setting {
     ViewDistance,
+    Fov,
     TextureQuality,
+    Grass,
+    GrassQuality,
     Shadows,
     ShadowQuality,
     Bloom,
@@ -511,7 +514,10 @@ const SETTINGS: [(&str, &[Setting]); 4] = [
         "set-graphics",
         &[
             Setting::ViewDistance,
+            Setting::Fov,
             Setting::TextureQuality,
+            Setting::Grass,
+            Setting::GrassQuality,
             Setting::Shadows,
             Setting::ShadowQuality,
             Setting::Bloom,
@@ -539,7 +545,10 @@ impl Setting {
     fn key(self) -> &'static str {
         match self {
             Setting::ViewDistance => "set-view-distance",
+            Setting::Fov => "set-fov",
             Setting::TextureQuality => "set-texture-quality",
+            Setting::Grass => "set-grass",
+            Setting::GrassQuality => "set-grass-quality",
             Setting::Shadows => "set-shadows",
             Setting::ShadowQuality => "set-shadow-quality",
             Setting::Bloom => "set-bloom",
@@ -563,11 +572,12 @@ impl Setting {
     }
 
     fn control(self, graphics: &Graphics, audio: &Audio, gameplay: &Gameplay) -> Control {
-        use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
+        use settings::{FOV, LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
         match self {
             Setting::ViewDistance => {
                 Control::Slider(fraction(graphics.view_distance, VIEW_DISTANCE))
             }
+            Setting::Fov => Control::Slider(fraction(graphics.fov, FOV)),
             Setting::Volume => Control::Slider(fraction(audio.master, VOLUME)),
             Setting::MaxFps => Control::Slider(fraction(graphics.max_fps, MAX_FPS)),
             Setting::LookSpeed => Control::Slider(fraction(gameplay.look_speed, LOOK_SPEED)),
@@ -575,6 +585,7 @@ impl Setting {
             Setting::Bloom => Control::Toggle(graphics.bloom),
             Setting::VolumetricClouds => Control::Toggle(graphics.volumetric_clouds),
             Setting::Mist => Control::Toggle(graphics.mist),
+            Setting::Grass => Control::Toggle(graphics.grass),
             Setting::VSync => Control::Toggle(graphics.vsync),
             Setting::AntiAliasing
             | Setting::AaQuality
@@ -582,6 +593,7 @@ impl Setting {
             | Setting::UpscalingQuality
             | Setting::ShadowQuality
             | Setting::MistQuality
+            | Setting::GrassQuality
             | Setting::TextureQuality
             | Setting::Window => Control::Choice,
             // Three steps, so it is dialled like the language rather than switched.
@@ -599,6 +611,12 @@ impl Setting {
                 t!(
                     "set-metres",
                     value = i18n::decimal(f64::from(graphics.view_distance), 0)
+                )
+            }
+            Setting::Fov => {
+                t!(
+                    "set-degrees",
+                    value = i18n::decimal(f64::from(graphics.fov), 0)
                 )
             }
             Setting::Volume => t!(
@@ -625,6 +643,7 @@ impl Setting {
             )),
             Setting::ShadowQuality => t!(dimmed(graphics.shadows, graphics.shadow_quality)),
             Setting::MistQuality => t!(dimmed(graphics.mist, graphics.mist_quality)),
+            Setting::GrassQuality => t!(dimmed(graphics.grass, graphics.grass_quality)),
             Setting::TextureQuality => t!(graphics.texture_quality.key()),
             Setting::Window => t!(graphics.window.key()),
             // The top step of the slider is not a rate but the absence of one.
@@ -737,15 +756,19 @@ fn change(
     gameplay: &mut Gameplay,
     support: &settings::UpscalingSupport,
 ) {
-    use settings::{LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
+    use settings::{FOV, LOOK_SPEED, MAX_FPS, VIEW_DISTANCE, VOLUME};
     match setting {
         Setting::ViewDistance => {
             graphics.view_distance = step(graphics.view_distance, dir, VIEW_DISTANCE);
+        }
+        Setting::Fov => {
+            graphics.fov = step(graphics.fov, dir, FOV);
         }
         Setting::Shadows => graphics.shadows = !graphics.shadows,
         Setting::Bloom => graphics.bloom = !graphics.bloom,
         Setting::VolumetricClouds => graphics.volumetric_clouds = !graphics.volumetric_clouds,
         Setting::Mist => graphics.mist = !graphics.mist,
+        Setting::Grass => graphics.grass = !graphics.grass,
         Setting::AntiAliasing => graphics.anti_aliasing = graphics.anti_aliasing.cycle(dir),
         Setting::AaQuality => graphics.aa_quality = graphics.aa_quality.cycle(dir),
         // The upscaling row only walks through what this machine can run.
@@ -759,6 +782,7 @@ fn change(
         }
         Setting::ShadowQuality => graphics.shadow_quality = graphics.shadow_quality.cycle(dir),
         Setting::MistQuality => graphics.mist_quality = graphics.mist_quality.cycle(dir),
+        Setting::GrassQuality => graphics.grass_quality = graphics.grass_quality.cycle(dir),
         Setting::TextureQuality => graphics.texture_quality = graphics.texture_quality.cycle(dir),
         Setting::Window => graphics.window = graphics.window.cycle(dir),
         Setting::VSync => graphics.vsync = !graphics.vsync,
@@ -1303,7 +1327,8 @@ pub fn menu(
             go(&mut menu, Page::Run);
         } else if menu.page == Page::Setup {
             // ← / → dial the value, Enter starts — this is a step of the drive flow, and
-            // in that flow Enter has meant "on you go" since the first page.
+            // in that flow Enter has meant "on you go" since the first page. Starting
+            // means the loading screen: it builds the run behind its progress bar.
             if dial != 0
                 && let Some(option) = entry.and_then(|e| e.run)
             {
@@ -1312,7 +1337,7 @@ pub fn menu(
                 selection.setup = Some(setup);
             }
             if confirmed {
-                next.set(GameState::Driving);
+                next.set(GameState::Loading);
             }
         } else if confirmed && let Some(entry) = entry {
             let id = entry.id.clone();
@@ -1513,11 +1538,12 @@ fn go(menu: &mut MenuState, page: Page) {
     menu.rebinding = None;
 }
 
-/// Walks to the next step of the drive flow, or starts the run where there is none left.
+/// Walks to the next step of the drive flow, or hands over to the loading screen
+/// where there is none left — it builds the run behind its progress bar.
 fn advance(menu: &mut MenuState, next: &mut NextState<GameState>, page: Option<Page>) {
     match page {
         Some(page) => go(menu, page),
-        None => next.set(GameState::Driving),
+        None => next.set(GameState::Loading),
     }
 }
 
@@ -3480,10 +3506,10 @@ mod tests {
     }
 
     /// The whole flow without a window: the title screen opens the first step, three
-    /// confirmations pick line, vehicle and scenario and hand over to `Driving`; Esc
-    /// walks back the same way and ends at the title screen.
+    /// confirmations pick line, vehicle and scenario and hand over to the loading
+    /// screen; Esc walks back the same way and ends at the title screen.
     #[test]
-    fn the_start_flow_reaches_driving_and_esc_walks_back() {
+    fn the_start_flow_reaches_loading_and_esc_walks_back() {
         let mut app = app();
         assert_eq!(page(&app), Page::Root, "the menu opens on the title screen");
         key(&mut app, KeyCode::Enter);
@@ -3511,7 +3537,7 @@ mod tests {
         key(&mut app, KeyCode::Enter);
         assert_eq!(
             *app.world().resource::<State<GameState>>().get(),
-            GameState::Driving
+            GameState::Loading
         );
         let selection = app.world().resource::<Selection>();
         assert!(selection.line_ref.is_none(), "the built-in line was picked");
@@ -3723,7 +3749,7 @@ mod tests {
         key(&mut app, KeyCode::Enter);
         assert_eq!(
             *app.world().resource::<State<GameState>>().get(),
-            GameState::Driving
+            GameState::Loading
         );
         let selection = app.world().resource::<Selection>();
         let service = selection.service.as_ref().expect("a service was taken");
@@ -4031,6 +4057,7 @@ mod tests {
             (settings::VIEW_DISTANCE.0..=settings::VIEW_DISTANCE.1)
                 .contains(&graphics.view_distance)
         );
+        assert!((settings::FOV.0..=settings::FOV.1).contains(&graphics.fov));
         assert!((settings::VOLUME.0..=settings::VOLUME.1).contains(&audio.master));
         assert!((settings::LOOK_SPEED.0..=settings::LOOK_SPEED.1).contains(&gameplay.look_speed));
         // The language cycles through system + every shipped language and back.

@@ -15,6 +15,7 @@
 //! that follows the running interlocking: lamp image, arm travel, placeholder
 //! colour.
 
+use crate::profiler::Profiler;
 use crate::{SimResource, models};
 use bevy::prelude::*;
 use sim_core::{interlock::advance_motion, train::Motion};
@@ -107,7 +108,9 @@ pub fn update_lamps(
     time: Res<Time>,
     sim: Res<SimResource>,
     mut lamps: Query<(&SignalLamp, &mut Visibility)>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("lamps");
     for (lamp, mut visibility) in lamps.iter_mut() {
         let lit = sim
             .0

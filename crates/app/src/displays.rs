@@ -14,6 +14,7 @@
 //! every camera here renders every frame.
 
 use crate::models::{Bound, ModelRoot};
+use crate::profiler::Profiler;
 use crate::{Mods, PlayerTrain, SimResource};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{RenderTarget, ScalingMode};
@@ -263,7 +264,9 @@ pub fn update_displays(
     time: Res<Time>,
     mut gauges: NonSendMut<HtmlGauges>,
     mut throttle: Local<HtmlThrottle>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("displays");
     let Some(train) = sim.0.trains.get(player.0) else {
         return;
     };

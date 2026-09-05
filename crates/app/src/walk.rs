@@ -26,6 +26,7 @@ use sim_core::train::{Train, Vehicle};
 use world_coords::{EcefPos, RenderOrigin};
 use world_render::{CharacterGraphs, Dressed, Gait, Person, gait, play_gait};
 
+use crate::profiler::Profiler;
 use crate::ui::{CameraMode, CameraState};
 use crate::{Origin, PlayerTrain, Precipitation, SimResource};
 
@@ -106,7 +107,9 @@ pub fn walk_player(
     mut ray: MeshRayCast,
     precipitation: Query<(), With<Precipitation>>,
     console: Res<crate::console::Console>,
+    mut profiler: ResMut<Profiler>,
 ) {
+    let _scope = profiler.scope("walk");
     // The console holds the keyboard while it is open (`crate::console`) — W is a
     // letter there, not a step forward.
     if console.open {

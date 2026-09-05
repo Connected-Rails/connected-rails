@@ -575,6 +575,43 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   spent in query order, so a field five hundred metres away filled in while the one under
   the window stayed bare. And a hero card drew a painted card inside the model standing on
   it.
+- **Meadow grass on the GPU (2026-09-04, `world_render::grass`):** the default terrain's
+  grass was first grown like the crops — every 32 m cell within reach of the camera a mesh
+  of a million vertices, built on the main thread the frame the camera came near, uploaded
+  whole, and drawn through the full PBR path with all three LOD levels in one mesh. A train
+  at line speed entered a new row of cells every second, and each one was a visible hitch.
+  Nothing of the meadow is built on the CPU any more. **(1) A ground cache:** the terrain
+  tiles around the camera and the fields, roads and waters draped on them are drawn once,
+  top down, into a 1024² texture of (height, grass weight) by a pass of its own over the
+  meshes already on the GPU — highest surface wins, an excluded surface lifted a little so
+  it wins the coplanar fight against the ground under it — and drawn again only when the
+  camera has left a 64 m margin, a tile has streamed in or out, or the origin was rebased.
+  **(2) A scatter compute pass** each frame over a grid of 4 m patches: a patch out of the
+  frustum costs one box test; a patch in view lays its blades out on Roberts' R2 sequence
+  (any prefix of it is evenly spread, which is what lets a prefix be the thinned stand),
+  keeps a blade where its rank is below the density its own distance asks for — so coming
+  closer only ever adds blades and never moves one — reads its foot off the ground cache,
+  culls it against the frustum, and appends the survivors to one of three instance lists,
+  whose counts land straight in the indirect draw arguments. **(3) Three indirect draws**
+  in the opaque pass, one per level of detail (eleven, seven and three vertices), through
+  Bevy's own mesh pipeline for the view's key with the shaders and the mesh bind group
+  swapped — so MSAA, HDR, the shadow filter, the fog and the atmosphere are whatever the
+  camera has, with no second copy of any of it. The vertex shader grows each 32-byte
+  record into a quadratic Bézier bent by its own lean and the weather's wind (a gust front
+  travelling downwind, a ripple on it, each blade's own flutter, less of all three on a
+  stiff blade), tapers it, keeps it at least a pixel and a half wide so far grass does not
+  shimmer, and turns the normal across the blade so it lights as a rounded stalk; the
+  fragment shader lights it with diffuse transmission for the back-lit glow, a root-to-tip
+  occlusion gradient, and `weather_pbr` for the rain and the snow. Density is 450 blades/m²
+  at the camera falling as 1/(1+(d/10 m)²) out to the range — 220 m on High, 160 on
+  Medium, 110 on Low, the density scaled with it — the survivors widening by 1/√keep so
+  the sward keeps its cover, and a blade at the threshold growing in rather than popping.
+  Fields, roads and water carry `GroundSurface::Excluded`, so no blade stands on them; the
+  splat's gravel and rock take the grass weight away on the formation and on steep ground,
+  and the edge is dithered so a verge thins into the ballast instead of stopping at a
+  line. Deep winter takes the meadow away, and the grassland phenology sets its height, so
+  it is short after the cut. The crop cards and hero models of the fields are untouched.
+  Nothing is state: every blade is a function of the ground and a hash of its position.
 - **No two fields on one piece of ground (2026-08-31, `content::farmland`,
   `fields::geometry`):** a cadastral register's parcels are meant to tile the land and do
   not quite: neighbours are digitised from either side of a boundary and agree to a few
@@ -2337,13 +2374,19 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
   draws the same sky over the same module** — its Time-of-day panel sets date,
   clock, time zone and cloud cover, and a slider runs a whole day past; latitude
   and longitude are the module's anchor, exactly as in a run, so the sun comes over
-  the same hillside in both programs. Two ceilings the sky carries: the camera's
-  exposure is fixed at Bevy's default, so the sun's illuminance and the stars'
-  luminance are lifted or lowered into it by constants rather than by an EV curve
-  (`world_render::sky` names them and says what the correct version is), and a sun
-  below the horizon still lights vertical faces from underneath, because Bevy hands
-  the atmosphere the directional light's own colour and anything taken off the
-  light would take the twilight sky with it. **The seasonal appearance hangs off
+  the same hillside in both programs. **Every light carries its real figure** — the
+  sun its 130 klx, the moon its quarter lux, the headlights 200 kcd, the cab lamp
+  800 lm, the stars and the moon's disk their luminance — and the camera's exposure
+  does the rest: `world_render::sky::exposure` is a reflected-light meter over a
+  level view with the eye's limits on top, about EV 14 under a high sun, the tables'
+  sunset and twilight, a floor of −3 under the moon, and it closes again by four
+  stops when the headlights or the cab lamp are lit (`Sky::artificial`), adapting
+  over seconds. Emissive surfaces stay display-referred on purpose — a driver has
+  to read a screen and a signal at any exposure. One ceiling the sky still carries:
+  Bevy's atmosphere has no earth shadow, so a set sun still lights the air and the
+  faces under it; the light is dimmed a decade every seven degrees below the
+  horizon (`EARTH_SHADOW_SLOPE`), which brings the twilight down to the tables' but
+  is a factor on the light where the real thing is a shadow on the air. **The seasonal appearance hangs off
   the same date** (`world_render::Season`, ch. 14 "seasons v2"): the generated ground
   textures and the placeholder trees are built in the colours of the start day — meadows
   turn through October, ground, gravel and foliage go under snow from November to March,
@@ -2407,13 +2450,50 @@ Every simplification is marked with a `ponytail:` comment at the code site, with
      members become islands the surface goes around. The surfaces are cut to the
      terrain tiles and laid over the raw elevation data at the level the shoreline
      samples give, so a lake settles flat and a river follows its fall, and an
-     embankment across a valley holds the water back like a dam. The shader
-     (`world_render::water`) makes the waves out of the wind and the rain, the
-     depth-coloured body out of the shoreline level minus the bed, and the
-     reflection out of the sky the atmosphere already computes. Clicking a surface
-     in the editor selects its body — waterline outlined, name editable, centre and
-     delete in the panel; the shape itself is the file's or a fresh import's.
-     Not yet: a hand-editable water level, and vertex handles like the fields have.
+     embankment across a valley holds the water back like a dam. Every vertex
+     carries two numbers and the shader (`world_render::water`) makes the whole
+     look out of them and the weather: the water column under it, which grades
+     the body from murky shallows to a dark deep and decides what shows
+     through; and how far the waterline is, which is how much room a wave had
+     to grow in and where the bank's own band lies. Where a DGM1 models the
+     water surface rather than the bed — the usual German delivery, and every
+     river in one — there is no column to measure, so one is assumed from the
+     distance to the bank; without it a river draws as a dead flat, translucent
+     sheet, because a wave with no water under it dies in the shallows exactly
+     as it should. The surface is ten octaves
+     of directional waves from a lake's swell down to a hand's-breadth ripple,
+     each one grown by the wind it needs (a ripple takes a breath, a swell a
+     gale), bent by the octaves above it and let through a noise of its own, so
+     the crests wander and break instead of weaving a corduroy; every octave
+     that falls below the pixel it would need is not dropped but folded into
+     the roughness (α² = α₀² + 2σ²), which is what makes a far lake glitter
+     rather than alias. **What is under and over the surface is the picture
+     itself**: the material is opaque with specular transmission, so Bevy
+     draws it after the opaque world with a copy of the frame bound, and the
+     bed is read out of that copy along the refracted ray — bent by the waves,
+     absorbed by Beer's law over the column (red first), scattered back as the
+     water's own blue-green — while the reflection is a screen-space march of
+     the mirrored ray against the depth prepass into the same copy, so the
+     bank, its trees and the train stand in the water where they belong and
+     wobble with it; where a ray leaves the screen or the surface is too
+     rough to mirror sharply, the atmosphere's probe takes over. Both
+     programs put a `DepthPrepass` on their camera for this (about 1.5 ms on
+     the demo), and the loader no longer switches foliage from its alpha mask
+     to alpha-to-coverage, because under MSAA Bevy's prepass has no discard
+     for that mode and every leaf card would write its whole quad into the
+     depth. On top of that: foam where a wave runs out on the bank and spume
+     streaks out on the open water from about eight metres a second, the
+     sun's own glitter path, rain rings, and a river that runs — nothing says
+     which body is a river, but a lake's surface is level and a river's
+     follows the fall of the valley, so the mesh's own normal gives Manning's
+     formula the gradient and the wave field is carried downstream at the
+     speed that comes out. Clicking a surface in the editor selects its body
+     — waterline outlined, name editable, centre and delete in the panel; the
+     shape itself is the file's or a fresh import's. Not yet: a hand-editable
+     water level, vertex handles like the fields have, real wave height (the
+     mesh is flat; the surface is all normal), and the cloud deck in the
+     reflection — it is drawn in the transparent phase, after the copy the
+     water reads.
    - **Areas and bands onto a fourth splat channel** — `terrain::splat_weights` already
      carries `[grass, rock, gravel, 1.0]`, the fourth component is free. Roads
      (`highway=*` buffered by their width), farmland and meadow paint into it instead of

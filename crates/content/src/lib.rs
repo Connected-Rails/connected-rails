@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod area_tests;
+pub mod buildings;
 pub mod characters;
 pub mod compose;
 pub mod demo;
@@ -16,6 +17,10 @@ pub mod terrain;
 pub mod vehicles;
 pub mod water;
 
+pub use buildings::{
+    BakedBuilding, BuildingPreset, BuildingSource, BuildingSpec, BuildingUse, FacadeMaterial,
+    RoofMaterial, RoofStyle,
+};
 pub use characters::{CharacterSpec, Gender, Role};
 pub use compose::Composition;
 pub use demo::musterbahn;
@@ -30,7 +35,7 @@ pub use roads::{RoadPatch, Roads};
 pub use route::{CompiledLine, FieldSource, LineSource, PowerLineSource, TreeSource};
 pub use scenarios::{musterbahn_day, re_4711, to_musterstadt};
 pub use terrain::{
-    Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions, TerrainStats,
-    TerrainTile, TileKey, Tree, Vegetation,
+    Buildings, Scenery, SceneryInstance, TerrainBuilder, TerrainEdits, TerrainOptions,
+    TerrainStats, TerrainTile, TileKey, Tree, Vegetation,
 };
 pub use water::{WaterPatch, Waters};

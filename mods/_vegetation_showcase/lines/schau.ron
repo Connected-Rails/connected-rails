@@ -11,6 +11,7 @@
             start: Geo(point: (lat: 52.0, lon: 10.0, height: 100.0), heading_deg: 90.0),
             segments: [(len: 250.0, k0: 0.0, dk: 0.0)],
             speed: [(0.0, 40.0)],
+            track_type: [(0.0, "example:hauptbahn")],
         ),
     ],
     sections: [(edges: [0])],

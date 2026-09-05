@@ -257,6 +257,9 @@ pub fn spawn_roads(
                 MeshMaterial3d(material),
                 // The patch is already in the tile's own frame.
                 Transform::IDENTITY,
+                // No meadow grass grows through it: the patch cuts a hole into
+                // the grass ground cache (`crate::grass`).
+                crate::grass::GroundSurface::Excluded,
                 RoadSurfaceMark {
                     surface: patch.surface,
                     sources: patch.sources.clone(),

@@ -21,7 +21,7 @@ use content::terrain::{self, TerrainBuilder, TerrainOptions, TerrainStats, Terra
 use glam::DVec2;
 
 use crate::render;
-use crate::{Origin, SimResource, TerrainInfo, ui};
+use crate::{Origin, SimResource, TerrainInfo, profiler, ui};
 
 /// How many tiles are built at the same time. One per worker thread is the
 /// most that can run; the rest only queue.
@@ -142,6 +142,7 @@ impl TerrainStreamer {
 pub fn stream_terrain(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut building_assets: ResMut<world_render::BuildingAssets>,
     mut streamer: ResMut<TerrainStreamer>,
     mut info: ResMut<TerrainInfo>,
     sim: Res<SimResource>,
@@ -173,7 +174,9 @@ pub fn stream_terrain(
         ResMut<world_render::ConductorMaterials>,
         ResMut<Assets<world_render::ConductorMaterial>>,
     ),
+    mut profiler: ResMut<profiler::Profiler>,
 ) {
+    let _scope = profiler.scope("stream");
     let options = streamer.options;
     // Every train counts, not just the player's — otherwise an AI train would drive
     // through a hole in the world as soon as someone looks at it.
@@ -255,6 +258,7 @@ pub fn stream_terrain(
         let entity = render::spawn_terrain_tile(
             &mut commands,
             &mut meshes,
+            &mut building_assets,
             &streamer.material,
             &streamer.catalog,
             &tile,

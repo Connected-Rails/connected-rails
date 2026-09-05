@@ -8747,6 +8747,7 @@ dependencies = [
  "rfd",
  "ron",
  "serde",
+ "serde_json",
  "sim-core",
  "winresource",
 ]
@@ -11255,6 +11256,7 @@ dependencies = [
 name = "world-render"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "bevy",
  "content",
  "fields",

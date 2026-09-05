@@ -1130,6 +1130,15 @@ pub struct SectionSource {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SignalSource {
+    /// Operational name shown on the small enamel plate at the signal, e.g. `A`,
+    /// `N1` or `47P3`.  It is deliberately data rather than part of the model:
+    /// several placements share one model but never one identity.
+    #[serde(default)]
+    pub designation: String,
+    /// Interlocking/signal box responsible for this signal.  This is operational
+    /// metadata and is not painted onto the signal itself.
+    #[serde(default)]
+    pub interlocking: String,
     pub kind: SignalKind,
     #[serde(default = "default_system")]
     pub system: SignalSystem,
@@ -1151,6 +1160,137 @@ pub struct SignalSource {
     /// signal type's default model.
     #[serde(default)]
     pub model: Option<String>,
+    /// Optional physical subsidiary-signal equipment fitted to this placement.
+    /// The base model stays reusable; the renderer assembles these fittings at
+    /// runtime and the aspect's lamp-image strings switch their light faces.
+    #[serde(default)]
+    pub addons: SignalAddons,
+}
+
+/// Whether an indicator is a fixed reflecting board or a switchable light
+/// display.  Both constructions are still found with H/V signals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ZsConstruction {
+    #[default]
+    Form,
+    Light,
+}
+
+/// Physical implementation of Zs 1.  The three-light A is the characteristic
+/// DB form-signal fitting; a single blinking white light also exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Zs1Display {
+    #[default]
+    ThreeLights,
+    BlinkingLight,
+}
+
+/// Physical implementation of Zs 8.  Its three blinking lights may share the
+/// A-shaped Zs-1 housing; the other implementation is a blinking diagonal bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Zs8Display {
+    #[default]
+    ThreeLights,
+    LightStrip,
+}
+
+/// A numbered Zs 3/Zs 3v indicator.  The number is one tenth of the speed in
+/// km/h, so `4` means 40 km/h and `10` means 100 km/h.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZsNumber {
+    /// All indications the fitted theatre display can show.  A fixed form
+    /// board has exactly one entry; a light display may serve several routes.
+    pub values: Vec<u8>,
+    #[serde(default)]
+    pub construction: ZsConstruction,
+}
+
+impl Default for ZsNumber {
+    fn default() -> Self {
+        Self {
+            values: vec![4],
+            construction: ZsConstruction::Form,
+        }
+    }
+}
+
+/// Optional subsidiary signals which are physically fitted to one signal.
+///
+/// This intentionally omits Zs 9 (a board *before* certain light main signals)
+/// and Zs 10 (a separately placed end indicator in the points area).  Putting
+/// either into this mast-attachment structure would permit a non-prototypical
+/// arrangement.  Zs 103 is retained for historical DV-301 routes.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SignalAddons {
+    #[serde(default)]
+    pub zs1: Option<Zs1Display>,
+    #[serde(default)]
+    pub zs2: Option<Vec<String>>,
+    #[serde(default)]
+    pub zs2v: Option<Vec<String>>,
+    #[serde(default)]
+    pub zs3: Option<ZsNumber>,
+    #[serde(default)]
+    pub zs3v: Option<ZsNumber>,
+    #[serde(default)]
+    pub zs6: Option<ZsConstruction>,
+    #[serde(default)]
+    pub zs7: bool,
+    #[serde(default)]
+    pub zs8: Option<Zs8Display>,
+    #[serde(default)]
+    pub zs12: bool,
+    #[serde(default)]
+    pub zs13: Option<ZsConstruction>,
+    #[serde(default)]
+    pub zs103: bool,
+}
+
+impl SignalAddons {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// Does this equipment set make operational and physical sense on the
+    /// signal function it was assigned to?
+    pub fn is_valid_for(&self, kind: SignalKind) -> bool {
+        let main = self.zs1.is_some()
+            || self.zs2.is_some()
+            || self.zs3.is_some()
+            || self.zs6.is_some()
+            || self.zs7
+            || self.zs8.is_some()
+            || self.zs12
+            || self.zs13.is_some()
+            || self.zs103;
+        let distant = self.zs2v.is_some() || self.zs3v.is_some();
+        let function_ok = match kind {
+            SignalKind::Main => !distant,
+            SignalKind::Distant => !main,
+            SignalKind::Combined => true,
+            SignalKind::Shunting | SignalKind::TrackLock => !main && !distant,
+        };
+        let letters_ok = |values: &Vec<String>| {
+            !values.is_empty() && values.iter().all(|value| value.trim().chars().count() == 1)
+        };
+        let numbers_ok = |number: &ZsNumber| {
+            !number.values.is_empty()
+                && number.values.iter().all(|value| (1..=16).contains(value))
+                && (number.construction == ZsConstruction::Light || number.values.len() == 1)
+        };
+        let values_ok = self.zs2.as_ref().is_none_or(letters_ok)
+            && self.zs2v.as_ref().is_none_or(letters_ok)
+            && self.zs3.as_ref().is_none_or(numbers_ok)
+            && self.zs3v.as_ref().is_none_or(numbers_ok);
+        // Ril 301 expressly excludes Zs 13 when Zs 3 with code 1, 2 or 3 is
+        // used for the same short/stub entry.
+        let combination_ok = !(self.zs13.is_some()
+            && self
+                .zs3
+                .as_ref()
+                .is_some_and(|number| number.values.iter().any(|value| *value <= 3)));
+        function_ok && values_ok && combination_ok
+    }
 }
 
 fn default_system() -> SignalSystem {
@@ -1577,6 +1717,14 @@ pub enum RuleIssue {
     DistantWithoutNext { signal: u32 },
     /// Signal whose device is missing or not a `Signal` device.
     SignalDeviceMismatch { signal: u32 },
+    /// A signal without its unique operational name cannot be identified in
+    /// orders, plans or the driver's location report.
+    SignalDesignationMissing { signal: u32 },
+    /// Every signal belongs to one controlling interlocking/signal box.
+    SignalInterlockingMissing { signal: u32 },
+    /// Subsidiary-signal hardware does not belong on this signal function, has
+    /// no value, or combines Zs 13 with a conflicting Zs 3 code 1–3.
+    SignalAddonsInvalid { signal: u32 },
     /// Boundary whose node is missing or not a `Buffer`.
     BoundaryInvalid { boundary: u32 },
     /// Edge names no track type at all — the line will not compile until it
@@ -2970,6 +3118,15 @@ impl LineSource {
                 Some(d) if d.kind == DeviceKind::Signal => {}
                 _ => issues.push(RuleIssue::SignalDeviceMismatch { signal }),
             }
+            if sig.designation.trim().is_empty() {
+                issues.push(RuleIssue::SignalDesignationMissing { signal });
+            }
+            if sig.interlocking.trim().is_empty() {
+                issues.push(RuleIssue::SignalInterlockingMissing { signal });
+            }
+            if !sig.addons.is_valid_for(sig.kind) {
+                issues.push(RuleIssue::SignalAddonsInvalid { signal });
+            }
             // A Ks combination signal carries both functions, so both magnets.
             if matches!(sig.kind, SignalKind::Distant | SignalKind::Combined)
                 && !linked(signal, MagnetFrequency::Hz1000)
@@ -3365,6 +3522,88 @@ impl LineSource {
 mod tests {
     use super::*;
 
+    #[test]
+    fn subsidiary_signal_equipment_round_trips_all_switchable_values() {
+        let text = r#"(
+            zs1: Some(ThreeLights),
+            zs2: Some(["K", "S"]),
+            zs2v: Some(["B"]),
+            zs3: Some((values: [4, 6], construction: Light)),
+            zs3v: Some((values: [6], construction: Form)),
+            zs6: Some(Form),
+            zs7: true,
+            zs8: Some(ThreeLights),
+            zs12: true,
+            zs13: Some(Light),
+            zs103: true,
+        )"#;
+        let addons: SignalAddons = ron::from_str(text).expect("valid subsidiary equipment");
+        assert_eq!(
+            addons.zs2.as_ref().unwrap(),
+            &vec!["K".to_owned(), "S".to_owned()]
+        );
+        assert_eq!(addons.zs3.as_ref().unwrap().values, [4, 6]);
+        let encoded = ron::to_string(&addons).expect("serializable subsidiary equipment");
+        assert_eq!(ron::from_str::<SignalAddons>(&encoded).unwrap(), addons);
+    }
+
+    #[test]
+    fn subsidiary_signal_validation_keeps_functions_and_real_conflicts_apart() {
+        let main = SignalAddons {
+            zs1: Some(Zs1Display::ThreeLights),
+            zs8: Some(Zs8Display::ThreeLights),
+            ..SignalAddons::default()
+        };
+        assert!(main.is_valid_for(SignalKind::Main));
+        assert!(!main.is_valid_for(SignalKind::Distant));
+
+        let advance = SignalAddons {
+            zs2v: Some(vec!["K".into(), "S".into()]),
+            zs3v: Some(ZsNumber {
+                values: vec![4, 6],
+                construction: ZsConstruction::Light,
+            }),
+            ..SignalAddons::default()
+        };
+        assert!(advance.is_valid_for(SignalKind::Distant));
+        assert!(!advance.is_valid_for(SignalKind::Main));
+
+        let combined = SignalAddons {
+            zs2: Some(vec!["K".into()]),
+            zs2v: Some(vec!["K".into()]),
+            ..SignalAddons::default()
+        };
+        assert!(combined.is_valid_for(SignalKind::Combined));
+
+        let multi_value_form = SignalAddons {
+            zs3: Some(ZsNumber {
+                values: vec![4, 6],
+                construction: ZsConstruction::Form,
+            }),
+            ..SignalAddons::default()
+        };
+        assert!(!multi_value_form.is_valid_for(SignalKind::Main));
+
+        let multi_character_direction = SignalAddons {
+            zs2: Some(vec!["KS".into()]),
+            ..SignalAddons::default()
+        };
+        assert!(
+            !multi_character_direction.is_valid_for(SignalKind::Main),
+            "a Zs 2 indication is one identifying letter; alternatives are separate values"
+        );
+
+        let zs13_conflict = SignalAddons {
+            zs3: Some(ZsNumber {
+                values: vec![3],
+                construction: ZsConstruction::Form,
+            }),
+            zs13: Some(ZsConstruction::Form),
+            ..SignalAddons::default()
+        };
+        assert!(!zs13_conflict.is_valid_for(SignalKind::Main));
+    }
+
     /// The type registry a rule check runs against: the one the Musterbahn is
     /// laid with, so a check reports what the test is about rather than a
     /// track type no installed mod answers.
@@ -3589,6 +3828,8 @@ mod tests {
             payload: String::new(),
         });
         line.signals.push(SignalSource {
+            designation: "N3".into(),
+            interlocking: "Bf Musterstadt".into(),
             kind: SignalKind::Main,
             system: SignalSystem::HV,
             device: line.devices.len() as u32 - 1,
@@ -3598,6 +3839,7 @@ mod tests {
             diverging_speed: None,
             signal_type: None,
             model: None,
+            addons: SignalAddons::default(),
         });
 
         // Signal 1 is the main signal at km 2.0 on edge 0, signal 2 the new one.
@@ -3635,6 +3877,8 @@ mod tests {
             payload: String::new(),
         });
         line.signals.push(SignalSource {
+            designation: "N3".into(),
+            interlocking: "Bf Musterstadt".into(),
             kind: SignalKind::Main,
             system: SignalSystem::HV,
             device: line.devices.len() as u32 - 1,
@@ -3644,6 +3888,7 @@ mod tests {
             diverging_speed: None,
             signal_type: None,
             model: None,
+            addons: SignalAddons::default(),
         });
 
         let route = line.route_between(1, 2, None).expect("a path exists");
@@ -3697,6 +3942,8 @@ mod tests {
                 payload: String::new(),
             });
             line.signals.push(SignalSource {
+                designation: format!("N{}", line.signals.len() + 1),
+                interlocking: "Bf Musterstadt".into(),
                 kind: SignalKind::Main,
                 system: SignalSystem::HV,
                 device: line.devices.len() as u32 - 1,
@@ -3706,6 +3953,7 @@ mod tests {
                 diverging_speed: None,
                 signal_type: None,
                 model: None,
+                addons: SignalAddons::default(),
             });
         }
         line.compile().expect("still compiles");
@@ -3758,6 +4006,8 @@ mod tests {
             payload: String::new(),
         });
         line.signals.push(SignalSource {
+            designation: format!("N{}", line.signals.len() + 1),
+            interlocking: "Bf Musterstadt".into(),
             kind: SignalKind::Main,
             system: SignalSystem::HV,
             device: line.devices.len() as u32 - 1,
@@ -3767,6 +4017,7 @@ mod tests {
             diverging_speed: None,
             signal_type: None,
             model: None,
+            addons: SignalAddons::default(),
         });
         line.signals.len() as u32 - 1
     }

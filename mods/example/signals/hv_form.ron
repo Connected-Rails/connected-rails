@@ -1,4 +1,4 @@
-// Semaphore (Form) main signal: the aspect is shown by arms, not lamps.
+// Three-aspect semaphore main signal (Hp 0 / Hp 1 / Hp 2).
 //
 // The lamp images name the moved elements; the model's `motions` bind them to
 // the arm nodes and swing them with a travel time (see signal_models/form_hp.ron).
@@ -6,18 +6,18 @@
     system: HV,
     rules: [
         // Hp0 — both arms at rest.
-        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: []),
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: ["lamp_red"]),
         // Hp2 — slow speed: both arms diagonal.
         (
             when: (diverging: Some(true)),
             show: (main: Some(ProceedSlow), speed: Some(40.0)),
-            lamps: ["fluegel1", "fluegel2"],
+            lamps: ["fluegel1", "fluegel2", "lamp_green", "lamp_yellow"],
         ),
         // Hp1 — proceed: the upper arm alone.
-        (when: (), show: (main: Some(Proceed)), lamps: ["fluegel1"]),
+        (when: (), show: (main: Some(Proceed)), lamps: ["fluegel1", "lamp_green"]),
     ],
     script: None,
-    model: Some("example:form_hp"),
+    model: Some("example:form_hp_8m_gitter_2fl"),
     // Tags: free, lower case — the route editor's content drawer filters on them.
-    tags: ["hv", "semaphore", "epoch-3"],
+    tags: ["hv", "semaphore", "main-signal", "hp0", "hp1", "hp2", "epoch-3"],
 )

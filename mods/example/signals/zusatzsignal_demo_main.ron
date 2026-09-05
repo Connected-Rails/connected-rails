@@ -1,0 +1,8 @@
+// Static base aspect; the showcase script lights the fitting belonging to each row entry.
+(
+    system: HV,
+    rules: [(when: (), show: (main: Some(Stop)), lamps: ["lamp_red"])],
+    script: Some("example:zusatzsignal_showcase"),
+    model: None,
+    tags: ["showcase", "semaphore", "subsidiary-signals"],
+)

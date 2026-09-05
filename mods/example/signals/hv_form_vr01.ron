@@ -1,0 +1,22 @@
+// Two-aspect Formvorsignal: Vr 0 / Vr 1 (Vr 1/2 in the DV 301 legacy case).
+(
+    system: HV,
+    rules: [
+        (
+            when: (next_stop: Some(true)),
+            show: (distant: Some(ExpectStop)),
+            lamps: ["vr0_licht"],
+        ),
+        (
+            when: (),
+            show: (distant: Some(ExpectProceed)),
+            lamps: [
+                "scheibe_weg", "vr1_licht",
+                "vr_blende_links_gruen", "vr_blende_rechts_gruen",
+            ],
+        ),
+    ],
+    script: None,
+    model: Some("example:form_vr_2_76m_2begr"),
+    tags: ["hv", "semaphore", "distant-signal", "two-aspect", "vr0", "vr1", "epoch-3"],
+)

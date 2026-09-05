@@ -10,7 +10,8 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use content::LineSource;
 use content::route::{
-    BoundarySource, FlankSource, NodeSource, RouteSource, RuleIssue, SectionSource, SignalSource,
+    BoundarySource, FlankSource, NodeSource, RouteSource, RuleIssue, SectionSource, SignalAddons,
+    SignalSource, Zs1Display, Zs8Display, ZsConstruction, ZsNumber,
 };
 use editor_ui::{colors, space};
 use i18n::t;
@@ -3042,9 +3043,15 @@ fn signal_labels(source: &LineSource) -> Vec<String> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
+            let designation = if s.designation.trim().is_empty() {
+                format!("#{i}")
+            } else {
+                s.designation.clone()
+            };
             t!(
                 "signal-label",
                 index = i,
+                designation = designation,
                 kind = signal_kind_label(s.kind),
                 device = s.device
             )
@@ -3075,6 +3082,8 @@ fn signal_rows(
             .clicked()
         {
             line.source.signals.push(SignalSource {
+                designation: format!("S{}", line.source.signals.len() + 1),
+                interlocking: String::new(),
                 kind: SignalKind::Main,
                 system: SignalSystem::Ks,
                 device: device as u32,
@@ -3084,6 +3093,7 @@ fn signal_rows(
                 diverging_speed: None,
                 signal_type: None,
                 model: None,
+                addons: Default::default(),
             });
         }
         return;
@@ -3094,6 +3104,20 @@ fn signal_rows(
     let sections = line.source.sections.len();
     let signal = &mut line.source.signals[index];
     editor_ui::form_grid(&format!("signal-{index}")).show(ui, |ui| {
+        row(ui, "sig-designation", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut signal.designation)
+                    .desired_width(space::FIELD)
+                    .hint_text("N1"),
+            );
+        });
+        row(ui, "sig-interlocking", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut signal.interlocking)
+                    .desired_width(space::FIELD)
+                    .hint_text("Stw Mf"),
+            );
+        });
         row(ui, "sig-kind", |ui| {
             signal_kind_combo(ui, index, &mut signal.kind);
         });
@@ -3149,6 +3173,7 @@ fn signal_rows(
             optional_text(ui, ("sig-model", index), &mut signal.model);
         });
     });
+    signal_addon_rows(ui, index, signal.kind, &mut signal.addons);
     index_chips(
         ui,
         ("sig-guarded", index),
@@ -3170,6 +3195,200 @@ fn signal_rows(
     // announces, a track lock secures, neither begins one.
     if starts_routes {
         signal_routes(ui, line, state, overlay, index, &labels);
+    }
+}
+
+/// Physical subsidiary-signal equipment of one placement.  Keeping this in
+/// the route file (rather than baking every combination into another glTF)
+/// lets a shared signal model serve A, N1 and 47P3 with different fittings.
+fn signal_addon_rows(ui: &mut egui::Ui, index: usize, kind: SignalKind, addons: &mut SignalAddons) {
+    editor_ui::subheading(ui, t!("sig-addons"));
+    ui.small(t!("sig-addons-hint"));
+    let main = matches!(kind, SignalKind::Main | SignalKind::Combined);
+    let distant = matches!(kind, SignalKind::Distant | SignalKind::Combined);
+    editor_ui::form_grid(&format!("signal-addons-{index}")).show(ui, |ui| {
+        if main {
+            row(ui, "sig-zs1", |ui| zs1_option(ui, index, &mut addons.zs1));
+            row(ui, "sig-zs2", |ui| {
+                letter_option(ui, (index, "zs2"), &mut addons.zs2)
+            });
+            row(ui, "sig-zs3", |ui| {
+                number_option(ui, (index, "zs3"), &mut addons.zs3)
+            });
+            row(ui, "sig-zs6", |ui| {
+                construction_option(ui, (index, "zs6"), &mut addons.zs6)
+            });
+            row(ui, "sig-zs7", |ui| {
+                ui.checkbox(&mut addons.zs7, t!("sig-fitted"));
+            });
+            row(ui, "sig-zs8", |ui| zs8_option(ui, index, &mut addons.zs8));
+            row(ui, "sig-zs12", |ui| {
+                ui.checkbox(&mut addons.zs12, t!("sig-fitted"));
+            });
+            row(ui, "sig-zs13", |ui| {
+                construction_option(ui, (index, "zs13"), &mut addons.zs13)
+            });
+            row(ui, "sig-zs103", |ui| {
+                ui.checkbox(&mut addons.zs103, t!("sig-fitted"));
+            });
+        }
+        if distant {
+            row(ui, "sig-zs2v", |ui| {
+                letter_option(ui, (index, "zs2v"), &mut addons.zs2v)
+            });
+            row(ui, "sig-zs3v", |ui| {
+                number_option(ui, (index, "zs3v"), &mut addons.zs3v)
+            });
+        }
+    });
+    if !main && !distant {
+        ui.small(t!("sig-addons-not-applicable"));
+    } else if !addons.is_valid_for(kind) {
+        ui.colored_label(colors::WARN, t!("sig-addons-invalid"));
+    }
+}
+
+fn zs1_option(ui: &mut egui::Ui, index: usize, value: &mut Option<Zs1Display>) {
+    let mut fitted = value.is_some();
+    if ui.checkbox(&mut fitted, t!("sig-fitted")).changed() {
+        *value = fitted.then(Zs1Display::default);
+    }
+    let Some(display) = value else { return };
+    egui::ComboBox::from_id_salt((index, "zs1-display"))
+        .selected_text(match display {
+            Zs1Display::ThreeLights => t!("sig-zs-a-lights"),
+            Zs1Display::BlinkingLight => t!("sig-zs-blink-light"),
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(display, Zs1Display::ThreeLights, t!("sig-zs-a-lights"));
+            ui.selectable_value(display, Zs1Display::BlinkingLight, t!("sig-zs-blink-light"));
+        });
+}
+
+fn zs8_option(ui: &mut egui::Ui, index: usize, value: &mut Option<Zs8Display>) {
+    let mut fitted = value.is_some();
+    if ui.checkbox(&mut fitted, t!("sig-fitted")).changed() {
+        *value = fitted.then(Zs8Display::default);
+    }
+    let Some(display) = value else { return };
+    egui::ComboBox::from_id_salt((index, "zs8-display"))
+        .selected_text(match display {
+            Zs8Display::ThreeLights => t!("sig-zs-a-lights"),
+            Zs8Display::LightStrip => t!("sig-zs-light-strip"),
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(display, Zs8Display::ThreeLights, t!("sig-zs-a-lights"));
+            ui.selectable_value(display, Zs8Display::LightStrip, t!("sig-zs-light-strip"));
+        });
+}
+
+fn construction_option(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut Option<ZsConstruction>,
+) {
+    let mut fitted = value.is_some();
+    if ui.checkbox(&mut fitted, t!("sig-fitted")).changed() {
+        *value = fitted.then(ZsConstruction::default);
+    }
+    let Some(construction) = value else { return };
+    construction_combo(ui, id, construction);
+}
+
+fn construction_combo(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut ZsConstruction,
+) {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(match value {
+            ZsConstruction::Form => t!("sig-zs-form"),
+            ZsConstruction::Light => t!("sig-zs-light"),
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, ZsConstruction::Form, t!("sig-zs-form"));
+            ui.selectable_value(value, ZsConstruction::Light, t!("sig-zs-light"));
+        });
+}
+
+/// One theatre indicator may show several route-dependent letters.  Each gets
+/// its own little field so typing a new value cannot be lost while the editor
+/// serialises the vector behind it.
+fn letter_option(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug + Clone,
+    value: &mut Option<Vec<String>>,
+) {
+    let mut fitted = value.is_some();
+    if ui.checkbox(&mut fitted, t!("sig-fitted")).changed() {
+        *value = fitted.then(|| vec!["K".into()]);
+    }
+    let Some(values) = value else { return };
+    let mut remove = None;
+    let value_count = values.len();
+    for (position, text) in values.iter_mut().enumerate() {
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .id_salt((id.clone(), position))
+                .desired_width(space::FIELD * 0.34)
+                .char_limit(1)
+                .hint_text(t!("sig-zs-values")),
+        );
+        if value_count > 1 && ui.small_button("×").clicked() {
+            remove = Some(position);
+        }
+    }
+    if let Some(position) = remove {
+        values.remove(position);
+    }
+    if ui
+        .small_button("+")
+        .on_hover_text(t!("sig-zs-add-letter"))
+        .clicked()
+    {
+        values.push("K".into());
+    }
+}
+
+fn number_option(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug + Clone,
+    value: &mut Option<ZsNumber>,
+) {
+    let mut fitted = value.is_some();
+    if ui.checkbox(&mut fitted, t!("sig-fitted")).changed() {
+        *value = fitted.then(ZsNumber::default);
+    }
+    let Some(indicator) = value else { return };
+    construction_combo(
+        ui,
+        (id.clone(), "construction"),
+        &mut indicator.construction,
+    );
+    if indicator.construction == ZsConstruction::Form && indicator.values.len() > 1 {
+        indicator.values.truncate(1);
+    }
+    let mut remove = None;
+    let value_count = indicator.values.len();
+    for (position, number) in indicator.values.iter_mut().enumerate() {
+        ui.add(egui::DragValue::new(number).range(1..=16));
+        if indicator.construction == ZsConstruction::Light
+            && value_count > 1
+            && ui.small_button("×").clicked()
+        {
+            remove = Some(position);
+        }
+    }
+    if let Some(position) = remove {
+        indicator.values.remove(position);
+    }
+    if indicator.construction == ZsConstruction::Light
+        && ui
+            .small_button("+")
+            .on_hover_text(t!("sig-zs-add-value"))
+            .clicked()
+    {
+        indicator.values.push(4);
     }
 }
 
@@ -4132,7 +4351,10 @@ fn issue_target(
         RuleIssue::DistantWithout1000Hz { signal }
         | RuleIssue::MainWithout2000Hz { signal }
         | RuleIssue::DistantWithoutNext { signal }
-        | RuleIssue::SignalDeviceMismatch { signal } => {
+        | RuleIssue::SignalDeviceMismatch { signal }
+        | RuleIssue::SignalDesignationMissing { signal }
+        | RuleIssue::SignalInterlockingMissing { signal }
+        | RuleIssue::SignalAddonsInvalid { signal } => {
             match line.source.signals.get(*signal as usize) {
                 Some(s) => device_target(s.device),
                 None => (None, Selection::None),
@@ -4262,6 +4484,13 @@ fn issue_text(issue: &RuleIssue) -> String {
         RuleIssue::MainWithout2000Hz { signal } => t!("check-main-no-2000hz", signal = signal),
         RuleIssue::DistantWithoutNext { signal } => t!("check-distant-no-next", signal = signal),
         RuleIssue::SignalDeviceMismatch { signal } => t!("check-signal-device", signal = signal),
+        RuleIssue::SignalDesignationMissing { signal } => {
+            t!("check-signal-designation", signal = signal)
+        }
+        RuleIssue::SignalInterlockingMissing { signal } => {
+            t!("check-signal-interlocking", signal = signal)
+        }
+        RuleIssue::SignalAddonsInvalid { signal } => t!("check-signal-addons", signal = signal),
         RuleIssue::BoundaryInvalid { boundary } => {
             t!("check-boundary-invalid", boundary = boundary)
         }

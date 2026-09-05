@@ -1,0 +1,15 @@
+// Mechanical Sperrsignal: the complete Sh 0 / Sh 1 rotating-disc presentation.
+(
+    system: HV,
+    rules: [
+        (
+            when: (shunting: Some(true)),
+            show: (shunt: Some(Proceed)),
+            lamps: ["sperrscheibe_frei", "sh_white"],
+        ),
+        (when: (), show: (shunt: Some(Stop)), lamps: ["sh_white"]),
+    ],
+    script: None,
+    model: Some("example:form_sh_niedrig"),
+    tags: ["hv", "semaphore", "shunting", "sperrsignal", "sh0", "sh1", "epoch-3"],
+)

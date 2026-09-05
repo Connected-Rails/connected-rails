@@ -25,7 +25,7 @@ use content::TerrainOptions;
 use content::import::alignment::{CantRules, ramp_cant};
 use content::route::{
     DeviceSource, EdgeSource, EdgeStart, FlankSource, GeoPoint, MarkerSource, NodeSource,
-    ObjectSource, STARTER_TRACK_TYPE, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
+    ObjectSource, SignalSource, TerrainEdit, TerrainEditSource, TreeSource,
 };
 use glam::{DQuat, DVec2, DVec3};
 use i18n::t;
@@ -3261,12 +3261,15 @@ pub fn tool_input(
                     if kind == DeviceKind::Signal
                         && (state.signal_type.is_some() || state.signal_model.is_some())
                     {
+                        let designation = format!("S{}", line.source.signals.len() + 1);
                         let system = state
                             .signal_type
                             .as_deref()
                             .and_then(|name| signal_types.map.get(name))
                             .map_or(SignalSystem::Ks, |ty| ty.system);
                         line.source.signals.push(SignalSource {
+                            designation,
+                            interlocking: String::new(),
                             kind: SignalKind::Main,
                             system,
                             device: device as u32,
@@ -3276,6 +3279,7 @@ pub fn tool_input(
                             diverging_speed: None,
                             signal_type: state.signal_type.clone(),
                             model: state.signal_model.clone(),
+                            addons: Default::default(),
                         });
                     }
                     state.selection = Selection::Device(device);
@@ -4636,6 +4640,7 @@ pub fn placement_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use content::route::STARTER_TRACK_TYPE;
 
     /// Lay options as the tool panel hands them over: armed with a track type.
     /// Track is laid with one or not at all — a piece that names none is a

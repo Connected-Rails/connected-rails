@@ -990,7 +990,18 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   that ask for it on the terrain surface), and the **signal assemblies** on
   their mount points. The shared `world-render` crate is that code, used by
   both programs, so a stroke, a wood, a signal box or a signal mast is judged
-  where it is set instead of only in the run. Tiles are
+  where it is set instead of only in the run.
+  Every placed signal now carries its **operational designation and controlling
+  interlocking** as editable route data.  The renderer rasterises its DIN-style
+  designation plate per placement (including names such as `24P3`, stacked within
+  the 285 × 300 mm standard field)
+  and assembles optional prototype Zs fittings without multiplying the base glTF:
+  Zs 1, 2/2v, 3/3v, 6, 7, 8, 12, 13 and historical Zs 103, including form/light,
+  shared-housing and route-dependent multi-value variants.  The route checker
+  rejects fittings on the wrong signal function and the Zs-13/Zs-3(1–3) conflict.
+  Zs 9 and Zs 10 remain separate placements, as prescribed, rather than fake
+  mast attachments.
+  Tiles are
   built on the task pool around the view point (3 km radius with a 25 %
   unload hysteresis, capped at 64 tiles); an edit is **diffed** against the
   last state (`main.rs::diff`) into what it reached — a stroke the ground of
@@ -1668,7 +1679,19 @@ As of 2026-08-31 · `cargo test --workspace`: **1136 tests green** · clippy and
   and the script-lit Zs1 included. **Semaphore signals** come out of the same strings:
   `motions` bindings make a node *travel* (rotate/translate over a travel time) while
   its string is in the lamp image — the example line's Form signal swings its arms
-  through the real intermediate positions. Optional **`lods`** switch `_LOD<n>` nodes
+  through the real intermediate positions. The example mod now ships the full current
+  H/V form family as 140 original-scale, weathered PBR geometric models: one- and two-arm
+  Hp signals on 6/8/10/12/14 m nominal-SU-height lattice and narrow masts (14 m is the
+  historical special height), two- and three-aspect Vr signals at
+  2.76/4.87/5.37 m with pale-green or iron-grey masts, gas or LED night signs and
+  attached or freestanding Ne 2 boards, plus low/high rotating Sh signals. Ne 2 uses a
+  sharp 512 px face/normal/ORM texture at the S 525.1 sizes 750 × 480 or 450 × 300 mm;
+  Vr and freestanding Ne 2 models carry three decreasing geometry LODs. Their arms use frame-rate-independent mechanics:
+  finite-acceleration powered raising, gravity-driven return and a diminishing rebound
+  at the stop (a separately tuned fall for the lower arm); the heavy Vr disc rebounds less.
+  Every asset embeds base-colour, ORM and normal maps;
+  `tools/gen_form_signals.py` regenerates and validates the complete catalogue. Optional
+  **`lods`** switch `_LOD<n>` nodes
   by camera distance, like vehicles. The model comes from the signal type's `model`
   default or a per-placement override; a signal without one gets a placeholder mast
   whose light follows the aspect, so every line shows its signals. The **signal editor**

@@ -21,7 +21,7 @@ use crate::Mods;
 use content::route::LineSource;
 use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value};
 use sim_core::Sim;
-use sim_core::interlock::{DistantAspect, MainAspect};
+use sim_core::interlock::{DistantAspect, MainAspect, ShuntAspect};
 use sim_core::scenario;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -167,6 +167,7 @@ impl ModRuntime {
             // What the rule table produced — the script usually only patches it.
             let _ = ctx.set("main", main_name(signal.aspect.main));
             let _ = ctx.set("distant", distant_name(signal.aspect.distant));
+            let _ = ctx.set("shunt", shunt_name(signal.aspect.shunt));
             let _ = ctx.set("speed", signal.aspect.speed);
 
             let Some(out) = self.scripts.call(&script, "aspect", ctx) else {
@@ -184,6 +185,14 @@ impl ModRuntime {
             if let Ok(Some(name)) = out.get::<Option<String>>("distant") {
                 match distant_aspect(&name) {
                     Some(distant) => signal.aspect.distant = Some(distant),
+                    None => self
+                        .scripts
+                        .error(format!("{script}: unknown aspect {name:?}")),
+                }
+            }
+            if let Ok(Some(name)) = out.get::<Option<String>>("shunt") {
+                match shunt_aspect(&name) {
+                    Some(shunt) => signal.aspect.shunt = Some(shunt),
                     None => self
                         .scripts
                         .error(format!("{script}: unknown aspect {name:?}")),
@@ -450,12 +459,110 @@ fn distant_aspect(name: &str) -> Option<DistantAspect> {
     })
 }
 
+fn shunt_name(aspect: Option<ShuntAspect>) -> Option<&'static str> {
+    Some(match aspect? {
+        ShuntAspect::Stop => "stop",
+        ShuntAspect::Proceed => "proceed",
+    })
+}
+
+fn shunt_aspect(name: &str) -> Option<ShuntAspect> {
+    Some(match name {
+        "stop" => ShuntAspect::Stop,
+        "proceed" => ShuntAspect::Proceed,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn runtime() -> ModRuntime {
         ModRuntime::load(concat!(env!("CARGO_MANIFEST_DIR"), "/../../mods"))
+    }
+
+    #[test]
+    fn shunting_aspects_round_trip_through_lua_names() {
+        for aspect in [ShuntAspect::Stop, ShuntAspect::Proceed] {
+            let name = shunt_name(Some(aspect)).expect("named shunting aspect");
+            assert_eq!(shunt_aspect(name), Some(aspect));
+        }
+        assert_eq!(shunt_aspect("unknown"), None);
+    }
+
+    #[test]
+    fn form_signal_showcase_advances_on_ten_second_boundaries() {
+        let mut rt = runtime();
+        let expected = [
+            (0.0, vec!["lamp_red"]),
+            (9.999, vec!["lamp_red"]),
+            (10.0, vec!["fluegel1", "lamp_green"]),
+            (
+                20.0,
+                vec!["fluegel1", "fluegel2", "lamp_green", "lamp_yellow"],
+            ),
+            (30.0, vec!["lamp_red"]),
+        ];
+        for (time, lamps) in expected {
+            let ctx = rt.scripts.context();
+            ctx.set("time", time).unwrap();
+            // ProceedSlow is the two-arm demo type's private marker before the
+            // showcase hook supplies the actual aspect for this ten-second slot.
+            ctx.set("main", "proceed_slow").unwrap();
+            let out = rt
+                .scripts
+                .call("example:formsignal_showcase_cycle", "aspect", ctx)
+                .expect("showcase script result");
+            assert_eq!(out.get::<Vec<String>>("lamps").unwrap(), lamps);
+        }
+
+        // A coupled two-arm signal is deliberately a two-step cycle. The
+        // script emits one shared mechanism command, never an Hp 1 pose or
+        // two independently drifting blade commands.
+        let expected_coupled = [
+            (0.0, vec!["lamp_red"]),
+            (10.0, vec!["fluegel_gekuppelt", "lamp_green", "lamp_yellow"]),
+            (20.0, vec!["lamp_red"]),
+        ];
+        for (time, lamps) in expected_coupled {
+            let ctx = rt.scripts.context();
+            ctx.set("time", time).unwrap();
+            ctx.set("main", "proceed").unwrap();
+            let out = rt
+                .scripts
+                .call("example:formsignal_showcase_cycle", "aspect", ctx)
+                .expect("coupled showcase script result");
+            assert_eq!(out.get::<Vec<String>>("lamps").unwrap(), lamps);
+        }
+
+        let expected_vr = [
+            (0.0, vec!["vr0_licht"]),
+            (
+                10.0,
+                vec![
+                    "scheibe_weg",
+                    "vr1_licht",
+                    "vr_blende_links_gruen",
+                    "vr_blende_rechts_gruen",
+                ],
+            ),
+            (
+                20.0,
+                vec!["vr2_fluegel", "vr2_licht", "vr_blende_rechts_gruen"],
+            ),
+            (30.0, vec!["vr0_licht"]),
+        ];
+        for (time, lamps) in expected_vr {
+            let ctx = rt.scripts.context();
+            ctx.set("time", time).unwrap();
+            ctx.set("distant", "expect_slow").unwrap();
+            let out = rt
+                .scripts
+                .call("example:formsignal_showcase_cycle", "aspect", ctx)
+                .expect("showcase distant-signal result");
+            assert_eq!(out.get::<Vec<String>>("lamps").unwrap(), lamps);
+        }
     }
 
     /// Filters out Git LFS warnings which are expected in CI environments.

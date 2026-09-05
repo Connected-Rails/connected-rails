@@ -35,6 +35,7 @@ pub mod plants;
 pub mod precipitation;
 pub mod roads;
 pub mod scatter;
+mod signal_fittings;
 pub mod sky;
 pub mod track;
 pub mod water;
@@ -638,7 +639,26 @@ pub struct LampsBound;
 #[derive(Component)]
 pub struct SignalLamp {
     pub signal: usize,
-    pub lamp: String,
+    /// Lamp-image strings which show this surface continuously.
+    pub steady: Vec<String>,
+    /// Lamp-image strings which show this surface with a 1 Hz flash.  This is
+    /// separate because one physical A-shaped unit can serve Zs 1 steadily and
+    /// Zs 8 flashing.
+    pub flashing: Vec<String>,
+}
+
+impl SignalLamp {
+    /// Whether the face is visible for this lamp image.  A steady command wins
+    /// if a shared physical fitting receives both a steady and flashing name.
+    pub fn visible(&self, active: &[String], elapsed_seconds: f32) -> bool {
+        let commanded = |names: &[String]| {
+            names
+                .iter()
+                .any(|wanted| active.iter().any(|lamp| lamp == wanted))
+        };
+        commanded(&self.steady)
+            || (commanded(&self.flashing) && (elapsed_seconds * 2.0).floor() as u32 % 2 == 0)
+    }
 }
 
 /// A moving node (semaphore arm): travels towards 1 while its string is in the
@@ -652,6 +672,8 @@ pub struct MotionNode {
     pub base: Transform,
     /// Current travel 0 … 1.
     pub value: f32,
+    /// Current travel speed, retained for accelerated and rebounding profiles.
+    pub velocity: f32,
 }
 
 /// A node of one level of detail (`<name>_LOD<level>`).
@@ -737,6 +759,10 @@ pub struct SignalView<'a> {
     pub aspect: Aspect,
     /// Resolved 3D model; `None` gets the placeholder mast.
     pub model: Option<&'a SignalModel>,
+    /// Operational name rendered onto a per-placement texture plate.
+    pub designation: &'a str,
+    /// Optional physical Zs equipment fitted to this placement.
+    pub addons: &'a content::route::SignalAddons,
 }
 
 /// Spawns every signal of the line: its resolved model, or the placeholder.
@@ -744,6 +770,7 @@ pub fn spawn_signals(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
     assets: &AssetServer,
     net: &TrackNetwork,
     signals: &[SignalView],
@@ -759,6 +786,7 @@ pub fn spawn_signals(
         perceptual_roughness: 0.7,
         ..default()
     });
+    let fitting_materials = signal_fittings::SignalFittingMaterials::new(materials);
 
     for (i, signal) in signals.iter().enumerate() {
         let device = net.device(signal.device);
@@ -858,6 +886,16 @@ pub fn spawn_signals(
                 ));
             }
         }
+        signal_fittings::spawn(
+            commands,
+            meshes,
+            materials,
+            images,
+            &fitting_materials,
+            view,
+            i,
+            signal,
+        );
     }
 
     aspect_materials
@@ -1003,6 +1041,7 @@ pub fn bind_lamps(
                         motion: *index,
                         base: *transform,
                         value: 0.0,
+                        velocity: 0.0,
                     },
                     Visibility::Inherited,
                 ));
@@ -1014,7 +1053,8 @@ pub fn bind_lamps(
                 commands.entity(entity).try_insert((
                     SignalLamp {
                         signal: part.signal,
-                        lamp: binding.lamp.clone(),
+                        steady: vec![binding.lamp.clone()],
+                        flashing: Vec::new(),
                     },
                     Visibility::Hidden,
                 ));

@@ -350,10 +350,135 @@ pub struct MotionBinding {
     /// Travel time of the full swing [s]; 0 switches instantly.
     #[serde(default = "default_motion_seconds")]
     pub seconds: f64,
+    /// Time law of the movement. `Semaphore` raises the mechanism under a
+    /// controlled drive, but lets it return under gravity and rebound from
+    /// the mechanical stop.
+    #[serde(default)]
+    pub profile: MotionProfile,
 }
 
 fn default_motion_seconds() -> f64 {
     1.5
+}
+
+/// Kinematics used by a signal-model motion binding.
+///
+/// `Linear` preserves the original generic behaviour. `Semaphore` models the
+/// fail-safe return of a mechanical signal: the active movement is driven with
+/// finite acceleration, while the return accelerates towards the stop and loses
+/// energy there according to its coefficient of restitution.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum MotionProfile {
+    #[default]
+    Linear,
+    Semaphore {
+        /// Free-fall time from full travel to the rest stop [s].
+        fall_seconds: f64,
+        /// Coefficient of restitution at the stop, 0 … 1.
+        rebound: f64,
+    },
+}
+
+/// Advances a motion binding by one frame and returns `(travel, velocity)`.
+/// Travel is always kept in 0 … 1; velocity is travel per second. The small
+/// fixed substeps make the impact and rebound independent of render frame rate.
+pub fn advance_motion(
+    profile: MotionProfile,
+    value: f32,
+    velocity: f32,
+    target: f32,
+    dt: f32,
+    seconds: f32,
+) -> (f32, f32) {
+    let target = target.clamp(0.0, 1.0);
+    if seconds <= 0.0 || !seconds.is_finite() {
+        return (target, 0.0);
+    }
+    match profile {
+        MotionProfile::Linear => {
+            let step = dt.max(0.0) / seconds;
+            let next = (value + (target - value).clamp(-step, step)).clamp(0.0, 1.0);
+            let velocity = if dt > 0.0 { (next - value) / dt } else { 0.0 };
+            (next, velocity)
+        }
+        MotionProfile::Semaphore {
+            fall_seconds,
+            rebound,
+        } => advance_semaphore(
+            value,
+            velocity,
+            target,
+            dt,
+            seconds,
+            fall_seconds as f32,
+            rebound as f32,
+        ),
+    }
+}
+
+fn advance_semaphore(
+    mut value: f32,
+    mut velocity: f32,
+    target: f32,
+    dt: f32,
+    raise_seconds: f32,
+    fall_seconds: f32,
+    rebound: f32,
+) -> (f32, f32) {
+    if dt <= 0.0 || !dt.is_finite() {
+        return (value.clamp(0.0, 1.0), velocity);
+    }
+    let fall_seconds = if fall_seconds.is_finite() {
+        fall_seconds.clamp(0.05, 60.0)
+    } else {
+        raise_seconds
+    };
+    let rebound = if rebound.is_finite() {
+        rebound.clamp(0.0, 0.8)
+    } else {
+        0.0
+    };
+    let frame = dt.min(0.25);
+    let steps = (frame / (1.0 / 240.0)).ceil().max(1.0) as usize;
+    let h = frame / steps as f32;
+
+    for _ in 0..steps {
+        if target >= 0.5 {
+            // A triangular velocity profile represents the wire drive: finite
+            // acceleration at both ends, with no unphysical snap or overshoot.
+            let acceleration = 4.0 / raise_seconds.max(0.05).powi(2);
+            let remaining = (1.0 - value).max(0.0);
+            let wanted = (2.0 * acceleration * remaining).sqrt();
+            velocity += (wanted - velocity).clamp(-acceleration * h, acceleration * h);
+            value += velocity * h;
+            if value >= 1.0 || (remaining < 1e-5 && velocity.abs() < 1e-3) {
+                value = 1.0;
+                velocity = 0.0;
+            }
+        } else {
+            let gravity = 2.0 / fall_seconds.powi(2);
+            let settle_velocity = 0.04 / fall_seconds;
+            if value <= 1e-5 && velocity.abs() <= settle_velocity {
+                value = 0.0;
+                velocity = 0.0;
+                continue;
+            }
+            velocity -= gravity * h;
+            value += velocity * h;
+            if value <= 0.0 {
+                // Reflect the tiny penetration as well as the speed. This is
+                // the compliant stop: each following hop has rebound² of the
+                // preceding height and therefore settles rapidly.
+                value = (-value * rebound).max(0.0);
+                velocity = -velocity * rebound;
+                if velocity <= settle_velocity {
+                    value = 0.0;
+                    velocity = 0.0;
+                }
+            }
+        }
+    }
+    (value.clamp(0.0, 1.0), velocity)
 }
 
 /// Track clear detection section (axle counter section).

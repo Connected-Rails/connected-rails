@@ -37,6 +37,7 @@ pub fn spawn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
     assets: &AssetServer,
     line: &Line,
     types: &SignalTypes,
@@ -80,22 +81,28 @@ pub fn spawn(
             kind: source.kind,
             aspect: Aspect::stop(),
             model: models[i].as_ref(),
+            designation: &source.designation,
+            addons: &source.addons,
         })
         .collect();
     world_render::spawn_signals(
-        commands, meshes, materials, assets, &line.net, &views, &origin.0,
+        commands, meshes, materials, images, assets, &line.net, &views, &origin.0,
     );
     drop(views);
     (models, lamps)
 }
 
 /// Lights the lamp nodes of the resting aspect.
-pub fn light_lamps(images: Res<LampImages>, mut lamps: Query<(&SignalLamp, &mut Visibility)>) {
+pub fn light_lamps(
+    time: Res<Time>,
+    images: Res<LampImages>,
+    mut lamps: Query<(&SignalLamp, &mut Visibility)>,
+) {
     for (lamp, mut visibility) in lamps.iter_mut() {
         let lit = images
             .0
             .get(lamp.signal)
-            .is_some_and(|image| image.iter().any(|l| l == &lamp.lamp));
+            .is_some_and(|image| lamp.visible(image, time.elapsed_secs()));
         // `set_if_neq`: writing the same value every frame marks every lamp
         // changed every frame, and the renderer re-extracts what changed.
         visibility.set_if_neq(if lit {

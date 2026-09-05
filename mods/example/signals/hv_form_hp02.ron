@@ -1,0 +1,16 @@
+// Coupled two-arm Formhauptsignal: Hp 0 / Hp 2. Both arms and both colour
+// spectacles share one mechanical command in the selected model.
+(
+    system: HV,
+    rules: [
+        (when: (clear: Some(false)), show: (main: Some(Stop)), lamps: ["lamp_red"]),
+        (
+            when: (),
+            show: (main: Some(ProceedSlow), speed: Some(40.0)),
+            lamps: ["fluegel_gekuppelt", "lamp_green", "lamp_yellow"],
+        ),
+    ],
+    script: None,
+    model: Some("example:form_hp_8m_gitter_2fl_gekuppelt"),
+    tags: ["hv", "semaphore", "main-signal", "coupled", "hp0", "hp2", "epoch-3"],
+)

@@ -161,6 +161,15 @@ SOFTWARE.
 The `egui-phosphor` crate that bundles the font (© 2023 Romet Tagobert) is MIT
 OR Apache-2.0; the font file it ships is compiled into the editor binaries.
 
+## DINish signal-plate font
+
+`crates/world-render/fonts/DINishCondensed-Bold.ttf` is from the
+[DINish project](https://github.com/playbeing/dinish), copyright 2021 The DINish
+Project Authors.  It is bundled under the SIL Open Font License 1.1 and is used to
+rasterise per-placement signal designation plates and illuminated indicators at
+runtime.  The complete licence accompanies the font in
+[`crates/world-render/fonts/LICENSE-DINish.txt`](crates/world-render/fonts/LICENSE-DINish.txt).
+
 ## People in `mods/people/`
 
 The characters — the walker's body and the passengers — are generated out of

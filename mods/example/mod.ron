@@ -3,7 +3,7 @@
     name: "Example Mod",
     version: "0.1.0",
     author: "Connected Rails",
-    description: "Reference mod: a vehicle with an AFB script, two signal types with a 3D signal model, and a line.",
+    description: "Reference mod: vehicles, a complete PBR German form-signal family, light signals, scenery, lines and scenarios.",
     depends: [],
     enabled: true,
 )

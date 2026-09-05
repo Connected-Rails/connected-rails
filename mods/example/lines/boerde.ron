@@ -128,12 +128,14 @@
         ),
     ],
     devices: [
+        // Das vorwärts wirkende Signal steht in Fahrtrichtung rechts. Positive
+        // Seitenabstände liegen links der Fahrtrichtung, daher hier -3,0 m.
         (
             kind: Signal,
             edge: 0,
             s: 4600.0,
             facing: Forward,
-            lateral_offset: 3.0,
+            lateral_offset: -3.0,
             payload: "(signal:Some(0))",
         ),
         (
@@ -27547,8 +27549,10 @@
     areas: [],
     signals: [
         (
+            designation: "A",
+            interlocking: "Bf Börde",
             kind: Main,
-            system: Ks,
+            system: HV,
             device: 0,
             next: None,
             guarded: [
@@ -27556,8 +27560,8 @@
             ],
             requires_route: false,
             diverging_speed: None,
-            signal_type: Some("example:ks_main"),
-            model: None,
+            signal_type: Some("example:hv_form_hp01"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
         ),
     ],
     routes: [],

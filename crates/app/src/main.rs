@@ -1076,12 +1076,15 @@ fn setup(
             kind: s.kind,
             aspect: s.aspect,
             model: signal_models.get(i).and_then(|m| m.as_ref()),
+            designation: &line_source.signals[i].designation,
+            addons: &line_source.signals[i].addons,
         })
         .collect();
     let aspect_materials = world_render::spawn_signals(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut images,
         &assets,
         &sim.net,
         &views,

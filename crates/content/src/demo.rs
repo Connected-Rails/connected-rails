@@ -400,6 +400,8 @@ pub fn musterbahn() -> LineSource {
         areas: Vec::new(),
         signals: vec![
             SignalSource {
+                designation: "a".into(),
+                interlocking: "Demo".into(),
                 kind: SignalKind::Distant,
                 system: SignalSystem::HV,
                 device: 0,
@@ -409,8 +411,11 @@ pub fn musterbahn() -> LineSource {
                 diverging_speed: None,
                 signal_type: None,
                 model: None,
+                addons: Default::default(),
             },
             SignalSource {
+                designation: "A".into(),
+                interlocking: "Demo".into(),
                 kind: SignalKind::Main,
                 system: SignalSystem::HV,
                 device: 2,
@@ -420,6 +425,7 @@ pub fn musterbahn() -> LineSource {
                 diverging_speed: None,
                 signal_type: None,
                 model: None,
+                addons: Default::default(),
             },
         ],
         routes: vec![],

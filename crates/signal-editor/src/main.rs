@@ -3,6 +3,11 @@
 //!
 //! ```text
 //! trainsim-signal-editor [signal_model.ron] [--frames N] [--screenshot file.png]
+//!   [--render-only --view front|rear|left|right|front-left|front-right|rear-left|rear-right]
+//!   [--focus full|head|detail|base --aspect hp0|hp1|hp2|vr0|vr1|vr2|sh0|sh1 --lod N]
+//!   [--target-node NAME_PREFIX] [--isolate-target]
+//!   [--from-aspect ASPECT --motion-time SECONDS]
+//!   [--background neutral|light|dark --bounds-json file.json]
 //! ```
 //!
 //! A desktop application like the vehicle editor: menu bar, docked panel, native
@@ -16,15 +21,16 @@ mod ui;
 
 use bevy::asset::io::AssetSourceBuilder;
 use bevy::asset::io::file::FileAssetReader;
+use bevy::camera::{ScalingMode, primitives::Aabb, visibility::RenderLayers};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use i18n::t;
 use serde::{Deserialize, Serialize};
-use sim_core::interlock::{LampBinding, MotionBinding, SignalModel};
+use sim_core::interlock::{LampBinding, MotionBinding, MotionProfile, SignalModel, advance_motion};
 use sim_core::train::{Motion, lod_level};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Asset source of the mods: `mods://<mod>/assets/…` — the same one the simulator uses.
@@ -311,6 +317,186 @@ struct FrameLimit(u32);
 #[derive(Resource)]
 struct ShotPath(String);
 
+/// A reproducible camera direction for an asset-review screenshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureView {
+    Front,
+    Rear,
+    Left,
+    Right,
+    FrontLeft,
+    FrontRight,
+    RearLeft,
+    RearRight,
+}
+
+impl CaptureView {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "front" => Self::Front,
+            "rear" => Self::Rear,
+            "left" => Self::Left,
+            "right" => Self::Right,
+            "front-left" => Self::FrontLeft,
+            "front-right" => Self::FrontRight,
+            "rear-left" => Self::RearLeft,
+            "rear-right" => Self::RearRight,
+            _ => return None,
+        })
+    }
+
+    /// From the signal towards the camera. Signal fronts face +Z.
+    fn direction(self) -> Vec3 {
+        match self {
+            Self::Front => Vec3::Z,
+            Self::Rear => Vec3::NEG_Z,
+            Self::Left => Vec3::NEG_X,
+            Self::Right => Vec3::X,
+            Self::FrontLeft => Vec3::new(-1.0, 0.12, 1.0).normalize(),
+            Self::FrontRight => Vec3::new(1.0, 0.12, 1.0).normalize(),
+            Self::RearLeft => Vec3::new(-1.0, 0.12, -1.0).normalize(),
+            Self::RearRight => Vec3::new(1.0, 0.12, -1.0).normalize(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureFocus {
+    Full,
+    Head,
+    Detail,
+    Base,
+}
+
+/// Flat studio backdrops for repeatable silhouette and material review.
+///
+/// Neutral is deliberately lighter than the interactive editor: black-painted
+/// rear mechanisms must remain legible in an unattended review matrix. Light
+/// is the explicit high-contrast check for those backs; dark preserves the old
+/// viewport look and exposes white edge halos.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureBackground {
+    Neutral,
+    Light,
+    Dark,
+}
+
+impl CaptureBackground {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "neutral" => Self::Neutral,
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            _ => return None,
+        })
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Self::Neutral => Color::srgb(0.42, 0.45, 0.49),
+            Self::Light => Color::srgb(0.74, 0.77, 0.81),
+            Self::Dark => Color::srgb(0.16, 0.17, 0.19),
+        }
+    }
+}
+
+impl CaptureFocus {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "full" => Self::Full,
+            "head" => Self::Head,
+            "detail" => Self::Detail,
+            "base" => Self::Base,
+            _ => return None,
+        })
+    }
+}
+
+/// UI-free, orthographic output used by `tools/signals/preview.py`.
+#[derive(Resource)]
+pub struct CaptureSettings {
+    path: String,
+    /// Machine-readable full and framed bounds beside the screenshot.  This
+    /// lets the review wrapper catch centimetre-scale drift without trying to
+    /// infer dimensions from pixels or camera perspective.
+    bounds_path: Option<String>,
+    view: CaptureView,
+    focus: CaptureFocus,
+    /// Optional glTF node-name prefix used only for camera framing.  The rest
+    /// of the assembled signal stays visible, so attachment errors remain
+    /// obvious in a close component review.
+    target_node: Option<String>,
+    /// Render only the target node and its descendants while retaining the
+    /// untouched full assembly for bounds and transform evaluation.
+    isolate_target: bool,
+    width: u32,
+    height: u32,
+    settle_frames: u32,
+    /// Optional deterministic sample of a real aspect transition. The target
+    /// is `Editor::lit`; these are the channels active at t=0.
+    motion: Option<MotionCapture>,
+}
+
+#[derive(Clone, Debug)]
+struct MotionCapture {
+    from: BTreeSet<String>,
+    target: BTreeSet<String>,
+    elapsed: f32,
+}
+
+#[derive(Resource, Default)]
+struct CaptureProgress {
+    settled: u32,
+    after_shot: u32,
+}
+
+/// Exact-size image rendered by a windowless capture run.
+#[derive(Resource)]
+struct CaptureTarget {
+    image: Handle<Image>,
+}
+
+fn aspect_lamps(aspect: &str) -> Option<&'static [&'static str]> {
+    Some(match aspect {
+        "hp0" => &["lamp_red"],
+        "hp1" => &["fluegel1", "lamp_green"],
+        // Both command schemes are selected deliberately: ordinary two-arm
+        // models bind fluegel1/fluegel2, coupled Hp0/Hp2 models bind only the
+        // shared channel. Unbound preview channels are harmless.
+        "hp2" => &[
+            "fluegel1",
+            "fluegel2",
+            "fluegel_gekuppelt",
+            "lamp_green",
+            "lamp_yellow",
+        ],
+        "vr0" => &["vr0_licht"],
+        "vr1" => &[
+            "scheibe_weg",
+            "vr1_licht",
+            "vr_blende_links_gruen",
+            "vr_blende_rechts_gruen",
+        ],
+        "vr2" => &["vr2_fluegel", "vr2_licht", "vr_blende_rechts_gruen"],
+        // The mechanical Sh face is internally lit/reflective in both
+        // positions. Only its black bar and coupled rear shutter rotate.
+        "sh0" => &["sh_white"],
+        "none" => &[],
+        "sh1" => &["sperrscheibe_frei", "sh_white"],
+        _ => return None,
+    })
+}
+
+fn aspect_lamp_set(aspect: &str) -> Option<BTreeSet<String>> {
+    aspect_lamps(aspect).map(|lamps| lamps.iter().map(|lamp| (*lamp).to_owned()).collect())
+}
+
+fn parse_window(value: Option<String>) -> Option<(u32, u32)> {
+    let value = value?;
+    let (width, height) = value.split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |name: &str| -> Option<String> {
@@ -320,12 +506,14 @@ fn main() {
             .cloned()
     };
     let shot = flag("--screenshot");
+    let render_only = args.iter().any(|arg| arg == "--render-only");
     if let Some(dir) = shot.as_ref().and_then(|p| std::path::Path::new(p).parent()) {
         let _ = std::fs::create_dir_all(dir);
     }
-    let frame_limit = flag("--frames")
-        .and_then(|n| n.parse::<u32>().ok())
-        .or_else(|| shot.as_ref().map(|_| 60));
+    let requested_frames = flag("--frames").and_then(|n| n.parse::<u32>().ok());
+    let frame_limit = (!render_only)
+        .then(|| requested_frames.or_else(|| shot.as_ref().map(|_| 60)))
+        .flatten();
 
     // Language before the first status message goes through `t!`.
     Settings::load().apply_language();
@@ -333,58 +521,179 @@ fn main() {
     if let Some(file) = args.first().filter(|a| !a.starts_with("--")) {
         editor.open(PathBuf::from(file));
     }
+    if let Some(level) = flag("--lod").and_then(|value| value.parse::<u8>().ok()) {
+        editor.preview_lod = level;
+    }
+    if let Some(aspect) = flag("--aspect") {
+        editor.lit =
+            aspect_lamp_set(&aspect).unwrap_or_else(|| panic!("unknown --aspect {aspect}"));
+    }
+    if let Some(lamps) = flag("--lamps") {
+        editor.lit.extend(
+            lamps
+                .split(',')
+                .filter(|lamp| !lamp.is_empty())
+                .map(str::to_owned),
+        );
+    }
 
+    let requested_size = parse_window(flag("--window")).unwrap_or((900, 1200));
+    let motion = flag("--from-aspect").map(|aspect| MotionCapture {
+        from: aspect_lamp_set(&aspect).unwrap_or_else(|| panic!("unknown --from-aspect {aspect}")),
+        target: editor.lit.clone(),
+        elapsed: flag("--motion-time")
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            .clamp(0.0, 60.0),
+    });
+    // The first film-strip frame is the complete source aspect. Once motion
+    // starts, the target lamps are selected while the mechanical filters and
+    // arms follow their sampled trajectories.
+    if let Some(sample) = motion.as_ref().filter(|sample| sample.elapsed == 0.0) {
+        editor.lit = sample.from.clone();
+    }
+    let capture = if render_only {
+        shot.clone().map(|path| CaptureSettings {
+            path,
+            bounds_path: flag("--bounds-json"),
+            view: flag("--view")
+                .as_deref()
+                .and_then(CaptureView::parse)
+                .unwrap_or(CaptureView::Front),
+            focus: flag("--focus")
+                .as_deref()
+                .and_then(CaptureFocus::parse)
+                .unwrap_or(CaptureFocus::Full),
+            target_node: flag("--target-node"),
+            isolate_target: args.iter().any(|arg| arg == "--isolate-target"),
+            width: requested_size.0,
+            height: requested_size.1,
+            settle_frames: requested_frames.unwrap_or(35),
+            motion,
+        })
+    } else {
+        None
+    };
+    if capture
+        .as_ref()
+        .is_some_and(|settings| settings.isolate_target && settings.target_node.is_none())
+    {
+        panic!("--isolate-target requires --target-node NAME_PREFIX");
+    }
+    let background = if render_only {
+        flag("--background")
+            .as_deref()
+            .map(|value| {
+                CaptureBackground::parse(value)
+                    .unwrap_or_else(|| panic!("unknown --background {value}"))
+            })
+            .unwrap_or(CaptureBackground::Neutral)
+    } else {
+        CaptureBackground::Dark
+    };
+
+    let capture_run = capture.is_some();
     let mut app = App::new();
     // Parts come out of the mods, exactly as the simulator reads them later.
     // Has to be registered before the asset plugin.
     app.register_asset_source(MOD_SOURCE, mod_asset_source());
     let mut window = Window {
         title: t!("window-signal-editor"),
-        resolution: bevy::window::WindowResolution::new(1280, 860),
+        resolution: bevy::window::WindowResolution::new(requested_size.0, requested_size.1),
         ..default()
     };
-    if let Some((w, h)) = editor.settings.window {
+    if capture.is_none()
+        && flag("--window").is_none()
+        && let Some((w, h)) = editor.settings.window
+    {
         window.resolution = bevy::window::WindowResolution::new(w as u32, h as u32);
     }
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(window),
+    let mut default_plugins = DefaultPlugins.set(WindowPlugin {
+        primary_window: (!capture_run).then_some(window),
         // The close button has to ask about unsaved work; `confirm_close` owns it.
         close_when_requested: false,
+        exit_condition: if capture_run {
+            bevy::window::ExitCondition::DontExit
+        } else {
+            bevy::window::ExitCondition::OnAllClosed
+        },
         ..default()
-    }))
-    .add_plugins(app_icon::plugin)
-    .add_plugins(EguiPlugin::default())
-    // The UI belongs on our own camera (see the vehicle editor for the why).
-    .insert_resource(bevy_egui::EguiGlobalSettings {
-        auto_create_primary_context: false,
-        ..default()
-    })
-    .insert_resource(ClearColor(Color::srgb(0.16, 0.17, 0.19)))
-    .insert_resource(editor)
-    .init_resource::<View>()
-    .add_systems(Startup, setup)
-    .add_systems(EguiPrimaryContextPass, ui::draw)
-    .add_systems(
-        Update,
-        (
-            sync_parts,
-            mount_preview,
-            preview_lamps,
-            preview_motions,
-            apply_preview_lod,
-            orbit_camera,
-            ground_grid,
-            confirm_close,
-            update_title,
-            track_window_size,
-        ),
-    );
+    });
+    if capture_run {
+        // An offscreen image, not a hidden window: compositors are then unable
+        // to resize a nominal 1200x900 review into the current desktop tile.
+        default_plugins =
+            default_plugins
+                .disable::<bevy::winit::WinitPlugin>()
+                .set(bevy::render::RenderPlugin {
+                    synchronous_pipeline_compilation: true,
+                    ..default()
+                });
+    }
+    app.add_plugins(default_plugins)
+        .add_plugins(app_icon::plugin)
+        .insert_resource(ClearColor(background.color()))
+        .insert_resource(editor)
+        .init_resource::<View>()
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                sync_parts,
+                mount_preview,
+                preview_lamps,
+                preview_motions,
+                apply_preview_lod,
+                orbit_camera,
+                ground_grid,
+                confirm_close,
+                update_title,
+                track_window_size,
+            ),
+        );
+
+    if capture_run {
+        // Without winit there is no event loop to advance frames.
+        app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
+            std::time::Duration::ZERO,
+        ));
+    }
+
+    if capture.is_none() {
+        app.add_plugins(EguiPlugin::default())
+            // The UI belongs on our own camera (see the vehicle editor for the why).
+            .insert_resource(bevy_egui::EguiGlobalSettings {
+                auto_create_primary_context: false,
+                ..default()
+            })
+            .add_systems(EguiPrimaryContextPass, ui::draw);
+    }
+
+    if let Some(capture) = capture {
+        app.insert_resource(capture)
+            .init_resource::<CaptureProgress>()
+            .add_systems(
+                Update,
+                isolate_capture_target
+                    .after(mount_preview)
+                    .after(preview_lamps)
+                    .after(apply_preview_lod),
+            )
+            .add_systems(
+                Update,
+                capture_preview
+                    .after(mount_preview)
+                    .after(preview_motions)
+                    .after(apply_preview_lod)
+                    .after(isolate_capture_target),
+            );
+    }
 
     if let Some(frames) = frame_limit {
         app.insert_resource(FrameLimit(frames))
             .add_systems(Update, exit_after_frames);
     }
-    if let Some(path) = shot {
+    if !render_only && let Some(path) = shot {
         app.insert_resource(ShotPath(path));
     }
     app.run();
@@ -394,21 +703,76 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    capture: Option<Res<CaptureSettings>>,
 ) {
-    commands.spawn((
+    let projection = if capture.is_some() {
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::FixedVertical {
+                viewport_height: 12.0,
+            },
+            near: 0.01,
+            far: 500.0,
+            ..OrthographicProjection::default_3d()
+        })
+    } else {
+        Projection::Perspective(PerspectiveProjection {
+            far: 5_000.0,
+            ..default()
+        })
+    };
+    let capture_target = capture.as_ref().map(|capture| {
+        let mut image = Image::new_fill(
+            bevy::render::render_resource::Extent3d {
+                width: capture.width,
+                height: capture.height,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            &[0, 0, 0, 255],
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        );
+        image.texture_descriptor.usage =
+            bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
+                | bevy::render::render_resource::TextureUsages::COPY_SRC
+                | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING;
+        images.add(image)
+    });
+    if let Some(image) = capture_target.as_ref() {
+        commands.insert_resource(CaptureTarget {
+            image: image.clone(),
+        });
+    }
+
+    let mut camera = commands.spawn((
         Camera3d::default(),
         // HDR + bloom, like the simulator: the lamp test glows the way the
         // night run will.
         bevy::camera::Hdr,
         bevy::post_process::bloom::Bloom::NATURAL,
-        Projection::Perspective(PerspectiveProjection {
-            far: 5_000.0,
-            ..default()
-        }),
+        projection,
         Transform::default(),
-        PrimaryEguiContext,
     ));
-    commands.spawn((
+    if let Some(image) = capture_target {
+        camera.insert(bevy::camera::RenderTarget::Image(image.into()));
+    }
+    if capture
+        .as_ref()
+        .is_some_and(|settings| settings.isolate_target)
+    {
+        // Layer 0 remains on the target so the ordinary studio lights still
+        // illuminate it. Layer 1 is camera-exclusive and therefore removes
+        // occluding sibling nodes without changing visibility or bounds.
+        camera.insert(RenderLayers::layer(1));
+    }
+    if capture.is_none() {
+        camera.insert(PrimaryEguiContext);
+    }
+    let isolated_capture = capture
+        .as_ref()
+        .is_some_and(|settings| settings.isolate_target);
+    let mut key_light = commands.spawn((
         DirectionalLight {
             illuminance: 12_000.0,
             shadow_maps_enabled: true,
@@ -416,14 +780,36 @@ fn setup(
         },
         Transform::from_xyz(30.0, 60.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    commands.spawn((
+    if isolated_capture {
+        key_light.insert(RenderLayers::from_layers(&[0, 1]));
+    }
+    let mut ambient = commands.spawn((
         AmbientLight {
             color: Color::srgb(0.8, 0.85, 1.0),
-            brightness: 400.0,
+            brightness: 700.0,
             ..default()
         },
         Transform::default(),
     ));
+    if isolated_capture {
+        ambient.insert(RenderLayers::from_layers(&[0, 1]));
+    }
+    // Rear fill keeps dark-painted mechanisms readable in every review view.
+    let mut fill_light = commands.spawn((
+        DirectionalLight {
+            illuminance: 6_000.0,
+            shadow_maps_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(-24.0, 36.0, -30.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    if isolated_capture {
+        fill_light.insert(RenderLayers::from_layers(&[0, 1]));
+    }
+
+    if capture.is_some() {
+        return;
+    }
 
     // Track stub as orientation: the signal stands beside it, facing +Z like a
     // driver approaching along -Z would see it.
@@ -616,9 +1002,9 @@ fn preview_lamps(
     }
 }
 
-/// Moves motion-bound nodes towards their lamp-test targets — the editor's copy
-/// of the simulator's swing, driven by the toggles instead of the interlocking.
-/// Base transforms are remembered on first touch.
+/// Moves motion-bound nodes towards their lamp-test targets with the simulator's
+/// own kinematics, driven by the toggles instead of the interlocking. Base
+/// transforms and dynamic state are remembered on first touch.
 fn preview_motions(
     time: Res<Time>,
     editor: Res<Editor>,
@@ -626,7 +1012,8 @@ fn preview_motions(
     children: Query<&Children>,
     mut named: Query<(&Name, &mut Transform)>,
     mut bases: Local<HashMap<Entity, Transform>>,
-    mut values: Local<HashMap<Entity, f32>>,
+    mut states: Local<HashMap<Entity, (f32, f32)>>,
+    capture: Option<Res<CaptureSettings>>,
 ) {
     let dt = time.delta_secs();
     for (root, part) in roots.iter() {
@@ -654,31 +1041,63 @@ fn preview_motions(
             let Some(binding) = bindings.iter().find(|m| m.node == name.as_str()) else {
                 continue;
             };
-            let target = if editor.lit.contains(&binding.lamp) {
-                1.0
+            let state = states.entry(entity).or_insert((0.0, 0.0));
+            *state = if let Some(sample) = capture
+                .as_ref()
+                .and_then(|settings| settings.motion.as_ref())
+            {
+                let target = sample.target.contains(&binding.lamp) as u8 as f32;
+                sample_motion(
+                    binding.profile,
+                    binding.seconds as f32,
+                    sample.from.contains(&binding.lamp) as u8 as f32,
+                    target,
+                    sample.elapsed,
+                )
+            } else if capture.is_some() {
+                // A normal review plate represents the settled signal aspect,
+                // while an explicit motion capture above samples its real path.
+                let target = editor.lit.contains(&binding.lamp) as u8 as f32;
+                (target, 0.0)
             } else {
-                0.0
+                let target = editor.lit.contains(&binding.lamp) as u8 as f32;
+                advance_motion(
+                    binding.profile,
+                    state.0,
+                    state.1,
+                    target,
+                    dt,
+                    binding.seconds as f32,
+                )
             };
-            let value = values.entry(entity).or_insert(0.0);
-            *value = slew(*value, target, dt, binding.seconds as f32);
             // Visibility motions are the lamp mechanism; the preview leaves
             // them to the lamp test.
             if !matches!(binding.motion, Motion::Visibility) {
                 let base = *bases.entry(entity).or_insert(*transform);
-                *transform = base * motion_transform(&binding.motion, *value);
+                *transform = base * motion_transform(&binding.motion, state.0);
             }
         }
     }
 }
 
-/// One step of the travel towards `target` — the editor's copy of the
-/// simulator's linear swing.
-fn slew(value: f32, target: f32, dt: f32, seconds: f32) -> f32 {
-    if seconds <= 0.0 {
-        return target;
+/// Samples a transition at an exact elapsed time with the simulator's own
+/// motion integrator. A fixed outer step keeps screenshots independent of the
+/// renderer frame rate; `advance_motion` retains its 240 Hz impact substeps.
+fn sample_motion(
+    profile: MotionProfile,
+    seconds: f32,
+    start: f32,
+    target: f32,
+    elapsed: f32,
+) -> (f32, f32) {
+    let mut state = (start.clamp(0.0, 1.0), 0.0);
+    let mut remaining = elapsed.max(0.0).min(60.0);
+    while remaining > 0.0 {
+        let dt = remaining.min(1.0 / 60.0);
+        state = advance_motion(profile, state.0, state.1, target, dt, seconds);
+        remaining -= dt;
     }
-    let step = dt / seconds;
-    (value + (target - value).clamp(-step, step)).clamp(0.0, 1.0)
+    state
 }
 
 /// Transform a [`Motion`] produces at `value` — the editor's copy of the
@@ -701,21 +1120,57 @@ fn motion_transform(motion: &Motion, value: f32) -> Transform {
 fn apply_preview_lod(
     mut commands: Commands,
     editor: Res<Editor>,
-    mut nodes: Query<(Entity, &Name, Option<&mut Visibility>)>,
+    mut nodes: Query<(Entity, &Name, Option<&mut Visibility>, Has<PreviewLamp>)>,
 ) {
-    for (entity, name, visibility) in nodes.iter_mut() {
+    for (entity, name, visibility, lamp) in nodes.iter_mut() {
         let Some(level) = lod_level(name.as_str()) else {
             continue;
         };
-        let wanted = if editor.model.lods.is_empty() || level == editor.preview_lod {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+        let selected = editor.model.lods.is_empty() || level == editor.preview_lod;
+        // A selected lamp remains under `preview_lamps` control. Replacing its
+        // Hidden state with Inherited here made every unlit lens glow in older
+        // editor screenshots, even though the simulator itself was correct.
+        if selected && lamp {
+            continue;
+        }
+        let wanted = selected
+            .then_some(Visibility::Inherited)
+            .unwrap_or(Visibility::Hidden);
         match visibility {
             Some(mut current) => *current = wanted,
             None => {
                 commands.entity(entity).insert(wanted);
+            }
+        }
+    }
+}
+
+/// Put a requested component and all its mesh descendants on the capture-only
+/// render layer.  Visibility is deliberately left untouched: target framing,
+/// active lamp state, LOD selection and the machine-readable assembly bounds
+/// continue to be evaluated against the exact loaded signal.
+fn isolate_capture_target(
+    capture: Res<CaptureSettings>,
+    named: Query<(Entity, &Name)>,
+    children: Query<&Children>,
+    mut tagged: Local<HashSet<Entity>>,
+    mut commands: Commands,
+) {
+    if !capture.isolate_target {
+        return;
+    }
+    let Some(prefix) = capture.target_node.as_deref() else {
+        return;
+    };
+    for (entity, name) in named.iter() {
+        if !name.as_str().starts_with(prefix) {
+            continue;
+        }
+        for member in std::iter::once(entity).chain(children.iter_descendants(entity)) {
+            if tagged.insert(member) {
+                commands
+                    .entity(member)
+                    .insert(RenderLayers::from_layers(&[0, 1]));
             }
         }
     }
@@ -731,7 +1186,11 @@ fn orbit_camera(
     mut motion: MessageReader<bevy::input::mouse::MouseMotion>,
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    capture: Option<Res<CaptureSettings>>,
 ) {
+    if capture.is_some() {
+        return;
+    }
     let over_ui = window
         .single()
         .ok()
@@ -759,6 +1218,258 @@ fn orbit_camera(
         *transform =
             Transform::from_translation(view.target + offset).looking_at(view.target, Vec3::Y);
     }
+}
+
+/// Frames only the assembled signal, then takes a deterministic orthographic
+/// screenshot after its meshes and textures have spent a few frames on the GPU.
+fn capture_preview(
+    capture: Res<CaptureSettings>,
+    target: Res<CaptureTarget>,
+    mut progress: ResMut<CaptureProgress>,
+    assets: Res<AssetServer>,
+    editor: Res<Editor>,
+    roots: Query<Entity, With<PreviewPart>>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    bounds: Query<(&GlobalTransform, &Aabb, Option<&Visibility>)>,
+    mut camera: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+    mut commands: Commands,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if progress.after_shot > 0 {
+        progress.after_shot += 1;
+        if progress.after_shot >= 10 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    }
+
+    let ready = editor.parts.iter().all(|part| {
+        part.gltf
+            .as_ref()
+            .is_some_and(|handle| assets.is_loaded_with_dependencies(handle))
+    });
+    let Some((assembly_min, assembly_max)) = ready
+        .then(|| preview_bounds(&roots, &children, &names, &bounds, None))
+        .flatten()
+    else {
+        return;
+    };
+    let (mut min, mut max) = if let Some(prefix) = capture.target_node.as_deref() {
+        preview_bounds(&roots, &children, &names, &bounds, Some(prefix))
+            .unwrap_or_else(|| panic!("--target-node {prefix:?} did not match a visible node"))
+    } else {
+        (assembly_min, assembly_max)
+    };
+
+    // A named component already supplies exact bounds and must never be cut in
+    // half by a generic top/base window. Without a target, fixed metre crops
+    // keep the same feature at the same scale across revisions.
+    if capture.target_node.is_none() {
+        match capture.focus {
+            CaptureFocus::Full => {}
+            CaptureFocus::Head => min.y = min.y.max(max.y - 3.2),
+            // A fixed 1.25-m top crop resolves enamel grain, glass Fresnel rings,
+            // fasteners and edge wear without changing camera scale from one
+            // revision to the next. It is the material microscope paired with
+            // the broader three-direction head review.
+            CaptureFocus::Detail => min.y = min.y.max(max.y - 1.25),
+            CaptureFocus::Base => max.y = max.y.min(min.y + 2.5),
+        }
+    }
+    let center = (min + max) * 0.5;
+    let direction = capture.view.direction();
+    let right = Vec3::Y.cross(direction).normalize_or_zero();
+    let up = direction.cross(right).normalize_or_zero();
+
+    // Project the axis-aligned world box into the requested camera plane. This
+    // fits side and quarter views without the huge empty margin a bounding
+    // sphere would add to a twelve-metre mast.
+    let mut screen_min = Vec2::splat(f32::INFINITY);
+    let mut screen_max = Vec2::splat(f32::NEG_INFINITY);
+    for corner in box_corners(min, max) {
+        let delta = corner - center;
+        let projected = Vec2::new(delta.dot(right), delta.dot(up));
+        screen_min = screen_min.min(projected);
+        screen_max = screen_max.max(projected);
+    }
+    let size = screen_max - screen_min;
+    let aspect = capture.width as f32 / capture.height as f32;
+    let viewport_height = (size.y.max(size.x / aspect) * 1.12).max(0.25);
+
+    let Ok((mut transform, mut projection)) = camera.single_mut() else {
+        return;
+    };
+    *transform = Transform::from_translation(center + direction * 40.0).looking_at(center, Vec3::Y);
+    *projection = Projection::Orthographic(OrthographicProjection {
+        scaling_mode: ScalingMode::FixedVertical { viewport_height },
+        near: 0.01,
+        far: 100.0,
+        ..OrthographicProjection::default_3d()
+    });
+    progress.settled += 1;
+
+    if progress.settled >= capture.settle_frames {
+        if let Some(path) = &capture.bounds_path {
+            let motion = capture_motion_report(&editor, &capture);
+            write_capture_bounds(path, assembly_min, assembly_max, min, max, motion)
+                .unwrap_or_else(|error| panic!("cannot write capture bounds {path}: {error}"));
+        }
+        commands
+            .spawn(Screenshot::image(target.image.clone()))
+            .observe(save_to_disk(capture.path.clone()));
+        progress.after_shot = 1;
+    }
+}
+
+/// Numerical state of one bound mechanism in the exact screenshot frame.
+///
+/// Keeping this beside the image makes a review independent of eyeballing a
+/// five-degree rebound or deciding from perspective alone which way a blade
+/// moved. It is derived with the same sampler that drives the rendered node.
+#[derive(Serialize)]
+struct CaptureMotionReport {
+    node: String,
+    lamp: String,
+    profile: String,
+    seconds: f32,
+    travel: f32,
+    velocity: f32,
+    kind: &'static str,
+    axis: [f32; 3],
+    configured_amount: f32,
+    effective_amount: f32,
+    unit: &'static str,
+}
+
+fn capture_motion_report(editor: &Editor, capture: &CaptureSettings) -> Vec<CaptureMotionReport> {
+    editor
+        .model
+        .motions
+        .iter()
+        .map(|binding| {
+            let (travel, velocity) = if let Some(sample) = &capture.motion {
+                sample_motion(
+                    binding.profile,
+                    binding.seconds as f32,
+                    sample.from.contains(&binding.lamp) as u8 as f32,
+                    sample.target.contains(&binding.lamp) as u8 as f32,
+                    sample.elapsed,
+                )
+            } else {
+                (editor.lit.contains(&binding.lamp) as u8 as f32, 0.0)
+            };
+            let (kind, axis, configured_amount, unit) = match binding.motion {
+                Motion::Rotate { axis, degrees } => ("rotate", axis, degrees, "degree"),
+                Motion::Translate { axis, metres } => ("translate", axis, metres, "metre"),
+                Motion::Visibility => ("visibility", [0.0; 3], 1.0, "ratio"),
+                Motion::Emissive => ("emissive", [0.0; 3], 1.0, "ratio"),
+            };
+            CaptureMotionReport {
+                node: binding.node.clone(),
+                lamp: binding.lamp.clone(),
+                profile: format!("{:?}", binding.profile),
+                seconds: binding.seconds as f32,
+                travel,
+                velocity,
+                kind,
+                axis,
+                configured_amount,
+                effective_amount: configured_amount * travel,
+                unit,
+            }
+        })
+        .collect()
+}
+
+fn preview_bounds(
+    roots: &Query<Entity, With<PreviewPart>>,
+    children: &Query<&Children>,
+    names: &Query<&Name>,
+    bounds: &Query<(&GlobalTransform, &Aabb, Option<&Visibility>)>,
+    target_prefix: Option<&str>,
+) -> Option<(Vec3, Vec3)> {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for root in roots.iter() {
+        for entity in std::iter::once(root).chain(children.iter_descendants(root)) {
+            if target_prefix.is_some_and(|prefix| {
+                !names
+                    .get(entity)
+                    .is_ok_and(|name| name.as_str().starts_with(prefix))
+            }) {
+                continue;
+            }
+            let Ok((transform, aabb, visibility)) = bounds.get(entity) else {
+                continue;
+            };
+            // Hidden LODs and inactive lamp/filter meshes must not enlarge the
+            // measured assembly.  Their transforms can differ from the chosen
+            // state even though Bevy correctly omits them from the screenshot.
+            if matches!(visibility, Some(Visibility::Hidden)) {
+                continue;
+            }
+            let local_min = Vec3::from(aabb.center) - Vec3::from(aabb.half_extents);
+            let local_max = Vec3::from(aabb.center) + Vec3::from(aabb.half_extents);
+            for corner in box_corners(local_min, local_max) {
+                let world = transform.affine().transform_point3(corner);
+                min = min.min(world);
+                max = max.max(world);
+            }
+        }
+    }
+    (min.x <= max.x).then_some((min, max))
+}
+
+fn write_capture_bounds(
+    path: &str,
+    assembly_min: Vec3,
+    assembly_max: Vec3,
+    framed_min: Vec3,
+    framed_max: Vec3,
+    motions: Vec<CaptureMotionReport>,
+) -> std::io::Result<()> {
+    let path = std::path::Path::new(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[derive(Serialize)]
+    struct Report {
+        unit: &'static str,
+        assembly_min: [f32; 3],
+        assembly_max: [f32; 3],
+        assembly_size: [f32; 3],
+        framed_min: [f32; 3],
+        framed_max: [f32; 3],
+        framed_size: [f32; 3],
+        motions: Vec<CaptureMotionReport>,
+    }
+    let array = |value: Vec3| value.to_array();
+    let report = Report {
+        unit: "metre",
+        assembly_min: array(assembly_min),
+        assembly_max: array(assembly_max),
+        assembly_size: array(assembly_max - assembly_min),
+        framed_min: array(framed_min),
+        framed_max: array(framed_max),
+        framed_size: array(framed_max - framed_min),
+        motions,
+    };
+    let text = serde_json::to_string_pretty(&report).map_err(std::io::Error::other)? + "\n";
+    std::fs::write(path, text)
+}
+
+fn box_corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
+    [
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(min.x, max.y, min.z),
+        Vec3::new(max.x, max.y, min.z),
+        Vec3::new(min.x, min.y, max.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(min.x, max.y, max.z),
+        Vec3::new(max.x, max.y, max.z),
+    ]
 }
 
 /// A one-metre grid on the ground — the ruler the mast heights are read against.
@@ -912,5 +1623,110 @@ mod tests {
         assert!(editor.would_cycle(0, 0));
         // … the other way round stays a chain.
         assert!(!editor.would_cycle(2, 0));
+    }
+
+    #[test]
+    fn capture_views_have_unambiguous_cardinal_directions() {
+        assert_eq!(CaptureView::parse("front"), Some(CaptureView::Front));
+        assert_eq!(CaptureView::Front.direction(), Vec3::Z);
+        assert_eq!(CaptureView::Rear.direction(), Vec3::NEG_Z);
+        assert_eq!(CaptureView::Left.direction(), Vec3::NEG_X);
+        assert_eq!(CaptureView::Right.direction(), Vec3::X);
+        assert!(CaptureView::parse("somewhere").is_none());
+    }
+
+    #[test]
+    fn form_signal_aspects_include_visual_and_motion_channels() {
+        assert_eq!(aspect_lamps("hp0"), Some(&["lamp_red"] as &[_]));
+        assert_eq!(
+            aspect_lamps("hp2"),
+            Some(&[
+                "fluegel1",
+                "fluegel2",
+                "fluegel_gekuppelt",
+                "lamp_green",
+                "lamp_yellow",
+            ] as &[_],)
+        );
+        assert!(aspect_lamps("vr1").unwrap().contains(&"scheibe_weg"));
+        assert!(
+            aspect_lamps("vr1")
+                .unwrap()
+                .contains(&"vr_blende_links_gruen")
+        );
+        assert_eq!(aspect_lamps("sh0"), Some(&["sh_white"] as &[_]));
+        assert!(aspect_lamps("sh1").unwrap().contains(&"sperrscheibe_frei"));
+        assert!(aspect_lamps("invalid").is_none());
+    }
+
+    #[test]
+    fn capture_window_parser_rejects_incomplete_sizes() {
+        assert_eq!(parse_window(Some("1600x1200".into())), Some((1600, 1200)));
+        assert_eq!(parse_window(Some("1600".into())), None);
+        assert_eq!(parse_window(Some("wide×high".into())), None);
+    }
+
+    #[test]
+    fn capture_backgrounds_are_explicit_and_neutral_is_not_the_old_dark_view() {
+        assert_eq!(
+            CaptureBackground::parse("neutral"),
+            Some(CaptureBackground::Neutral)
+        );
+        assert_eq!(
+            CaptureBackground::parse("light"),
+            Some(CaptureBackground::Light)
+        );
+        assert_eq!(
+            CaptureBackground::parse("dark"),
+            Some(CaptureBackground::Dark)
+        );
+        assert!(CaptureBackground::parse("sky").is_none());
+        assert_ne!(
+            CaptureBackground::Neutral.color(),
+            CaptureBackground::Dark.color()
+        );
+    }
+
+    #[test]
+    fn deterministic_motion_sample_uses_the_runtime_kinematics() {
+        let profile = MotionProfile::Semaphore {
+            fall_seconds: 0.75,
+            rebound: 0.36,
+        };
+        let falling = sample_motion(profile, 1.8, 1.0, 0.0, 0.50);
+        let rebound = sample_motion(profile, 1.8, 1.0, 0.0, 0.90);
+        let settled = sample_motion(profile, 1.8, 1.0, 0.0, 2.50);
+
+        assert!(falling.0 > 0.40 && falling.1 < 0.0);
+        assert!(rebound.0 > 0.05 && rebound.1 > 0.0);
+        assert_eq!(settled, (0.0, 0.0));
+
+        // The canonical 45-degree Hauptsignal arm reaches a clearly readable
+        // first rebound peak of about 5.8 degrees. Lock the requested stronger
+        // bounce numerically so a later material or geometry pass cannot
+        // quietly damp it back to an almost invisible twitch.
+        let first_peak_degrees = sample_motion(profile, 1.8, 1.0, 0.0, 1.02).0 * 45.0;
+        assert!(
+            (5.7..=6.0).contains(&first_peak_degrees),
+            "unexpected first Hp rebound peak: {first_peak_degrees} degrees"
+        );
+    }
+
+    #[test]
+    fn deterministic_motion_sample_starts_in_the_source_aspect() {
+        assert_eq!(
+            sample_motion(MotionProfile::Linear, 1.0, 1.0, 0.0, 0.0),
+            (1.0, 0.0)
+        );
+        let halfway = sample_motion(MotionProfile::Linear, 1.0, 0.0, 1.0, 0.5);
+        assert!((halfway.0 - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn box_corner_helper_covers_both_extrema() {
+        let corners = box_corners(Vec3::new(-1.0, -2.0, -3.0), Vec3::new(4.0, 5.0, 6.0));
+        assert!(corners.contains(&Vec3::new(-1.0, -2.0, -3.0)));
+        assert!(corners.contains(&Vec3::new(4.0, 5.0, 6.0)));
+        assert_eq!(corners.len(), 8);
     }
 }

@@ -17,13 +17,14 @@
 
 use crate::{SimResource, models};
 use bevy::prelude::*;
-use sim_core::train::Motion;
+use sim_core::{interlock::advance_motion, train::Motion};
 use world_render::{
     AspectMaterials, MotionNode, PlaceholderHead, SignalLamp, SignalLodNode, SignalModels,
 };
 
-/// Moves the motion-bound nodes: linear travel towards their target — the
-/// characteristic swing of a semaphore arm, intermediate positions included.
+/// Moves motion-bound nodes towards their target using the binding's time law.
+/// Semaphore profiles are driven upwards and fall back under gravity, including
+/// the damped rebound at the mechanical stop.
 pub fn animate_motions(
     time: Res<Time>,
     sim: Res<SimResource>,
@@ -47,7 +48,14 @@ pub fn animate_motions(
             .get(node.signal)
             .is_some_and(|s| s.lamps.iter().any(|l| l == &binding.lamp));
         let target = if lit { 1.0 } else { 0.0 };
-        node.value = slew(node.value, target, dt, binding.seconds as f32);
+        (node.value, node.velocity) = advance_motion(
+            binding.profile,
+            node.value,
+            node.velocity,
+            target,
+            dt,
+            binding.seconds as f32,
+        );
         match binding.motion {
             Motion::Visibility => {
                 *visibility = if node.value >= 0.5 {
@@ -59,15 +67,6 @@ pub fn animate_motions(
             _ => *transform = node.base * models::motion_transform(&binding.motion, node.value),
         }
     }
-}
-
-/// One step of the travel towards `target`: linear, the full swing in `seconds`.
-fn slew(value: f32, target: f32, dt: f32, seconds: f32) -> f32 {
-    if seconds <= 0.0 {
-        return target;
-    }
-    let step = dt / seconds;
-    (value + (target - value).clamp(-step, step)).clamp(0.0, 1.0)
 }
 
 /// Shows exactly the level of detail whose distance the signal is within;
@@ -104,14 +103,18 @@ pub fn update_signal_lods(
 }
 
 /// Shows exactly the lamp nodes whose string is in the signal's lamp image.
-pub fn update_lamps(sim: Res<SimResource>, mut lamps: Query<(&SignalLamp, &mut Visibility)>) {
+pub fn update_lamps(
+    time: Res<Time>,
+    sim: Res<SimResource>,
+    mut lamps: Query<(&SignalLamp, &mut Visibility)>,
+) {
     for (lamp, mut visibility) in lamps.iter_mut() {
         let lit = sim
             .0
             .interlock
             .signals
             .get(lamp.signal)
-            .is_some_and(|s| s.lamps.iter().any(|l| l == &lamp.lamp));
+            .is_some_and(|s| lamp.visible(&s.lamps, time.elapsed_secs()));
         *visibility = if lit {
             Visibility::Inherited
         } else {
@@ -140,15 +143,66 @@ pub fn update_placeholders(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sim_core::interlock::MotionProfile;
 
     #[test]
-    fn the_swing_is_linear_and_clamped() {
+    fn the_linear_swing_remains_linear_and_clamped() {
         // Half the travel time covers half the travel, whatever the start.
-        assert_eq!(slew(0.0, 1.0, 0.75, 1.5), 0.5);
-        assert_eq!(slew(1.0, 0.0, 0.75, 1.5), 0.5);
+        assert_eq!(
+            advance_motion(MotionProfile::Linear, 0.0, 0.0, 1.0, 0.75, 1.5).0,
+            0.5
+        );
+        assert_eq!(
+            advance_motion(MotionProfile::Linear, 1.0, 0.0, 0.0, 0.75, 1.5).0,
+            0.5
+        );
         // It stops at the target instead of overshooting.
-        assert_eq!(slew(0.9, 1.0, 1.0, 1.5), 1.0);
+        assert_eq!(
+            advance_motion(MotionProfile::Linear, 0.9, 0.0, 1.0, 1.0, 1.5).0,
+            1.0
+        );
         // No travel time: a hard switch.
-        assert_eq!(slew(0.0, 1.0, 0.001, 0.0), 1.0);
+        assert_eq!(
+            advance_motion(MotionProfile::Linear, 0.0, 0.0, 1.0, 0.001, 0.0).0,
+            1.0
+        );
+    }
+
+    #[test]
+    fn a_semaphore_accelerates_down_bounces_and_settles() {
+        let profile = MotionProfile::Semaphore {
+            fall_seconds: 0.75,
+            rebound: 0.36,
+        };
+        let (first, velocity) = advance_motion(profile, 1.0, 0.0, 0.0, 0.1, 1.8);
+        let (second, _) = advance_motion(profile, first, velocity, 0.0, 0.1, 1.8);
+        assert!(1.0 - first < first - second, "the falling arm accelerates");
+
+        let (mut value, mut velocity) = (1.0, 0.0);
+        let mut rebounded = false;
+        let mut first_rebound_peak = 0.0_f32;
+        let mut impact_seen = false;
+        for _ in 0..1_200 {
+            let previous_velocity = velocity;
+            (value, velocity) = advance_motion(profile, value, velocity, 0.0, 1.0 / 240.0, 1.8);
+            if previous_velocity < 0.0 && velocity > 0.0 {
+                rebounded = true;
+                impact_seen = true;
+            }
+            if impact_seen {
+                first_rebound_peak = first_rebound_peak.max(value);
+            }
+        }
+        assert!(rebounded, "the arm rebounds from its mechanical stop");
+        assert!(
+            first_rebound_peak >= 0.10,
+            "the first hop must remain clearly visible: {first_rebound_peak}"
+        );
+        assert_eq!((value, velocity), (0.0, 0.0));
+
+        for _ in 0..600 {
+            (value, velocity) = advance_motion(profile, value, velocity, 1.0, 1.0 / 240.0, 1.8);
+        }
+        assert_eq!((value, velocity), (1.0, 0.0));
     }
 }

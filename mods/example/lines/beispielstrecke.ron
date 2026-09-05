@@ -3,8 +3,8 @@
 // comes from that state machine instead of the built-in logic.
 //
 // 4 km straight, one Ks main signal at km 2.0 with a 1000 Hz magnet 1000 m ahead of it,
-// and a semaphore (Form) main signal at km 3.5 whose arms are moved by the model's
-// motion bindings (signal_models/form_hp.ron).
+// and a semaphore (Form) distant/main pair at km 2.5 / 3.5 whose disc, auxiliary
+// wing and main arms move through the model motion bindings.
 //
 // Behind km 4.0 the line has somewhere to shunt to (plan ch. 11): a turnout, 600 m of
 // running road on to the eastern portal, and a 300 m stabling siding off the diverging
@@ -101,6 +101,10 @@
         // 9: the distant signal at km 1.0, a braking distance ahead of the Ks main. New
         // devices go at the end of this list — the entries above are addressed by index.
         (kind: Signal, edge: 0, s: 1000.0, lateral_offset: 3.0, payload: "(signal:Some(3))"),
+        // 10/11: full-size three-aspect Formvorsignal and its 1000 Hz magnet,
+        // one braking distance before the Formhauptsignal at km 3.5.
+        (kind: Signal, edge: 0, s: 2500.0, lateral_offset: 3.0, payload: "(signal:Some(4))"),
+        (kind: Magnet, edge: 0, s: 2500.0, payload: "(frequency:Hz1000,signal:Some(4),activation:WhenRestrictive)"),
     ],
     // Scenery with a track reference: two masts left of the line (objects/mast.ron
     // carries the default offset and rotation the editor stamps on placement).
@@ -123,6 +127,8 @@
     sections: [(edges: [0]), (edges: [1]), (edges: [2])],
     signals: [
         (
+            designation: "20",
+            interlocking: "Bks",
             kind: Main,
             system: Ks,
             device: 1,
@@ -132,6 +138,8 @@
         // The semaphore guards nothing on this demo line — it stands at proceed
         // and swings its arm as the run starts.
         (
+            designation: "N1",
+            interlocking: "Bks",
             kind: Main,
             system: HV,
             device: 4,
@@ -141,12 +149,14 @@
         // 2: the shunting signal at the siding. It shows Sh 1 only while a shunting
         // route is set over it — `requires_route` is what says so.
         (
+            designation: "W1",
+            interlocking: "Bks",
             kind: Shunting,
-            system: Ks,
+            system: HV,
             device: 6,
             guarded: [],
             requires_route: true,
-            signal_type: Some("example:sperrsignal"),
+            signal_type: Some("example:formsperrsignal"),
         ),
         // 3: the distant signal for the Ks main at km 2.0. It guards nothing of its own —
         // it repeats what stands ahead — and `next` is what makes it do that: the
@@ -154,11 +164,24 @@
         // what puts the 1000 Hz magnet beside it under current. Without a model it draws
         // the placeholder mast.
         (
+            designation: "v20",
+            interlocking: "Bks",
             kind: Distant,
             system: Ks,
             device: 9,
             next: Some(0),
             guarded: [],
+        ),
+        // 4: three-aspect Formvorsignal (Vr 0 / Vr 1 / Vr 2) announcing signal 1.
+        (
+            designation: "n1",
+            interlocking: "Bks",
+            kind: Distant,
+            system: HV,
+            device: 10,
+            next: Some(1),
+            guarded: [],
+            signal_type: Some("example:hv_form_vr012"),
         ),
     ],
     // Vegetation: every tree its own row, geo-positioned, height from the

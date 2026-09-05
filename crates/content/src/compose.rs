@@ -524,6 +524,8 @@ mod tests {
             sections: vec![SectionSource { edges: vec![0] }],
             areas: Vec::new(),
             signals: vec![SignalSource {
+                designation: "A".into(),
+                interlocking: "Test".into(),
                 kind: SignalKind::Main,
                 system: SignalSystem::Ks,
                 device: 0,
@@ -533,6 +535,7 @@ mod tests {
                 diverging_speed: None,
                 signal_type: None,
                 model: None,
+                addons: Default::default(),
             }],
             routes: vec![],
             boundaries: vec![

@@ -1,0 +1,313 @@
+// Reference row for per-placement signal designations and every mast-mounted
+// Zs construction supported by the editor.  The final two entries of each
+// group deliberately combine fittings to catch collisions and shared housings.
+(
+    name: "Formsignal-Zusatzsignale – Anbau- und Schriftprobe",
+    year: Some(2026),
+    fictional: true,
+    geoid_offset: 46.0,
+    nodes: [Buffer, Buffer],
+    edges: [(
+        from: 0,
+        to: 1,
+        start: Geo(point: (lat: 52.0, lon: 10.0, height: 100.0), heading_deg: 90.0),
+        segments: [(len: 1200.0, k0: 0.0, dk: 0.0)],
+        grade: [(0.0, 0.0)],
+        speed: [(0.0, 40.0)],
+        track_type: [(0.0, "example:altbau")],
+        electrification: [(0.0, "none")],
+    )],
+    devices: [
+        // 00: A
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -39.90, payload: "(signal:Some(0))"),
+        // 01: N1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -35.70, payload: "(signal:Some(1))"),
+        // 02: N2
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -31.50, payload: "(signal:Some(2))"),
+        // 03: N3
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -27.30, payload: "(signal:Some(3))"),
+        // 04: N4
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -23.10, payload: "(signal:Some(4))"),
+        // 05: P1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -18.90, payload: "(signal:Some(5))"),
+        // 06: P2
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -14.70, payload: "(signal:Some(6))"),
+        // 07: P3
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -10.50, payload: "(signal:Some(7))"),
+        // 08: P4
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -6.30, payload: "(signal:Some(8))"),
+        // 09: R1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: -2.10, payload: "(signal:Some(9))"),
+        // 10: R2
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 2.10, payload: "(signal:Some(10))"),
+        // 11: S1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 6.30, payload: "(signal:Some(11))"),
+        // 12: S2
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 10.50, payload: "(signal:Some(12))"),
+        // 13: 47P3
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 14.70, payload: "(signal:Some(13))"),
+        // 14: F1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 18.90, payload: "(signal:Some(14))"),
+        // 15: G1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 23.10, payload: "(signal:Some(15))"),
+        // 16: vN2
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 27.30, payload: "(signal:Some(16))"),
+        // 17: vN4
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 31.50, payload: "(signal:Some(17))"),
+        // 18: vP1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 35.70, payload: "(signal:Some(18))"),
+        // 19: vF1
+        (kind: Signal, edge: 0, s: 650.0, facing: Forward, lateral_offset: 39.90, payload: "(signal:Some(19))"),
+    ],
+    yards: [
+        (name: "Besucherstand", kind: Portal, edge: 0, s: 250.0, facing: Forward, length: 120.0),
+    ],
+    sections: [(edges: [0])],
+    signals: [
+        // 00: A
+        (
+            designation: "A",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 0,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs1: Some(ThreeLights)),
+        ),
+        // 01: N1
+        (
+            designation: "N1",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 1,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs1: Some(BlinkingLight)),
+        ),
+        // 02: N2
+        (
+            designation: "N2",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 2,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs2: Some(["K", "S"])),
+        ),
+        // 03: N3
+        (
+            designation: "N3",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 3,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs3: Some((values: [6], construction: Form))),
+        ),
+        // 04: N4
+        (
+            designation: "N4",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 4,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs3: Some((values: [4, 6], construction: Light))),
+        ),
+        // 05: P1
+        (
+            designation: "P1",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 5,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs6: Some(Form)),
+        ),
+        // 06: P2
+        (
+            designation: "P2",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 6,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs6: Some(Light)),
+        ),
+        // 07: P3
+        (
+            designation: "P3",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 7,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs7: true),
+        ),
+        // 08: P4
+        (
+            designation: "P4",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 8,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs8: Some(ThreeLights)),
+        ),
+        // 09: R1
+        (
+            designation: "R1",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 9,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs8: Some(LightStrip)),
+        ),
+        // 10: R2
+        (
+            designation: "R2",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 10,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs12: true),
+        ),
+        // 11: S1
+        (
+            designation: "S1",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 11,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs13: Some(Form)),
+        ),
+        // 12: S2
+        (
+            designation: "S2",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 12,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs13: Some(Light)),
+        ),
+        // 13: 47P3
+        (
+            designation: "47P3",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 13,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs103: true),
+        ),
+        // 14: F1
+        (
+            designation: "F1",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 14,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs1: Some(ThreeLights), zs2: Some(["K"]), zs3: Some((values: [6], construction: Form)), zs6: Some(Form), zs12: true),
+        ),
+        // 15: G1
+        (
+            designation: "G1",
+            interlocking: "Zsf",
+            kind: Main,
+            system: HV,
+            device: 15,
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_main"),
+            model: Some("example:form_hp_8m_gitter_1fl"),
+            addons: (zs1: Some(ThreeLights), zs3: Some((values: [4, 6], construction: Light)), zs8: Some(ThreeLights)),
+        ),
+        // 16: vN2
+        (
+            designation: "vN2",
+            interlocking: "Zsf",
+            kind: Distant,
+            system: HV,
+            device: 16,
+            next: Some(0),
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_distant"),
+            model: Some("example:form_vr_4_87m_2begr"),
+            addons: (zs2v: Some(["K", "S"])),
+        ),
+        // 17: vN4
+        (
+            designation: "vN4",
+            interlocking: "Zsf",
+            kind: Distant,
+            system: HV,
+            device: 17,
+            next: Some(0),
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_distant"),
+            model: Some("example:form_vr_4_87m_2begr"),
+            addons: (zs3v: Some((values: [6], construction: Form))),
+        ),
+        // 18: vP1
+        (
+            designation: "vP1",
+            interlocking: "Zsf",
+            kind: Distant,
+            system: HV,
+            device: 18,
+            next: Some(0),
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_distant"),
+            model: Some("example:form_vr_4_87m_2begr"),
+            addons: (zs3v: Some((values: [4, 6], construction: Light))),
+        ),
+        // 19: vF1
+        (
+            designation: "vF1",
+            interlocking: "Zsf",
+            kind: Distant,
+            system: HV,
+            device: 19,
+            next: Some(0),
+            guarded: [],
+            signal_type: Some("example:zusatzsignal_demo_distant"),
+            model: Some("example:form_vr_4_87m_2begr"),
+            addons: (zs2v: Some(["K"]), zs3v: Some((values: [6], construction: Form))),
+        ),
+    ],
+)
+
